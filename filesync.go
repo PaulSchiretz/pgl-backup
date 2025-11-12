@@ -52,9 +52,21 @@ func copyFile(src, dst string) error {
 // syncDirTree incrementally copies files from src to dst, only if the source file
 // is newer than the destination file. It also logs the copied files.
 func syncDirTree(src, dst string) error {
-	// --- 1. PRE-CHECK: Check if the destination directory exists and is writable ---
-	// We check if we can create a temporary file in the destination.
-	// We use MkdirAll first in case the destination directory does not exist yet.
+	// --- 1. PRE-CHECKS ---
+	// Check if source exists and is a directory.
+	srcInfo, err := os.Stat(src)
+	if os.IsNotExist(err) {
+		return fmt.Errorf("source directory %s does not exist", src)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to stat source directory %s: %w", src, err)
+	}
+	if !srcInfo.IsDir() {
+		return fmt.Errorf("source path %s is not a directory", src)
+	}
+
+	// Check if the destination directory can be created and is writable.
+	// We use MkdirAll in case the destination directory does not exist yet.
 	if err := os.MkdirAll(dst, 0755); err != nil {
 		return fmt.Errorf("failed to create destination directory %s: %w", dst, err)
 	}
@@ -133,8 +145,20 @@ func syncDirTree(src, dst string) error {
 // efficient and robust directory mirror. It is much faster for incremental
 // backups than a manual walk. It returns a list of copied files.
 func syncDirTreeRobocopy(src, dst string, mirror bool) error {
-	// Ensure the destination directory exists. Robocopy can create it, but
-	// it's good practice to ensure the parent exists and is writable.
+	// --- 1. PRE-CHECKS ---
+	// Check if source exists and is a directory.
+	srcInfo, err := os.Stat(src)
+	if os.IsNotExist(err) {
+		return fmt.Errorf("source directory %s does not exist", src)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to stat source directory %s: %w", src, err)
+	}
+	if !srcInfo.IsDir() {
+		return fmt.Errorf("source path %s is not a directory", src)
+	}
+
+	// Ensure the destination directory exists.
 	if err := os.MkdirAll(dst, 0755); err != nil {
 		return fmt.Errorf("failed to create destination directory %s: %w", dst, err)
 	}
