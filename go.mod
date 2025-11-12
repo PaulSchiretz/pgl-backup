@@ -1,3 +1,3 @@
-module pixelgardenlabs.io/pgl-Backup
+module pixelgardenlabs.io/pgl-backup
 
 go 1.25.4
