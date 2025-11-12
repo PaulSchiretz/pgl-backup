@@ -49,37 +49,45 @@ func copyFile(src, dst string) error {
 	return os.Rename(out.Name(), dst)
 }
 
-// syncDirTree incrementally copies files from src to dst, only if the source file
-// is newer than the destination file. It also logs the copied files.
-func syncDirTree(src, dst string) error {
-	// --- 1. PRE-CHECKS ---
-	// Check if source exists and is a directory.
+// validateSyncPaths checks that the source path exists and is a directory,
+// and that the destination path can be created and is writable.
+func validateSyncPaths(src, dst string, checkDstWrite bool) error {
+	// 1. Check if source exists and is a directory.
 	srcInfo, err := os.Stat(src)
 	if os.IsNotExist(err) {
 		return fmt.Errorf("source directory %s does not exist", src)
 	}
 	if err != nil {
-		return fmt.Errorf("failed to stat source directory %s: %w", src, err)
+		return fmt.Errorf("cannot stat source directory %s: %w", src, err)
 	}
 	if !srcInfo.IsDir() {
 		return fmt.Errorf("source path %s is not a directory", src)
 	}
 
-	// Check if the destination directory can be created and is writable.
-	// We use MkdirAll in case the destination directory does not exist yet.
+	// 2. Ensure the destination directory can be created.
 	if err := os.MkdirAll(dst, 0755); err != nil {
 		return fmt.Errorf("failed to create destination directory %s: %w", dst, err)
 	}
 
-	tempFile := filepath.Join(dst, "test_write.tmp")
-	if f, err := os.Create(tempFile); err != nil {
-		return fmt.Errorf("destination directory %s is not writable: %w", dst, err)
-	} else {
-		f.Close()
-		// Clean up the temporary file after successful check
-		os.Remove(tempFile)
+	// 3. Optionally, perform a more thorough write check.
+	if checkDstWrite {
+		tempFile := filepath.Join(dst, "test_write.tmp")
+		if f, err := os.Create(tempFile); err != nil {
+			return fmt.Errorf("destination directory %s is not writable: %w", dst, err)
+		} else {
+			f.Close()
+			os.Remove(tempFile)
+		}
 	}
-	// -------------------------------------------------------------------------------
+	return nil
+}
+
+// syncDirTree incrementally copies files from src to dst, only if the source file
+// is newer than the destination file. It also logs the copied files.
+func syncDirTree(src, dst string) error {
+	if err := validateSyncPaths(src, dst, true); err != nil {
+		return err
+	}
 
 	log.Printf("Starting incremental sync from %s to %s. Destination is writable.", src, dst)
 
@@ -145,22 +153,9 @@ func syncDirTree(src, dst string) error {
 // efficient and robust directory mirror. It is much faster for incremental
 // backups than a manual walk. It returns a list of copied files.
 func syncDirTreeRobocopy(src, dst string, mirror bool) error {
-	// --- 1. PRE-CHECKS ---
-	// Check if source exists and is a directory.
-	srcInfo, err := os.Stat(src)
-	if os.IsNotExist(err) {
-		return fmt.Errorf("source directory %s does not exist", src)
-	}
-	if err != nil {
-		return fmt.Errorf("failed to stat source directory %s: %w", src, err)
-	}
-	if !srcInfo.IsDir() {
-		return fmt.Errorf("source path %s is not a directory", src)
-	}
-
-	// Ensure the destination directory exists.
-	if err := os.MkdirAll(dst, 0755); err != nil {
-		return fmt.Errorf("failed to create destination directory %s: %w", dst, err)
+	// Robocopy handles its own write checks, so we don't need the extra check.
+	if err := validateSyncPaths(src, dst, false); err != nil {
+		return err
 	}
 
 	// Robocopy command arguments:
