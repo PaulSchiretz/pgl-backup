@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// parseAndBuildConfig parses command-line flags and constructs the backupConfig.
-func parseAndBuildConfig() backupConfig {
+// parseBackupConfig parses command-line flags and constructs the backupConfig.
+func parseBackupConfig() backupConfig {
 	// Define command-line flags for source and destination directories.
 	// The hardcoded values are now used as defaults.
 	srcFlag := flag.String("source", defaultConfig.Paths.Source, "Source directory to copy from")
@@ -110,17 +110,26 @@ func runBackupJob(runConfig backupConfig) ([]string, error) {
 	}
 
 	fmt.Println("\nBackup operation completed.")
+
+	// --- 3. Clean up old backups ---
+	fmt.Println("\n--- Cleaning Up Old Backups ---")
+	if err := handleRetention(runConfig); err != nil {
+		// We log this as a non-fatal error because the main backup was successful.
+		log.Printf("Error applying retention policy: %v", err)
+	}
 	return copiedFiles, nil
 }
 
-func main() {
+// run encapsulates the main application logic and returns an error if something
+// goes wrong, allowing the main function to handle exit codes.
+func run() error {
 	// 1. Parse flags and build the configuration for this run.
-	runConfig := parseAndBuildConfig()
+	runConfig := parseBackupConfig()
 
 	// 2. Run the backup job.
 	copiedFiles, err := runBackupJob(runConfig)
 	if err != nil {
-		log.Fatalf("Fatal backup error: %v", err)
+		return fmt.Errorf("fatal backup error: %w", err)
 	}
 
 	// --- Print the Log of Copied Files ---
@@ -128,15 +137,14 @@ func main() {
 	if len(copiedFiles) == 0 {
 		fmt.Println("No new or modified files were copied.")
 	} else {
-		for _, file := range copiedFiles {
-			fmt.Printf("COPIED: %s\n", file)
-		}
+		fmt.Printf("Copied %d file(s).\n", len(copiedFiles))
 	}
+	return nil
+}
 
-	// --- 3. Clean up old backups ---
-	fmt.Println("\n--- Cleaning Up Old Backups ---")
-	if err := cleanupOldBackups(runConfig); err != nil { // cleanupOldBackups is still called directly from main
-		// We log this as a non-fatal error because the main backup was successful.
-		log.Printf("Error during cleanup: %v", err)
+func main() {
+	if err := run(); err != nil {
+		log.Printf("Error: %v", err)
+		os.Exit(1)
 	}
 }

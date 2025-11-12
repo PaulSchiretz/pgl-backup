@@ -51,11 +51,11 @@ func handleRollover(config backupConfig) error {
 	return nil
 }
 
-// cleanupOldBackups scans a directory, finds all subdirectories (assumed to be backups),
-// sorts them by name (chronologically), and removes the oldest ones, keeping only// a tiered set of backups (hourly, daily, weekly, monthly).
-func cleanupOldBackups(config backupConfig) error {
+// handleRetention scans the backup target directory and deletes snapshots
+// that are no longer needed according to the configured retention policy.
+func handleRetention(config backupConfig) error {
 	currentDirName := config.Naming.Prefix + config.Naming.IncrementalModeSuffix
-	baseDir := config.Paths.TargetBase // This is already from config.Paths.TargetBase
+	baseDir := config.Paths.TargetBase
 	log.Printf("Checking for old backups to clean up in %s...", baseDir)
 
 	entries, err := os.ReadDir(baseDir)
