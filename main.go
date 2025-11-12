@@ -196,8 +196,9 @@ type backupInfo struct {
 
 // handleRollover checks if the incremental backup directory is from a previous day.
 // If so, it renames it to a permanent timestamped archive.
-func handleRollover(baseDir, prefix, currentDirName string) error {
-	currentBackupPath := filepath.Join(baseDir, currentDirName)
+func handleRollover(config backupConfig) error {
+	currentDirName := config.Naming.Prefix + config.Naming.IncrementalModeSuffix
+	currentBackupPath := filepath.Join(config.Paths.TargetBase, currentDirName)
 	metaFilePath := filepath.Join(currentBackupPath, ".ppbackup_meta")
 
 	meta, err := os.Stat(metaFilePath)
@@ -215,9 +216,9 @@ func handleRollover(baseDir, prefix, currentDirName string) error {
 	isDifferentDay := now.Year() != lastBackupTime.Year() || now.YearDay() != lastBackupTime.YearDay()
 
 	if isDifferentDay {
-		archiveTimestamp := lastBackupTime.Format(backupTimeFormat)
-		archiveDirName := fmt.Sprintf("%s%s", prefix, archiveTimestamp)
-		archivePath := filepath.Join(baseDir, archiveDirName)
+		archiveTimestamp := lastBackupTime.Format(config.Naming.TimeFormat)
+		archiveDirName := fmt.Sprintf("%s%s", config.Naming.Prefix, archiveTimestamp)
+		archivePath := filepath.Join(config.Paths.TargetBase, archiveDirName)
 
 		log.Printf("Rolling over previous day's backup to: %s", archivePath)
 		if err := os.Rename(currentBackupPath, archivePath); err != nil {
@@ -230,7 +231,9 @@ func handleRollover(baseDir, prefix, currentDirName string) error {
 
 // cleanupOldBackups scans a directory, finds all subdirectories (assumed to be backups),
 // sorts them by name (chronologically), and removes the oldest ones, keeping only// a tiered set of backups (hourly, daily, weekly, monthly).
-func cleanupOldBackups(baseDir, prefix string, keepDaily, keepWeekly, keepMonthly int, currentDirName string) error {
+func cleanupOldBackups(config backupConfig) error {
+	currentDirName := config.Naming.Prefix + config.Naming.IncrementalModeSuffix
+	baseDir := config.Paths.TargetBase // This is already from config.Paths.TargetBase
 	log.Printf("Checking for old backups to clean up in %s...", baseDir)
 
 	entries, err := os.ReadDir(baseDir)
@@ -244,13 +247,13 @@ func cleanupOldBackups(baseDir, prefix string, keepDaily, keepWeekly, keepMonthl
 
 	for _, entry := range entries {
 		dirName := entry.Name()
-		if !entry.IsDir() || !strings.HasPrefix(dirName, prefix) || dirName == currentDirName {
+		if !entry.IsDir() || !strings.HasPrefix(dirName, config.Naming.Prefix) || dirName == currentDirName {
 			continue
 		}
 
 		// --- 2. Validate the directory name format ---
-		timestampStr := strings.TrimPrefix(dirName, prefix)
-		backupTime, err := time.Parse(backupTimeFormat, timestampStr)
+		timestampStr := strings.TrimPrefix(dirName, config.Naming.Prefix)
+		backupTime, err := time.Parse(config.Naming.TimeFormat, timestampStr)
 		if err != nil {
 			log.Printf("Skipping directory with invalid format: %s", dirName)
 			continue // Not a valid backup name format, so we ignore it.
@@ -270,36 +273,38 @@ func cleanupOldBackups(baseDir, prefix string, keepDaily, keepWeekly, keepMonthl
 	})
 
 	// Keep track of which periods we've already saved a backup for.
+	savedHour := make(map[string]bool)
 	savedDay := make(map[string]bool)
 	savedWeek := make(map[string]bool)
 	savedMonth := make(map[string]bool)
 
 	for _, b := range allBackups {
-		if keepHourly {
+		if config.Retention.Hours > 0 {
 			// Rule: Hourly backups for the current day
-			if b.Time.Year() == now.Year() && b.Time.Month() == now.Month() && b.Time.Day() == now.Day() {
-				// This check is implicitly handled by the backupsToKeep map, but is good for clarity
-				if _, exists := backupsToKeep[b.Name]; !exists {
+			if b.Time.Year() == now.Year() && b.Time.YearDay() == now.YearDay() {
+				hourKey := b.Time.Format("2006-01-02-15") // YYYY-MM-DD-HH
+				if len(savedHour) < config.Retention.Hours && !savedHour[hourKey] {
 					backupsToKeep[b.Name] = true
+					savedHour[hourKey] = true
 				}
 			}
 		}
 
 		// Rule: Daily backups for the last N days
-		if keepDailyEnabled {
+		if config.Retention.Days > 0 {
 			dayKey := b.Time.Format("2006-01-02")
-			if len(savedDay) < keepDaily && !savedDay[dayKey] {
+			if len(savedDay) < config.Retention.Days && !savedDay[dayKey] {
 				backupsToKeep[b.Name] = true
 				savedDay[dayKey] = true
 			}
 		}
 
 		// Rule: Weekly backups for the last N weeks (keep the last backup of Sunday)
-		if keepWeeklyEnabled {
+		if config.Retention.Weeks > 0 {
 			if b.Time.Weekday() == time.Sunday {
 				year, week := b.Time.ISOWeek()
 				weekKey := fmt.Sprintf("%d-%d", year, week)
-				if len(savedWeek) < keepWeekly && !savedWeek[weekKey] {
+				if len(savedWeek) < config.Retention.Weeks && !savedWeek[weekKey] {
 					backupsToKeep[b.Name] = true
 					savedWeek[weekKey] = true
 				}
@@ -307,10 +312,10 @@ func cleanupOldBackups(baseDir, prefix string, keepDaily, keepWeekly, keepMonthl
 		}
 
 		// Rule: Monthly backups for the last N months (keep the last backup of the month)
-		if keepMonthlyEnabled {
+		if config.Retention.Months > 0 {
 			if b.Time.Day() == time.Date(b.Time.Year(), b.Time.Month()+1, 0, 0, 0, 0, 0, b.Time.Location()).Day() {
 				monthKey := b.Time.Format("2006-01")
-				if len(savedMonth) < keepMonthly && !savedMonth[monthKey] {
+				if len(savedMonth) < config.Retention.Months && !savedMonth[monthKey] {
 					backupsToKeep[b.Name] = true
 					savedMonth[monthKey] = true
 				}
@@ -320,16 +325,16 @@ func cleanupOldBackups(baseDir, prefix string, keepDaily, keepWeekly, keepMonthl
 
 	// Build a descriptive log message for the retention plan
 	var planParts []string
-	if keepHourly {
-		planParts = append(planParts, "Hourly (for today)")
+	if config.Retention.Hours > 0 {
+		planParts = append(planParts, fmt.Sprintf("%d hourly (for today)", len(savedHour)))
 	}
-	if keepDailyEnabled {
+	if config.Retention.Days > 0 {
 		planParts = append(planParts, fmt.Sprintf("%d daily", len(savedDay)))
 	}
-	if keepWeeklyEnabled {
+	if config.Retention.Weeks > 0 {
 		planParts = append(planParts, fmt.Sprintf("%d weekly", len(savedWeek)))
 	}
-	if keepMonthlyEnabled {
+	if config.Retention.Months > 0 {
 		planParts = append(planParts, fmt.Sprintf("%d monthly", len(savedMonth)))
 	}
 	log.Printf("Retention plan: %s snapshots to be kept.", strings.Join(planParts, ", "))
@@ -349,21 +354,79 @@ func cleanupOldBackups(baseDir, prefix string, keepDaily, keepWeekly, keepMonthl
 	return nil
 }
 
-const backupPrefix = "5ive_Backup_"
-const keepHourly = false        // Set to true to keep the latest backup per hour for the current day
-const keepDailyEnabled = true   // Set to false to disable daily backups
-const keepWeeklyEnabled = true  // Set to false to disable weekly backups
-const keepMonthlyEnabled = true // Set to false to disable monthly backups
-const keepDays = 7
-const keepWeeks = 4
-const keepMonths = 12
-const backupTimeFormat = "2006-01-02-15-04-05-000"
+type backupNamingConfig struct {
+	Prefix                string `json:"prefix"`
+	TimeFormat            string `json:"timeFormat"`
+	IncrementalModeSuffix string `json:"incrementalModeSuffix"`
+}
+
+type backupPathConfig struct {
+	Source     string
+	TargetBase string
+	// CurrentTarget is the full, calculated path for this specific backup operation.
+	CurrentTarget string
+}
+
+type backupRetentionPolicyConfig struct {
+	Hours  int
+	Days   int
+	Weeks  int
+	Months int
+}
+
+// BackupMode represents the operational mode of the backup (incremental or snapshot).
+type BackupMode int
+
+// Constants for BackupMode, acting as an enum.
+const (
+	IncrementalMode BackupMode = iota // 0
+	SnapshotMode                      // 1
+)
+
+// String returns the string representation of a BackupMode.
+func (bm BackupMode) String() string {
+	switch bm {
+	case IncrementalMode:
+		return "incremental"
+	case SnapshotMode:
+		return "snapshot"
+	default:
+		return fmt.Sprintf("unknown_mode(%d)", bm)
+	}
+}
+
+type backupConfig struct {
+	Mode      BackupMode                  `json:"mode"`
+	Naming    backupNamingConfig          `json:"naming"`
+	Paths     backupPathConfig            `json:"paths"`
+	Retention backupRetentionPolicyConfig `json:"retention"`
+}
+
+var defaultConfig = backupConfig{
+	Mode: IncrementalMode, // Default mode
+	Naming: backupNamingConfig{
+		Prefix:                "5ive_Backup_",
+		TimeFormat:            "2006-01-02-15-04-05-000",
+		IncrementalModeSuffix: "current",
+	},
+	Paths: backupPathConfig{
+		Source:     "./src_backup",
+		TargetBase: "./dest_backup_mirror",
+		// CurrentTarget is calculated at runtime.
+	},
+	Retention: backupRetentionPolicyConfig{
+		Hours:  24, // N > 0: keep one backup for each of the last N hours of today.
+		Days:   7,  // N > 0: keep one backup for each of the last N days.
+		Weeks:  4,  // N > 0: keep one backup for each of the last N weeks.
+		Months: 12, // N > 0: keep one backup for each of the last N months.
+	},
+}
 
 func main() {
 	// Define command-line flags for source and destination directories.
 	// The hardcoded values are now used as defaults.
-	srcFlag := flag.String("source", "./src_backup", "Source directory to copy from")
-	destFlag := flag.String("target", "./dest_backup_mirror", "Base destination directory for backups")
+	srcFlag := flag.String("source", defaultConfig.Paths.Source, "Source directory to copy from")
+	destFlag := flag.String("target", defaultConfig.Paths.TargetBase, "Base destination directory for backups")
 	snapshotFlag := flag.Bool("snapshot", false, "Perform a full snapshot backup. Default is incremental.")
 
 	// Add a flag for robocopy, defaulting to true only on Windows.
@@ -374,85 +437,77 @@ func main() {
 	useRobocopyFlag := flag.Bool("robocopy", useRobocopyDefault, "Use robocopy for faster sync on Windows (no effect on other OS)")
 	flag.Parse()
 
+	// Create a final config for this run, overriding defaults with flag values.
+	runConfig := defaultConfig
+	runConfig.Paths.Source = *srcFlag
+	runConfig.Paths.TargetBase = *destFlag
+	if *snapshotFlag {
+		runConfig.Mode = SnapshotMode
+	} else {
+		runConfig.Mode = IncrementalMode
+	}
+
 	// Create a slice to store the log of copied files
 	var copiedFiles []string
 	fileLogger := func(relPath string) {
 		copiedFiles = append(copiedFiles, relPath)
 	}
 
-	// --- 1. Define the destination for this specific backup run ---
-	baseDestDir := *destFlag
-	currentIncrementalDirName := backupPrefix + "current"
-
 	fmt.Printf("--- Starting Backup ---\n")
-	fmt.Printf("Source: %s\n", *srcFlag)
+	fmt.Printf("Source: %s\n", runConfig.Paths.Source)
+	fmt.Printf("Mode: %s\n", runConfig.Mode)
+
+	// --- 1. Pre-backup tasks (rollover) and destination calculation ---
+	if runConfig.Mode == SnapshotMode {
+		// SNAPSHOT MODE
+		timestamp := time.Now().Format(runConfig.Naming.TimeFormat)
+		backupDirName := fmt.Sprintf("%s%s", runConfig.Naming.Prefix, timestamp)
+		runConfig.Paths.CurrentTarget = filepath.Join(runConfig.Paths.TargetBase, backupDirName)
+	} else {
+		// INCREMENTAL MODE (DEFAULT)
+		if err := handleRollover(runConfig); err != nil {
+
+			log.Fatalf("Error during backup rollover: %v", err)
+		}
+		currentIncrementalDirName := runConfig.Naming.Prefix + runConfig.Naming.IncrementalModeSuffix
+		runConfig.Paths.CurrentTarget = filepath.Join(runConfig.Paths.TargetBase, currentIncrementalDirName)
+	}
+
+	fmt.Printf("Destination: %s\n", runConfig.Paths.CurrentTarget)
+	fmt.Println("------------------------------")
 
 	// --- 2. Perform the backup ---
-	if *snapshotFlag {
-		// SNAPSHOT MODE
-		fmt.Println("Mode: Snapshot")
-		timestamp := time.Now().Format(backupTimeFormat)
-		backupDirName := fmt.Sprintf("%s%s", backupPrefix, timestamp)
-		currentDestDir := filepath.Join(baseDestDir, backupDirName)
-		fmt.Printf("Destination: %s\n", currentDestDir)
-		fmt.Println("------------------------------")
-
+	if runConfig.Mode == SnapshotMode {
 		if *useRobocopyFlag && runtime.GOOS == "windows" {
 			log.Println("Using robocopy for snapshot.")
-			// For a snapshot, we do a simple copy (/E), not a mirror (/MIR).
-			robocopiedFiles, err := syncDirTreeRobocopy(*srcFlag, currentDestDir, false)
-			if err != nil {
-				if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() >= 8 {
-					log.Fatalf("Fatal backup error during robocopy snapshot: %v", err)
-				}
+			robocopiedFiles, err := syncDirTreeRobocopy(runConfig.Paths.Source, runConfig.Paths.CurrentTarget, false)
+			if err != nil && (!isRobocopySuccess(err)) {
+				log.Fatalf("Fatal backup error during robocopy snapshot: %v", err)
 			}
 			copiedFiles = robocopiedFiles
 		} else {
-			// In snapshot mode, we use the original blind copy.
 			log.Println("Using manual Go implementation for snapshot.")
-			if err := SyncDirTree(*srcFlag, currentDestDir, fileLogger); err != nil {
+			if err := SyncDirTree(runConfig.Paths.Source, runConfig.Paths.CurrentTarget, fileLogger); err != nil {
 				log.Fatalf("Fatal backup error during snapshot: %v", err)
 			}
 		}
-
-	} else {
-		// INCREMENTAL MODE (DEFAULT)
-		// This is the default behavior when --snapshot is not provided.
-		// It performs a fast, incremental backup to a 'current' directory,
-		// which is rolled over daily.
-
-		fmt.Println("Mode: Incremental")
-		if err := handleRollover(baseDestDir, backupPrefix, currentIncrementalDirName); err != nil {
-			log.Fatalf("Error during backup rollover: %v", err)
-		}
-
-		currentDestDir := filepath.Join(baseDestDir, currentIncrementalDirName)
-		fmt.Printf("Destination: %s\n", currentDestDir)
-		fmt.Println("------------------------------")
-
+	} else { // Incremental Mode
 		if *useRobocopyFlag && runtime.GOOS == "windows" {
-			// Use the much faster robocopy for incremental sync on Windows.
 			log.Println("Using robocopy for synchronization.")
-			robocopiedFiles, err := syncDirTreeRobocopy(*srcFlag, currentDestDir, true)
-			if err != nil {
-				// Check for robocopy's specific success exit codes.
-				// Exit codes < 8 are considered success.
-				if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() >= 8 {
-					log.Fatalf("Fatal backup error during robocopy sync: %v", err)
-				}
+			robocopiedFiles, err := syncDirTreeRobocopy(runConfig.Paths.Source, runConfig.Paths.CurrentTarget, true)
+			if err != nil && (!isRobocopySuccess(err)) {
+				log.Fatalf("Fatal backup error during robocopy sync: %v", err)
 			}
-			// The file list is gathered from the dry run.
 			copiedFiles = robocopiedFiles
 		} else {
-			// Use the pure Go implementation for synchronization.
 			log.Println("Using manual Go implementation for synchronization.")
-			if err := SyncDirTree(*srcFlag, currentDestDir, fileLogger); err != nil {
+			if err := SyncDirTree(runConfig.Paths.Source, runConfig.Paths.CurrentTarget, fileLogger); err != nil {
 				log.Fatalf("Fatal backup error during sync: %v", err)
 			}
 		}
 
 		// Touch a meta file to update the modification time of the backup set.
-		metaFilePath := filepath.Join(currentDestDir, ".ppbackup_meta")
+		metaFilePath := filepath.Join(runConfig.Paths.CurrentTarget, ".ppbackup_meta")
 		if f, err := os.Create(metaFilePath); err != nil {
 			log.Printf("Warning: could not update metafile timestamp: %v", err)
 		} else {
@@ -474,8 +529,20 @@ func main() {
 
 	// --- 3. Clean up old backups ---
 	fmt.Println("\n--- Cleaning Up Old Backups ---")
-	if err := cleanupOldBackups(baseDestDir, backupPrefix, keepDays, keepWeeks, keepMonths, currentIncrementalDirName); err != nil {
+	if err := cleanupOldBackups(runConfig); err != nil {
 		// We log this as a non-fatal error because the main backup was successful.
 		log.Printf("Error during cleanup: %v", err)
 	}
+}
+
+// isRobocopySuccess checks if a robocopy error is actually a success code.
+// Robocopy returns exit codes < 8 for successful operations that involved copying/deleting files.
+func isRobocopySuccess(err error) bool {
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		// Exit codes 0-7 are considered success by robocopy.
+		if exitErr.ExitCode() < 8 {
+			return true
+		}
+	}
+	return false
 }
