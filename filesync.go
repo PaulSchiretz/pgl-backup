@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 )
 
 // copyFile handles copying a regular file from src to dst and preserves permissions.
@@ -52,7 +51,7 @@ func copyFile(src, dst string) error {
 
 // syncDirTree incrementally copies files from src to dst, only if the source file
 // is newer than the destination file. It also logs the copied files.
-func syncDirTree(src, dst string, logFunc func(string)) error {
+func syncDirTree(src, dst string) error {
 	// --- 1. PRE-CHECK: Check if the destination directory exists and is writable ---
 	// We check if we can create a temporary file in the destination.
 	// We use MkdirAll first in case the destination directory does not exist yet.
@@ -91,7 +90,11 @@ func syncDirTree(src, dst string, logFunc func(string)) error {
 			if err != nil {
 				return err
 			}
-			return os.MkdirAll(dstPath, info.Mode())
+			err = os.MkdirAll(dstPath, info.Mode())
+			if err == nil {
+				fmt.Printf("MKDIR: %s\n", relPath)
+			}
+			return err
 
 		} else if fileType.IsRegular() {
 			// HANDLE REGULAR FILES
@@ -115,7 +118,7 @@ func syncDirTree(src, dst string, logFunc func(string)) error {
 			}
 
 			// Log the copied file
-			logFunc(relPath)
+			fmt.Printf("COPY: %s\n", relPath)
 			return nil
 
 		} else {
@@ -129,59 +132,38 @@ func syncDirTree(src, dst string, logFunc func(string)) error {
 // syncDirTreeRobocopy uses the Windows `robocopy` utility to perform a highly
 // efficient and robust directory mirror. It is much faster for incremental
 // backups than a manual walk. It returns a list of copied files.
-func syncDirTreeRobocopy(src, dst string, mirror bool) ([]string, error) {
+func syncDirTreeRobocopy(src, dst string, mirror bool) error {
 	// Ensure the destination directory exists. Robocopy can create it, but
 	// it's good practice to ensure the parent exists and is writable.
 	if err := os.MkdirAll(dst, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create destination directory %s: %w", dst, err)
+		return fmt.Errorf("failed to create destination directory %s: %w", dst, err)
 	}
 
 	// Robocopy command arguments:
 	// /MIR :: MIRror a directory tree (equivalent to /E plus /PURGE).
 	// /E :: copy subdirectories, including Empty ones.
-	// /PURGE :: delete destination files/dirs that no longer exist in source.
+	// /V :: Verbose output, showing skipped files.
+	// /TEE :: output to console window as well as the log file.
 	// /R:3 :: Retry 3 times on failed copies.
 	// /W:5 :: Wait 5 seconds between retries.
 	// /NP :: No Progress - don't display % copied.
 	// /NJH :: No Job Header.
 	// /NJS :: No Job Summary.
-	// /NDL :: No Directory List - don't log directory names.
-	// /L :: List only - don't copy, delete, or timestamp any files. We use this for a dry run.
-	args := []string{src, dst, "/R:3", "/W:5", "/NP", "/NJH", "/NJS", "/NDL", "/L"}
+	args := []string{src, dst, "/V", "/TEE", "/R:3", "/W:5", "/NP", "/NJH", "/NJS"}
 	if mirror {
 		args = append(args, "/MIR")
 	} else {
 		args = append(args, "/E")
 	}
+
+	log.Println("Starting sync with robocopy...")
 	cmd := exec.Command("robocopy", args...)
 
-	log.Println("Performing dry run with robocopy to find changed files...")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		// Robocopy exit codes < 8 indicate success (with files copied, etc.)
-		// We check the exit code to see if it's a real error.
-		if exitError, ok := err.(*exec.ExitError); ok {
-			if exitError.ExitCode() >= 8 {
-				return nil, fmt.Errorf("robocopy dry run failed with exit code %d: %s", exitError.ExitCode(), string(output))
-			}
-		} else {
-			return nil, fmt.Errorf("failed to execute robocopy dry run: %w", err)
-		}
-	}
-
-	copiedFiles := strings.Fields(strings.TrimSpace(string(output)))
-
-	log.Println("Performing actual sync with robocopy...")
-	// Remove the /L (List only) flag for the actual copy operation.
-	actualArgs := []string{src, dst, "/R:3", "/W:5"}
-	if mirror {
-		actualArgs = append(actualArgs, "/MIR")
-	} else {
-		actualArgs = append(actualArgs, "/E")
-	}
-	cmd = exec.Command("robocopy", actualArgs...)
-
-	return copiedFiles, cmd.Run()
+	// Pipe robocopy's stdout and stderr directly to our program's stdout/stderr
+	// This provides real-time logging.
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 // isRobocopySuccess checks if a robocopy error is actually a success code.

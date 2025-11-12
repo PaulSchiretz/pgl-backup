@@ -41,13 +41,7 @@ func parseBackupConfig() backupConfig {
 }
 
 // runBackupJob executes the backup process based on the provided configuration.
-func runBackupJob(runConfig backupConfig) ([]string, error) {
-	// Create a slice to store the log of copied files
-	var copiedFiles []string
-	fileLogger := func(relPath string) {
-		copiedFiles = append(copiedFiles, relPath)
-	}
-
+func runBackupJob(runConfig backupConfig) error {
 	fmt.Printf("--- Starting Backup ---\n")
 	fmt.Printf("Source: %s\n", runConfig.Paths.Source)
 	fmt.Printf("Mode: %s\n", runConfig.Mode)
@@ -61,7 +55,7 @@ func runBackupJob(runConfig backupConfig) ([]string, error) {
 	} else {
 		// INCREMENTAL MODE (DEFAULT)
 		if err := handleRollover(runConfig); err != nil {
-			return nil, fmt.Errorf("error during backup rollover: %w", err)
+			return fmt.Errorf("error during backup rollover: %w", err)
 		}
 		currentIncrementalDirName := runConfig.Naming.Prefix + runConfig.Naming.IncrementalModeSuffix
 		runConfig.Paths.CurrentTarget = filepath.Join(runConfig.Paths.TargetBase, currentIncrementalDirName)
@@ -74,29 +68,27 @@ func runBackupJob(runConfig backupConfig) ([]string, error) {
 	if runConfig.Mode == snapshotMode {
 		if runConfig.UseRobocopy && runtime.GOOS == "windows" {
 			log.Println("Using robocopy for snapshot.")
-			robocopiedFiles, err := syncDirTreeRobocopy(runConfig.Paths.Source, runConfig.Paths.CurrentTarget, false)
+			err := syncDirTreeRobocopy(runConfig.Paths.Source, runConfig.Paths.CurrentTarget, false)
 			if err != nil && (!isRobocopySuccess(err)) {
-				return nil, fmt.Errorf("fatal backup error during robocopy snapshot: %w", err)
+				return fmt.Errorf("fatal backup error during robocopy snapshot: %w", err)
 			}
-			copiedFiles = robocopiedFiles
 		} else {
 			log.Println("Using manual Go implementation for snapshot.")
-			if err := syncDirTree(runConfig.Paths.Source, runConfig.Paths.CurrentTarget, fileLogger); err != nil {
-				return nil, fmt.Errorf("fatal backup error during snapshot: %w", err)
+			if err := syncDirTree(runConfig.Paths.Source, runConfig.Paths.CurrentTarget); err != nil {
+				return fmt.Errorf("fatal backup error during snapshot: %w", err)
 			}
 		}
 	} else { // Incremental Mode
 		if runConfig.UseRobocopy && runtime.GOOS == "windows" {
 			log.Println("Using robocopy for synchronization.")
-			robocopiedFiles, err := syncDirTreeRobocopy(runConfig.Paths.Source, runConfig.Paths.CurrentTarget, true)
+			err := syncDirTreeRobocopy(runConfig.Paths.Source, runConfig.Paths.CurrentTarget, true)
 			if err != nil && (!isRobocopySuccess(err)) {
-				return nil, fmt.Errorf("fatal backup error during robocopy sync: %w", err)
+				return fmt.Errorf("fatal backup error during robocopy sync: %w", err)
 			}
-			copiedFiles = robocopiedFiles
 		} else {
 			log.Println("Using manual Go implementation for synchronization.")
-			if err := syncDirTree(runConfig.Paths.Source, runConfig.Paths.CurrentTarget, fileLogger); err != nil {
-				return nil, fmt.Errorf("fatal backup error during sync: %w", err)
+			if err := syncDirTree(runConfig.Paths.Source, runConfig.Paths.CurrentTarget); err != nil {
+				return fmt.Errorf("fatal backup error during sync: %w", err)
 			}
 		}
 
@@ -117,7 +109,7 @@ func runBackupJob(runConfig backupConfig) ([]string, error) {
 		// We log this as a non-fatal error because the main backup was successful.
 		log.Printf("Error applying retention policy: %v", err)
 	}
-	return copiedFiles, nil
+	return nil
 }
 
 // run encapsulates the main application logic and returns an error if something
@@ -127,17 +119,8 @@ func run() error {
 	runConfig := parseBackupConfig()
 
 	// 2. Run the backup job.
-	copiedFiles, err := runBackupJob(runConfig)
-	if err != nil {
+	if err := runBackupJob(runConfig); err != nil {
 		return fmt.Errorf("fatal backup error: %w", err)
-	}
-
-	// --- Print the Log of Copied Files ---
-	fmt.Println("\n--- Log of Copied Files ---")
-	if len(copiedFiles) == 0 {
-		fmt.Println("No new or modified files were copied.")
-	} else {
-		fmt.Printf("Copied %d file(s).\n", len(copiedFiles))
 	}
 	return nil
 }
