@@ -10,7 +10,8 @@ import (
 	"time"
 )
 
-func main() {
+// parseAndBuildConfig parses command-line flags and constructs the backupConfig.
+func parseAndBuildConfig() backupConfig {
 	// Define command-line flags for source and destination directories.
 	// The hardcoded values are now used as defaults.
 	srcFlag := flag.String("source", defaultConfig.Paths.Source, "Source directory to copy from")
@@ -35,6 +36,12 @@ func main() {
 		runConfig.Mode = incrementalMode
 	}
 
+	runConfig.UseRobocopy = *useRobocopyFlag
+	return runConfig
+}
+
+// runBackupJob executes the backup process based on the provided configuration.
+func runBackupJob(runConfig backupConfig) ([]string, error) {
 	// Create a slice to store the log of copied files
 	var copiedFiles []string
 	fileLogger := func(relPath string) {
@@ -54,8 +61,7 @@ func main() {
 	} else {
 		// INCREMENTAL MODE (DEFAULT)
 		if err := handleRollover(runConfig); err != nil {
-
-			log.Fatalf("Error during backup rollover: %v", err)
+			return nil, fmt.Errorf("error during backup rollover: %w", err)
 		}
 		currentIncrementalDirName := runConfig.Naming.Prefix + runConfig.Naming.IncrementalModeSuffix
 		runConfig.Paths.CurrentTarget = filepath.Join(runConfig.Paths.TargetBase, currentIncrementalDirName)
@@ -66,31 +72,31 @@ func main() {
 
 	// --- 2. Perform the backup ---
 	if runConfig.Mode == snapshotMode {
-		if *useRobocopyFlag && runtime.GOOS == "windows" {
+		if runConfig.UseRobocopy && runtime.GOOS == "windows" {
 			log.Println("Using robocopy for snapshot.")
 			robocopiedFiles, err := syncDirTreeRobocopy(runConfig.Paths.Source, runConfig.Paths.CurrentTarget, false)
 			if err != nil && (!isRobocopySuccess(err)) {
-				log.Fatalf("Fatal backup error during robocopy snapshot: %v", err)
+				return nil, fmt.Errorf("fatal backup error during robocopy snapshot: %w", err)
 			}
 			copiedFiles = robocopiedFiles
 		} else {
 			log.Println("Using manual Go implementation for snapshot.")
 			if err := syncDirTree(runConfig.Paths.Source, runConfig.Paths.CurrentTarget, fileLogger); err != nil {
-				log.Fatalf("Fatal backup error during snapshot: %v", err)
+				return nil, fmt.Errorf("fatal backup error during snapshot: %w", err)
 			}
 		}
 	} else { // Incremental Mode
-		if *useRobocopyFlag && runtime.GOOS == "windows" {
+		if runConfig.UseRobocopy && runtime.GOOS == "windows" {
 			log.Println("Using robocopy for synchronization.")
 			robocopiedFiles, err := syncDirTreeRobocopy(runConfig.Paths.Source, runConfig.Paths.CurrentTarget, true)
 			if err != nil && (!isRobocopySuccess(err)) {
-				log.Fatalf("Fatal backup error during robocopy sync: %v", err)
+				return nil, fmt.Errorf("fatal backup error during robocopy sync: %w", err)
 			}
 			copiedFiles = robocopiedFiles
 		} else {
 			log.Println("Using manual Go implementation for synchronization.")
 			if err := syncDirTree(runConfig.Paths.Source, runConfig.Paths.CurrentTarget, fileLogger); err != nil {
-				log.Fatalf("Fatal backup error during sync: %v", err)
+				return nil, fmt.Errorf("fatal backup error during sync: %w", err)
 			}
 		}
 
@@ -104,6 +110,18 @@ func main() {
 	}
 
 	fmt.Println("\nBackup operation completed.")
+	return copiedFiles, nil
+}
+
+func main() {
+	// 1. Parse flags and build the configuration for this run.
+	runConfig := parseAndBuildConfig()
+
+	// 2. Run the backup job.
+	copiedFiles, err := runBackupJob(runConfig)
+	if err != nil {
+		log.Fatalf("Fatal backup error: %v", err)
+	}
 
 	// --- Print the Log of Copied Files ---
 	fmt.Println("\n--- Log of Copied Files ---")
@@ -117,7 +135,7 @@ func main() {
 
 	// --- 3. Clean up old backups ---
 	fmt.Println("\n--- Cleaning Up Old Backups ---")
-	if err := cleanupOldBackups(runConfig); err != nil {
+	if err := cleanupOldBackups(runConfig); err != nil { // cleanupOldBackups is still called directly from main
 		// We log this as a non-fatal error because the main backup was successful.
 		log.Printf("Error during cleanup: %v", err)
 	}

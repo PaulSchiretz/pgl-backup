@@ -44,14 +44,16 @@ func (bm backupMode) String() string {
 }
 
 type backupConfig struct {
-	Mode      backupMode                  `json:"mode"`
-	Naming    backupNamingConfig          `json:"naming"`
-	Paths     backupPathConfig            `json:"paths"`
-	Retention backupRetentionPolicyConfig `json:"retention"`
+	Mode        backupMode                  `json:"mode"`
+	UseRobocopy bool                        `json:"useRobocopy"`
+	Naming      backupNamingConfig          `json:"naming"`
+	Paths       backupPathConfig            `json:"paths"`
+	Retention   backupRetentionPolicyConfig `json:"retention"`
 }
 
 var defaultConfig = backupConfig{
-	Mode: incrementalMode, // Default mode
+	Mode:        incrementalMode, // Default mode
+	UseRobocopy: false,           // Default to false; will be determined by OS at runtime.
 	Naming: backupNamingConfig{
 		Prefix:                "5ive_Backup_",
 		TimeFormat:            "2006-01-02-15-04-05-000",
