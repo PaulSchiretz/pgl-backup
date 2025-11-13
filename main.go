@@ -65,40 +65,8 @@ func runBackupJob(runConfig backupConfig) error {
 	fmt.Println("------------------------------")
 
 	// --- 2. Perform the backup ---
-	if runConfig.Mode == snapshotMode {
-		if runConfig.UseRobocopy && runtime.GOOS == "windows" {
-			log.Println("Using robocopy for snapshot.")
-			err := syncDirTreeRobocopy(runConfig.Paths.Source, runConfig.Paths.CurrentTarget, false)
-			if err != nil && (!isRobocopySuccess(err)) {
-				return fmt.Errorf("fatal backup error during robocopy snapshot: %w", err)
-			}
-		} else {
-			log.Println("Using manual Go implementation for snapshot.")
-			if err := syncDirTree(runConfig.Paths.Source, runConfig.Paths.CurrentTarget); err != nil {
-				return fmt.Errorf("fatal backup error during snapshot: %w", err)
-			}
-		}
-	} else { // Incremental Mode
-		if runConfig.UseRobocopy && runtime.GOOS == "windows" {
-			log.Println("Using robocopy for synchronization.")
-			err := syncDirTreeRobocopy(runConfig.Paths.Source, runConfig.Paths.CurrentTarget, true)
-			if err != nil && (!isRobocopySuccess(err)) {
-				return fmt.Errorf("fatal backup error during robocopy sync: %w", err)
-			}
-		} else {
-			log.Println("Using manual Go implementation for synchronization.")
-			if err := syncDirTree(runConfig.Paths.Source, runConfig.Paths.CurrentTarget); err != nil {
-				return fmt.Errorf("fatal backup error during sync: %w", err)
-			}
-		}
-
-		// Touch a meta file to update the modification time of the backup set.
-		metaFilePath := filepath.Join(runConfig.Paths.CurrentTarget, ".ppbackup_meta")
-		if f, err := os.Create(metaFilePath); err != nil {
-			log.Printf("Warning: could not update metafile timestamp: %v", err)
-		} else {
-			f.Close()
-		}
+	if err := handleSync(runConfig); err != nil {
+		return fmt.Errorf("fatal backup error during sync: %w", err)
 	}
 
 	fmt.Println("\nBackup operation completed.")
