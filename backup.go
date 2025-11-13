@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -14,6 +15,52 @@ import (
 type backupInfo struct {
 	Time time.Time
 	Name string
+}
+
+// handleSync is the main entry point for synchronization. It decides whether to use
+// the native Go implementation or the faster Robocopy implementation based on the
+// operating system and configuration.
+func handleSync(config backupConfig) error {
+	src := config.Paths.Source
+	dst := config.Paths.CurrentTarget
+	mirror := config.Mode == incrementalMode // Mirror mode deletes extra files in destination.
+
+	// Validation for all sync paths.
+	if err := validateSyncPaths(src, dst); err != nil {
+		return err
+	}
+
+	useRobocopy := config.UseRobocopy && runtime.GOOS == "windows"
+	if useRobocopy {
+		log.Println("Using robocopy for synchronization.")
+		syncErr := handleSyncRobocopy(src, dst, mirror)
+
+		if syncErr != nil {
+			return fmt.Errorf("robocopy sync failed: %w", syncErr)
+		}
+	} else {
+		log.Println("Using native Go implementation for synchronization.")
+		if mirror {
+			log.Println("Warning: Native Go sync does not support mirror (delete) operations. Only additions/updates will be performed.")
+		}
+		syncErr := handleSyncNative(src, dst)
+		// Check for fatal errors after attempting the sync.
+		if syncErr != nil {
+			return fmt.Errorf("native sync failed: %w", syncErr)
+		}
+	}
+
+	// If the sync was successful, update the metafile timestamp in incremental mode.
+	if config.Mode == incrementalMode {
+		metaFilePath := filepath.Join(dst, ".ppbackup_meta")
+		if f, err := os.Create(metaFilePath); err != nil {
+			log.Printf("Warning: could not update metafile timestamp: %v", err)
+		} else {
+			f.Close()
+		}
+	}
+
+	return nil
 }
 
 // handleRollover checks if the incremental backup directory is from a previous day.
@@ -121,26 +168,22 @@ func handleRetention(config backupConfig) error {
 			}
 		}
 
-		// Rule: Weekly backups for the last N weeks (keep the last backup of Sunday)
+		// Rule: Weekly backups for the last N weeks (keep the newest backup for each week)
 		if config.Retention.Weeks > 0 {
-			if b.Time.Weekday() == time.Sunday {
-				year, week := b.Time.ISOWeek()
-				weekKey := fmt.Sprintf("%d-%d", year, week)
-				if len(savedWeek) < config.Retention.Weeks && !savedWeek[weekKey] {
-					backupsToKeep[b.Name] = true
-					savedWeek[weekKey] = true
-				}
+			year, week := b.Time.ISOWeek()
+			weekKey := fmt.Sprintf("%d-%d", year, week)
+			if len(savedWeek) < config.Retention.Weeks && !savedWeek[weekKey] {
+				backupsToKeep[b.Name] = true
+				savedWeek[weekKey] = true
 			}
 		}
 
-		// Rule: Monthly backups for the last N months (keep the last backup of the month)
+		// Rule: Monthly backups for the last N months (keep the newest backup for each month)
 		if config.Retention.Months > 0 {
-			if b.Time.Day() == time.Date(b.Time.Year(), b.Time.Month()+1, 0, 0, 0, 0, 0, b.Time.Location()).Day() {
-				monthKey := b.Time.Format("2006-01")
-				if len(savedMonth) < config.Retention.Months && !savedMonth[monthKey] {
-					backupsToKeep[b.Name] = true
-					savedMonth[monthKey] = true
-				}
+			monthKey := b.Time.Format("2006-01")
+			if len(savedMonth) < config.Retention.Months && !savedMonth[monthKey] {
+				backupsToKeep[b.Name] = true
+				savedMonth[monthKey] = true
 			}
 		}
 	}

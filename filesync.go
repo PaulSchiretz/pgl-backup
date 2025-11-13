@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 )
 
 // copyFile handles copying a regular file from src to dst and preserves permissions.
@@ -52,7 +51,7 @@ func copyFile(src, dst string) error {
 
 // validateSyncPaths checks that the source path exists and is a directory,
 // and that the destination path can be created and is writable.
-func validateSyncPaths(src, dst string, checkDstWrite bool) error {
+func validateSyncPaths(src, dst string) error {
 	// 1. Check if source exists and is a directory.
 	if srcInfo, err := os.Stat(src); err != nil {
 		if os.IsNotExist(err) {
@@ -69,56 +68,12 @@ func validateSyncPaths(src, dst string, checkDstWrite bool) error {
 	}
 
 	// 3. Optionally, perform a more thorough write check.
-	if checkDstWrite {
-		tempFile := filepath.Join(dst, "test_write.tmp")
-		if f, err := os.Create(tempFile); err != nil {
-			return fmt.Errorf("destination directory %s is not writable: %w", dst, err)
-		} else {
-			f.Close()
-			os.Remove(tempFile)
-		}
-	}
-	return nil
-}
-
-// handleSync is the main entry point for synchronization. It decides whether to use
-// the native Go implementation or the faster Robocopy implementation based on the
-// operating system and configuration.
-func handleSync(config backupConfig) error {
-	src := config.Paths.Source
-	dst := config.Paths.CurrentTarget
-	mirror := config.Mode == incrementalMode // Mirror mode deletes extra files in destination.
-
-	useRobocopy := config.UseRobocopy && runtime.GOOS == "windows"
-	if useRobocopy {
-		log.Println("Using robocopy for synchronization.")
-		syncErr := handleSyncRobocopy(src, dst, mirror)
-
-		// Check for fatal errors after attempting the sync.
-		// For Robocopy, some non-nil errors are actually success codes.
-		if syncErr != nil && !isRobocopySuccess(syncErr) {
-			return fmt.Errorf("robocopy sync failed: %w", syncErr)
-		}
+	tempFile := filepath.Join(dst, "test_write.tmp")
+	if f, err := os.Create(tempFile); err != nil {
+		return fmt.Errorf("destination directory %s is not writable: %w", dst, err)
 	} else {
-		log.Println("Using native Go implementation for synchronization.")
-		if mirror {
-			log.Println("Warning: Native Go sync does not support mirror (delete) operations. Only additions/updates will be performed.")
-		}
-		syncErr := handleSyncNative(src, dst)
-		// Check for fatal errors after attempting the sync.
-		if syncErr != nil {
-			return fmt.Errorf("native sync failed: %w", syncErr)
-		}
-	}
-
-	// If the sync was successful, update the metafile timestamp in incremental mode.
-	if config.Mode == incrementalMode {
-		metaFilePath := filepath.Join(dst, ".ppbackup_meta")
-		if f, err := os.Create(metaFilePath); err != nil {
-			log.Printf("Warning: could not update metafile timestamp: %v", err)
-		} else {
-			f.Close()
-		}
+		f.Close()
+		os.Remove(tempFile)
 	}
 
 	return nil
@@ -128,10 +83,6 @@ func handleSync(config backupConfig) error {
 // is newer than the destination file. It also logs the copied files.
 // This is the pure Go, cross-platform implementation.
 func handleSyncNative(src, dst string) error {
-	if err := validateSyncPaths(src, dst, true); err != nil {
-		return err
-	}
-
 	// Note: This implementation does not delete files from dst that are not in src.
 	log.Printf("Starting native sync from %s to %s...", src, dst)
 
@@ -197,11 +148,6 @@ func handleSyncNative(src, dst string) error {
 // efficient and robust directory mirror. It is much faster for incremental
 // backups than a manual walk. It returns a list of copied files.
 func handleSyncRobocopy(src, dst string, mirror bool) error {
-	// Robocopy handles its own path validation, but we'll ensure the base dirs can be made.
-	if err := validateSyncPaths(src, dst, false); err != nil {
-		return err
-	}
-
 	// Robocopy command arguments:
 	// /MIR :: MIRror a directory tree (equivalent to /E plus /PURGE).
 	// /E :: copy subdirectories, including Empty ones.
@@ -226,7 +172,14 @@ func handleSyncRobocopy(src, dst string, mirror bool) error {
 	// This provides real-time logging.
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+
+	err := cmd.Run()
+	// Robocopy returns non-zero exit codes for success cases (e.g., files were copied).
+	// We check if the error is a "successful" one and return nil if so.
+	if err != nil && !isRobocopySuccess(err) {
+		return err // It's a real error
+	}
+	return nil // It was a success code or no error
 }
 
 // isRobocopySuccess checks if a robocopy error is actually a success code.
