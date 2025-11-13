@@ -82,11 +82,15 @@ func validateSyncPaths(src, dst string) error {
 // handleSyncNative incrementally copies files from src to dst, only if the source file
 // is newer than the destination file. It also logs the copied files.
 // This is the pure Go, cross-platform implementation.
-func handleSyncNative(src, dst string) error {
-	// Note: This implementation does not delete files from dst that are not in src.
+func handleSyncNative(src, dst string, mirror bool) error {
 	log.Printf("Starting native sync from %s to %s...", src, dst)
 
-	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+	// Create a map to store all relative paths found in the source.
+	// This makes the deletion phase safer, as it doesn't re-stat the source.
+	sourcePaths := make(map[string]bool)
+
+	// --- Phase 1: Copy/update files from source to destination ---
+	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err // Stop if there's an error accessing a path
 		}
@@ -95,6 +99,9 @@ func handleSyncNative(src, dst string) error {
 		if err != nil {
 			return err
 		}
+
+		// Record every valid path from the source.
+		sourcePaths[relPath] = true
 
 		dstPath := filepath.Join(dst, relPath)
 		fileType := d.Type()
@@ -141,6 +148,33 @@ func handleSyncNative(src, dst string) error {
 			// log.Printf("Skipping non-regular file or directory: %s (Type: %s)", path, fileType.String())
 			return nil
 		}
+	})
+
+	if err != nil {
+		return fmt.Errorf("error during file copy/update phase: %w", err)
+	}
+
+	// --- Phase 2: Delete files/dirs from destination that are not in source (if mirroring) ---
+	if !mirror {
+		return nil
+	}
+
+	log.Println("Starting deletion phase for mirror sync...")
+	return filepath.WalkDir(dst, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		relPath, err := filepath.Rel(dst, path)
+		if err != nil {
+			return err
+		}
+
+		if _, exists := sourcePaths[relPath]; !exists {
+			log.Printf("DELETE (not in source): %s", relPath)
+			return os.RemoveAll(path) // Use RemoveAll to handle both files and directories
+		}
+		return nil
 	})
 }
 

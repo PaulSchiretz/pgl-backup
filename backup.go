@@ -40,10 +40,7 @@ func handleSync(config backupConfig) error {
 		}
 	} else {
 		log.Println("Using native Go implementation for synchronization.")
-		if mirror {
-			log.Println("Warning: Native Go sync does not support mirror (delete) operations. Only additions/updates will be performed.")
-		}
-		syncErr := handleSyncNative(src, dst)
+		syncErr := handleSyncNative(src, dst, mirror)
 		// Check for fatal errors after attempting the sync.
 		if syncErr != nil {
 			return fmt.Errorf("native sync failed: %w", syncErr)
