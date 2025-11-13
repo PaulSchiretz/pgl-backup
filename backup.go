@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -15,6 +16,12 @@ import (
 type backupInfo struct {
 	Time time.Time
 	Name string
+}
+
+// backupRunMeta holds metadata about a specific backup run.
+type backupRunMeta struct {
+	Version    string    `json:"version"`
+	BackupTime time.Time `json:"backupTime"`
 }
 
 // handleSync is the main entry point for synchronization. It decides whether to use
@@ -33,27 +40,38 @@ func handleSync(config backupConfig) error {
 	useRobocopy := config.UseRobocopy && runtime.GOOS == "windows"
 	if useRobocopy {
 		log.Println("Using robocopy for synchronization.")
-		syncErr := handleSyncRobocopy(src, dst, mirror)
-
-		if syncErr != nil {
+		// Sync and check for errors after attempting the sync.
+		if syncErr := handleSyncRobocopy(src, dst, mirror, config.DryRun, config.Quiet); syncErr != nil {
 			return fmt.Errorf("robocopy sync failed: %w", syncErr)
 		}
 	} else {
 		log.Println("Using native Go implementation for synchronization.")
-		syncErr := handleSyncNative(src, dst, mirror)
-		// Check for fatal errors after attempting the sync.
-		if syncErr != nil {
+		// Sync and check for errors after attempting the sync.
+		if syncErr := handleSyncNative(src, dst, mirror, config.DryRun, config.Quiet); syncErr != nil {
 			return fmt.Errorf("native sync failed: %w", syncErr)
 		}
 	}
 
 	// If the sync was successful, update the metafile timestamp in incremental mode.
 	if config.Mode == incrementalMode {
-		metaFilePath := filepath.Join(dst, ".ppbackup_meta")
-		if f, err := os.Create(metaFilePath); err != nil {
-			log.Printf("Warning: could not update metafile timestamp: %v", err)
-		} else {
-			f.Close()
+		if config.DryRun {
+			log.Printf("[DRY RUN] Would update metafile in %s", dst)
+			return nil
+		}
+		metaFilePath := filepath.Join(dst, ".ppBackup.meta")
+		metaData := backupRunMeta{
+			Version:    version,
+			BackupTime: time.Now(),
+		}
+
+		jsonData, err := json.MarshalIndent(metaData, "", "  ")
+		if err != nil {
+			log.Printf("Warning: could not marshal meta data: %v", err)
+			return nil // Don't let a metafile error fail the backup.
+		}
+
+		if err := os.WriteFile(metaFilePath, jsonData, 0664); err != nil {
+			log.Printf("Warning: could not write meta file: %v", err)
 		}
 	}
 
@@ -65,17 +83,26 @@ func handleSync(config backupConfig) error {
 func handleRollover(config backupConfig) error {
 	currentDirName := config.Naming.Prefix + config.Naming.IncrementalModeSuffix
 	currentBackupPath := filepath.Join(config.Paths.TargetBase, currentDirName)
-	metaFilePath := filepath.Join(currentBackupPath, ".ppbackup_meta")
+	metaFilePath := filepath.Join(currentBackupPath, ".ppBackup.meta")
 
-	meta, err := os.Stat(metaFilePath)
+	metaFile, err := os.Open(metaFilePath)
 	if os.IsNotExist(err) {
 		return nil // No previous backup, nothing to roll over.
 	}
 	if err != nil {
-		return fmt.Errorf("could not stat metafile in %s: %w", currentBackupPath, err)
+		return fmt.Errorf("could not open metafile in %s: %w", currentBackupPath, err)
+	}
+	defer metaFile.Close()
+
+	var metaData backupRunMeta
+	decoder := json.NewDecoder(metaFile)
+	if err := decoder.Decode(&metaData); err != nil {
+		return fmt.Errorf("could not parse metafile %s: %w. It may be corrupt", metaFilePath, err)
 	}
 
-	lastBackupTime := meta.ModTime()
+	// Use the precise time from the file content, not the file's modification time.
+	lastBackupTime := metaData.BackupTime
+
 	now := time.Now()
 
 	// Check if the last backup was on a different day.
@@ -87,7 +114,12 @@ func handleRollover(config backupConfig) error {
 		archivePath := filepath.Join(config.Paths.TargetBase, archiveDirName)
 
 		log.Printf("Rolling over previous day's backup to: %s", archivePath)
-		if err := os.Rename(currentBackupPath, archivePath); err != nil {
+		if config.DryRun {
+			log.Printf("[DRY RUN] Would rename %s to %s", currentBackupPath, archivePath)
+			// In a dry run, we must exit here to prevent the next sync from using the wrong directory.
+			// We simulate a successful rollover for the rest of the dry run logic.
+			return nil
+		} else if err := os.Rename(currentBackupPath, archivePath); err != nil {
 			return fmt.Errorf("failed to roll over backup: %w", err)
 		}
 	}
@@ -102,41 +134,15 @@ func handleRetention(config backupConfig) error {
 	baseDir := config.Paths.TargetBase
 	log.Printf("Checking for old backups to clean up in %s...", baseDir)
 
-	entries, err := os.ReadDir(baseDir)
+	// --- 1. Get a sorted list of all valid, historical backups ---
+	allBackups, err := fetchSortedBackups(baseDir, config.Naming.Prefix, config.Naming.TimeFormat, currentDirName)
 	if err != nil {
-		return fmt.Errorf("failed to read backup directory %s: %w", baseDir, err)
-	}
-
-	// --- 1. Collect all valid backups ---
-	var allBackups []backupInfo
-	allBackupNames := make(map[string]bool)
-
-	for _, entry := range entries {
-		dirName := entry.Name()
-		if !entry.IsDir() || !strings.HasPrefix(dirName, config.Naming.Prefix) || dirName == currentDirName {
-			continue
-		}
-
-		// --- 2. Validate the directory name format ---
-		timestampStr := strings.TrimPrefix(dirName, config.Naming.Prefix)
-		backupTime, err := time.Parse(config.Naming.TimeFormat, timestampStr)
-		if err != nil {
-			log.Printf("Skipping directory with invalid format: %s", dirName)
-			continue // Not a valid backup name format, so we ignore it.
-		}
-
-		allBackupNames[dirName] = true
-		allBackups = append(allBackups, backupInfo{Time: backupTime, Name: dirName})
+		return err
 	}
 
 	// --- 2. Apply retention rules to find which backups to keep ---
 	backupsToKeep := make(map[string]bool)
 	now := time.Now()
-
-	// Sort all backups once, from newest to oldest, for efficient processing.
-	sort.Slice(allBackups, func(i, j int) bool {
-		return allBackups[i].Time.After(allBackups[j].Time)
-	})
 
 	// Keep track of which periods we've already saved a backup for.
 	savedHour := make(map[string]bool)
@@ -203,10 +209,15 @@ func handleRetention(config backupConfig) error {
 	log.Printf("Total backups to be kept: %d", len(backupsToKeep))
 
 	// --- 3. Delete all backups that are not in our final `backupsToKeep` set ---
-	for dirName := range allBackupNames {
+	for _, backup := range allBackups {
+		dirName := backup.Name
 		if _, shouldKeep := backupsToKeep[dirName]; !shouldKeep {
 			dirToDelete := filepath.Join(baseDir, dirName)
 			log.Printf("DELETING redundant or old backup: %s", dirToDelete)
+			if config.DryRun {
+				log.Printf("[DRY RUN] Would delete directory: %s", dirToDelete)
+				continue
+			}
 			if err := os.RemoveAll(dirToDelete); err != nil {
 				log.Printf("Warning: failed to delete old backup directory %s: %v", dirToDelete, err)
 			}
@@ -214,4 +225,37 @@ func handleRetention(config backupConfig) error {
 	}
 
 	return nil
+}
+
+// fetchSortedBackups scans a directory for valid backup folders, parses their
+// timestamps, and returns them sorted from newest to oldest.
+func fetchSortedBackups(baseDir, prefix, timeFormat, excludeDir string) ([]backupInfo, error) {
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read backup directory %s: %w", baseDir, err)
+	}
+
+	var backups []backupInfo
+	for _, entry := range entries {
+		dirName := entry.Name()
+		if !entry.IsDir() || !strings.HasPrefix(dirName, prefix) || dirName == excludeDir {
+			continue
+		}
+
+		timestampStr := strings.TrimPrefix(dirName, prefix)
+		backupTime, err := time.Parse(timeFormat, timestampStr)
+		if err != nil {
+			log.Printf("Skipping directory with invalid format: %s", dirName)
+			continue
+		}
+
+		backups = append(backups, backupInfo{Time: backupTime, Name: dirName})
+	}
+
+	// Sort all backups from newest to oldest for consistent processing.
+	sort.Slice(backups, func(i, j int) bool {
+		return backups[i].Time.After(backups[j].Time)
+	})
+
+	return backups, nil
 }

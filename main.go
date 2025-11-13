@@ -10,41 +10,29 @@ import (
 	"time"
 )
 
-// parseBackupConfig parses command-line flags and constructs the backupConfig.
-func parseBackupConfig() backupConfig {
-	// Define command-line flags for source and destination directories.
-	// The hardcoded values are now used as defaults.
-	srcFlag := flag.String("source", defaultConfig.Paths.Source, "Source directory to copy from")
-	destFlag := flag.String("target", defaultConfig.Paths.TargetBase, "Base destination directory for backups")
-	snapshotFlag := flag.Bool("snapshot", false, "Perform a full snapshot backup. Default is incremental.")
+// version holds the application's version string.
+// It's a `var` so it can be set at compile time using ldflags.
+// Example: go build -ldflags="-X main.version=1.0.0"
+var version = "dev"
 
-	// Add a flag for robocopy, defaulting to true only on Windows.
-	var useRobocopyDefault = false
-	if runtime.GOOS == "windows" {
-		useRobocopyDefault = true
+// init is called before main. We use it to set up a custom, more descriptive
+// help message for the command-line flags.
+func init() {
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s (version %s):\n", os.Args[0], version)
+		fmt.Fprintf(flag.CommandLine.Output(), "A simple and powerful file backup utility with snapshot and incremental modes.\n\n")
+		flag.PrintDefaults()
 	}
-	useRobocopyFlag := flag.Bool("robocopy", useRobocopyDefault, "Use robocopy for faster sync on Windows (no effect on other OS)")
-	flag.Parse()
-
-	// Create a final config for this run, overriding defaults with flag values.
-	runConfig := defaultConfig
-	runConfig.Paths.Source = *srcFlag
-	runConfig.Paths.TargetBase = *destFlag
-	if *snapshotFlag {
-		runConfig.Mode = snapshotMode
-	} else {
-		runConfig.Mode = incrementalMode
-	}
-
-	runConfig.UseRobocopy = *useRobocopyFlag
-	return runConfig
 }
 
 // runBackupJob executes the backup process based on the provided configuration.
 func runBackupJob(runConfig backupConfig) error {
-	fmt.Printf("--- Starting Backup ---\n")
-	fmt.Printf("Source: %s\n", runConfig.Paths.Source)
-	fmt.Printf("Mode: %s\n", runConfig.Mode)
+	log.Println("--- Starting Backup ---")
+	log.Printf("Source: %s", runConfig.Paths.Source)
+	if runConfig.DryRun {
+		log.Println("Mode: Dry Run")
+	}
+	log.Printf("Mode: %s", runConfig.Mode)
 
 	// --- 1. Pre-backup tasks (rollover) and destination calculation ---
 	if runConfig.Mode == snapshotMode {
@@ -61,18 +49,18 @@ func runBackupJob(runConfig backupConfig) error {
 		runConfig.Paths.CurrentTarget = filepath.Join(runConfig.Paths.TargetBase, currentIncrementalDirName)
 	}
 
-	fmt.Printf("Destination: %s\n", runConfig.Paths.CurrentTarget)
-	fmt.Println("------------------------------")
+	log.Printf("Destination: %s", runConfig.Paths.CurrentTarget)
+	log.Println("------------------------------")
 
 	// --- 2. Perform the backup ---
 	if err := handleSync(runConfig); err != nil {
 		return fmt.Errorf("fatal backup error during sync: %w", err)
 	}
 
-	fmt.Println("\nBackup operation completed.")
+	log.Println("Backup operation completed.")
 
 	// --- 3. Clean up old backups ---
-	fmt.Println("\n--- Cleaning Up Old Backups ---")
+	log.Println("--- Cleaning Up Old Backups ---")
 	if err := handleRetention(runConfig); err != nil {
 		// We log this as a non-fatal error because the main backup was successful.
 		log.Printf("Error applying retention policy: %v", err)
@@ -80,13 +68,70 @@ func runBackupJob(runConfig backupConfig) error {
 	return nil
 }
 
+// finalizeConfig takes the base configuration (from file or default) and the parsed
+// command-line flags, and constructs the final configuration for the backup job.
+func finalizeConfig(baseConfig backupConfig, src, target, mode *string, quiet, dryrun, robocopy *bool) (backupConfig, error) {
+	runConfig := baseConfig
+	runConfig.Paths.Source = *src
+	runConfig.Paths.TargetBase = *target
+
+	switch *mode {
+	case "snapshot":
+		runConfig.Mode = snapshotMode
+	case "incremental":
+		runConfig.Mode = incrementalMode
+	default:
+		return backupConfig{}, fmt.Errorf("invalid mode: %q. Must be 'incremental' or 'snapshot'", *mode)
+	}
+
+	runConfig.UseRobocopy = *robocopy
+	runConfig.DryRun = *dryrun
+	runConfig.Quiet = *quiet
+
+	// Final sanity check: ensure robocopy is disabled if not on Windows.
+	if runtime.GOOS != "windows" {
+		runConfig.UseRobocopy = false
+	}
+
+	return runConfig, nil
+}
+
 // run encapsulates the main application logic and returns an error if something
 // goes wrong, allowing the main function to handle exit codes.
 func run() error {
-	// 1. Parse flags and build the configuration for this run.
-	runConfig := parseBackupConfig()
+	// 1. Load base configuration from file, if it exists.
+	loadedConfig, err := loadConfig()
+	if err != nil {
+		log.Printf("Warning: could not parse ppBackup.conf: %v. Using defaults.", err)
+		loadedConfig = defaultConfig
+	}
 
-	// 2. Run the backup job.
+	// 2. Define all command-line flags, using the loaded config for defaults.
+	srcFlag := flag.String("source", loadedConfig.Paths.Source, "Source directory to copy from")
+	destFlag := flag.String("target", loadedConfig.Paths.TargetBase, "Base destination directory for backups")
+	modeFlag := flag.String("mode", "incremental", "Set the backup mode: 'incremental' or 'snapshot'.")
+	quietFlag := flag.Bool("quiet", loadedConfig.Quiet, "Suppress individual file operation logs.")
+	dryRunFlag := flag.Bool("dryrun", loadedConfig.DryRun, "Show what would be done without making any changes.")
+	initFlag := flag.Bool("init", false, "Generate a default ppBackup.conf file and exit.")
+	versionFlag := flag.Bool("version", false, "Print the application version and exit.")
+	useRobocopyFlag := flag.Bool("robocopy", loadedConfig.UseRobocopy, "Use robocopy for faster sync on Windows (no effect on other OS)")
+
+	flag.Parse()
+
+	// 3. Handle immediate action flags that do not perform a backup.
+	if *versionFlag {
+		fmt.Printf("ppBackup version %s\n", version)
+		return nil
+	}
+	if *initFlag {
+		return generateConfig()
+	}
+
+	// 4. If not an action flag, build the final config and run the backup job.
+	runConfig, err := finalizeConfig(loadedConfig, srcFlag, destFlag, modeFlag, quietFlag, dryRunFlag, useRobocopyFlag)
+	if err != nil {
+		return err // Return configuration error
+	}
 	if err := runBackupJob(runConfig); err != nil {
 		return fmt.Errorf("fatal backup error: %w", err)
 	}
@@ -95,7 +140,6 @@ func run() error {
 
 func main() {
 	if err := run(); err != nil {
-		log.Printf("Error: %v", err)
-		os.Exit(1)
+		log.Fatalf("Error: %v", err)
 	}
 }

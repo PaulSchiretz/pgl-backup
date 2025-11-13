@@ -82,7 +82,7 @@ func validateSyncPaths(src, dst string) error {
 // handleSyncNative incrementally copies files from src to dst, only if the source file
 // is newer than the destination file. It also logs the copied files.
 // This is the pure Go, cross-platform implementation.
-func handleSyncNative(src, dst string, mirror bool) error {
+func handleSyncNative(src, dst string, mirror, dryRun, quiet bool) error {
 	log.Printf("Starting native sync from %s to %s...", src, dst)
 
 	// Create a map to store all relative paths found in the source.
@@ -112,9 +112,13 @@ func handleSyncNative(src, dst string, mirror bool) error {
 			if err != nil {
 				return err
 			}
-			err = os.MkdirAll(dstPath, info.Mode())
-			if err == nil {
-				fmt.Printf("MKDIR: %s\n", relPath)
+
+			if dryRun {
+				log.Printf("[DRY RUN] MKDIR: %s", relPath)
+				return nil
+			}
+			if err := os.MkdirAll(dstPath, info.Mode()); err == nil && !quiet {
+				log.Printf("MKDIR: %s", relPath)
 			}
 			return err
 
@@ -135,12 +139,17 @@ func handleSyncNative(src, dst string, mirror bool) error {
 			}
 
 			// If we reach here, we need to copy the file.
+			if dryRun {
+				log.Printf("[DRY RUN] COPY: %s", relPath)
+				return nil
+			}
+
 			if err := copyFile(path, dstPath); err != nil {
 				return err
 			}
-
-			// Log the copied file
-			fmt.Printf("COPY: %s\n", relPath)
+			if !quiet {
+				log.Printf("COPY: %s", relPath)
+			}
 			return nil
 
 		} else {
@@ -171,7 +180,15 @@ func handleSyncNative(src, dst string, mirror bool) error {
 		}
 
 		if _, exists := sourcePaths[relPath]; !exists {
-			log.Printf("DELETE (not in source): %s", relPath)
+			if dryRun {
+				log.Printf("[DRY RUN] DELETE (not in source): %s", relPath)
+				return nil
+			}
+
+			if !quiet {
+				log.Printf("DELETE (not in source): %s", relPath)
+			}
+
 			return os.RemoveAll(path) // Use RemoveAll to handle both files and directories
 		}
 		return nil
@@ -181,7 +198,7 @@ func handleSyncNative(src, dst string, mirror bool) error {
 // handleSyncRobocopy uses the Windows `robocopy` utility to perform a highly
 // efficient and robust directory mirror. It is much faster for incremental
 // backups than a manual walk. It returns a list of copied files.
-func handleSyncRobocopy(src, dst string, mirror bool) error {
+func handleSyncRobocopy(src, dst string, mirror, dryRun, quiet bool) error {
 	// Robocopy command arguments:
 	// /MIR :: MIRror a directory tree (equivalent to /E plus /PURGE).
 	// /E :: copy subdirectories, including Empty ones.
@@ -191,12 +208,21 @@ func handleSyncRobocopy(src, dst string, mirror bool) error {
 	// /W:5 :: Wait 5 seconds between retries.
 	// /NP :: No Progress - don't display % copied.
 	// /NJH :: No Job Header.
-	// /NJS :: No Job Summary.
-	args := []string{src, dst, "/V", "/TEE", "/R:3", "/W:5", "/NP", "/NJH", "/NJS"}
+	// /NJS :: No Job Summary. (We keep the summary for a good overview)
+	args := []string{src, dst, "/V", "/TEE", "/R:3", "/W:5", "/NP", "/NJH"}
 	if mirror {
 		args = append(args, "/MIR")
 	} else {
 		args = append(args, "/E")
+	}
+
+	if quiet {
+		args = append(args, "/NFL") // No File List - don't log individual files.
+		args = append(args, "/NDL") // No Directory List - don't log individual directories.
+	}
+
+	if dryRun {
+		args = append(args, "/L") // /L :: List only - don't copy, delete, or timestamp files.
 	}
 
 	log.Println("Starting sync with robocopy...")
