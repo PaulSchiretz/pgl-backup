@@ -128,12 +128,11 @@ func (e *Engine) writeMetafile() error {
 
 	jsonData, err := json.MarshalIndent(metaData, "", "  ")
 	if err != nil {
-		log.Printf("Warning: could not marshal meta data: %v", err)
-		return nil // Don't let a metafile error fail the backup.
+		return fmt.Errorf("could not marshal meta data: %w", err)
 	}
 
 	if err := os.WriteFile(metaFilePath, jsonData, 0664); err != nil {
-		log.Printf("Warning: could not write meta file: %v", err)
+		return fmt.Errorf("could not write meta file %s: %w", metaFilePath, err)
 	}
 	return nil
 }
@@ -173,9 +172,13 @@ func (e *Engine) performRollover() error {
 
 		log.Printf("Rolling over previous day's backup to: %s", archivePath)
 		if e.config.DryRun {
+			// Check if the destination for the rollover already exists.
+			if _, err := os.Stat(archivePath); err == nil {
+				return fmt.Errorf("dry run: rollover destination %s already exists, cannot proceed", archivePath)
+			} else if !os.IsNotExist(err) {
+				return fmt.Errorf("dry run: could not check rollover destination %s: %w", archivePath, err)
+			}
 			log.Printf("[DRY RUN] Would rename %s to %s", currentBackupPath, archivePath)
-			// In a dry run, we must exit here to prevent the next sync from using the wrong directory.
-			// We simulate a successful rollover for the rest of the dry run logic.
 			return nil
 		} else if err := os.Rename(currentBackupPath, archivePath); err != nil {
 			return fmt.Errorf("failed to roll over backup: %w", err)
