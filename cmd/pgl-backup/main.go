@@ -78,7 +78,7 @@ func run() error {
 	}
 
 	srcFlag := flag.String("source", loadedConfig.Paths.Source, "Source directory to copy from")
-	destFlag := flag.String("target", loadedConfig.Paths.TargetBase, "Base destination directory for backups")
+	targetFlag := flag.String("target", loadedConfig.Paths.TargetBase, "Base destination directory for backups")
 	modeFlag := flag.String("mode", loadedConfig.Mode.String(), "Set the backup mode: 'incremental' or 'snapshot'.")
 	quietFlag := flag.Bool("quiet", loadedConfig.Quiet, "Suppress individual file operation logs.")
 	dryRunFlag := flag.Bool("dryrun", loadedConfig.DryRun, "Show what would be done without making any changes.")
@@ -96,12 +96,12 @@ func run() error {
 		return config.Generate()
 	}
 
-	runConfig, err := finalizeConfig(loadedConfig, srcFlag, destFlag, modeFlag, syncEngineFlag, quietFlag, dryRunFlag, nativeEngineWorkersFlag)
+	runConfig, err := finalizeConfig(loadedConfig, srcFlag, targetFlag, modeFlag, syncEngineFlag, quietFlag, dryRunFlag, nativeEngineWorkersFlag)
 	if err != nil {
 		return err
 	}
 	backupEngine := engine.New(runConfig, version)
-	return backupEngine.RunJob()
+	return backupEngine.Execute()
 }
 
 func main() {

@@ -20,8 +20,8 @@ type backupInfo struct {
 	Name string
 }
 
-// backupRunMeta holds metadata about a specific backup run.
-type backupRunMeta struct {
+// runMetadata holds metadata about a specific backup run.
+type runMetadata struct {
 	Version    string    `json:"version"`
 	BackupTime time.Time `json:"backupTime"`
 }
@@ -45,8 +45,8 @@ func New(cfg config.Config, version string) *Engine {
 	}
 }
 
-// RunJob executes the backup process.
-func (e *Engine) RunJob() error {
+// Execute runs the entire backup job from start to finish.
+func (e *Engine) Execute() error {
 	if e.config.DryRun {
 		log.Println("--- Starting Backup (DRY RUN) ---")
 	} else {
@@ -116,7 +116,7 @@ func (e *Engine) writeMetafile() error {
 		return nil
 	}
 	metaFilePath := filepath.Join(e.currentTarget, ".ppBackup.meta")
-	metaData := backupRunMeta{
+	metaData := runMetadata{
 		Version:    e.version,
 		BackupTime: time.Now(),
 	}
@@ -149,7 +149,7 @@ func (e *Engine) performRollover() error {
 	}
 	defer metaFile.Close()
 
-	var metaData backupRunMeta
+	var metaData runMetadata
 	decoder := json.NewDecoder(metaFile)
 	if err := decoder.Decode(&metaData); err != nil {
 		return fmt.Errorf("could not parse metafile %s: %w. It may be corrupt", metaFilePath, err)

@@ -18,8 +18,6 @@ type BackupNamingConfig struct {
 type BackupPathConfig struct {
 	Source     string `json:"source"`
 	TargetBase string `json:"targetBase"`
-	// CurrentTarget is the full, calculated path for this specific backup operation.
-	CurrentTarget string `json:"-"`
 }
 
 type BackupRetentionPolicyConfig struct {
@@ -111,7 +109,6 @@ func NewDefault() Config {
 		Paths: BackupPathConfig{
 			Source:     "./src_backup",
 			TargetBase: "./dest_backup_mirror",
-			// CurrentTarget is calculated at runtime.
 		},
 		Retention: BackupRetentionPolicyConfig{
 			Hours:  24, // N > 0: keep one backup for each of the last N hours of today.
