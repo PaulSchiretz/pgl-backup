@@ -32,7 +32,7 @@ func handleSync(config backupConfig) error {
 	mirror := config.Mode == IncrementalMode // Mirror mode deletes extra files in destination.
 
 	// Validation for all sync paths.
-	if err := validateSyncPaths(src, dst); err != nil {
+	if err := validateSyncPaths(src, dst, config.DryRun); err != nil {
 		return err
 	}
 

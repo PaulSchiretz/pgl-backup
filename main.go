@@ -61,7 +61,6 @@ func runBackupJob(runConfig backupConfig) error {
 	log.Println("Backup operation completed.")
 
 	// --- 3. Clean up old backups ---
-	log.Println("--- Cleaning Up Old Backups ---")
 	if err := handleRetention(runConfig); err != nil {
 		// We log this as a non-fatal error because the main backup was successful.
 		log.Printf("Error applying retention policy: %v", err)
@@ -124,7 +123,7 @@ func run() error {
 	// 2. Define all command-line flags, using the loaded config for defaults.
 	srcFlag := flag.String("source", loadedConfig.Paths.Source, "Source directory to copy from")
 	destFlag := flag.String("target", loadedConfig.Paths.TargetBase, "Base destination directory for backups")
-	modeFlag := flag.String("mode", "incremental", "Set the backup mode: 'incremental' or 'snapshot'.")
+	modeFlag := flag.String("mode", loadedConfig.Mode.String(), "Set the backup mode: 'incremental' or 'snapshot'.")
 	quietFlag := flag.Bool("quiet", loadedConfig.Quiet, "Suppress individual file operation logs.")
 	dryRunFlag := flag.Bool("dryrun", loadedConfig.DryRun, "Show what would be done without making any changes.")
 	initFlag := flag.Bool("init", false, "Generate a default ppBackup.conf file and exit.")
