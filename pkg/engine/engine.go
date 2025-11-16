@@ -208,7 +208,7 @@ func (e *Engine) applyRetentionPolicy() error {
 	}
 
 	// --- 2. Apply retention rules to find which backups to keep ---
-	backupsToKeep := e.determineBackupsToKeep(allBackups, retentionPolicy, e.currentTimestamp)
+	backupsToKeep := e.determineBackupsToKeep(allBackups, retentionPolicy)
 
 	// --- 3. Delete all backups that are not in our final `backupsToKeep` set ---
 	for _, backup := range allBackups {
@@ -230,7 +230,7 @@ func (e *Engine) applyRetentionPolicy() error {
 }
 
 // determineBackupsToKeep applies the retention policy to a sorted list of backups.
-func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy config.BackupRetentionPolicyConfig, currentTimestamp time.Time) map[string]bool {
+func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy config.BackupRetentionPolicyConfig) map[string]bool {
 	backupsToKeep := make(map[string]bool)
 
 	// Keep track of which periods we've already saved a backup for.
