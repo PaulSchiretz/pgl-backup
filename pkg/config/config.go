@@ -48,6 +48,30 @@ func (bm BackupMode) String() string {
 	}
 }
 
+// MarshalJSON implements the json.Marshaler interface for BackupMode.
+func (bm BackupMode) MarshalJSON() ([]byte, error) {
+	return json.Marshal(bm.String())
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface for BackupMode.
+func (bm *BackupMode) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return fmt.Errorf("BackupMode should be a string, got %s", data)
+	}
+
+	switch s {
+	case "incremental":
+		*bm = IncrementalMode
+	case "snapshot":
+		*bm = SnapshotMode
+	default:
+		return fmt.Errorf("invalid BackupMode: %s", s)
+	}
+
+	return nil
+}
+
 // SyncEngine represents the file synchronization engine to use.
 type SyncEngine int
 
@@ -70,19 +94,43 @@ func (se SyncEngine) String() string {
 	}
 }
 
+// MarshalJSON implements the json.Marshaler interface for SyncEngine.
+func (se SyncEngine) MarshalJSON() ([]byte, error) {
+	return json.Marshal(se.String())
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface for SyncEngine.
+func (se *SyncEngine) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return fmt.Errorf("SyncEngine should be a string, got %s", data)
+	}
+
+	switch s {
+	case "native":
+		*se = NativeEngine
+	case "robocopy":
+		*se = RobocopyEngine
+	default:
+		return fmt.Errorf("invalid SyncEngine: %s", s)
+	}
+
+	return nil
+}
+
 type BackupEngineConfig struct {
 	Type                SyncEngine `json:"type"`
 	NativeEngineWorkers int        `json:"nativeEngineWorkers"`
 }
 
 type Config struct {
-	Mode      BackupMode                  `json:"mode"`
-	Engine    BackupEngineConfig          `json:"engine"`
-	Quiet     bool                        `json:"quiet"`
-	DryRun    bool                        `json:"dryRun"`
-	Naming    BackupNamingConfig          `json:"naming"`
-	Paths     BackupPathConfig            `json:"paths"`
-	Retention BackupRetentionPolicyConfig `json:"retention"`
+	Mode            BackupMode                  `json:"mode"`
+	Engine          BackupEngineConfig          `json:"engine"`
+	Quiet           bool                        `json:"quiet"`
+	DryRun          bool                        `json:"dryRun"`
+	Naming          BackupNamingConfig          `json:"naming"`
+	Paths           BackupPathConfig            `json:"paths"`
+	RetentionPolicy BackupRetentionPolicyConfig `json:"retentionPolicy"`
 }
 
 // NewDefault creates and returns a Config struct with sensible default
@@ -110,8 +158,8 @@ func NewDefault() Config {
 			Source:     "./src_backup",
 			TargetBase: "./dest_backup_mirror",
 		},
-		Retention: BackupRetentionPolicyConfig{
-			Hours:  24, // N > 0: keep one backup for each of the last N hours of today.
+		RetentionPolicy: BackupRetentionPolicyConfig{
+			Hours:  24, // N > 0: keep the N most recent hourly backups.
 			Days:   7,  // N > 0: keep one backup for each of the last N days.
 			Weeks:  4,  // N > 0: keep one backup for each of the last N weeks.
 			Months: 12, // N > 0: keep one backup for each of the last N months.

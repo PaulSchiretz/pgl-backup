@@ -28,11 +28,12 @@ type runMetadata struct {
 
 // Engine orchestrates the entire backup process.
 type Engine struct {
-	config        config.Config
-	version       string
-	source        string
-	currentTarget string
-	mirror        bool
+	config           config.Config
+	version          string
+	source           string
+	currentTarget    string
+	mirror           bool
+	currentTimestamp time.Time // The timestamp of the current backup run for consistency.
 }
 
 // New creates a new backup engine with the given configuration and version.
@@ -42,6 +43,7 @@ func New(cfg config.Config, version string) *Engine {
 		version: version,
 		source:  cfg.Paths.Source,
 		mirror:  cfg.Mode == config.IncrementalMode,
+		// currentTimestamp is set in Execute() to capture the run's start time.
 	}
 }
 
@@ -52,6 +54,9 @@ func (e *Engine) Execute() error {
 	} else {
 		log.Println("--- Starting Backup ---")
 	}
+
+	e.currentTimestamp = time.Now() // Capture a consistent timestamp for the entire run.
+
 	log.Printf("Source: %s", e.source)
 	log.Printf("Mode: %s", e.config.Mode)
 
@@ -83,7 +88,7 @@ func (e *Engine) Execute() error {
 func (e *Engine) prepareDestination() error {
 	if e.config.Mode == config.SnapshotMode {
 		// SNAPSHOT MODE
-		timestamp := time.Now().Format(e.config.Naming.TimeFormat)
+		timestamp := e.currentTimestamp.Format(e.config.Naming.TimeFormat)
 		backupDirName := e.config.Naming.Prefix + timestamp
 		e.currentTarget = filepath.Join(e.config.Paths.TargetBase, backupDirName)
 	} else {
@@ -118,7 +123,7 @@ func (e *Engine) writeMetafile() error {
 	metaFilePath := filepath.Join(e.currentTarget, ".ppBackup.meta")
 	metaData := runMetadata{
 		Version:    e.version,
-		BackupTime: time.Now(),
+		BackupTime: e.currentTimestamp,
 	}
 
 	jsonData, err := json.MarshalIndent(metaData, "", "  ")
@@ -158,10 +163,8 @@ func (e *Engine) performRollover() error {
 	// Use the precise time from the file content, not the file's modification time.
 	lastBackupTime := metaData.BackupTime
 
-	now := time.Now()
-
 	// Check if the last backup was on a different day.
-	isDifferentDay := now.Year() != lastBackupTime.Year() || now.YearDay() != lastBackupTime.YearDay()
+	isDifferentDay := e.currentTimestamp.Year() != lastBackupTime.Year() || e.currentTimestamp.YearDay() != lastBackupTime.YearDay()
 
 	if isDifferentDay {
 		archiveTimestamp := lastBackupTime.Format(e.config.Naming.TimeFormat)
@@ -187,15 +190,14 @@ func (e *Engine) performRollover() error {
 func (e *Engine) applyRetentionPolicy() error {
 	currentDirName := e.config.Naming.Prefix + e.config.Naming.IncrementalModeSuffix
 	baseDir := e.config.Paths.TargetBase
-	policy := e.config.Retention
+	retentionPolicy := e.config.RetentionPolicy
 
-	if policy.Hours <= 0 && policy.Days <= 0 && policy.Weeks <= 0 && policy.Months <= 0 {
+	if retentionPolicy.Hours <= 0 && retentionPolicy.Days <= 0 && retentionPolicy.Weeks <= 0 && retentionPolicy.Months <= 0 {
 		log.Println("Retention policy is disabled. Skipping cleanup.")
 		return nil
 	}
 	log.Println("--- Cleaning Up Old Backups ---")
 	log.Printf("Applying retention policy in %s...", baseDir)
-
 	// --- 1. Get a sorted list of all valid, historical backups ---
 	allBackups, err := e.fetchSortedBackups(baseDir, currentDirName)
 	if err != nil {
@@ -203,72 +205,7 @@ func (e *Engine) applyRetentionPolicy() error {
 	}
 
 	// --- 2. Apply retention rules to find which backups to keep ---
-	backupsToKeep := make(map[string]bool)
-	now := time.Now()
-
-	// Keep track of which periods we've already saved a backup for.
-	savedHour := make(map[string]bool)
-	savedDay := make(map[string]bool)
-	savedWeek := make(map[string]bool)
-	savedMonth := make(map[string]bool)
-
-	for _, b := range allBackups {
-		if policy.Hours > 0 {
-			// Rule: Hourly backups for the current day
-			if b.Time.Year() == now.Year() && b.Time.YearDay() == now.YearDay() {
-				hourKey := b.Time.Format("2006-01-02-15") // YYYY-MM-DD-HH
-				if len(savedHour) < policy.Hours && !savedHour[hourKey] {
-					backupsToKeep[b.Name] = true
-					savedHour[hourKey] = true
-				}
-			}
-		}
-
-		// Rule: Daily backups for the last N days
-		if policy.Days > 0 {
-			dayKey := b.Time.Format("2006-01-02")
-			if len(savedDay) < policy.Days && !savedDay[dayKey] {
-				backupsToKeep[b.Name] = true
-				savedDay[dayKey] = true
-			}
-		}
-
-		// Rule: Weekly backups for the last N weeks (keep the newest backup for each week)
-		if policy.Weeks > 0 {
-			year, week := b.Time.ISOWeek()
-			weekKey := fmt.Sprintf("%d-%d", year, week)
-			if len(savedWeek) < policy.Weeks && !savedWeek[weekKey] {
-				backupsToKeep[b.Name] = true
-				savedWeek[weekKey] = true
-			}
-		}
-
-		// Rule: Monthly backups for the last N months (keep the newest backup for each month)
-		if policy.Months > 0 {
-			monthKey := b.Time.Format("2006-01")
-			if len(savedMonth) < policy.Months && !savedMonth[monthKey] {
-				backupsToKeep[b.Name] = true
-				savedMonth[monthKey] = true
-			}
-		}
-	}
-
-	// Build a descriptive log message for the retention plan
-	var planParts []string
-	if policy.Hours > 0 {
-		planParts = append(planParts, fmt.Sprintf("%d hourly (for today)", len(savedHour)))
-	}
-	if policy.Days > 0 {
-		planParts = append(planParts, fmt.Sprintf("%d daily", len(savedDay)))
-	}
-	if policy.Weeks > 0 {
-		planParts = append(planParts, fmt.Sprintf("%d weekly", len(savedWeek)))
-	}
-	if policy.Months > 0 {
-		planParts = append(planParts, fmt.Sprintf("%d monthly", len(savedMonth)))
-	}
-	log.Printf("Retention plan: %s snapshots to be kept.", strings.Join(planParts, ", "))
-	log.Printf("Total backups to be kept: %d", len(backupsToKeep))
+	backupsToKeep := e.determineBackupsToKeep(allBackups, retentionPolicy, e.currentTimestamp)
 
 	// --- 3. Delete all backups that are not in our final `backupsToKeep` set ---
 	for _, backup := range allBackups {
@@ -287,6 +224,74 @@ func (e *Engine) applyRetentionPolicy() error {
 	}
 
 	return nil
+}
+
+// determineBackupsToKeep applies the retention policy to a sorted list of backups.
+func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy config.BackupRetentionPolicyConfig, currentTimestamp time.Time) map[string]bool {
+	backupsToKeep := make(map[string]bool)
+
+	// Keep track of which periods we've already saved a backup for.
+	savedHourly := make(map[string]bool)
+	savedDaily := make(map[string]bool)
+	savedWeekly := make(map[string]bool)
+	savedMonthly := make(map[string]bool)
+
+	for _, b := range allBackups {
+		// The rules are processed from shortest to longest duration.
+		// Once a backup is kept, it's not considered for longer-duration rules.
+		// This "promotes" a backup to the highest-frequency slot it qualifies for.
+
+		// Rule: Keep N hourly backups
+		hourKey := b.Time.Format("2006-01-02-15") // YYYY-MM-DD-HH
+		if len(savedHourly) < retentionPolicy.Hours && !savedHourly[hourKey] {
+			backupsToKeep[b.Name] = true
+			savedHourly[hourKey] = true
+			continue // Promoted to hourly, skip other rules
+		}
+
+		// Rule: Keep N daily backups
+		dayKey := b.Time.Format("2006-01-02")
+		if len(savedDaily) < retentionPolicy.Days && !savedDaily[dayKey] {
+			backupsToKeep[b.Name] = true
+			savedDaily[dayKey] = true
+			continue // Promoted to daily
+		}
+
+		// Rule: Keep N weekly backups
+		year, week := b.Time.ISOWeek()
+		weekKey := fmt.Sprintf("%d-%d", year, week)
+		if len(savedWeekly) < retentionPolicy.Weeks && !savedWeekly[weekKey] {
+			backupsToKeep[b.Name] = true
+			savedWeekly[weekKey] = true
+			continue // Promoted to weekly
+		}
+
+		// Rule: Keep N monthly backups
+		monthKey := b.Time.Format("2006-01")
+		if len(savedMonthly) < retentionPolicy.Months && !savedMonthly[monthKey] {
+			backupsToKeep[b.Name] = true
+			savedMonthly[monthKey] = true
+		}
+	}
+
+	// Build a descriptive log message for the retention plan
+	var planParts []string
+	if retentionPolicy.Hours > 0 {
+		planParts = append(planParts, fmt.Sprintf("%d hourly", len(savedHourly)))
+	}
+	if retentionPolicy.Days > 0 {
+		planParts = append(planParts, fmt.Sprintf("%d daily", len(savedDaily)))
+	}
+	if retentionPolicy.Weeks > 0 {
+		planParts = append(planParts, fmt.Sprintf("%d weekly", len(savedWeekly)))
+	}
+	if retentionPolicy.Months > 0 {
+		planParts = append(planParts, fmt.Sprintf("%d monthly", len(savedMonthly)))
+	}
+	log.Printf("Retention plan: keeping up to %s.", strings.Join(planParts, ", "))
+	log.Printf("Total unique backups to be kept: %d", len(backupsToKeep))
+
+	return backupsToKeep
 }
 
 // fetchSortedBackups scans a directory for valid backup folders, parses their
