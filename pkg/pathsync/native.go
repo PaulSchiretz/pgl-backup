@@ -1,4 +1,4 @@
-package main
+package pathsync
 
 import (
 	"context"
@@ -7,9 +7,23 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 )
+
+// nativeSyncJob encapsulates the state and logic for a single native sync operation.
+type nativeSyncJob struct {
+	src, dst              string
+	mirror, dryRun, quiet bool
+	numWorkers            int
+
+	sourcePaths map[string]bool
+	mu          sync.Mutex
+	wg          sync.WaitGroup
+	tasks       chan string
+	errs        chan error
+	ctx         context.Context
+	cancel      context.CancelFunc
+}
 
 // copyFileHelper handles copying a regular file from src to dst and preserves permissions.
 func copyFileHelper(src, dst string) error {
@@ -52,14 +66,14 @@ func copyFileHelper(src, dst string) error {
 
 // handleDirectoryAsyncHelper processes a directory path. It creates the corresponding
 // destination directory and adds its children to the task queue.
-func handleDirectoryAsyncHelper(ctx context.Context, path, dstPath, relPath string, srcInfo os.FileInfo, tasks chan<- string, dryRun, quiet bool) error {
-	if dryRun {
+func (j *nativeSyncJob) handleDirectory(path, dstPath, relPath string, srcInfo os.FileInfo) error {
+	if j.dryRun {
 		log.Printf("[DRY RUN] MKDIR: %s", relPath)
 	} else {
 		if err := os.MkdirAll(dstPath, srcInfo.Mode()); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dstPath, err)
 		}
-		if !quiet {
+		if !j.quiet {
 			log.Printf("MKDIR: %s", relPath)
 		}
 	}
@@ -71,18 +85,18 @@ func handleDirectoryAsyncHelper(ctx context.Context, path, dstPath, relPath stri
 	}
 	for _, entry := range entries {
 		select {
-		case <-ctx.Done():
-			return ctx.Err() // Stop enqueuing if context is cancelled.
+		case <-j.ctx.Done():
+			return j.ctx.Err() // Stop enqueuing if context is cancelled.
 		// This send is blocking. If the tasks channel is full, it will wait.
 		// This naturally throttles directory reading to the speed of file processing.
-		case tasks <- filepath.Join(path, entry.Name()):
+		case j.tasks <- filepath.Join(path, entry.Name()):
 		}
 	}
 	return nil
 }
 
 // handleRegularFileAsyncHelper processes a regular file path, copying it if necessary.
-func handleRegularFileAsyncHelper(path, dstPath, relPath string, srcInfo os.FileInfo, dryRun, quiet bool) error {
+func (j *nativeSyncJob) handleRegularFile(path, dstPath, relPath string, srcInfo os.FileInfo) error {
 	// Check if the destination file exists and if it's older.
 	dstInfo, err := os.Stat(dstPath)
 	if err == nil {
@@ -93,7 +107,7 @@ func handleRegularFileAsyncHelper(path, dstPath, relPath string, srcInfo os.File
 	}
 
 	// If we reach here, we need to copy the file.
-	if dryRun {
+	if j.dryRun {
 		log.Printf("[DRY RUN] COPY: %s", relPath)
 		return nil
 	}
@@ -101,7 +115,7 @@ func handleRegularFileAsyncHelper(path, dstPath, relPath string, srcInfo os.File
 	if err := copyFileHelper(path, dstPath); err != nil {
 		return fmt.Errorf("failed to copy file to %s: %w", dstPath, err)
 	}
-	if !quiet {
+	if !j.quiet {
 		log.Printf("COPY: %s", relPath)
 	}
 	return nil
@@ -110,30 +124,30 @@ func handleRegularFileAsyncHelper(path, dstPath, relPath string, srcInfo os.File
 // handlePathAsyncHelper is the core logic executed by each worker goroutine.
 // It processes a single path, and if it's a directory, it sends its children
 // back to the tasks channel for other workers to process.
-func handlePathAsyncHelper(ctx context.Context, currentPath, src, dst string, sourcePaths *map[string]bool, mu *sync.Mutex, tasks chan<- string, dryRun, quiet bool) error {
+func (j *nativeSyncJob) handlePath(currentPath string) error {
 	// Get relative path for logging and destination path calculation
-	relPath, err := filepath.Rel(src, currentPath)
-	if err != nil { // This should ideally not fail as currentPath is a child of src
+	relPath, err := filepath.Rel(j.src, currentPath)
+	if err != nil { // This should ideally not fail as currentPath is a child of j.src
 		return fmt.Errorf("failed to get relative path for %s: %w", currentPath, err)
 	}
 
 	// Safely update the shared map
-	mu.Lock()
-	(*sourcePaths)[relPath] = true
-	mu.Unlock()
+	j.mu.Lock()
+	j.sourcePaths[relPath] = true
+	j.mu.Unlock()
 
 	srcInfo, err := os.Lstat(currentPath) // Use Lstat to not follow symlinks
 	if err != nil {
 		return fmt.Errorf("failed to stat source path %s: %w", currentPath, err)
 	}
 
-	dstPath := filepath.Join(dst, relPath)
+	dstPath := filepath.Join(j.dst, relPath)
 
 	switch mode := srcInfo.Mode(); {
 	case mode.IsDir():
-		return handleDirectoryAsyncHelper(ctx, currentPath, dstPath, relPath, srcInfo, tasks, dryRun, quiet)
+		return j.handleDirectory(currentPath, dstPath, relPath, srcInfo)
 	case mode.IsRegular():
-		return handleRegularFileAsyncHelper(currentPath, dstPath, relPath, srcInfo, dryRun, quiet)
+		return j.handleRegularFile(currentPath, dstPath, relPath, srcInfo)
 	default:
 		// Skip other file types like symlinks, etc.
 		return nil
@@ -142,9 +156,9 @@ func handlePathAsyncHelper(ctx context.Context, currentPath, src, dst string, so
 
 // handleDeleteSyncHelper performs a sequential BFS traversal to delete files and directories
 // from the destination that are not present in the source.
-func handleDeleteSyncHelper(dst string, sourcePaths map[string]bool, dryRun, quiet bool) error {
+func (j *nativeSyncJob) handleDelete() error {
 	log.Println("Starting sequential deletion phase for mirror sync...")
-	deleteQueue := []string{dst}
+	deleteQueue := []string{j.dst}
 	for len(deleteQueue) > 0 {
 		currentDstPath := deleteQueue[0]
 		deleteQueue = deleteQueue[1:]
@@ -160,17 +174,17 @@ func handleDeleteSyncHelper(dst string, sourcePaths map[string]bool, dryRun, qui
 
 		for _, entry := range entries {
 			fullPath := filepath.Join(currentDstPath, entry.Name())
-			relPath, err := filepath.Rel(dst, fullPath)
+			relPath, err := filepath.Rel(j.dst, fullPath)
 			if err != nil {
 				return fmt.Errorf("failed to get relative path for deletion check on %s: %w", fullPath, err)
 			}
 
-			if _, existsInSource := sourcePaths[relPath]; !existsInSource {
+			if _, existsInSource := j.sourcePaths[relPath]; !existsInSource {
 				// This path does not exist in the source, so delete it.
-				if dryRun {
+				if j.dryRun {
 					log.Printf("[DRY RUN] DELETE (not in source): %s", relPath)
 				} else {
-					if !quiet {
+					if !j.quiet {
 						log.Printf("DELETE (not in source): %s", relPath)
 					}
 					if err := os.RemoveAll(fullPath); err != nil {
@@ -186,72 +200,73 @@ func handleDeleteSyncHelper(dst string, sourcePaths map[string]bool, dryRun, qui
 	return nil
 }
 
-// handleSyncNative incrementally copies files from src to dst, only if the source file
-// is newer than the destination file. It also logs the copied files.
-// It uses a breadth-first search (BFS) to traverse the source directory, ensuring
-// parent directories are processed before their contents. This implementation uses a
-// worker pool of goroutines to process files in parallel.
-func handleSyncNative(src, dst string, mirror, dryRun, quiet bool, numWorkers int) error {
-	log.Printf("Starting native sync from %s to %s...", src, dst)
-
-	// Create a map to store all relative paths found in the source.
-	// This makes the deletion phase safer, as it doesn't re-stat the source.
-	sourcePaths := make(map[string]bool)
-	var sourcePathsMutex sync.Mutex
-
-	// Use a context to signal cancellation to all workers if an error occurs.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel() // Ensure cancel is called on exit.
-
-	var wg sync.WaitGroup
-	tasks := make(chan string, runtime.NumCPU()*2) // Buffered channel
-	errs := make(chan error, 1)                    // Buffered channel to hold the first error.
-
-	// --- Phase 1: Concurrently copy/update files from source to destination ---
-	log.Printf("Spawning %d worker goroutines for sync phase.", numWorkers)
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for {
-				select {
-				case <-ctx.Done(): // If context is cancelled, exit.
-					return
-				case path, ok := <-tasks:
-					if !ok { // If channel is closed, exit.
-						return
-					}
-
-					// Process the path
-					if err := handlePathAsyncHelper(ctx, path, src, dst, &sourcePaths, &sourcePathsMutex, tasks, dryRun, quiet); err != nil {
-						select {
-						case errs <- err: // Send error non-blockingly
-						default:
-						}
-						cancel() // Signal all other goroutines to stop.
-						return
-					}
-				}
+// worker is the main goroutine function for processing tasks.
+func (j *nativeSyncJob) worker() {
+	defer j.wg.Done()
+	for {
+		select {
+		case <-j.ctx.Done(): // If context is cancelled, exit.
+			return
+		case path, ok := <-j.tasks:
+			if !ok { // If channel is closed, exit.
+				return
 			}
-		}()
+
+			// Process the path
+			if err := j.handlePath(path); err != nil {
+				select {
+				case j.errs <- err: // Send error non-blockingly
+				default:
+				}
+				j.cancel() // Signal all other goroutines to stop.
+				return
+			}
+		}
+	}
+}
+
+// run performs the main synchronization logic.
+func (j *nativeSyncJob) run() error {
+	log.Printf("Spawning %d worker goroutines for sync phase.", j.numWorkers)
+	for i := 0; i < j.numWorkers; i++ {
+		j.wg.Add(1)
+		go j.worker()
 	}
 
-	// Start the process with the root source directory.
-	tasks <- src
-	wg.Wait()
-	close(tasks) // Close channel to signal workers that no more tasks are coming.
-	close(errs)  // Close the error channel after all workers are done.
+	j.tasks <- j.src
+	j.wg.Wait()
+	close(j.tasks)
+	close(j.errs)
 
-	// Check if any worker sent an error.
-	if err := <-errs; err != nil {
+	if err := <-j.errs; err != nil {
 		return fmt.Errorf("sync failed: %w", err)
 	}
 
-	// --- Phase 2: Delete files/dirs from destination that are not in source (if mirroring) ---
-	if !mirror {
+	if !j.mirror {
 		return nil
 	}
 
-	// The deletion phase remains sequential as it's generally faster and safer.
-	return handleDeleteSyncHelper(dst, sourcePaths, dryRun, quiet)
+	return j.handleDelete()
+}
+
+// handleNative is the entry point for the native file synchronization.
+func (s *PathSyncer) handleNative(src, dst string, mirror bool) error {
+	log.Printf("Starting native sync from %s to %s...", src, dst)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	job := &nativeSyncJob{
+		src:         src,
+		dst:         dst,
+		mirror:      mirror,
+		dryRun:      s.config.DryRun,
+		quiet:       s.config.Quiet,
+		numWorkers:  s.config.Engine.NativeEngineWorkers,
+		sourcePaths: make(map[string]bool),
+		tasks:       make(chan string, s.config.Engine.NativeEngineWorkers*2),
+		errs:        make(chan error, 1),
+		ctx:         ctx,
+		cancel:      cancel,
+	}
+	return job.run()
 }

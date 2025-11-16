@@ -1,14 +1,44 @@
-package main
+package pathsync
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+
+	"pixelgardenlabs.io/pgl-backup/pkg/config"
 )
+
+// PathSyncer orchestrates the file synchronization process.
+type PathSyncer struct {
+	config config.Config
+}
+
+// NewPathSyncer creates a new PathSyncer with the given configuration.
+func NewPathSyncer(cfg config.Config) *PathSyncer {
+	return &PathSyncer{config: cfg}
+}
+
+// Sync is the main entry point for synchronization. It dispatches to the configured sync engine.
+func (s *PathSyncer) Sync(src, dst string, mirror bool) error {
+	if err := s.validateSyncPaths(src, dst); err != nil {
+		return err
+	}
+
+	switch s.config.Engine.Type {
+	case config.RobocopyEngine:
+		return s.handleRobocopy(src, dst, mirror)
+	case config.NativeEngine:
+		log.Println("Using native Go implementation for synchronization...")
+		return s.handleNative(src, dst, mirror)
+	default:
+		return fmt.Errorf("unknown sync engine configured: %v", s.config.Engine.Type)
+	}
+}
 
 // validateSyncPaths checks that the source path exists and is a directory,
 // and that the destination path can be created and is writable.
-func validateSyncPaths(src, dst string, dryRun bool) error {
+func (s *PathSyncer) validateSyncPaths(src, dst string) error {
 	// 1. Check if source exists and is a directory.
 	if srcInfo, err := os.Stat(src); err != nil {
 		if os.IsNotExist(err) {
@@ -19,7 +49,7 @@ func validateSyncPaths(src, dst string, dryRun bool) error {
 		return fmt.Errorf("source path %s is not a directory", src)
 	}
 
-	if dryRun {
+	if s.config.DryRun {
 		return nil // Skip filesystem modifications in dry run mode.
 	}
 

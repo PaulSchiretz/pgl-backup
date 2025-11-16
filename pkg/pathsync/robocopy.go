@@ -1,6 +1,6 @@
 //go:build windows
 
-package main
+package pathsync
 
 import (
 	"log"
@@ -23,7 +23,7 @@ func isRobocopySuccessHelper(err error) bool {
 // handleSyncRobocopy uses the Windows `robocopy` utility to perform a highly
 // efficient and robust directory mirror. It is much faster for incremental
 // backups than a manual walk. It returns a list of copied files.
-func handleSyncRobocopy(src, dst string, mirror, dryRun, quiet bool) error {
+func (s *PathSyncer) handleRobocopy(src, dst string, mirror bool) error {
 	// Robocopy command arguments:
 	// /MIR :: MIRror a directory tree (equivalent to /E plus /PURGE).
 	// /E :: copy subdirectories, including Empty ones.
@@ -41,12 +41,12 @@ func handleSyncRobocopy(src, dst string, mirror, dryRun, quiet bool) error {
 		args = append(args, "/E")
 	}
 
-	if quiet {
+	if s.config.Quiet {
 		args = append(args, "/NFL") // No File List - don't log individual files.
 		args = append(args, "/NDL") // No Directory List - don't log individual directories.
 	}
 
-	if dryRun {
+	if s.config.DryRun {
 		args = append(args, "/L") // /L :: List only - don't copy, delete, or timestamp files.
 	}
 

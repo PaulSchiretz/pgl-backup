@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"encoding/json"
@@ -77,7 +77,7 @@ type BackupEngineConfig struct {
 	NativeEngineWorkers int        `json:"nativeEngineWorkers"`
 }
 
-type backupConfig struct {
+type Config struct {
 	Mode      BackupMode                  `json:"mode"`
 	Engine    BackupEngineConfig          `json:"engine"`
 	Quiet     bool                        `json:"quiet"`
@@ -87,15 +87,15 @@ type backupConfig struct {
 	Retention BackupRetentionPolicyConfig `json:"retention"`
 }
 
-// newDefaultConfig creates and returns a backupConfig struct with sensible default
+// NewDefault creates and returns a Config struct with sensible default
 // values. It dynamically sets the sync engine based on the operating system.
-func newDefaultConfig() backupConfig {
+func NewDefault() Config {
 	// Set a default sync engine based on the OS.
 	defaultEngine := NativeEngine
 	if runtime.GOOS == "windows" {
 		defaultEngine = RobocopyEngine
 	}
-	return backupConfig{
+	return Config{
 		Mode:   IncrementalMode, // Default mode
 		Quiet:  false,
 		DryRun: false,
@@ -122,15 +122,15 @@ func newDefaultConfig() backupConfig {
 	}
 }
 
-// loadConfig attempts to load a configuration from "ppBackup.conf".
+// Load attempts to load a configuration from "ppBackup.conf".
 // If the file doesn't exist, it returns the provided default config without an error.
 // If the file exists but fails to parse, it returns an error and a zero-value config.
-func loadConfig() (backupConfig, error) {
+func Load() (Config, error) {
 	exePath, err := os.Executable()
 	if err != nil {
 		// Cannot find exe path, proceed with defaults but log a warning.
 		log.Printf("Warning: could not determine executable path: %v. Using default config.", err)
-		return newDefaultConfig(), nil
+		return NewDefault(), nil
 	}
 
 	configPath := filepath.Join(filepath.Dir(exePath), "ppBackup.conf")
@@ -138,26 +138,26 @@ func loadConfig() (backupConfig, error) {
 	file, err := os.Open(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return newDefaultConfig(), nil // Config file doesn't exist, which is a normal case.
+			return NewDefault(), nil // Config file doesn't exist, which is a normal case.
 		}
-		return backupConfig{}, fmt.Errorf("error opening config file %s: %w", configPath, err)
+		return Config{}, fmt.Errorf("error opening config file %s: %w", configPath, err)
 	}
 	defer file.Close()
 
 	log.Printf("Loading configuration from %s", configPath)
 	// Start with default values, then overwrite with the file's content.
 	// This makes the config loading resilient to missing fields in the JSON file.
-	config := newDefaultConfig()
+	config := NewDefault()
 	decoder := json.NewDecoder(file)
 	if err := decoder.Decode(&config); err != nil {
-		return backupConfig{}, fmt.Errorf("error parsing config file %s: %w", configPath, err)
+		return Config{}, fmt.Errorf("error parsing config file %s: %w", configPath, err)
 	}
 	return config, nil
 }
 
-// generateConfig creates a default ppBackup.conf file in the executable's
+// Generate creates a default ppBackup.conf file in the executable's
 // directory. It will not overwrite an existing file.
-func generateConfig() error {
+func Generate() error {
 	exePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("could not determine executable path: %w", err)
@@ -173,7 +173,7 @@ func generateConfig() error {
 	}
 
 	// Marshal the default config into nicely formatted JSON.
-	jsonData, err := json.MarshalIndent(newDefaultConfig(), "", "  ")
+	jsonData, err := json.MarshalIndent(NewDefault(), "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal default config to JSON: %w", err)
 	}

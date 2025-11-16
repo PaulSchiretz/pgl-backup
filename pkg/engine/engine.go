@@ -1,4 +1,4 @@
-package main
+package engine
 
 import (
 	"encoding/json"
@@ -9,6 +9,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"pixelgardenlabs.io/pgl-backup/pkg/config"
+	"pixelgardenlabs.io/pgl-backup/pkg/pathsync"
 )
 
 // backupInfo holds the parsed time and name of a backup directory.
@@ -23,44 +26,94 @@ type backupRunMeta struct {
 	BackupTime time.Time `json:"backupTime"`
 }
 
-// handleSync is the main entry point for synchronization. It decides whether to use
-// the native Go implementation or the faster Robocopy implementation based on the
-// operating system and configuration.
-func handleSync(config backupConfig) error {
-	src := config.Paths.Source
-	dst := config.Paths.CurrentTarget
-	mirror := config.Mode == IncrementalMode // Mirror mode deletes extra files in destination.
+// Engine orchestrates the entire backup process.
+type Engine struct {
+	config  config.Config
+	version string
+}
 
-	// Validation for all sync paths.
-	if err := validateSyncPaths(src, dst, config.DryRun); err != nil {
+// New creates a new backup engine with the given configuration and version.
+func New(cfg config.Config, version string) *Engine {
+	return &Engine{
+		config:  cfg,
+		version: version,
+	}
+}
+
+// RunJob executes the backup process.
+func (e *Engine) RunJob() error {
+	if e.config.DryRun {
+		log.Println("--- Starting Backup (DRY RUN) ---")
+	} else {
+		log.Println("--- Starting Backup ---")
+	}
+	log.Printf("Source: %s", e.config.Paths.Source)
+	log.Printf("Mode: %s", e.config.Mode)
+
+	// --- 1. Pre-backup tasks (rollover) and destination calculation ---
+	if err := e.prepareDestination(); err != nil {
 		return err
 	}
 
-	switch config.Engine.Type {
-	case RobocopyEngine:
-		// Sync and check for errors after attempting the sync.
-		if syncErr := handleSyncRobocopy(src, dst, mirror, config.DryRun, config.Quiet); syncErr != nil {
-			return fmt.Errorf("robocopy sync failed: %w", syncErr)
+	log.Printf("Destination: %s", e.config.Paths.CurrentTarget)
+	log.Println("------------------------------")
+
+	// --- 2. Perform the backup ---
+	if err := e.performSync(); err != nil {
+		return fmt.Errorf("fatal backup error during sync: %w", err)
+	}
+
+	log.Println("Backup operation completed.")
+
+	// --- 3. Clean up old backups ---
+	if err := e.applyRetentionPolicy(); err != nil {
+		// We log this as a non-fatal error because the main backup was successful.
+		log.Printf("Error applying retention policy: %v", err)
+	}
+	return nil
+}
+
+// prepareDestination calculates the target directory for the backup, performing
+// a rollover if necessary for incremental backups.
+func (e *Engine) prepareDestination() error {
+	if e.config.Mode == config.SnapshotMode {
+		// SNAPSHOT MODE
+		timestamp := time.Now().Format(e.config.Naming.TimeFormat)
+		backupDirName := fmt.Sprintf("%s%s", e.config.Naming.Prefix, timestamp)
+		e.config.Paths.CurrentTarget = filepath.Join(e.config.Paths.TargetBase, backupDirName)
+	} else {
+		// INCREMENTAL MODE (DEFAULT)
+		if err := e.performRollover(); err != nil {
+			return fmt.Errorf("error during backup rollover: %w", err)
 		}
-	case NativeEngine:
-		log.Println("Using native Go implementation for synchronization...")
-		// Sync and check for errors after attempting the sync.
-		if syncErr := handleSyncNative(src, dst, mirror, config.DryRun, config.Quiet, config.Engine.NativeEngineWorkers); syncErr != nil {
-			return fmt.Errorf("native sync failed: %w", syncErr)
-		}
-	default:
-		return fmt.Errorf("unknown sync engine configured: %v", config.Engine.Type)
+		currentIncrementalDirName := e.config.Naming.Prefix + e.config.Naming.IncrementalModeSuffix
+		e.config.Paths.CurrentTarget = filepath.Join(e.config.Paths.TargetBase, currentIncrementalDirName)
+	}
+	return nil
+}
+
+// performSync is the main entry point for synchronization.
+func (e *Engine) performSync() error {
+	src := e.config.Paths.Source
+	dst := e.config.Paths.CurrentTarget
+	mirror := e.config.Mode == config.IncrementalMode // Mirror mode deletes extra files in destination.
+
+	pathSyncer := pathsync.NewPathSyncer(e.config)
+	// Sync and check for errors after attempting the sync.
+	if syncErr := pathSyncer.Sync(src, dst, mirror); syncErr != nil {
+		return fmt.Errorf("sync failed: %w", syncErr)
 	}
 
 	// If the sync was successful, update the metafile timestamp in incremental mode.
-	if config.Mode == IncrementalMode {
-		if config.DryRun {
+	if e.config.Mode == config.IncrementalMode {
+		dst := e.config.Paths.CurrentTarget
+		if e.config.DryRun {
 			log.Printf("[DRY RUN] Would update metafile in %s", dst)
 			return nil
 		}
 		metaFilePath := filepath.Join(dst, ".ppBackup.meta")
 		metaData := backupRunMeta{
-			Version:    version,
+			Version:    e.version,
 			BackupTime: time.Now(),
 		}
 
@@ -78,11 +131,11 @@ func handleSync(config backupConfig) error {
 	return nil
 }
 
-// handleRollover checks if the incremental backup directory is from a previous day.
+// performRollover checks if the incremental backup directory is from a previous day.
 // If so, it renames it to a permanent timestamped archive.
-func handleRollover(config backupConfig) error {
-	currentDirName := config.Naming.Prefix + config.Naming.IncrementalModeSuffix
-	currentBackupPath := filepath.Join(config.Paths.TargetBase, currentDirName)
+func (e *Engine) performRollover() error {
+	currentDirName := e.config.Naming.Prefix + e.config.Naming.IncrementalModeSuffix
+	currentBackupPath := filepath.Join(e.config.Paths.TargetBase, currentDirName)
 	metaFilePath := filepath.Join(currentBackupPath, ".ppBackup.meta")
 
 	metaFile, err := os.Open(metaFilePath)
@@ -109,12 +162,12 @@ func handleRollover(config backupConfig) error {
 	isDifferentDay := now.Year() != lastBackupTime.Year() || now.YearDay() != lastBackupTime.YearDay()
 
 	if isDifferentDay {
-		archiveTimestamp := lastBackupTime.Format(config.Naming.TimeFormat)
-		archiveDirName := fmt.Sprintf("%s%s", config.Naming.Prefix, archiveTimestamp)
-		archivePath := filepath.Join(config.Paths.TargetBase, archiveDirName)
+		archiveTimestamp := lastBackupTime.Format(e.config.Naming.TimeFormat)
+		archiveDirName := fmt.Sprintf("%s%s", e.config.Naming.Prefix, archiveTimestamp)
+		archivePath := filepath.Join(e.config.Paths.TargetBase, archiveDirName)
 
 		log.Printf("Rolling over previous day's backup to: %s", archivePath)
-		if config.DryRun {
+		if e.config.DryRun {
 			log.Printf("[DRY RUN] Would rename %s to %s", currentBackupPath, archivePath)
 			// In a dry run, we must exit here to prevent the next sync from using the wrong directory.
 			// We simulate a successful rollover for the rest of the dry run logic.
@@ -127,21 +180,22 @@ func handleRollover(config backupConfig) error {
 	return nil
 }
 
-// handleRetention scans the backup target directory and deletes snapshots
+// applyRetentionPolicy scans the backup target directory and deletes snapshots
 // that are no longer needed according to the configured retention policy.
-func handleRetention(config backupConfig) error {
-	currentDirName := config.Naming.Prefix + config.Naming.IncrementalModeSuffix
-	baseDir := config.Paths.TargetBase
-	policy := config.Retention
+func (e *Engine) applyRetentionPolicy() error {
+	currentDirName := e.config.Naming.Prefix + e.config.Naming.IncrementalModeSuffix
+	baseDir := e.config.Paths.TargetBase
+	policy := e.config.Retention
 
 	if policy.Hours <= 0 && policy.Days <= 0 && policy.Weeks <= 0 && policy.Months <= 0 {
 		log.Println("Retention policy is disabled. Skipping cleanup.")
 		return nil
 	}
-	log.Printf("Checking for old backups to clean up in %s...", baseDir)
+	log.Println("--- Cleaning Up Old Backups ---")
+	log.Printf("Applying retention policy in %s...", baseDir)
 
 	// --- 1. Get a sorted list of all valid, historical backups ---
-	allBackups, err := fetchSortedBackups(baseDir, config.Naming.Prefix, config.Naming.TimeFormat, currentDirName)
+	allBackups, err := e.fetchSortedBackups(baseDir, currentDirName)
 	if err != nil {
 		return err
 	}
@@ -220,7 +274,7 @@ func handleRetention(config backupConfig) error {
 		if _, shouldKeep := backupsToKeep[dirName]; !shouldKeep {
 			dirToDelete := filepath.Join(baseDir, dirName)
 			log.Printf("DELETING redundant or old backup: %s", dirToDelete)
-			if config.DryRun {
+			if e.config.DryRun {
 				log.Printf("[DRY RUN] Would delete directory: %s", dirToDelete)
 				continue
 			}
@@ -235,7 +289,10 @@ func handleRetention(config backupConfig) error {
 
 // fetchSortedBackups scans a directory for valid backup folders, parses their
 // timestamps, and returns them sorted from newest to oldest.
-func fetchSortedBackups(baseDir, prefix, timeFormat, excludeDir string) ([]backupInfo, error) {
+func (e *Engine) fetchSortedBackups(baseDir, excludeDir string) ([]backupInfo, error) {
+	prefix := e.config.Naming.Prefix
+	timeFormat := e.config.Naming.TimeFormat
+
 	entries, err := os.ReadDir(baseDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read backup directory %s: %w", baseDir, err)
