@@ -6,80 +6,120 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
-type backupNamingConfig struct {
+type BackupNamingConfig struct {
 	Prefix                string `json:"prefix"`
 	TimeFormat            string `json:"timeFormat"`
 	IncrementalModeSuffix string `json:"incrementalModeSuffix"`
 }
 
-type backupPathConfig struct {
-	Source     string
-	TargetBase string
+type BackupPathConfig struct {
+	Source     string `json:"source"`
+	TargetBase string `json:"targetBase"`
 	// CurrentTarget is the full, calculated path for this specific backup operation.
-	CurrentTarget string
+	CurrentTarget string `json:"-"`
 }
 
-type backupRetentionPolicyConfig struct {
-	Hours  int
-	Days   int
-	Weeks  int
-	Months int
+type BackupRetentionPolicyConfig struct {
+	Hours  int `json:"hours"`
+	Days   int `json:"days"`
+	Weeks  int `json:"weeks"`
+	Months int `json:"months"`
 }
 
-// backupMode represents the operational mode of the backup (incremental or snapshot).
-type backupMode int
+// BackupMode represents the operational mode of the backup (incremental or snapshot).
+type BackupMode int
 
-// Constants for backupMode, acting as an enum.
+// Constants for BackupMode, acting as an enum.
 const (
-	incrementalMode backupMode = iota // 0
-	snapshotMode                      // 1
+	IncrementalMode BackupMode = iota // 0
+	SnapshotMode                      // 1
 )
 
-// String returns the string representation of a backupMode.
-func (bm backupMode) String() string {
+// String returns the string representation of a BackupMode.
+func (bm BackupMode) String() string {
 	switch bm {
-	case incrementalMode:
+	case IncrementalMode:
 		return "incremental"
-	case snapshotMode:
+	case SnapshotMode:
 		return "snapshot"
 	default:
-		return fmt.Sprintf("unknown_mode(%d)", bm)
+		return fmt.Sprintf("unknown_backup_mode(%d)", bm)
 	}
 }
 
-type backupConfig struct {
-	Mode        backupMode                  `json:"mode"`
-	UseRobocopy bool                        `json:"useRobocopy"`
-	Quiet       bool                        `json:"quiet"`
-	DryRun      bool                        `json:"dryRun"`
-	Naming      backupNamingConfig          `json:"naming"`
-	Paths       backupPathConfig            `json:"paths"`
-	Retention   backupRetentionPolicyConfig `json:"retention"`
+// SyncEngine represents the file synchronization engine to use.
+type SyncEngine int
+
+const (
+	// NativeEngine uses the cross-platform Go implementation.
+	NativeEngine SyncEngine = iota
+	// RobocopyEngine uses the Windows-specific robocopy utility.
+	RobocopyEngine
+)
+
+// String returns the string representation of a SyncEngine.
+func (se SyncEngine) String() string {
+	switch se {
+	case NativeEngine:
+		return "native"
+	case RobocopyEngine:
+		return "robocopy"
+	default:
+		return fmt.Sprintf("unknown_sync_engine(%d)", se)
+	}
 }
 
-var defaultConfig = backupConfig{
-	Mode:        incrementalMode, // Default mode
-	UseRobocopy: true,            // Default to true; will only be active on Windows.
-	Quiet:       false,
-	DryRun:      false,
-	Naming: backupNamingConfig{
-		Prefix:                "5ive_Backup_",
-		TimeFormat:            "2006-01-02-15-04-05-000",
-		IncrementalModeSuffix: "current",
-	},
-	Paths: backupPathConfig{
-		Source:     "./src_backup",
-		TargetBase: "./dest_backup_mirror",
-		// CurrentTarget is calculated at runtime.
-	},
-	Retention: backupRetentionPolicyConfig{
-		Hours:  24, // N > 0: keep one backup for each of the last N hours of today.
-		Days:   7,  // N > 0: keep one backup for each of the last N days.
-		Weeks:  4,  // N > 0: keep one backup for each of the last N weeks.
-		Months: 12, // N > 0: keep one backup for each of the last N months.
-	},
+type BackupEngineConfig struct {
+	Type                SyncEngine `json:"type"`
+	NativeEngineWorkers int        `json:"nativeEngineWorkers"`
+}
+
+type backupConfig struct {
+	Mode      BackupMode                  `json:"mode"`
+	Engine    BackupEngineConfig          `json:"engine"`
+	Quiet     bool                        `json:"quiet"`
+	DryRun    bool                        `json:"dryRun"`
+	Naming    BackupNamingConfig          `json:"naming"`
+	Paths     BackupPathConfig            `json:"paths"`
+	Retention BackupRetentionPolicyConfig `json:"retention"`
+}
+
+// newDefaultConfig creates and returns a backupConfig struct with sensible default
+// values. It dynamically sets the sync engine based on the operating system.
+func newDefaultConfig() backupConfig {
+	// Set a default sync engine based on the OS.
+	defaultEngine := NativeEngine
+	if runtime.GOOS == "windows" {
+		defaultEngine = RobocopyEngine
+	}
+	return backupConfig{
+		Mode:   IncrementalMode, // Default mode
+		Quiet:  false,
+		DryRun: false,
+		Engine: BackupEngineConfig{
+			Type:                defaultEngine,
+			NativeEngineWorkers: runtime.NumCPU(), // Default to the number of CPU cores.
+		},
+		Naming: BackupNamingConfig{
+			Prefix:                "5ive_Backup_",
+			TimeFormat:            "2006-01-02-15-04-05-000",
+			IncrementalModeSuffix: "current",
+		},
+		Paths: BackupPathConfig{
+			Source:     "./src_backup",
+			TargetBase: "./dest_backup_mirror",
+			// CurrentTarget is calculated at runtime.
+		},
+		Retention: BackupRetentionPolicyConfig{
+			Hours:  24, // N > 0: keep one backup for each of the last N hours of today.
+			Days:   7,  // N > 0: keep one backup for each of the last N days.
+			Weeks:  4,  // N > 0: keep one backup for each of the last N weeks.
+			Months: 12, // N > 0: keep one backup for each of the last N months.
+		},
+	}
 }
 
 // loadConfig attempts to load a configuration from "ppBackup.conf".
@@ -90,7 +130,7 @@ func loadConfig() (backupConfig, error) {
 	if err != nil {
 		// Cannot find exe path, proceed with defaults but log a warning.
 		log.Printf("Warning: could not determine executable path: %v. Using default config.", err)
-		return defaultConfig, nil
+		return newDefaultConfig(), nil
 	}
 
 	configPath := filepath.Join(filepath.Dir(exePath), "ppBackup.conf")
@@ -98,7 +138,7 @@ func loadConfig() (backupConfig, error) {
 	file, err := os.Open(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return defaultConfig, nil // Config file doesn't exist, which is a normal case.
+			return newDefaultConfig(), nil // Config file doesn't exist, which is a normal case.
 		}
 		return backupConfig{}, fmt.Errorf("error opening config file %s: %w", configPath, err)
 	}
@@ -107,7 +147,7 @@ func loadConfig() (backupConfig, error) {
 	log.Printf("Loading configuration from %s", configPath)
 	// Start with default values, then overwrite with the file's content.
 	// This makes the config loading resilient to missing fields in the JSON file.
-	config := defaultConfig
+	config := newDefaultConfig()
 	decoder := json.NewDecoder(file)
 	if err := decoder.Decode(&config); err != nil {
 		return backupConfig{}, fmt.Errorf("error parsing config file %s: %w", configPath, err)
@@ -133,7 +173,7 @@ func generateConfig() error {
 	}
 
 	// Marshal the default config into nicely formatted JSON.
-	jsonData, err := json.MarshalIndent(defaultConfig, "", "  ")
+	jsonData, err := json.MarshalIndent(newDefaultConfig(), "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal default config to JSON: %w", err)
 	}

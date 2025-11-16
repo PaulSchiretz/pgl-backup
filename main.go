@@ -27,15 +27,16 @@ func init() {
 
 // runBackupJob executes the backup process based on the provided configuration.
 func runBackupJob(runConfig backupConfig) error {
-	log.Println("--- Starting Backup ---")
-	log.Printf("Source: %s", runConfig.Paths.Source)
 	if runConfig.DryRun {
-		log.Println("Mode: Dry Run")
+		log.Println("--- Starting Backup (DRY RUN) ---")
+	} else {
+		log.Println("--- Starting Backup ---")
 	}
+	log.Printf("Source: %s", runConfig.Paths.Source)
 	log.Printf("Mode: %s", runConfig.Mode)
 
 	// --- 1. Pre-backup tasks (rollover) and destination calculation ---
-	if runConfig.Mode == snapshotMode {
+	if runConfig.Mode == SnapshotMode {
 		// SNAPSHOT MODE
 		timestamp := time.Now().Format(runConfig.Naming.TimeFormat)
 		backupDirName := fmt.Sprintf("%s%s", runConfig.Naming.Prefix, timestamp)
@@ -70,27 +71,41 @@ func runBackupJob(runConfig backupConfig) error {
 
 // finalizeConfig takes the base configuration (from file or default) and the parsed
 // command-line flags, and constructs the final configuration for the backup job.
-func finalizeConfig(baseConfig backupConfig, src, target, mode *string, quiet, dryrun, robocopy *bool) (backupConfig, error) {
+func finalizeConfig(baseConfig backupConfig, src, target, mode, syncEngine *string, quiet, dryrun *bool, nativeEngineWorkers *int) (backupConfig, error) {
 	runConfig := baseConfig
 	runConfig.Paths.Source = *src
 	runConfig.Paths.TargetBase = *target
 
 	switch *mode {
 	case "snapshot":
-		runConfig.Mode = snapshotMode
+		runConfig.Mode = SnapshotMode
 	case "incremental":
-		runConfig.Mode = incrementalMode
+		runConfig.Mode = IncrementalMode
 	default:
 		return backupConfig{}, fmt.Errorf("invalid mode: %q. Must be 'incremental' or 'snapshot'", *mode)
 	}
 
-	runConfig.UseRobocopy = *robocopy
+	switch *syncEngine {
+	case "native":
+		runConfig.Engine.Type = NativeEngine
+	case "robocopy":
+		runConfig.Engine.Type = RobocopyEngine
+	default:
+		return backupConfig{}, fmt.Errorf("invalid syncEngine: %q. Must be 'native' or 'robocopy'", *syncEngine)
+	}
+
 	runConfig.DryRun = *dryrun
 	runConfig.Quiet = *quiet
+	runConfig.Engine.NativeEngineWorkers = *nativeEngineWorkers
+
+	if runConfig.Engine.NativeEngineWorkers < 1 {
+		return backupConfig{}, fmt.Errorf("nativeEngineWorkers must be at least 1")
+	}
 
 	// Final sanity check: ensure robocopy is disabled if not on Windows.
-	if runtime.GOOS != "windows" {
-		runConfig.UseRobocopy = false
+	if runtime.GOOS != "windows" && runConfig.Engine.Type == RobocopyEngine {
+		log.Println("Robocopy is not available on this OS. Forcing 'native' sync engine.")
+		runConfig.Engine.Type = NativeEngine
 	}
 
 	return runConfig, nil
@@ -103,7 +118,7 @@ func run() error {
 	loadedConfig, err := loadConfig()
 	if err != nil {
 		log.Printf("Warning: could not parse ppBackup.conf: %v. Using defaults.", err)
-		loadedConfig = defaultConfig
+		loadedConfig = newDefaultConfig()
 	}
 
 	// 2. Define all command-line flags, using the loaded config for defaults.
@@ -114,7 +129,8 @@ func run() error {
 	dryRunFlag := flag.Bool("dryrun", loadedConfig.DryRun, "Show what would be done without making any changes.")
 	initFlag := flag.Bool("init", false, "Generate a default ppBackup.conf file and exit.")
 	versionFlag := flag.Bool("version", false, "Print the application version and exit.")
-	useRobocopyFlag := flag.Bool("robocopy", loadedConfig.UseRobocopy, "Use robocopy for faster sync on Windows (no effect on other OS)")
+	syncEngineFlag := flag.String("syncEngine", loadedConfig.Engine.Type.String(), "Sync engine to use: 'native' or 'robocopy' (Windows only).")
+	nativeEngineWorkersFlag := flag.Int("nativeEngineWorkers", loadedConfig.Engine.NativeEngineWorkers, "Number of worker goroutines for native sync.")
 
 	flag.Parse()
 
@@ -128,7 +144,7 @@ func run() error {
 	}
 
 	// 4. If not an action flag, build the final config and run the backup job.
-	runConfig, err := finalizeConfig(loadedConfig, srcFlag, destFlag, modeFlag, quietFlag, dryRunFlag, useRobocopyFlag)
+	runConfig, err := finalizeConfig(loadedConfig, srcFlag, destFlag, modeFlag, syncEngineFlag, quietFlag, dryRunFlag, nativeEngineWorkersFlag)
 	if err != nil {
 		return err // Return configuration error
 	}

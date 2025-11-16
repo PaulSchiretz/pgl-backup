@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -30,30 +29,31 @@ type backupRunMeta struct {
 func handleSync(config backupConfig) error {
 	src := config.Paths.Source
 	dst := config.Paths.CurrentTarget
-	mirror := config.Mode == incrementalMode // Mirror mode deletes extra files in destination.
+	mirror := config.Mode == IncrementalMode // Mirror mode deletes extra files in destination.
 
 	// Validation for all sync paths.
 	if err := validateSyncPaths(src, dst); err != nil {
 		return err
 	}
 
-	useRobocopy := config.UseRobocopy && runtime.GOOS == "windows"
-	if useRobocopy {
-		log.Println("Using robocopy for synchronization.")
+	switch config.Engine.Type {
+	case RobocopyEngine:
 		// Sync and check for errors after attempting the sync.
 		if syncErr := handleSyncRobocopy(src, dst, mirror, config.DryRun, config.Quiet); syncErr != nil {
 			return fmt.Errorf("robocopy sync failed: %w", syncErr)
 		}
-	} else {
-		log.Println("Using native Go implementation for synchronization.")
+	case NativeEngine:
+		log.Println("Using native Go implementation for synchronization...")
 		// Sync and check for errors after attempting the sync.
-		if syncErr := handleSyncNative(src, dst, mirror, config.DryRun, config.Quiet); syncErr != nil {
+		if syncErr := handleSyncNative(src, dst, mirror, config.DryRun, config.Quiet, config.Engine.NativeEngineWorkers); syncErr != nil {
 			return fmt.Errorf("native sync failed: %w", syncErr)
 		}
+	default:
+		return fmt.Errorf("unknown sync engine configured: %v", config.Engine.Type)
 	}
 
 	// If the sync was successful, update the metafile timestamp in incremental mode.
-	if config.Mode == incrementalMode {
+	if config.Mode == IncrementalMode {
 		if config.DryRun {
 			log.Printf("[DRY RUN] Would update metafile in %s", dst)
 			return nil
@@ -132,6 +132,12 @@ func handleRollover(config backupConfig) error {
 func handleRetention(config backupConfig) error {
 	currentDirName := config.Naming.Prefix + config.Naming.IncrementalModeSuffix
 	baseDir := config.Paths.TargetBase
+	policy := config.Retention
+
+	if policy.Hours <= 0 && policy.Days <= 0 && policy.Weeks <= 0 && policy.Months <= 0 {
+		log.Println("Retention policy is disabled. Skipping cleanup.")
+		return nil
+	}
 	log.Printf("Checking for old backups to clean up in %s...", baseDir)
 
 	// --- 1. Get a sorted list of all valid, historical backups ---
@@ -151,11 +157,11 @@ func handleRetention(config backupConfig) error {
 	savedMonth := make(map[string]bool)
 
 	for _, b := range allBackups {
-		if config.Retention.Hours > 0 {
+		if policy.Hours > 0 {
 			// Rule: Hourly backups for the current day
 			if b.Time.Year() == now.Year() && b.Time.YearDay() == now.YearDay() {
 				hourKey := b.Time.Format("2006-01-02-15") // YYYY-MM-DD-HH
-				if len(savedHour) < config.Retention.Hours && !savedHour[hourKey] {
+				if len(savedHour) < policy.Hours && !savedHour[hourKey] {
 					backupsToKeep[b.Name] = true
 					savedHour[hourKey] = true
 				}
@@ -163,28 +169,28 @@ func handleRetention(config backupConfig) error {
 		}
 
 		// Rule: Daily backups for the last N days
-		if config.Retention.Days > 0 {
+		if policy.Days > 0 {
 			dayKey := b.Time.Format("2006-01-02")
-			if len(savedDay) < config.Retention.Days && !savedDay[dayKey] {
+			if len(savedDay) < policy.Days && !savedDay[dayKey] {
 				backupsToKeep[b.Name] = true
 				savedDay[dayKey] = true
 			}
 		}
 
 		// Rule: Weekly backups for the last N weeks (keep the newest backup for each week)
-		if config.Retention.Weeks > 0 {
+		if policy.Weeks > 0 {
 			year, week := b.Time.ISOWeek()
 			weekKey := fmt.Sprintf("%d-%d", year, week)
-			if len(savedWeek) < config.Retention.Weeks && !savedWeek[weekKey] {
+			if len(savedWeek) < policy.Weeks && !savedWeek[weekKey] {
 				backupsToKeep[b.Name] = true
 				savedWeek[weekKey] = true
 			}
 		}
 
 		// Rule: Monthly backups for the last N months (keep the newest backup for each month)
-		if config.Retention.Months > 0 {
+		if policy.Months > 0 {
 			monthKey := b.Time.Format("2006-01")
-			if len(savedMonth) < config.Retention.Months && !savedMonth[monthKey] {
+			if len(savedMonth) < policy.Months && !savedMonth[monthKey] {
 				backupsToKeep[b.Name] = true
 				savedMonth[monthKey] = true
 			}
@@ -193,16 +199,16 @@ func handleRetention(config backupConfig) error {
 
 	// Build a descriptive log message for the retention plan
 	var planParts []string
-	if config.Retention.Hours > 0 {
+	if policy.Hours > 0 {
 		planParts = append(planParts, fmt.Sprintf("%d hourly (for today)", len(savedHour)))
 	}
-	if config.Retention.Days > 0 {
+	if policy.Days > 0 {
 		planParts = append(planParts, fmt.Sprintf("%d daily", len(savedDay)))
 	}
-	if config.Retention.Weeks > 0 {
+	if policy.Weeks > 0 {
 		planParts = append(planParts, fmt.Sprintf("%d weekly", len(savedWeek)))
 	}
-	if config.Retention.Months > 0 {
+	if policy.Months > 0 {
 		planParts = append(planParts, fmt.Sprintf("%d monthly", len(savedMonth)))
 	}
 	log.Printf("Retention plan: %s snapshots to be kept.", strings.Join(planParts, ", "))

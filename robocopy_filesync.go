@@ -8,6 +8,18 @@ import (
 	"os/exec"
 )
 
+// isRobocopySuccessHelper checks if a robocopy error is actually a success code.
+// Robocopy returns exit codes < 8 for successful operations that involved copying/deleting files.
+func isRobocopySuccessHelper(err error) bool {
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		// Exit codes 0-7 are considered success by robocopy.
+		if exitErr.ExitCode() < 8 {
+			return true
+		}
+	}
+	return false
+}
+
 // handleSyncRobocopy uses the Windows `robocopy` utility to perform a highly
 // efficient and robust directory mirror. It is much faster for incremental
 // backups than a manual walk. It returns a list of copied files.
@@ -49,20 +61,8 @@ func handleSyncRobocopy(src, dst string, mirror, dryRun, quiet bool) error {
 	err := cmd.Run()
 	// Robocopy returns non-zero exit codes for success cases (e.g., files were copied).
 	// We check if the error is a "successful" one and return nil if so.
-	if err != nil && !isRobocopySuccess(err) {
+	if err != nil && !isRobocopySuccessHelper(err) {
 		return err // It's a real error
 	}
 	return nil // It was a success code or no error
-}
-
-// isRobocopySuccess checks if a robocopy error is actually a success code.
-// Robocopy returns exit codes < 8 for successful operations that involved copying/deleting files.
-func isRobocopySuccess(err error) bool {
-	if exitErr, ok := err.(*exec.ExitError); ok {
-		// Exit codes 0-7 are considered success by robocopy.
-		if exitErr.ExitCode() < 8 {
-			return true
-		}
-	}
-	return false
 }
