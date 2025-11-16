@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"io/fs"
 	"log"
 	"os"
 	"os/exec"
@@ -81,7 +80,8 @@ func validateSyncPaths(src, dst string) error {
 
 // handleSyncNative incrementally copies files from src to dst, only if the source file
 // is newer than the destination file. It also logs the copied files.
-// This is the pure Go, cross-platform implementation.
+// It uses a breadth-first search (BFS) to traverse the source directory, ensuring
+// parent directories are processed before their contents.
 func handleSyncNative(src, dst string, mirror, dryRun, quiet bool) error {
 	log.Printf("Starting native sync from %s to %s...", src, dst)
 
@@ -89,78 +89,79 @@ func handleSyncNative(src, dst string, mirror, dryRun, quiet bool) error {
 	// This makes the deletion phase safer, as it doesn't re-stat the source.
 	sourcePaths := make(map[string]bool)
 
-	// --- Phase 1: Copy/update files from source to destination ---
-	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err // Stop if there's an error accessing a path
-		}
+	// --- Phase 1: Copy/update files from source to destination using BFS ---
+	// We use a queue for a breadth-first (level-order) traversal of the source directory.
+	queue := []string{src}
+	for len(queue) > 0 {
+		// Dequeue the current path
+		currentPath := queue[0]
+		queue = queue[1:]
 
-		relPath, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
+		// Get relative path for logging and destination path calculation
+		relPath, err := filepath.Rel(src, currentPath)
+		if err != nil { // This should ideally not fail as currentPath is a child of src
+			return fmt.Errorf("failed to get relative path for %s: %w", currentPath, err)
 		}
+		sourcePaths[relPath] = true // Record every valid path from the source
 
-		// Record every valid path from the source.
-		sourcePaths[relPath] = true
+		srcInfo, err := os.Lstat(currentPath) // Use Lstat to not follow symlinks
+		if err != nil {
+			return fmt.Errorf("failed to stat source path %s: %w", currentPath, err)
+		}
 
 		dstPath := filepath.Join(dst, relPath)
-		fileType := d.Type()
 
-		if fileType.IsDir() {
-			// HANDLE DIRECTORIES
-			info, err := d.Info()
-			if err != nil {
-				return err
-			}
-
+		switch mode := srcInfo.Mode(); {
+		case mode.IsDir():
+			// HANDLE DIRECTORY
 			if dryRun {
 				log.Printf("[DRY RUN] MKDIR: %s", relPath)
-				return nil
+			} else {
+				if err := os.MkdirAll(dstPath, srcInfo.Mode()); err != nil {
+					return fmt.Errorf("failed to create directory %s: %w", dstPath, err)
+				}
+				if !quiet {
+					log.Printf("MKDIR: %s", relPath)
+				}
 			}
-			if err := os.MkdirAll(dstPath, info.Mode()); err == nil && !quiet {
-				log.Printf("MKDIR: %s", relPath)
-			}
-			return err
 
-		} else if fileType.IsRegular() {
-			// HANDLE REGULAR FILES
-			srcInfo, err := d.Info()
+			// Enqueue children for the next level of traversal
+			entries, err := os.ReadDir(currentPath)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to read directory %s: %w", currentPath, err)
+			}
+			for _, entry := range entries {
+				queue = append(queue, filepath.Join(currentPath, entry.Name()))
 			}
 
+		case mode.IsRegular():
+			// HANDLE REGULAR FILE
 			// Check if the destination file exists and if it's older.
 			dstInfo, err := os.Stat(dstPath)
 			if err == nil {
 				// Destination exists, compare modification times and size.
 				if !srcInfo.ModTime().After(dstInfo.ModTime()) && srcInfo.Size() == dstInfo.Size() {
-					return nil // Skip if source is not newer.
+					continue // Skip if source is not newer.
 				}
 			}
 
 			// If we reach here, we need to copy the file.
 			if dryRun {
 				log.Printf("[DRY RUN] COPY: %s", relPath)
-				return nil
+				continue
 			}
 
-			if err := copyFile(path, dstPath); err != nil {
-				return err
+			if err := copyFile(currentPath, dstPath); err != nil {
+				return fmt.Errorf("failed to copy file to %s: %w", dstPath, err)
 			}
 			if !quiet {
 				log.Printf("COPY: %s", relPath)
 			}
-			return nil
 
-		} else {
-			// SKIP ALL OTHER TYPES (including Symbolic Links)
-			// log.Printf("Skipping non-regular file or directory: %s (Type: %s)", path, fileType.String())
-			return nil
+		default:
+			// Skip other file types like symlinks, etc.
+			// log.Printf("Skipping non-regular file or directory: %s", relPath)
 		}
-	})
-
-	if err != nil {
-		return fmt.Errorf("error during file copy/update phase: %w", err)
 	}
 
 	// --- Phase 2: Delete files/dirs from destination that are not in source (if mirroring) ---
@@ -169,30 +170,49 @@ func handleSyncNative(src, dst string, mirror, dryRun, quiet bool) error {
 	}
 
 	log.Println("Starting deletion phase for mirror sync...")
-	return filepath.WalkDir(dst, func(path string, d fs.DirEntry, err error) error {
+
+	// We use a separate queue for a BFS traversal of the destination for deletion.
+	// This allows us to prune entire directories efficiently.
+	deleteQueue := []string{dst}
+	for len(deleteQueue) > 0 {
+		currentDstPath := deleteQueue[0]
+		deleteQueue = deleteQueue[1:]
+
+		entries, err := os.ReadDir(currentDstPath)
 		if err != nil {
-			return err
+			// If the directory was already deleted (as part of a parent), just skip.
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("failed to read destination directory for deletion check: %w", err)
 		}
 
-		relPath, err := filepath.Rel(dst, path)
-		if err != nil {
-			return err
-		}
-
-		if _, exists := sourcePaths[relPath]; !exists {
-			if dryRun {
-				log.Printf("[DRY RUN] DELETE (not in source): %s", relPath)
-				return nil
+		for _, entry := range entries {
+			fullPath := filepath.Join(currentDstPath, entry.Name())
+			relPath, err := filepath.Rel(dst, fullPath)
+			if err != nil {
+				return fmt.Errorf("failed to get relative path for deletion check on %s: %w", fullPath, err)
 			}
 
-			if !quiet {
-				log.Printf("DELETE (not in source): %s", relPath)
+			if _, existsInSource := sourcePaths[relPath]; !existsInSource {
+				// This path does not exist in the source, so delete it.
+				if dryRun {
+					log.Printf("[DRY RUN] DELETE (not in source): %s", relPath)
+				} else {
+					if !quiet {
+						log.Printf("DELETE (not in source): %s", relPath)
+					}
+					if err := os.RemoveAll(fullPath); err != nil {
+						return fmt.Errorf("failed to delete %s: %w", fullPath, err)
+					}
+				}
+			} else if entry.IsDir() {
+				// If it exists in the source and is a directory, check its children.
+				deleteQueue = append(deleteQueue, fullPath)
 			}
-
-			return os.RemoveAll(path) // Use RemoveAll to handle both files and directories
 		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // handleSyncRobocopy uses the Windows `robocopy` utility to perform a highly
