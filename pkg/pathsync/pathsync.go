@@ -11,12 +11,18 @@ import (
 
 // PathSyncer orchestrates the file synchronization process.
 type PathSyncer struct {
-	config config.Config
+	engine config.BackupEngineConfig
+	dryRun bool
+	quiet  bool
 }
 
 // NewPathSyncer creates a new PathSyncer with the given configuration.
 func NewPathSyncer(cfg config.Config) *PathSyncer {
-	return &PathSyncer{config: cfg}
+	return &PathSyncer{
+		engine: cfg.Engine,
+		dryRun: cfg.DryRun,
+		quiet:  cfg.Quiet,
+	}
 }
 
 // Sync is the main entry point for synchronization. It dispatches to the configured sync engine.
@@ -25,14 +31,14 @@ func (s *PathSyncer) Sync(src, dst string, mirror bool) error {
 		return err
 	}
 
-	switch s.config.Engine.Type {
+	switch s.engine.Type {
 	case config.RobocopyEngine:
 		return s.handleRobocopy(src, dst, mirror)
 	case config.NativeEngine:
 		log.Println("Using native Go implementation for synchronization...")
 		return s.handleNative(src, dst, mirror)
 	default:
-		return fmt.Errorf("unknown sync engine configured: %v", s.config.Engine.Type)
+		return fmt.Errorf("unknown sync engine configured: %v", s.engine.Type)
 	}
 }
 
@@ -49,7 +55,7 @@ func (s *PathSyncer) validateSyncPaths(src, dst string) error {
 		return fmt.Errorf("source path %s is not a directory", src)
 	}
 
-	if s.config.DryRun {
+	if s.dryRun {
 		return nil // Skip filesystem modifications in dry run mode.
 	}
 

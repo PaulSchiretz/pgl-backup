@@ -28,8 +28,11 @@ type backupRunMeta struct {
 
 // Engine orchestrates the entire backup process.
 type Engine struct {
-	config  config.Config
-	version string
+	config        config.Config
+	version       string
+	source        string
+	currentTarget string
+	mirror        bool
 }
 
 // New creates a new backup engine with the given configuration and version.
@@ -37,6 +40,8 @@ func New(cfg config.Config, version string) *Engine {
 	return &Engine{
 		config:  cfg,
 		version: version,
+		source:  cfg.Paths.Source,
+		mirror:  cfg.Mode == config.IncrementalMode,
 	}
 }
 
@@ -47,7 +52,7 @@ func (e *Engine) RunJob() error {
 	} else {
 		log.Println("--- Starting Backup ---")
 	}
-	log.Printf("Source: %s", e.config.Paths.Source)
+	log.Printf("Source: %s", e.source)
 	log.Printf("Mode: %s", e.config.Mode)
 
 	// --- 1. Pre-backup tasks (rollover) and destination calculation ---
@@ -55,7 +60,7 @@ func (e *Engine) RunJob() error {
 		return err
 	}
 
-	log.Printf("Destination: %s", e.config.Paths.CurrentTarget)
+	log.Printf("Destination: %s", e.currentTarget)
 	log.Println("------------------------------")
 
 	// --- 2. Perform the backup ---
@@ -79,55 +84,52 @@ func (e *Engine) prepareDestination() error {
 	if e.config.Mode == config.SnapshotMode {
 		// SNAPSHOT MODE
 		timestamp := time.Now().Format(e.config.Naming.TimeFormat)
-		backupDirName := fmt.Sprintf("%s%s", e.config.Naming.Prefix, timestamp)
-		e.config.Paths.CurrentTarget = filepath.Join(e.config.Paths.TargetBase, backupDirName)
+		backupDirName := e.config.Naming.Prefix + timestamp
+		e.currentTarget = filepath.Join(e.config.Paths.TargetBase, backupDirName)
 	} else {
 		// INCREMENTAL MODE (DEFAULT)
 		if err := e.performRollover(); err != nil {
 			return fmt.Errorf("error during backup rollover: %w", err)
 		}
 		currentIncrementalDirName := e.config.Naming.Prefix + e.config.Naming.IncrementalModeSuffix
-		e.config.Paths.CurrentTarget = filepath.Join(e.config.Paths.TargetBase, currentIncrementalDirName)
+		e.currentTarget = filepath.Join(e.config.Paths.TargetBase, currentIncrementalDirName)
 	}
 	return nil
 }
 
 // performSync is the main entry point for synchronization.
 func (e *Engine) performSync() error {
-	src := e.config.Paths.Source
-	dst := e.config.Paths.CurrentTarget
-	mirror := e.config.Mode == config.IncrementalMode // Mirror mode deletes extra files in destination.
-
 	pathSyncer := pathsync.NewPathSyncer(e.config)
 	// Sync and check for errors after attempting the sync.
-	if syncErr := pathSyncer.Sync(src, dst, mirror); syncErr != nil {
+	if syncErr := pathSyncer.Sync(e.source, e.currentTarget, e.mirror); syncErr != nil {
 		return fmt.Errorf("sync failed: %w", syncErr)
 	}
 
-	// If the sync was successful, update the metafile timestamp in incremental mode.
-	if e.config.Mode == config.IncrementalMode {
-		dst := e.config.Paths.CurrentTarget
-		if e.config.DryRun {
-			log.Printf("[DRY RUN] Would update metafile in %s", dst)
-			return nil
-		}
-		metaFilePath := filepath.Join(dst, ".ppBackup.meta")
-		metaData := backupRunMeta{
-			Version:    e.version,
-			BackupTime: time.Now(),
-		}
+	// If the sync was successful, write the metafile for retention purposes.
+	return e.writeMetafile()
+}
 
-		jsonData, err := json.MarshalIndent(metaData, "", "  ")
-		if err != nil {
-			log.Printf("Warning: could not marshal meta data: %v", err)
-			return nil // Don't let a metafile error fail the backup.
-		}
-
-		if err := os.WriteFile(metaFilePath, jsonData, 0664); err != nil {
-			log.Printf("Warning: could not write meta file: %v", err)
-		}
+// writeMetafile writes the .ppBackup.meta file into the destination directory.
+func (e *Engine) writeMetafile() error {
+	if e.config.DryRun {
+		log.Printf("[DRY RUN] Would write metafile in %s", e.currentTarget)
+		return nil
+	}
+	metaFilePath := filepath.Join(e.currentTarget, ".ppBackup.meta")
+	metaData := backupRunMeta{
+		Version:    e.version,
+		BackupTime: time.Now(),
 	}
 
+	jsonData, err := json.MarshalIndent(metaData, "", "  ")
+	if err != nil {
+		log.Printf("Warning: could not marshal meta data: %v", err)
+		return nil // Don't let a metafile error fail the backup.
+	}
+
+	if err := os.WriteFile(metaFilePath, jsonData, 0664); err != nil {
+		log.Printf("Warning: could not write meta file: %v", err)
+	}
 	return nil
 }
 

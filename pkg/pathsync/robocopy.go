@@ -41,12 +41,12 @@ func (s *PathSyncer) handleRobocopy(src, dst string, mirror bool) error {
 		args = append(args, "/E")
 	}
 
-	if s.config.Quiet {
+	if s.quiet {
 		args = append(args, "/NFL") // No File List - don't log individual files.
 		args = append(args, "/NDL") // No Directory List - don't log individual directories.
 	}
 
-	if s.config.DryRun {
+	if s.dryRun {
 		args = append(args, "/L") // /L :: List only - don't copy, delete, or timestamp files.
 	}
 
