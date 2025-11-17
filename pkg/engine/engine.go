@@ -114,13 +114,13 @@ func (e *Engine) performSync() error {
 	return e.writeMetafile()
 }
 
-// writeMetafile writes the .ppBackup.meta file into the destination directory.
+// writeMetafile writes the .pgl-backup.meta file into the destination directory.
 func (e *Engine) writeMetafile() error {
 	if e.config.DryRun {
 		log.Printf("[DRY RUN] Would write metafile in %s", e.currentTarget)
 		return nil
 	}
-	metaFilePath := filepath.Join(e.currentTarget, ".ppBackup.meta")
+	metaFilePath := filepath.Join(e.currentTarget, ".pgl-backup.meta")
 	metaData := runMetadata{
 		Version:    e.version,
 		BackupTime: e.currentTimestamp,
@@ -142,7 +142,7 @@ func (e *Engine) writeMetafile() error {
 func (e *Engine) performRollover() error {
 	currentDirName := e.config.Naming.Prefix + e.config.Naming.IncrementalModeSuffix
 	currentBackupPath := filepath.Join(e.config.Paths.TargetBase, currentDirName)
-	metaFilePath := filepath.Join(currentBackupPath, ".ppBackup.meta")
+	metaFilePath := filepath.Join(currentBackupPath, ".pgl-backup.meta")
 
 	metaFile, err := os.Open(metaFilePath)
 	if os.IsNotExist(err) {

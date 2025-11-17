@@ -38,7 +38,7 @@ func copyFileHelper(src, dst string) error {
 	// This ensures that we don't overwrite the destination until the copy is complete
 	// and that the rename operation will be on the same filesystem (making it atomic).
 	dstDir := filepath.Dir(dst)
-	out, err := os.CreateTemp(dstDir, "ppbackup-*.tmp")
+	out, err := os.CreateTemp(dstDir, "pgl-backup-*.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create temporary file in %s: %w", dstDir, err)
 	}

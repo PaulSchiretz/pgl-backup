@@ -65,7 +65,7 @@ func (s *PathSyncer) validateSyncPaths(src, dst string) error {
 	}
 
 	// 3. Optionally, perform a more thorough write check.
-	tempFile := filepath.Join(dst, ".ppBackup_write_test.tmp")
+	tempFile := filepath.Join(dst, ".pgl-backup-writetest.tmp")
 	if f, err := os.Create(tempFile); err != nil {
 		return fmt.Errorf("destination directory %s is not writable: %w", dst, err)
 	} else {
