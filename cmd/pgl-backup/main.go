@@ -78,9 +78,10 @@ func finalizeConfig(baseConfig config.Config, flags flagValues) (config.Config, 
 func run() error {
 	loadedConfig, err := config.Load()
 	if err != nil {
-		// Only show a warning if the file exists but is invalid. Not existing is fine.
+		// If the config file exists but is invalid, we should fail fast.
+		// Running with defaults when a config is present but broken is unexpected.
 		if !os.IsNotExist(err) {
-			log.Printf("Warning: could not load pgl-backup.conf: %v. Using defaults.", err)
+			return fmt.Errorf("failed to load configuration file 'pgl-backup.conf': %w. Please fix the file or remove it to use defaults", err)
 		}
 	}
 
