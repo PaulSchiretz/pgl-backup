@@ -117,6 +117,18 @@ func run() error {
 	if err != nil {
 		return err
 	}
+
+	// If not in quiet mode, log the final configuration for user confirmation.
+	if !runConfig.Quiet {
+		log.Println("Starting backup with the following configuration:")
+		log.Printf("  - Mode: %s", runConfig.Mode)
+		log.Printf("  - Source: %s", runConfig.Paths.Source)
+		log.Printf("  - Target: %s", runConfig.Paths.TargetBase)
+		log.Printf("  - Sync Engine: %s", runConfig.Engine.Type)
+		log.Printf("  - Dry Run: %t", runConfig.DryRun)
+		log.Println("--------------------------------------------------")
+	}
+
 	backupEngine := engine.New(runConfig, version)
 	return backupEngine.Execute()
 }
