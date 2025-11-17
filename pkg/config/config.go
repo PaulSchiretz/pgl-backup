@@ -10,7 +10,7 @@ import (
 )
 
 // configFileName is the name of the configuration file.
-const configFileName = "ppBackup.conf"
+const configFileName = "pgl-backup.conf"
 
 type BackupNamingConfig struct {
 	Prefix                string `json:"prefix"`
@@ -190,7 +190,7 @@ func NewDefault() Config {
 	}
 }
 
-// Load attempts to load a configuration from "ppBackup.conf".
+// Load attempts to load a configuration from "pgl-backup.conf".
 // If the file doesn't exist, it returns the provided default config without an error.
 // If the file exists but fails to parse, it returns an error and a zero-value config.
 func Load() (Config, error) {
@@ -219,7 +219,7 @@ func Load() (Config, error) {
 	return config, nil
 }
 
-// Generate creates a default ppBackup.conf file in the executable's
+// Generate creates a default pgl-backup.conf file in the executable's
 // directory. It will not overwrite an existing file.
 func Generate() error {
 	configPath, err := getConfigPath()

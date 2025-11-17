@@ -80,7 +80,7 @@ func run() error {
 	if err != nil {
 		// Only show a warning if the file exists but is invalid. Not existing is fine.
 		if !os.IsNotExist(err) {
-			log.Printf("Warning: could not load ppBackup.conf: %v. Using defaults.", err)
+			log.Printf("Warning: could not load pgl-backup.conf: %v. Using defaults.", err)
 		}
 	}
 
@@ -89,14 +89,14 @@ func run() error {
 	modeFlag := flag.String("mode", loadedConfig.Mode.String(), "Set the backup mode: 'incremental' or 'snapshot'.")
 	quietFlag := flag.Bool("quiet", loadedConfig.Quiet, "Suppress individual file operation logs.")
 	dryRunFlag := flag.Bool("dryrun", loadedConfig.DryRun, "Show what would be done without making any changes.")
-	initFlag := flag.Bool("init", false, "Generate a default ppBackup.conf file and exit.")
+	initFlag := flag.Bool("init", false, "Generate a default pgl-backup.conf file and exit.")
 	versionFlag := flag.Bool("version", false, "Print the application version and exit.")
 	syncEngineFlag := flag.String("syncEngine", loadedConfig.Engine.Type.String(), "Sync engine to use: 'native' or 'robocopy' (Windows only).")
 	nativeEngineWorkersFlag := flag.Int("nativeEngineWorkers", loadedConfig.Engine.NativeEngineWorkers, "Number of worker goroutines for native sync.")
 	flag.Parse()
 
 	if *versionFlag {
-		fmt.Printf("ppBackup version %s\n", version)
+		fmt.Printf("pgl-backup version %s\n", version)
 		return nil
 	}
 	if *initFlag {
