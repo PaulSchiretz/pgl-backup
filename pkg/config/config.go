@@ -189,9 +189,7 @@ func NewDefault() Config {
 func Load() (Config, error) {
 	exePath, err := os.Executable()
 	if err != nil {
-		// Cannot find exe path, proceed with defaults but log a warning.
-		log.Printf("Warning: could not determine executable path: %v. Using default config.", err)
-		return NewDefault(), nil
+		return Config{}, fmt.Errorf("could not determine executable path: %w", err)
 	}
 
 	configPath := filepath.Join(filepath.Dir(exePath), "ppBackup.conf")
