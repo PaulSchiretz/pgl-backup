@@ -48,6 +48,18 @@ func (bm BackupMode) String() string {
 	}
 }
 
+// ModeFromString parses a string and returns the corresponding BackupMode.
+func ModeFromString(s string) (BackupMode, error) {
+	switch s {
+	case "incremental":
+		return IncrementalMode, nil
+	case "snapshot":
+		return SnapshotMode, nil
+	default:
+		return 0, fmt.Errorf("invalid BackupMode: %q. Must be 'incremental' or 'snapshot'", s)
+	}
+}
+
 // MarshalJSON implements the json.Marshaler interface for BackupMode.
 func (bm BackupMode) MarshalJSON() ([]byte, error) {
 	return json.Marshal(bm.String())
@@ -60,15 +72,11 @@ func (bm *BackupMode) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("BackupMode should be a string, got %s", data)
 	}
 
-	switch s {
-	case "incremental":
-		*bm = IncrementalMode
-	case "snapshot":
-		*bm = SnapshotMode
-	default:
-		return fmt.Errorf("invalid BackupMode: %s", s)
+	mode, err := ModeFromString(s)
+	if err != nil {
+		return err
 	}
-
+	*bm = mode
 	return nil
 }
 
@@ -94,6 +102,18 @@ func (se SyncEngine) String() string {
 	}
 }
 
+// EngineTypeFromString parses a string and returns the corresponding SyncEngine.
+func EngineTypeFromString(s string) (SyncEngine, error) {
+	switch s {
+	case "native":
+		return NativeEngine, nil
+	case "robocopy":
+		return RobocopyEngine, nil
+	default:
+		return 0, fmt.Errorf("invalid SyncEngine: %q. Must be 'native' or 'robocopy'", s)
+	}
+}
+
 // MarshalJSON implements the json.Marshaler interface for SyncEngine.
 func (se SyncEngine) MarshalJSON() ([]byte, error) {
 	return json.Marshal(se.String())
@@ -106,15 +126,11 @@ func (se *SyncEngine) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("SyncEngine should be a string, got %s", data)
 	}
 
-	switch s {
-	case "native":
-		*se = NativeEngine
-	case "robocopy":
-		*se = RobocopyEngine
-	default:
-		return fmt.Errorf("invalid SyncEngine: %s", s)
+	engine, err := EngineTypeFromString(s)
+	if err != nil {
+		return err
 	}
-
+	*se = engine
 	return nil
 }
 

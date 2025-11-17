@@ -26,34 +26,39 @@ func init() {
 	}
 }
 
-// finalizeConfig takes the base configuration (from file or default) and the parsed
-// command-line flags, and constructs the final configuration for the backup job.
-func finalizeConfig(baseConfig config.Config, src, target, mode, syncEngine *string, quiet, dryrun *bool, nativeEngineWorkers *int) (config.Config, error) {
+// flagValues holds the values parsed from the command-line flags.
+type flagValues struct {
+	source              string
+	target              string
+	mode                string
+	syncEngine          string
+	quiet               bool
+	dryRun              bool
+	nativeEngineWorkers int
+}
+
+// finalizeConfig merges the base configuration with the command-line flag values
+// to construct the final configuration for the backup job.
+func finalizeConfig(baseConfig config.Config, flags flagValues) (config.Config, error) {
 	runConfig := baseConfig
-	runConfig.Paths.Source = *src
-	runConfig.Paths.TargetBase = *target
+	runConfig.Paths.Source = flags.source
+	runConfig.Paths.TargetBase = flags.target
 
-	switch *mode {
-	case "snapshot":
-		runConfig.Mode = config.SnapshotMode
-	case "incremental":
-		runConfig.Mode = config.IncrementalMode
-	default:
-		return config.Config{}, fmt.Errorf("invalid mode: %q. Must be 'incremental' or 'snapshot'", *mode)
+	mode, err := config.ModeFromString(flags.mode)
+	if err != nil {
+		return config.Config{}, err
 	}
+	runConfig.Mode = mode
 
-	switch *syncEngine {
-	case "native":
-		runConfig.Engine.Type = config.NativeEngine
-	case "robocopy":
-		runConfig.Engine.Type = config.RobocopyEngine
-	default:
-		return config.Config{}, fmt.Errorf("invalid syncEngine: %q. Must be 'native' or 'robocopy'", *syncEngine)
+	engineType, err := config.EngineTypeFromString(flags.syncEngine)
+	if err != nil {
+		return config.Config{}, err
 	}
+	runConfig.Engine.Type = engineType
 
-	runConfig.DryRun = *dryrun
-	runConfig.Quiet = *quiet
-	runConfig.Engine.NativeEngineWorkers = *nativeEngineWorkers
+	runConfig.DryRun = flags.dryRun
+	runConfig.Quiet = flags.quiet
+	runConfig.Engine.NativeEngineWorkers = flags.nativeEngineWorkers
 
 	if runConfig.Engine.NativeEngineWorkers < 1 {
 		return config.Config{}, fmt.Errorf("nativeEngineWorkers must be at least 1")
@@ -73,8 +78,10 @@ func finalizeConfig(baseConfig config.Config, src, target, mode, syncEngine *str
 func run() error {
 	loadedConfig, err := config.Load()
 	if err != nil {
-		log.Printf("Warning: could not parse ppBackup.conf: %v. Using defaults.", err)
-		loadedConfig = config.NewDefault()
+		// Only show a warning if the file exists but is invalid. Not existing is fine.
+		if !os.IsNotExist(err) {
+			log.Printf("Warning: could not load ppBackup.conf: %v. Using defaults.", err)
+		}
 	}
 
 	srcFlag := flag.String("source", loadedConfig.Paths.Source, "Source directory to copy from")
@@ -96,7 +103,16 @@ func run() error {
 		return config.Generate()
 	}
 
-	runConfig, err := finalizeConfig(loadedConfig, srcFlag, targetFlag, modeFlag, syncEngineFlag, quietFlag, dryRunFlag, nativeEngineWorkersFlag)
+	flags := flagValues{
+		source:              *srcFlag,
+		target:              *targetFlag,
+		mode:                *modeFlag,
+		syncEngine:          *syncEngineFlag,
+		quiet:               *quietFlag,
+		dryRun:              *dryRunFlag,
+		nativeEngineWorkers: *nativeEngineWorkersFlag,
+	}
+	runConfig, err := finalizeConfig(loadedConfig, flags)
 	if err != nil {
 		return err
 	}
