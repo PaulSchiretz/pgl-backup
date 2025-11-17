@@ -9,6 +9,9 @@ import (
 	"runtime"
 )
 
+// configFileName is the name of the configuration file.
+const configFileName = "ppBackup.conf"
+
 type BackupNamingConfig struct {
 	Prefix                string `json:"prefix"`
 	TimeFormat            string `json:"timeFormat"`
@@ -187,12 +190,10 @@ func NewDefault() Config {
 // If the file doesn't exist, it returns the provided default config without an error.
 // If the file exists but fails to parse, it returns an error and a zero-value config.
 func Load() (Config, error) {
-	exePath, err := os.Executable()
+	configPath, err := getConfigPath()
 	if err != nil {
-		return Config{}, fmt.Errorf("could not determine executable path: %w", err)
+		return Config{}, err // Can't load if we can't determine the path.
 	}
-
-	configPath := filepath.Join(filepath.Dir(exePath), "ppBackup.conf")
 
 	file, err := os.Open(configPath)
 	if err != nil {
@@ -217,13 +218,10 @@ func Load() (Config, error) {
 // Generate creates a default ppBackup.conf file in the executable's
 // directory. It will not overwrite an existing file.
 func Generate() error {
-	exePath, err := os.Executable()
+	configPath, err := getConfigPath()
 	if err != nil {
-		return fmt.Errorf("could not determine executable path: %w", err)
+		return err // Error is already descriptive
 	}
-
-	configPath := filepath.Join(filepath.Dir(exePath), "ppBackup.conf")
-
 	// Check if the file already exists to prevent overwriting.
 	if _, err := os.Stat(configPath); err == nil {
 		return fmt.Errorf("config file already exists at %s, will not overwrite", configPath)
@@ -244,4 +242,14 @@ func Generate() error {
 
 	log.Printf("Successfully created default config file at: %s", configPath)
 	return nil
+}
+
+// getConfigPath determines the absolute path to the configuration file.
+func getConfigPath() (string, error) {
+	exePath, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("could not determine executable path: %w", err)
+	}
+	configDir := filepath.Dir(exePath)
+	return filepath.Join(configDir, configFileName), nil
 }
