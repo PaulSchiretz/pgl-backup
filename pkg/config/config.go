@@ -271,7 +271,7 @@ func (c *Config) LogSummary() {
 	if c.Quiet {
 		return
 	}
-	plog.Info("Starting backup with the following configuration:",
+	plog.Info("Backup run configuration loaded",
 		"mode", c.Mode,
 		"source", c.Paths.Source,
 		"target", c.Paths.TargetBase,
