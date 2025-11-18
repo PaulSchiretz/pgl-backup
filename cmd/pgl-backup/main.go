@@ -54,53 +54,51 @@ func buildRunConfig(baseConfig config.Config) (config.Config, action, error) {
 
 	flag.Parse()
 
-	// Start with the base config and overwrite with parsed flag values.
-	runConfig := baseConfig
-	runConfig.Paths.Source = *srcFlag
-	runConfig.Paths.TargetBase = *targetFlag
-	runConfig.DryRun = *dryRunFlag
-	runConfig.Quiet = *quietFlag
-	runConfig.Engine.NativeEngineWorkers = *nativeEngineWorkersFlag
+	// Overwrite the base config with any values provided by flags.
+	baseConfig.Paths.Source = *srcFlag
+	baseConfig.Paths.TargetBase = *targetFlag
+	baseConfig.DryRun = *dryRunFlag
+	baseConfig.Quiet = *quietFlag
+	baseConfig.Engine.NativeEngineWorkers = *nativeEngineWorkersFlag
 
 	// Parse string flags into their corresponding enum types.
 	mode, err := config.BackupModeFromString(*modeFlag)
 	if err != nil {
 		return config.Config{}, actionRunBackup, err
 	}
-	runConfig.Mode = mode
+	baseConfig.Mode = mode
 
 	engineType, err := config.SyncEngineFromString(*syncEngineFlag)
 	if err != nil {
 		return config.Config{}, actionRunBackup, err
 	}
-	runConfig.Engine.Type = engineType
+	baseConfig.Engine.Type = engineType
 
 	// Final sanity check: ensure robocopy is disabled if not on Windows.
-	if runtime.GOOS != "windows" && runConfig.Engine.Type == config.RobocopyEngine {
+	if runtime.GOOS != "windows" && baseConfig.Engine.Type == config.RobocopyEngine {
 		log.Println("Robocopy is not available on this OS. Forcing 'native' sync engine.")
-		runConfig.Engine.Type = config.NativeEngine
+		baseConfig.Engine.Type = config.NativeEngine
 	}
 
 	// Determine which action to take based on flags.
 	if *versionFlag {
-		return runConfig, actionShowVersion, nil
+		return baseConfig, actionShowVersion, nil
 	}
 	if *initFlag {
-		return runConfig, actionInitConfig, nil
+		return baseConfig, actionInitConfig, nil
 	}
-	return runConfig, actionRunBackup, nil
+	return baseConfig, actionRunBackup, nil
 }
 
 // run encapsulates the main application logic and returns an error if something
 // goes wrong, allowing the main function to handle exit codes.
 func run(ctx context.Context) error {
 	loadedConfig, err := config.Load()
-	if err != nil {
-		// If the config file exists but is invalid, we should fail fast.
-		// Running with defaults when a config is present but broken is unexpected.
-		if !os.IsNotExist(err) {
-			return fmt.Errorf("failed to load configuration file 'pgl-backup.conf': %w. Please fix the file or remove it to use defaults", err)
-		}
+	// If a config file exists but is invalid, we should fail fast.
+	// Running with defaults when a config is present but broken is unexpected.
+	// We ignore os.IsNotExist, as that simply means we'll use the defaults.
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to load configuration file 'pgl-backup.conf': %w. Please fix the file or remove it to use defaults", err)
 	}
 
 	runConfig, actionToRun, err := buildRunConfig(loadedConfig)
