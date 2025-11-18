@@ -24,6 +24,8 @@ type backupInfo struct {
 type runMetadata struct {
 	Version    string    `json:"version"`
 	BackupTime time.Time `json:"backupTime"`
+	Mode       string    `json:"mode"`
+	Source     string    `json:"source"`
 }
 
 // Engine orchestrates the entire backup process.
@@ -111,30 +113,7 @@ func (e *Engine) performSync() error {
 	}
 
 	// If the sync was successful, write the metafile for retention purposes.
-	return e.writeMetafile()
-}
-
-// writeMetafile writes the .pgl-backup.meta file into the destination directory.
-func (e *Engine) writeMetafile() error {
-	if e.config.DryRun {
-		log.Printf("[DRY RUN] Would write metafile in %s", e.currentTarget)
-		return nil
-	}
-	metaFilePath := filepath.Join(e.currentTarget, ".pgl-backup.meta")
-	metaData := runMetadata{
-		Version:    e.version,
-		BackupTime: e.currentTimestamp,
-	}
-
-	jsonData, err := json.MarshalIndent(metaData, "", "  ")
-	if err != nil {
-		return fmt.Errorf("could not marshal meta data: %w", err)
-	}
-
-	if err := os.WriteFile(metaFilePath, jsonData, 0664); err != nil {
-		return fmt.Errorf("could not write meta file %s: %w", metaFilePath, err)
-	}
-	return nil
+	return writeBackupMetafile(e.currentTarget, e.version, e.config.Mode.String(), e.source, e.currentTimestamp, e.config.DryRun)
 }
 
 // performRollover checks if the incremental backup directory is from a previous day.
@@ -142,21 +121,10 @@ func (e *Engine) writeMetafile() error {
 func (e *Engine) performRollover() error {
 	currentDirName := e.config.Naming.Prefix + e.config.Naming.IncrementalModeSuffix
 	currentBackupPath := filepath.Join(e.config.Paths.TargetBase, currentDirName)
-	metaFilePath := filepath.Join(currentBackupPath, ".pgl-backup.meta")
 
-	metaFile, err := os.Open(metaFilePath)
+	metaData, err := readBackupMetafile(currentBackupPath)
 	if os.IsNotExist(err) {
 		return nil // No previous backup, nothing to roll over.
-	}
-	if err != nil {
-		return fmt.Errorf("could not open metafile in %s: %w", currentBackupPath, err)
-	}
-	defer metaFile.Close()
-
-	var metaData runMetadata
-	decoder := json.NewDecoder(metaFile)
-	if err := decoder.Decode(&metaData); err != nil {
-		return fmt.Errorf("could not parse metafile %s: %w. It may be corrupt", metaFilePath, err)
 	}
 
 	// Use the precise time from the file content, not the file's modification time.
@@ -298,11 +266,59 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 	return backupsToKeep
 }
 
+// writeBackupMetafile creates and writes the .pgl-backup.meta file into a given directory.
+func writeBackupMetafile(dirPath, version, mode, source string, backupTime time.Time, dryRun bool) error {
+	if dryRun {
+		log.Printf("[DRY RUN] Would write metafile in %s", dirPath)
+		return nil
+	}
+
+	metaFilePath := filepath.Join(dirPath, ".pgl-backup.meta")
+	metaData := runMetadata{
+		Version:    version,
+		BackupTime: backupTime,
+		Mode:       mode,
+		Source:     source,
+	}
+
+	jsonData, err := json.MarshalIndent(metaData, "", "  ")
+	if err != nil {
+		return fmt.Errorf("could not marshal meta data: %w", err)
+	}
+
+	if err := os.WriteFile(metaFilePath, jsonData, 0664); err != nil {
+		return fmt.Errorf("could not write meta file %s: %w", metaFilePath, err)
+	}
+
+	return nil
+}
+
+// readBackupMetafile opens and parses the .pgl-backup.meta file within a given directory.
+// It returns the parsed metadata or an error if the file cannot be read.
+func readBackupMetafile(dirPath string) (*runMetadata, error) {
+	metaFilePath := filepath.Join(dirPath, ".pgl-backup.meta")
+	metaFile, err := os.Open(metaFilePath)
+	if err != nil {
+		// Note: os.IsNotExist errors are handled by the caller.
+		return nil, fmt.Errorf("could not open metafile in %s: %w", dirPath, err)
+	}
+	defer metaFile.Close()
+
+	var metaData runMetadata
+	decoder := json.NewDecoder(metaFile)
+	if err := decoder.Decode(&metaData); err != nil {
+		return nil, fmt.Errorf("could not parse metafile %s: %w. It may be corrupt", metaFilePath, err)
+	}
+
+	return &metaData, nil
+}
+
 // fetchSortedBackups scans a directory for valid backup folders, parses their
-// timestamps, and returns them sorted from newest to oldest.
+// metadata to get an accurate timestamp, and returns them sorted from newest to oldest.
+// It relies exclusively on the `.pgl-backup.meta` file; directories without a
+// readable metafile are ignored for retention purposes.
 func (e *Engine) fetchSortedBackups(baseDir, excludeDir string) ([]backupInfo, error) {
 	prefix := e.config.Naming.Prefix
-	timeFormat := e.config.Naming.TimeFormat
 
 	entries, err := os.ReadDir(baseDir)
 	if err != nil {
@@ -316,14 +332,15 @@ func (e *Engine) fetchSortedBackups(baseDir, excludeDir string) ([]backupInfo, e
 			continue
 		}
 
-		timestampStr := strings.TrimPrefix(dirName, prefix)
-		backupTime, err := time.Parse(timeFormat, timestampStr)
+		backupPath := filepath.Join(baseDir, dirName)
+		metaData, err := readBackupMetafile(backupPath)
 		if err != nil {
-			log.Printf("Skipping directory with invalid format: %s", dirName)
+			log.Printf("Warning: skipping directory %s for retention: %v", dirName, err)
 			continue
 		}
 
-		backups = append(backups, backupInfo{Time: backupTime, Name: dirName})
+		// The metafile is the sole source of truth for the backup time.
+		backups = append(backups, backupInfo{Time: metaData.BackupTime, Name: dirName})
 	}
 
 	// Sort all backups from newest to oldest for consistent processing.
