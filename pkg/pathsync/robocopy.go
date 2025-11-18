@@ -4,9 +4,10 @@ package pathsync
 
 import (
 	"context"
-	"log"
 	"os"
 	"os/exec"
+
+	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
 
 // isRobocopySuccessHelper checks if a robocopy error is actually a success code.
@@ -51,7 +52,7 @@ func (s *PathSyncer) handleRobocopy(ctx context.Context, src, dst string, mirror
 		args = append(args, "/L") // /L :: List only - don't copy, delete, or timestamp files.
 	}
 
-	log.Println("Starting sync with robocopy...")
+	plog.Info("Starting sync with robocopy")
 	cmd := exec.CommandContext(ctx, "robocopy", args...)
 
 	// Pipe robocopy's stdout and stderr directly to our program's stdout/stderr

@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"sync"
+
+	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
 
 // nativeSyncRun encapsulates the state and logic for a single native sync operation.
@@ -67,13 +68,13 @@ func copyFileHelper(src, dst string) error {
 // destination directory and adds its children to the task queue.
 func (r *nativeSyncRun) handleDirectory(path, dstPath, relPath string, srcInfo os.FileInfo) error {
 	if r.dryRun {
-		log.Printf("[DRY RUN] MKDIR: %s", relPath)
+		plog.Info("[DRY RUN] MKDIR", "path", relPath)
 	} else {
 		if err := os.MkdirAll(dstPath, srcInfo.Mode()); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dstPath, err)
 		}
 		if !r.quiet {
-			log.Printf("MKDIR: %s", relPath)
+			plog.Info("MKDIR", "path", relPath)
 		}
 	}
 
@@ -107,7 +108,7 @@ func (r *nativeSyncRun) handleRegularFile(path, dstPath, relPath string, srcInfo
 
 	// If we reach here, we need to copy the file.
 	if r.dryRun {
-		log.Printf("[DRY RUN] COPY: %s", relPath)
+		plog.Info("[DRY RUN] COPY", "path", relPath)
 		return nil
 	}
 
@@ -115,7 +116,7 @@ func (r *nativeSyncRun) handleRegularFile(path, dstPath, relPath string, srcInfo
 		return fmt.Errorf("failed to copy file to %s: %w", dstPath, err)
 	}
 	if !r.quiet {
-		log.Printf("COPY: %s", relPath)
+		plog.Info("COPY", "path", relPath)
 	}
 	return nil
 }
@@ -149,7 +150,7 @@ func (r *nativeSyncRun) handlePath(currentPath string) error {
 		return r.handleRegularFile(currentPath, dstPath, relPath, srcInfo)
 	default:
 		if !r.quiet {
-			log.Printf("SKIP (unsupported file type: %s): %s", mode.String(), relPath)
+			plog.Info("SKIP", "type", mode.String(), "path", relPath)
 		}
 		return nil
 	}
@@ -158,7 +159,7 @@ func (r *nativeSyncRun) handlePath(currentPath string) error {
 // handleDeleteSyncHelper performs a sequential BFS traversal to delete files and directories
 // from the destination that are not present in the source.
 func (r *nativeSyncRun) handleDelete() error {
-	log.Println("Starting sequential deletion phase for mirror sync...")
+	plog.Info("Starting sequential deletion phase for mirror sync")
 
 	// Check for cancellation before starting the delete phase.
 	select {
@@ -198,10 +199,10 @@ func (r *nativeSyncRun) handleDelete() error {
 			if _, existsInSource := r.sourcePaths[relPath]; !existsInSource {
 				// This path does not exist in the source, so delete it.
 				if r.dryRun {
-					log.Printf("[DRY RUN] DELETE (not in source): %s", relPath)
+					plog.Info("[DRY RUN] DELETE", "reason", "not in source", "path", relPath)
 				} else {
 					if !r.quiet {
-						log.Printf("DELETE (not in source): %s", relPath)
+						plog.Info("DELETE", "reason", "not in source", "path", relPath)
 					}
 					if err := os.RemoveAll(fullPath); err != nil {
 						return fmt.Errorf("failed to delete %s: %w", fullPath, err)
@@ -248,7 +249,7 @@ func (r *nativeSyncRun) execute() error {
 	defer cancel()
 	r.ctx = ctx // Use the cancellable context for the run.
 
-	log.Printf("Spawning %d worker goroutines for sync phase.", r.numWorkers)
+	plog.Info("Spawning worker goroutines for sync phase", "count", r.numWorkers)
 	for i := 0; i < r.numWorkers; i++ {
 		r.wg.Add(1)
 		go r.worker()
@@ -297,7 +298,7 @@ func (r *nativeSyncRun) execute() error {
 
 // handleNative is the entry point for the native file synchronization.
 func (s *PathSyncer) handleNative(ctx context.Context, src, dst string, mirror bool) error {
-	log.Printf("Starting native sync from %s to %s...", src, dst)
+	plog.Info("Starting native sync", "from", src, "to", dst)
 
 	run := &nativeSyncRun{
 		src:         src,

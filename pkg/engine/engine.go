@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,6 +12,7 @@ import (
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
 	"pixelgardenlabs.io/pgl-backup/pkg/pathsync"
+	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
 
 // backupInfo holds the parsed time and name of a backup directory.
@@ -55,35 +55,35 @@ func (e *Engine) Execute(ctx context.Context) error {
 	}
 
 	if e.config.DryRun {
-		log.Println("--- Starting Backup (DRY RUN) ---")
+		plog.Info("--- Starting Backup (DRY RUN) ---")
 	} else {
-		log.Println("--- Starting Backup ---")
+		plog.Info("--- Starting Backup ---")
 	}
 
 	e.currentTimestamp = time.Now() // Capture a consistent timestamp for the entire run.
 
-	log.Printf("Source: %s", e.config.Paths.Source)
-	log.Printf("Mode: %s", e.config.Mode)
+	plog.Info("Backup source", "path", e.config.Paths.Source)
+	plog.Info("Backup mode", "mode", e.config.Mode)
 
 	// --- 1. Pre-backup tasks (rollover) and destination calculation ---
 	if err := e.prepareDestination(ctx); err != nil {
 		return err
 	}
 
-	log.Printf("Destination: %s", e.currentTarget)
-	log.Println("------------------------------")
+	plog.Info("Backup destination", "path", e.currentTarget)
+	plog.Info("------------------------------")
 
 	// --- 2. Perform the backup ---
 	if err := e.performSync(ctx); err != nil {
-		return fmt.Errorf("fatal backup error during sync: %w", err)
+		return fmt.Errorf("fatal backup error during sync: %w", err) // This is a fatal error, so we return it.
 	}
 
-	log.Println("Backup operation completed.")
+	plog.Info("Backup operation completed.")
 
 	// --- 3. Clean up old backups ---
 	if err := e.applyRetentionPolicy(ctx); err != nil {
 		// We log this as a non-fatal error because the main backup was successful.
-		log.Printf("Error applying retention policy: %v", err)
+		plog.Warn("Error applying retention policy", "error", err)
 	}
 	return nil
 }
@@ -157,9 +157,9 @@ func (e *Engine) performRollover(ctx context.Context) error {
 			return fmt.Errorf("could not check rollover destination %s: %w", archivePath, err)
 		}
 
-		log.Printf("Rolling over previous day's backup to: %s", archivePath)
+		plog.Info("Rolling over previous day's backup", "destination", archivePath)
 		if e.config.DryRun {
-			log.Printf("[DRY RUN] Would rename %s to %s", currentBackupPath, archivePath)
+			plog.Info("[DRY RUN] Would rename", "from", currentBackupPath, "to", archivePath)
 			return nil
 		} else if err := os.Rename(currentBackupPath, archivePath); err != nil {
 			return fmt.Errorf("failed to roll over backup: %w", err)
@@ -177,11 +177,11 @@ func (e *Engine) applyRetentionPolicy(ctx context.Context) error {
 	retentionPolicy := e.config.RetentionPolicy
 
 	if retentionPolicy.Hours <= 0 && retentionPolicy.Days <= 0 && retentionPolicy.Weeks <= 0 && retentionPolicy.Months <= 0 {
-		log.Println("Retention policy is disabled. Skipping cleanup.")
+		plog.Info("Retention policy is disabled. Skipping cleanup.")
 		return nil
 	}
-	log.Println("--- Cleaning Up Old Backups ---")
-	log.Printf("Applying retention policy in %s...", baseDir)
+	plog.Info("--- Cleaning Up Old Backups ---")
+	plog.Info("Applying retention policy", "directory", baseDir)
 	// --- 1. Get a sorted list of all valid, historical backups ---
 	allBackups, err := e.fetchSortedBackups(ctx, baseDir, currentDirName)
 	if err != nil {
@@ -203,13 +203,13 @@ func (e *Engine) applyRetentionPolicy(ctx context.Context) error {
 		dirName := backup.Name
 		if _, shouldKeep := backupsToKeep[dirName]; !shouldKeep {
 			dirToDelete := filepath.Join(baseDir, dirName)
-			log.Printf("DELETING redundant or old backup: %s", dirToDelete)
+			plog.Info("Deleting redundant or old backup", "path", dirToDelete)
 			if e.config.DryRun {
-				log.Printf("[DRY RUN] Would delete directory: %s", dirToDelete)
+				plog.Info("[DRY RUN] Would delete directory", "path", dirToDelete)
 				continue
 			}
 			if err := os.RemoveAll(dirToDelete); err != nil {
-				log.Printf("Warning: failed to delete old backup directory %s: %v", dirToDelete, err)
+				plog.Warn("Failed to delete old backup directory", "path", dirToDelete, "error", err)
 			}
 		}
 	}
@@ -279,8 +279,8 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 	if retentionPolicy.Months > 0 {
 		planParts = append(planParts, fmt.Sprintf("%d monthly", len(savedMonthly)))
 	}
-	log.Printf("Retention plan: keeping up to %s.", strings.Join(planParts, ", "))
-	log.Printf("Total unique backups to be kept: %d", len(backupsToKeep))
+	plog.Info("Retention plan", "details", strings.Join(planParts, ", "))
+	plog.Info("Total unique backups to be kept", "count", len(backupsToKeep))
 
 	return backupsToKeep
 }
@@ -288,7 +288,7 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 // writeBackupMetafile creates and writes the .pgl-backup.meta file into a given directory.
 func writeBackupMetafile(dirPath, version, mode, source string, backupTime time.Time, dryRun bool) error {
 	if dryRun {
-		log.Printf("[DRY RUN] Would write metafile in %s", dirPath)
+		plog.Info("[DRY RUN] Would write metafile", "directory", dirPath)
 		return nil
 	}
 
@@ -361,7 +361,7 @@ func (e *Engine) fetchSortedBackups(ctx context.Context, baseDir, excludeDir str
 		backupPath := filepath.Join(baseDir, dirName)
 		metaData, err := readBackupMetafile(backupPath)
 		if err != nil {
-			log.Printf("Warning: skipping directory %s for retention: %v", dirName, err)
+			plog.Warn("Skipping directory for retention check", "directory", dirName, "reason", err)
 			continue
 		}
 

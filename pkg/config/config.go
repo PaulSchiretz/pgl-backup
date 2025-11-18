@@ -3,11 +3,12 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
 
 // configFileName is the name of the configuration file.
@@ -195,7 +196,7 @@ func Load() (Config, error) {
 	}
 	defer file.Close()
 
-	log.Printf("Loading configuration from %s", configPath)
+	plog.Info("Loading configuration from", "path", configPath)
 	// Start with default values, then overwrite with the file's content.
 	// This makes the config loading resilient to missing fields in the JSON file.
 	config := NewDefault()
@@ -231,7 +232,7 @@ func Generate() error {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
-	log.Printf("Successfully created default config file at: %s", configPath)
+	plog.Info("Successfully created default config file", "path", configPath)
 	return nil
 }
 
@@ -266,17 +267,17 @@ func (c *Config) Validate() error {
 
 // LogSummary prints a user-friendly summary of the configuration to the
 // provided logger. It respects the 'Quiet' setting.
-func (c *Config) LogSummary(logger *log.Logger) {
+func (c *Config) LogSummary() {
 	if c.Quiet {
 		return
 	}
-	logger.Println("Starting backup with the following configuration:")
-	logger.Printf("  - Mode: %s", c.Mode)
-	logger.Printf("  - Source: %s", c.Paths.Source)
-	logger.Printf("  - Target: %s", c.Paths.TargetBase)
-	logger.Printf("  - Sync Engine: %s", c.Engine.Type)
-	logger.Printf("  - Dry Run: %t", c.DryRun)
-	logger.Println("--------------------------------------------------")
+	plog.Info("Starting backup with the following configuration:",
+		"mode", c.Mode,
+		"source", c.Paths.Source,
+		"target", c.Paths.TargetBase,
+		"sync_engine", c.Engine.Type,
+		"dry_run", c.DryRun,
+	)
 }
 
 // getConfigPath determines the absolute path to the configuration file.

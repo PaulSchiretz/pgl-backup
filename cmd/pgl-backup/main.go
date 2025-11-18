@@ -4,13 +4,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"runtime"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
 	"pixelgardenlabs.io/pgl-backup/pkg/engine"
+	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
 
 // version holds the application's version string.
@@ -76,7 +76,7 @@ func buildRunConfig(baseConfig config.Config) (config.Config, action, error) {
 
 	// Final sanity check: ensure robocopy is disabled if not on Windows.
 	if runtime.GOOS != "windows" && baseConfig.Engine.Type == config.RobocopyEngine {
-		log.Println("Robocopy is not available on this OS. Forcing 'native' sync engine.")
+		plog.Warn("Robocopy is not available on this OS. Forcing 'native' sync engine.")
 		baseConfig.Engine.Type = config.NativeEngine
 	}
 
@@ -114,7 +114,7 @@ func run(ctx context.Context) error {
 		return config.Generate()
 	case actionRunBackup:
 		// If not in quiet mode, log the final configuration for user confirmation.
-		runConfig.LogSummary(log.Default())
+		runConfig.LogSummary()
 
 		// Perform final validation on the merged configuration.
 		if err := runConfig.Validate(); err != nil {
@@ -142,7 +142,7 @@ func main() {
 	}()
 
 	if err := run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		plog.Error("Application failed", "error", err)
 		os.Exit(1)
 	}
 }

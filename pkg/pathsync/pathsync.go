@@ -3,11 +3,11 @@ package pathsync
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
+	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
 
 // PathSyncer orchestrates the file synchronization process.
@@ -43,7 +43,7 @@ func (s *PathSyncer) Sync(ctx context.Context, src, dst string, mirror bool) err
 	case config.RobocopyEngine:
 		return s.handleRobocopy(ctx, src, dst, mirror)
 	case config.NativeEngine:
-		log.Println("Using native Go implementation for synchronization...")
+		plog.Info("Using native Go implementation for synchronization")
 		return s.handleNative(ctx, src, dst, mirror)
 	default:
 		return fmt.Errorf("unknown sync engine configured: %v", s.engine.Type)
