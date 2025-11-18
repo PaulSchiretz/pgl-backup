@@ -33,9 +33,7 @@ type runMetadata struct {
 type Engine struct {
 	config           config.Config
 	version          string
-	source           string
 	currentTarget    string
-	mirror           bool
 	currentTimestamp time.Time // The timestamp of the current backup run for consistency.
 }
 
@@ -44,9 +42,6 @@ func New(cfg config.Config, version string) *Engine {
 	return &Engine{
 		config:  cfg,
 		version: version,
-		source:  cfg.Paths.Source,
-		mirror:  cfg.Mode == config.IncrementalMode,
-		// currentTimestamp is set in Execute() to capture the run's start time.
 	}
 }
 
@@ -67,7 +62,7 @@ func (e *Engine) Execute(ctx context.Context) error {
 
 	e.currentTimestamp = time.Now() // Capture a consistent timestamp for the entire run.
 
-	log.Printf("Source: %s", e.source)
+	log.Printf("Source: %s", e.config.Paths.Source)
 	log.Printf("Mode: %s", e.config.Mode)
 
 	// --- 1. Pre-backup tasks (rollover) and destination calculation ---
@@ -115,13 +110,15 @@ func (e *Engine) prepareDestination(ctx context.Context) error {
 // performSync is the main entry point for synchronization.
 func (e *Engine) performSync(ctx context.Context) error {
 	pathSyncer := pathsync.NewPathSyncer(e.config)
+	source := e.config.Paths.Source
+	mirror := e.config.Mode == config.IncrementalMode
 	// Sync and check for errors after attempting the sync.
-	if syncErr := pathSyncer.Sync(ctx, e.source, e.currentTarget, e.mirror); syncErr != nil {
+	if syncErr := pathSyncer.Sync(ctx, source, e.currentTarget, mirror); syncErr != nil {
 		return fmt.Errorf("sync failed: %w", syncErr)
 	}
 
 	// If the sync was successful, write the metafile for retention purposes.
-	return writeBackupMetafile(e.currentTarget, e.version, e.config.Mode.String(), e.source, e.currentTimestamp, e.config.DryRun)
+	return writeBackupMetafile(e.currentTarget, e.version, e.config.Mode.String(), source, e.currentTimestamp, e.config.DryRun)
 }
 
 // performRollover checks if the incremental backup directory is from a previous day.

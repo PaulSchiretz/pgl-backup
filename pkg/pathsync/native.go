@@ -22,7 +22,6 @@ type nativeSyncRun struct {
 	tasks       chan string
 	errs        chan error
 	ctx         context.Context
-	cancel      context.CancelFunc
 }
 
 // copyFileHelper handles copying a regular file from src to dst and preserves permissions.
@@ -235,7 +234,6 @@ func (r *nativeSyncRun) worker() {
 				case r.errs <- err: // Send error non-blockingly
 				default:
 				}
-				r.cancel() // Signal all other goroutines to stop.
 				return
 			}
 		}
@@ -244,21 +242,52 @@ func (r *nativeSyncRun) worker() {
 
 // execute performs the main synchronization logic.
 func (r *nativeSyncRun) execute() error {
+	// Create a new context that we can cancel if a worker fails.
+	// This ensures all other workers stop promptly on the first error.
+	ctx, cancel := context.WithCancel(r.ctx)
+	defer cancel()
+	r.ctx = ctx // Use the cancellable context for the run.
+
 	log.Printf("Spawning %d worker goroutines for sync phase.", r.numWorkers)
 	for i := 0; i < r.numWorkers; i++ {
 		r.wg.Add(1)
 		go r.worker()
 	}
 
-	r.tasks <- r.src
-	r.wg.Wait()
-	close(r.tasks)
-	close(r.errs)
+	// This goroutine waits for all workers to finish and then closes the tasks channel.
+	// It also listens for the first error and triggers cancellation.
+	go func() {
+		select {
+		case err := <-r.errs:
+			if err != nil {
+				// On first error, cancel the context for all other workers.
+				cancel()
+			}
+		case <-ctx.Done():
+			// If the parent context was cancelled, we'll just exit.
+		}
+	}()
 
-	if err := <-r.errs; err != nil {
-		return fmt.Errorf("sync failed: %w", err)
+	r.tasks <- r.src // Kick off the process.
+	r.wg.Wait()      // Wait for all workers to complete.
+	close(r.tasks)   // Close tasks to signal workers are done with the main loop.
+
+	// Check for a captured error after all workers have finished.
+	select {
+	case err := <-r.errs:
+		if err != nil {
+			return fmt.Errorf("sync failed: %w", err)
+		}
+	default:
+		// No error was sent.
 	}
 
+	// If the context was cancelled externally, return the context error.
+	if r.ctx.Err() != nil {
+		return r.ctx.Err()
+	}
+
+	// Proceed to the deletion phase if mirroring is enabled.
 	if !r.mirror {
 		return nil
 	}
@@ -280,12 +309,7 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, dst string, mirror b
 		sourcePaths: make(map[string]bool),
 		tasks:       make(chan string, s.engine.NativeEngineWorkers*2),
 		errs:        make(chan error, 1),
-		ctx:         ctx,
 	}
-	// The cancel function is derived from the context passed into the worker.
-	// It's used to signal an internal error to other workers.
-	run.ctx, run.cancel = context.WithCancel(ctx)
-	defer run.cancel()
 
 	return run.execute()
 }
