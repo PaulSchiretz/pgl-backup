@@ -149,7 +149,9 @@ func (r *nativeSyncRun) handlePath(currentPath string) error {
 	case mode.IsRegular():
 		return r.handleRegularFile(currentPath, dstPath, relPath, srcInfo)
 	default:
-		// Skip other file types like symlinks, etc.
+		if !r.quiet {
+			log.Printf("SKIP (unsupported file type: %s): %s", mode.String(), relPath)
+		}
 		return nil
 	}
 }

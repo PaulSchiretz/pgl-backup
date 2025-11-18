@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // configFileName is the name of the configuration file.
@@ -39,15 +40,8 @@ const (
 	SnapshotMode                      // 1
 )
 
-var backupModeToString = map[BackupMode]string{
-	IncrementalMode: "incremental",
-	SnapshotMode:    "snapshot",
-}
-
-var stringToBackupMode = map[string]BackupMode{
-	"incremental": IncrementalMode,
-	"snapshot":    SnapshotMode,
-}
+var backupModeToString = map[BackupMode]string{IncrementalMode: "incremental", SnapshotMode: "snapshot"}
+var stringToBackupMode = invertMap(backupModeToString)
 
 // String returns the string representation of a BackupMode.
 func (bm BackupMode) String() string {
@@ -57,8 +51,8 @@ func (bm BackupMode) String() string {
 	return fmt.Sprintf("unknown_backup_mode(%d)", bm)
 }
 
-// ModeFromString parses a string and returns the corresponding BackupMode.
-func ModeFromString(s string) (BackupMode, error) {
+// BackupModeFromString parses a string and returns the corresponding BackupMode.
+func BackupModeFromString(s string) (BackupMode, error) {
 	if mode, ok := stringToBackupMode[s]; ok {
 		return mode, nil
 	}
@@ -77,7 +71,7 @@ func (bm *BackupMode) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("BackupMode should be a string, got %s", data)
 	}
 
-	mode, err := ModeFromString(s) // Use the helper for parsing
+	mode, err := BackupModeFromString(s) // Use the helper for parsing
 	if err != nil {
 		return err
 	}
@@ -95,15 +89,8 @@ const (
 	RobocopyEngine
 )
 
-var syncEngineToString = map[SyncEngine]string{
-	NativeEngine:   "native",
-	RobocopyEngine: "robocopy",
-}
-
-var stringToSyncEngine = map[string]SyncEngine{
-	"native":   NativeEngine,
-	"robocopy": RobocopyEngine,
-}
+var syncEngineToString = map[SyncEngine]string{NativeEngine: "native", RobocopyEngine: "robocopy"}
+var stringToSyncEngine = invertMap(syncEngineToString)
 
 // String returns the string representation of a SyncEngine.
 func (se SyncEngine) String() string {
@@ -113,8 +100,8 @@ func (se SyncEngine) String() string {
 	return fmt.Sprintf("unknown_sync_engine(%d)", se)
 }
 
-// EngineTypeFromString parses a string and returns the corresponding SyncEngine.
-func EngineTypeFromString(s string) (SyncEngine, error) {
+// SyncEngineFromString parses a string and returns the corresponding SyncEngine.
+func SyncEngineFromString(s string) (SyncEngine, error) {
 	if engine, ok := stringToSyncEngine[s]; ok {
 		return engine, nil
 	}
@@ -133,7 +120,7 @@ func (se *SyncEngine) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("SyncEngine should be a string, got %s", data)
 	}
 
-	engine, err := EngineTypeFromString(s) // Use the helper for parsing
+	engine, err := SyncEngineFromString(s) // Use the helper for parsing
 	if err != nil {
 		return err
 	}
@@ -178,8 +165,8 @@ func NewDefault() Config {
 			IncrementalModeSuffix: "current",
 		},
 		Paths: BackupPathConfig{
-			Source:     "./src_backup",
-			TargetBase: "./dest_backup_mirror",
+			Source:     "", // Intentionally empty to force user configuration.
+			TargetBase: "", // Intentionally empty to force user configuration.
 		},
 		RetentionPolicy: BackupRetentionPolicyConfig{
 			Hours:  24, // N > 0: keep the N most recent hourly backups.
@@ -248,6 +235,50 @@ func Generate() error {
 	return nil
 }
 
+// Validate checks the configuration for logical errors and inconsistencies.
+func (c *Config) Validate() error {
+	// Expand tilde in paths for user convenience.
+	var err error
+	c.Paths.Source, err = expandPath(c.Paths.Source)
+	if err != nil {
+		return fmt.Errorf("could not expand source path: %w", err)
+	}
+	c.Paths.TargetBase, err = expandPath(c.Paths.TargetBase)
+	if err != nil {
+		return fmt.Errorf("could not expand target path: %w", err)
+	}
+
+	if c.Paths.Source == "" {
+		return fmt.Errorf("source path cannot be empty")
+	}
+	if _, err := os.Stat(c.Paths.Source); os.IsNotExist(err) {
+		return fmt.Errorf("source path '%s' does not exist", c.Paths.Source)
+	}
+
+	if c.Paths.TargetBase == "" {
+		return fmt.Errorf("target path cannot be empty")
+	}
+	if c.Engine.NativeEngineWorkers < 1 {
+		return fmt.Errorf("nativeEngineWorkers must be at least 1")
+	}
+	return nil
+}
+
+// LogSummary prints a user-friendly summary of the configuration to the
+// provided logger. It respects the 'Quiet' setting.
+func (c *Config) LogSummary(logger *log.Logger) {
+	if c.Quiet {
+		return
+	}
+	logger.Println("Starting backup with the following configuration:")
+	logger.Printf("  - Mode: %s", c.Mode)
+	logger.Printf("  - Source: %s", c.Paths.Source)
+	logger.Printf("  - Target: %s", c.Paths.TargetBase)
+	logger.Printf("  - Sync Engine: %s", c.Engine.Type)
+	logger.Printf("  - Dry Run: %t", c.DryRun)
+	logger.Println("--------------------------------------------------")
+}
+
 // getConfigPath determines the absolute path to the configuration file.
 func getConfigPath() (string, error) {
 	exePath, err := os.Executable()
@@ -256,4 +287,29 @@ func getConfigPath() (string, error) {
 	}
 	configDir := filepath.Dir(exePath)
 	return filepath.Join(configDir, configFileName), nil
+}
+
+// expandPath expands the tilde (~) prefix in a path to the user's home directory.
+func expandPath(path string) (string, error) {
+	if !strings.HasPrefix(path, "~") {
+		return path, nil // No tilde, return as-is.
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("could not get user home directory: %w", err)
+	}
+
+	// Replace the tilde with the home directory.
+	return filepath.Join(home, path[1:]), nil
+}
+
+// invertMap takes a map[K]V and returns a map[V]K.
+// It's a generic helper for creating reverse lookup maps for enums.
+func invertMap[K comparable, V comparable](m map[K]V) map[V]K {
+	inv := make(map[V]K, len(m))
+	for k, v := range m {
+		inv[v] = k
+	}
+	return inv
 }

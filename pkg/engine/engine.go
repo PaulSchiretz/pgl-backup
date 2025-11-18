@@ -170,14 +170,15 @@ func (e *Engine) performRollover() error {
 		archiveDirName := fmt.Sprintf("%s%s", e.config.Naming.Prefix, archiveTimestamp)
 		archivePath := filepath.Join(e.config.Paths.TargetBase, archiveDirName)
 
+		// Sanity check: ensure the destination for the rollover does not already exist.
+		if _, err := os.Stat(archivePath); err == nil {
+			return fmt.Errorf("rollover destination %s already exists, cannot proceed", archivePath)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("could not check rollover destination %s: %w", archivePath, err)
+		}
+
 		log.Printf("Rolling over previous day's backup to: %s", archivePath)
 		if e.config.DryRun {
-			// Check if the destination for the rollover already exists.
-			if _, err := os.Stat(archivePath); err == nil {
-				return fmt.Errorf("dry run: rollover destination %s already exists, cannot proceed", archivePath)
-			} else if !os.IsNotExist(err) {
-				return fmt.Errorf("dry run: could not check rollover destination %s: %w", archivePath, err)
-			}
 			log.Printf("[DRY RUN] Would rename %s to %s", currentBackupPath, archivePath)
 			return nil
 		} else if err := os.Rename(currentBackupPath, archivePath); err != nil {
@@ -246,7 +247,7 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 
 		// Rule: Keep N hourly backups
 		hourKey := b.Time.Format("2006-01-02-15") // YYYY-MM-DD-HH
-		if len(savedHourly) < retentionPolicy.Hours && !savedHourly[hourKey] {
+		if retentionPolicy.Hours > 0 && len(savedHourly) < retentionPolicy.Hours && !savedHourly[hourKey] {
 			backupsToKeep[b.Name] = true
 			savedHourly[hourKey] = true
 			continue // Promoted to hourly, skip other rules
@@ -254,7 +255,7 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 
 		// Rule: Keep N daily backups
 		dayKey := b.Time.Format("2006-01-02")
-		if len(savedDaily) < retentionPolicy.Days && !savedDaily[dayKey] {
+		if retentionPolicy.Days > 0 && len(savedDaily) < retentionPolicy.Days && !savedDaily[dayKey] {
 			backupsToKeep[b.Name] = true
 			savedDaily[dayKey] = true
 			continue // Promoted to daily
@@ -263,7 +264,7 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 		// Rule: Keep N weekly backups
 		year, week := b.Time.ISOWeek()
 		weekKey := fmt.Sprintf("%d-%d", year, week)
-		if len(savedWeekly) < retentionPolicy.Weeks && !savedWeekly[weekKey] {
+		if retentionPolicy.Weeks > 0 && len(savedWeekly) < retentionPolicy.Weeks && !savedWeekly[weekKey] {
 			backupsToKeep[b.Name] = true
 			savedWeekly[weekKey] = true
 			continue // Promoted to weekly
@@ -271,7 +272,7 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 
 		// Rule: Keep N monthly backups
 		monthKey := b.Time.Format("2006-01")
-		if len(savedMonthly) < retentionPolicy.Months && !savedMonthly[monthKey] {
+		if retentionPolicy.Months > 0 && len(savedMonthly) < retentionPolicy.Months && !savedMonthly[monthKey] {
 			backupsToKeep[b.Name] = true
 			savedMonthly[monthKey] = true
 		}

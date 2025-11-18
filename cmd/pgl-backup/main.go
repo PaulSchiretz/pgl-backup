@@ -26,43 +26,43 @@ func init() {
 	}
 }
 
-// flagValues holds the values parsed from the command-line flags.
-type flagValues struct {
-	source              string
-	target              string
-	mode                string
-	syncEngine          string
-	quiet               bool
-	dryRun              bool
-	nativeEngineWorkers int
-}
+// buildRunConfig defines and parses command-line flags, using a base
+// configuration for defaults. It then constructs and returns the final,
+// effective configuration for the application to use.
+func buildRunConfig(baseConfig config.Config) (config.Config, bool, bool, error) {
+	// Define flags, using the base config for default values.
+	srcFlag := flag.String("source", baseConfig.Paths.Source, "Source directory to copy from")
+	targetFlag := flag.String("target", baseConfig.Paths.TargetBase, "Base destination directory for backups")
+	modeFlag := flag.String("mode", baseConfig.Mode.String(), "Set the backup mode: 'incremental' or 'snapshot'.")
+	quietFlag := flag.Bool("quiet", baseConfig.Quiet, "Suppress individual file operation logs.")
+	dryRunFlag := flag.Bool("dryrun", baseConfig.DryRun, "Show what would be done without making any changes.")
+	initFlag := flag.Bool("init", false, "Generate a default pgl-backup.conf file and exit.")
+	versionFlag := flag.Bool("version", false, "Print the application version and exit.")
+	syncEngineFlag := flag.String("syncEngine", baseConfig.Engine.Type.String(), "Sync engine to use: 'native' or 'robocopy' (Windows only).")
+	nativeEngineWorkersFlag := flag.Int("nativeEngineWorkers", baseConfig.Engine.NativeEngineWorkers, "Number of worker goroutines for native sync.")
 
-// finalizeConfig merges the base configuration with the command-line flag values
-// to construct the final configuration for the backup job.
-func finalizeConfig(baseConfig config.Config, flags flagValues) (config.Config, error) {
+	flag.Parse()
+
+	// Start with the base config and overwrite with parsed flag values.
 	runConfig := baseConfig
-	runConfig.Paths.Source = flags.source
-	runConfig.Paths.TargetBase = flags.target
+	runConfig.Paths.Source = *srcFlag
+	runConfig.Paths.TargetBase = *targetFlag
+	runConfig.DryRun = *dryRunFlag
+	runConfig.Quiet = *quietFlag
+	runConfig.Engine.NativeEngineWorkers = *nativeEngineWorkersFlag
 
-	mode, err := config.ModeFromString(flags.mode)
+	// Parse string flags into their corresponding enum types.
+	mode, err := config.BackupModeFromString(*modeFlag)
 	if err != nil {
-		return config.Config{}, err
+		return config.Config{}, false, false, err
 	}
 	runConfig.Mode = mode
 
-	engineType, err := config.EngineTypeFromString(flags.syncEngine)
+	engineType, err := config.SyncEngineFromString(*syncEngineFlag)
 	if err != nil {
-		return config.Config{}, err
+		return config.Config{}, false, false, err
 	}
 	runConfig.Engine.Type = engineType
-
-	runConfig.DryRun = flags.dryRun
-	runConfig.Quiet = flags.quiet
-	runConfig.Engine.NativeEngineWorkers = flags.nativeEngineWorkers
-
-	if runConfig.Engine.NativeEngineWorkers < 1 {
-		return config.Config{}, fmt.Errorf("nativeEngineWorkers must be at least 1")
-	}
 
 	// Final sanity check: ensure robocopy is disabled if not on Windows.
 	if runtime.GOOS != "windows" && runConfig.Engine.Type == config.RobocopyEngine {
@@ -70,7 +70,7 @@ func finalizeConfig(baseConfig config.Config, flags flagValues) (config.Config, 
 		runConfig.Engine.Type = config.NativeEngine
 	}
 
-	return runConfig, nil
+	return runConfig, *versionFlag, *initFlag, nil
 }
 
 // run encapsulates the main application logic and returns an error if something
@@ -85,48 +85,25 @@ func run() error {
 		}
 	}
 
-	srcFlag := flag.String("source", loadedConfig.Paths.Source, "Source directory to copy from")
-	targetFlag := flag.String("target", loadedConfig.Paths.TargetBase, "Base destination directory for backups")
-	modeFlag := flag.String("mode", loadedConfig.Mode.String(), "Set the backup mode: 'incremental' or 'snapshot'.")
-	quietFlag := flag.Bool("quiet", loadedConfig.Quiet, "Suppress individual file operation logs.")
-	dryRunFlag := flag.Bool("dryrun", loadedConfig.DryRun, "Show what would be done without making any changes.")
-	initFlag := flag.Bool("init", false, "Generate a default pgl-backup.conf file and exit.")
-	versionFlag := flag.Bool("version", false, "Print the application version and exit.")
-	syncEngineFlag := flag.String("syncEngine", loadedConfig.Engine.Type.String(), "Sync engine to use: 'native' or 'robocopy' (Windows only).")
-	nativeEngineWorkersFlag := flag.Int("nativeEngineWorkers", loadedConfig.Engine.NativeEngineWorkers, "Number of worker goroutines for native sync.")
-	flag.Parse()
-
-	if *versionFlag {
-		fmt.Printf("pgl-backup version %s\n", version)
-		return nil
-	}
-	if *initFlag {
-		return config.Generate()
-	}
-
-	flags := flagValues{
-		source:              *srcFlag,
-		target:              *targetFlag,
-		mode:                *modeFlag,
-		syncEngine:          *syncEngineFlag,
-		quiet:               *quietFlag,
-		dryRun:              *dryRunFlag,
-		nativeEngineWorkers: *nativeEngineWorkersFlag,
-	}
-	runConfig, err := finalizeConfig(loadedConfig, flags)
+	runConfig, versionFlag, initFlag, err := buildRunConfig(loadedConfig)
 	if err != nil {
 		return err
 	}
 
+	if versionFlag {
+		fmt.Printf("pgl-backup version %s\n", version)
+		return nil
+	}
+	if initFlag {
+		return config.Generate()
+	}
+
 	// If not in quiet mode, log the final configuration for user confirmation.
-	if !runConfig.Quiet {
-		log.Println("Starting backup with the following configuration:")
-		log.Printf("  - Mode: %s", runConfig.Mode)
-		log.Printf("  - Source: %s", runConfig.Paths.Source)
-		log.Printf("  - Target: %s", runConfig.Paths.TargetBase)
-		log.Printf("  - Sync Engine: %s", runConfig.Engine.Type)
-		log.Printf("  - Dry Run: %t", runConfig.DryRun)
-		log.Println("--------------------------------------------------")
+	runConfig.LogSummary(log.Default())
+
+	// Perform final validation on the merged configuration.
+	if err := runConfig.Validate(); err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	backupEngine := engine.New(runConfig, version)
@@ -135,6 +112,7 @@ func run() error {
 
 func main() {
 	if err := run(); err != nil {
-		log.Fatalf("Error: %v", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
 }
