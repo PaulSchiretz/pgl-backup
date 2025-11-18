@@ -1,6 +1,7 @@
 package pathsync
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -26,17 +27,24 @@ func NewPathSyncer(cfg config.Config) *PathSyncer {
 }
 
 // Sync is the main entry point for synchronization. It dispatches to the configured sync engine.
-func (s *PathSyncer) Sync(src, dst string, mirror bool) error {
+func (s *PathSyncer) Sync(ctx context.Context, src, dst string, mirror bool) error {
 	if err := s.validateSyncPaths(src, dst); err != nil {
 		return err
 	}
 
+	// Check for cancellation after validation but before starting the heavy work.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	switch s.engine.Type {
 	case config.RobocopyEngine:
-		return s.handleRobocopy(src, dst, mirror)
+		return s.handleRobocopy(ctx, src, dst, mirror)
 	case config.NativeEngine:
 		log.Println("Using native Go implementation for synchronization...")
-		return s.handleNative(src, dst, mirror)
+		return s.handleNative(ctx, src, dst, mirror)
 	default:
 		return fmt.Errorf("unknown sync engine configured: %v", s.engine.Type)
 	}

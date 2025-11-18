@@ -160,6 +160,14 @@ func (r *nativeSyncRun) handlePath(currentPath string) error {
 // from the destination that are not present in the source.
 func (r *nativeSyncRun) handleDelete() error {
 	log.Println("Starting sequential deletion phase for mirror sync...")
+
+	// Check for cancellation before starting the delete phase.
+	select {
+	case <-r.ctx.Done():
+		return r.ctx.Err()
+	default:
+	}
+
 	deleteQueue := []string{r.dst}
 	for len(deleteQueue) > 0 {
 		currentDstPath := deleteQueue[0]
@@ -175,6 +183,13 @@ func (r *nativeSyncRun) handleDelete() error {
 		}
 
 		for _, entry := range entries {
+			// Check for cancellation inside the loop to be responsive.
+			select {
+			case <-r.ctx.Done():
+				return r.ctx.Err()
+			default:
+			}
+
 			fullPath := filepath.Join(currentDstPath, entry.Name())
 			relPath, err := filepath.Rel(r.dst, fullPath)
 			if err != nil {
@@ -252,12 +267,10 @@ func (r *nativeSyncRun) execute() error {
 }
 
 // handleNative is the entry point for the native file synchronization.
-func (s *PathSyncer) handleNative(src, dst string, mirror bool) error {
+func (s *PathSyncer) handleNative(ctx context.Context, src, dst string, mirror bool) error {
 	log.Printf("Starting native sync from %s to %s...", src, dst)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
-	r := &nativeSyncRun{
+	run := &nativeSyncRun{
 		src:         src,
 		dst:         dst,
 		mirror:      mirror,
@@ -268,7 +281,11 @@ func (s *PathSyncer) handleNative(src, dst string, mirror bool) error {
 		tasks:       make(chan string, s.engine.NativeEngineWorkers*2),
 		errs:        make(chan error, 1),
 		ctx:         ctx,
-		cancel:      cancel,
 	}
-	return r.execute()
+	// The cancel function is derived from the context passed into the worker.
+	// It's used to signal an internal error to other workers.
+	run.ctx, run.cancel = context.WithCancel(ctx)
+	defer run.cancel()
+
+	return run.execute()
 }

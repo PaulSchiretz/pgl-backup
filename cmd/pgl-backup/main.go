@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"runtime"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
@@ -91,7 +93,7 @@ func buildRunConfig(baseConfig config.Config) (config.Config, action, error) {
 
 // run encapsulates the main application logic and returns an error if something
 // goes wrong, allowing the main function to handle exit codes.
-func run() error {
+func run(ctx context.Context) error {
 	loadedConfig, err := config.Load()
 	if err != nil {
 		// If the config file exists but is invalid, we should fail fast.
@@ -122,14 +124,26 @@ func run() error {
 		}
 
 		backupEngine := engine.New(runConfig, version)
-		return backupEngine.Execute()
+		return backupEngine.Execute(ctx)
 	default:
 		return fmt.Errorf("internal error: unknown action %d", actionToRun)
 	}
 }
 
 func main() {
-	if err := run(); err != nil {
+	// Set up a context that is canceled when an interrupt signal is received.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Listen for interrupt signals (like Ctrl+C) in a separate goroutine.
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt)
+	go func() {
+		<-sigChan
+		cancel()
+	}()
+
+	if err := run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

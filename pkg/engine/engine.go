@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -50,7 +51,14 @@ func New(cfg config.Config, version string) *Engine {
 }
 
 // Execute runs the entire backup job from start to finish.
-func (e *Engine) Execute() error {
+func (e *Engine) Execute(ctx context.Context) error {
+	// Check for cancellation at the very beginning.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
 	if e.config.DryRun {
 		log.Println("--- Starting Backup (DRY RUN) ---")
 	} else {
@@ -63,7 +71,7 @@ func (e *Engine) Execute() error {
 	log.Printf("Mode: %s", e.config.Mode)
 
 	// --- 1. Pre-backup tasks (rollover) and destination calculation ---
-	if err := e.prepareDestination(); err != nil {
+	if err := e.prepareDestination(ctx); err != nil {
 		return err
 	}
 
@@ -71,14 +79,14 @@ func (e *Engine) Execute() error {
 	log.Println("------------------------------")
 
 	// --- 2. Perform the backup ---
-	if err := e.performSync(); err != nil {
+	if err := e.performSync(ctx); err != nil {
 		return fmt.Errorf("fatal backup error during sync: %w", err)
 	}
 
 	log.Println("Backup operation completed.")
 
 	// --- 3. Clean up old backups ---
-	if err := e.applyRetentionPolicy(); err != nil {
+	if err := e.applyRetentionPolicy(ctx); err != nil {
 		// We log this as a non-fatal error because the main backup was successful.
 		log.Printf("Error applying retention policy: %v", err)
 	}
@@ -87,7 +95,7 @@ func (e *Engine) Execute() error {
 
 // prepareDestination calculates the target directory for the backup, performing
 // a rollover if necessary for incremental backups.
-func (e *Engine) prepareDestination() error {
+func (e *Engine) prepareDestination(ctx context.Context) error {
 	if e.config.Mode == config.SnapshotMode {
 		// SNAPSHOT MODE
 		timestamp := e.currentTimestamp.Format(e.config.Naming.TimeFormat)
@@ -95,7 +103,7 @@ func (e *Engine) prepareDestination() error {
 		e.currentTarget = filepath.Join(e.config.Paths.TargetBase, backupDirName)
 	} else {
 		// INCREMENTAL MODE (DEFAULT)
-		if err := e.performRollover(); err != nil {
+		if err := e.performRollover(ctx); err != nil {
 			return fmt.Errorf("error during backup rollover: %w", err)
 		}
 		currentIncrementalDirName := e.config.Naming.Prefix + e.config.Naming.IncrementalModeSuffix
@@ -105,10 +113,10 @@ func (e *Engine) prepareDestination() error {
 }
 
 // performSync is the main entry point for synchronization.
-func (e *Engine) performSync() error {
+func (e *Engine) performSync(ctx context.Context) error {
 	pathSyncer := pathsync.NewPathSyncer(e.config)
 	// Sync and check for errors after attempting the sync.
-	if syncErr := pathSyncer.Sync(e.source, e.currentTarget, e.mirror); syncErr != nil {
+	if syncErr := pathSyncer.Sync(ctx, e.source, e.currentTarget, e.mirror); syncErr != nil {
 		return fmt.Errorf("sync failed: %w", syncErr)
 	}
 
@@ -118,7 +126,7 @@ func (e *Engine) performSync() error {
 
 // performRollover checks if the incremental backup directory is from a previous day.
 // If so, it renames it to a permanent timestamped archive.
-func (e *Engine) performRollover() error {
+func (e *Engine) performRollover(ctx context.Context) error {
 	currentDirName := e.config.Naming.Prefix + e.config.Naming.IncrementalModeSuffix
 	currentBackupPath := filepath.Join(e.config.Paths.TargetBase, currentDirName)
 
@@ -134,6 +142,13 @@ func (e *Engine) performRollover() error {
 	isDifferentDay := e.currentTimestamp.Year() != lastBackupTime.Year() || e.currentTimestamp.YearDay() != lastBackupTime.YearDay()
 
 	if isDifferentDay {
+		// Check for cancellation before performing the rename.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		archiveTimestamp := lastBackupTime.Format(e.config.Naming.TimeFormat)
 		archiveDirName := fmt.Sprintf("%s%s", e.config.Naming.Prefix, archiveTimestamp)
 		archivePath := filepath.Join(e.config.Paths.TargetBase, archiveDirName)
@@ -159,7 +174,7 @@ func (e *Engine) performRollover() error {
 
 // applyRetentionPolicy scans the backup target directory and deletes snapshots
 // that are no longer needed according to the configured retention policy.
-func (e *Engine) applyRetentionPolicy() error {
+func (e *Engine) applyRetentionPolicy(ctx context.Context) error {
 	currentDirName := e.config.Naming.Prefix + e.config.Naming.IncrementalModeSuffix
 	baseDir := e.config.Paths.TargetBase
 	retentionPolicy := e.config.RetentionPolicy
@@ -171,7 +186,7 @@ func (e *Engine) applyRetentionPolicy() error {
 	log.Println("--- Cleaning Up Old Backups ---")
 	log.Printf("Applying retention policy in %s...", baseDir)
 	// --- 1. Get a sorted list of all valid, historical backups ---
-	allBackups, err := e.fetchSortedBackups(baseDir, currentDirName)
+	allBackups, err := e.fetchSortedBackups(ctx, baseDir, currentDirName)
 	if err != nil {
 		return err
 	}
@@ -181,6 +196,13 @@ func (e *Engine) applyRetentionPolicy() error {
 
 	// --- 3. Delete all backups that are not in our final `backupsToKeep` set ---
 	for _, backup := range allBackups {
+		// Check for cancellation before each deletion.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		dirName := backup.Name
 		if _, shouldKeep := backupsToKeep[dirName]; !shouldKeep {
 			dirToDelete := filepath.Join(baseDir, dirName)
@@ -317,7 +339,7 @@ func readBackupMetafile(dirPath string) (*runMetadata, error) {
 // metadata to get an accurate timestamp, and returns them sorted from newest to oldest.
 // It relies exclusively on the `.pgl-backup.meta` file; directories without a
 // readable metafile are ignored for retention purposes.
-func (e *Engine) fetchSortedBackups(baseDir, excludeDir string) ([]backupInfo, error) {
+func (e *Engine) fetchSortedBackups(ctx context.Context, baseDir, excludeDir string) ([]backupInfo, error) {
 	prefix := e.config.Naming.Prefix
 
 	entries, err := os.ReadDir(baseDir)
@@ -327,6 +349,13 @@ func (e *Engine) fetchSortedBackups(baseDir, excludeDir string) ([]backupInfo, e
 
 	var backups []backupInfo
 	for _, entry := range entries {
+		// Check for cancellation during the directory scan.
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
 		dirName := entry.Name()
 		if !entry.IsDir() || !strings.HasPrefix(dirName, prefix) || dirName == excludeDir {
 			continue
