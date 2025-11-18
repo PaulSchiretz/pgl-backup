@@ -16,6 +16,15 @@ import (
 // Example: go build -ldflags="-X main.version=1.0.0"
 var version = "dev"
 
+// action defines a special command to execute instead of a backup.
+type action int
+
+const (
+	actionRunBackup action = iota // The default action is to run a backup.
+	actionShowVersion
+	actionInitConfig
+)
+
 // init is called before main. We use it to set up a custom, more descriptive
 // help message for the command-line flags.
 func init() {
@@ -29,7 +38,7 @@ func init() {
 // buildRunConfig defines and parses command-line flags, using a base
 // configuration for defaults. It then constructs and returns the final,
 // effective configuration for the application to use.
-func buildRunConfig(baseConfig config.Config) (config.Config, bool, bool, error) {
+func buildRunConfig(baseConfig config.Config) (config.Config, action, error) {
 	// Define flags, using the base config for default values.
 	srcFlag := flag.String("source", baseConfig.Paths.Source, "Source directory to copy from")
 	targetFlag := flag.String("target", baseConfig.Paths.TargetBase, "Base destination directory for backups")
@@ -54,13 +63,13 @@ func buildRunConfig(baseConfig config.Config) (config.Config, bool, bool, error)
 	// Parse string flags into their corresponding enum types.
 	mode, err := config.BackupModeFromString(*modeFlag)
 	if err != nil {
-		return config.Config{}, false, false, err
+		return config.Config{}, actionRunBackup, err
 	}
 	runConfig.Mode = mode
 
 	engineType, err := config.SyncEngineFromString(*syncEngineFlag)
 	if err != nil {
-		return config.Config{}, false, false, err
+		return config.Config{}, actionRunBackup, err
 	}
 	runConfig.Engine.Type = engineType
 
@@ -70,7 +79,14 @@ func buildRunConfig(baseConfig config.Config) (config.Config, bool, bool, error)
 		runConfig.Engine.Type = config.NativeEngine
 	}
 
-	return runConfig, *versionFlag, *initFlag, nil
+	// Determine which action to take based on flags.
+	if *versionFlag {
+		return runConfig, actionShowVersion, nil
+	}
+	if *initFlag {
+		return runConfig, actionInitConfig, nil
+	}
+	return runConfig, actionRunBackup, nil
 }
 
 // run encapsulates the main application logic and returns an error if something
@@ -85,29 +101,31 @@ func run() error {
 		}
 	}
 
-	runConfig, versionFlag, initFlag, err := buildRunConfig(loadedConfig)
+	runConfig, actionToRun, err := buildRunConfig(loadedConfig)
 	if err != nil {
 		return err
 	}
 
-	if versionFlag {
+	switch actionToRun {
+	case actionShowVersion:
 		fmt.Printf("pgl-backup version %s\n", version)
 		return nil
-	}
-	if initFlag {
+	case actionInitConfig:
 		return config.Generate()
+	case actionRunBackup:
+		// If not in quiet mode, log the final configuration for user confirmation.
+		runConfig.LogSummary(log.Default())
+
+		// Perform final validation on the merged configuration.
+		if err := runConfig.Validate(); err != nil {
+			return fmt.Errorf("invalid configuration: %w", err)
+		}
+
+		backupEngine := engine.New(runConfig, version)
+		return backupEngine.Execute()
+	default:
+		return fmt.Errorf("internal error: unknown action %d", actionToRun)
 	}
-
-	// If not in quiet mode, log the final configuration for user confirmation.
-	runConfig.LogSummary(log.Default())
-
-	// Perform final validation on the merged configuration.
-	if err := runConfig.Validate(); err != nil {
-		return fmt.Errorf("invalid configuration: %w", err)
-	}
-
-	backupEngine := engine.New(runConfig, version)
-	return backupEngine.Execute()
 }
 
 func main() {
