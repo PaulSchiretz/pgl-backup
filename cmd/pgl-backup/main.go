@@ -50,10 +50,12 @@ func buildRunConfig(baseConfig config.Config) (config.Config, action, error) {
 	dryRunFlag := flag.Bool("dryrun", baseConfig.DryRun, "Show what would be done without making any changes.")
 	initFlag := flag.Bool("init", false, "Generate a default pgl-backup.conf file and exit.")
 	versionFlag := flag.Bool("version", false, "Print the application version and exit.")
-	syncEngineFlag := flag.String("syncEngine", baseConfig.Engine.Type.String(), "Sync engine to use: 'native' or 'robocopy' (Windows only).")
-	nativeEngineWorkersFlag := flag.Int("nativeEngineWorkers", baseConfig.Engine.NativeEngineWorkers, "Number of worker goroutines for native sync.")
-	excludeFilesFlag := flag.String("excludeFiles", strings.Join(baseConfig.Paths.ExcludeFiles, ","), "Comma-separated list of file names to exclude.")
-	excludeDirsFlag := flag.String("excludeDirs", strings.Join(baseConfig.Paths.ExcludeDirs, ","), "Comma-separated list of directory names to exclude.")
+	syncEngineFlag := flag.String("sync-engine", baseConfig.Engine.Type.String(), "Sync engine to use: 'native' or 'robocopy' (Windows only).")
+	nativeEngineWorkersFlag := flag.Int("native-engine-workers", baseConfig.Engine.NativeEngineWorkers, "Number of worker goroutines for native sync.")
+	nativeRetryCountFlag := flag.Int("native-retry-count", baseConfig.Engine.NativeEngineRetryCount, "Number of retries for failed file copies in native engine.")
+	nativeRetryWaitFlag := flag.Int("native-retry-wait", baseConfig.Engine.NativeEngineRetryWaitSeconds, "Seconds to wait between retries in native engine.")
+	excludeFilesFlag := flag.String("exclude-files", strings.Join(baseConfig.Paths.ExcludeFiles, ","), "Comma-separated list of file names to exclude.")
+	excludeDirsFlag := flag.String("exclude-dirs", strings.Join(baseConfig.Paths.ExcludeDirs, ","), "Comma-separated list of directory names to exclude.")
 
 	flag.Parse()
 
@@ -63,6 +65,8 @@ func buildRunConfig(baseConfig config.Config) (config.Config, action, error) {
 	baseConfig.DryRun = *dryRunFlag
 	baseConfig.Quiet = *quietFlag
 	baseConfig.Engine.NativeEngineWorkers = *nativeEngineWorkersFlag
+	baseConfig.Engine.NativeEngineRetryCount = *nativeRetryCountFlag
+	baseConfig.Engine.NativeEngineRetryWaitSeconds = *nativeRetryWaitFlag
 
 	// If the ignore flag was set, parse it and override the config.
 	if *excludeFilesFlag != strings.Join(baseConfig.Paths.ExcludeFiles, ",") {

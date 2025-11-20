@@ -135,8 +135,10 @@ func (se *SyncEngine) UnmarshalJSON(data []byte) error {
 }
 
 type BackupEngineConfig struct {
-	Type                SyncEngine `json:"type"`
-	NativeEngineWorkers int        `json:"nativeEngineWorkers"`
+	Type                         SyncEngine `json:"type"`
+	NativeEngineWorkers          int        `json:"nativeEngineWorkers"`
+	NativeEngineRetryCount       int        `json:"nativeEngineRetryCount"`
+	NativeEngineRetryWaitSeconds int        `json:"nativeEngineRetryWaitSeconds"`
 }
 
 type Config struct {
@@ -162,8 +164,10 @@ func NewDefault() Config {
 		Quiet:  false,
 		DryRun: false,
 		Engine: BackupEngineConfig{
-			Type:                defaultEngine,
-			NativeEngineWorkers: runtime.NumCPU(), // Default to the number of CPU cores.
+			Type:                         defaultEngine,
+			NativeEngineWorkers:          runtime.NumCPU(), // Default to the number of CPU cores.
+			NativeEngineRetryCount:       3,                // Default retries on failure.
+			NativeEngineRetryWaitSeconds: 5,                // Default wait time between retries.
 		},
 		Naming: BackupNamingConfig{
 			Prefix:                "5ive_Backup_",
@@ -268,6 +272,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Engine.NativeEngineWorkers < 1 {
 		return fmt.Errorf("nativeEngineWorkers must be at least 1")
+	}
+	if c.Engine.NativeEngineRetryCount < 0 {
+		return fmt.Errorf("nativeEngineRetryCount cannot be negative")
 	}
 	return nil
 }
