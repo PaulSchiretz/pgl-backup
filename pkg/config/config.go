@@ -276,6 +276,14 @@ func (c *Config) Validate() error {
 	if c.Engine.NativeEngineRetryCount < 0 {
 		return fmt.Errorf("nativeEngineRetryCount cannot be negative")
 	}
+
+	if err := validateGlobPatterns("excludeFiles", c.Paths.ExcludeFiles); err != nil {
+		return err
+	}
+	if err := validateGlobPatterns("excludeDirs", c.Paths.ExcludeDirs); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -335,4 +343,14 @@ func invertMap[K comparable, V comparable](m map[K]V) map[V]K {
 		inv[v] = k
 	}
 	return inv
+}
+
+// validateGlobPatterns checks if a list of strings are valid glob patterns.
+func validateGlobPatterns(fieldName string, patterns []string) error {
+	for _, pattern := range patterns {
+		if _, err := filepath.Match(pattern, ""); err != nil {
+			return fmt.Errorf("invalid glob pattern for %s: %q - %w", fieldName, pattern, err)
+		}
+	}
+	return nil
 }

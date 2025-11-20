@@ -54,8 +54,8 @@ func buildRunConfig(baseConfig config.Config) (config.Config, action, error) {
 	nativeEngineWorkersFlag := flag.Int("native-engine-workers", baseConfig.Engine.NativeEngineWorkers, "Number of worker goroutines for native sync.")
 	nativeRetryCountFlag := flag.Int("native-retry-count", baseConfig.Engine.NativeEngineRetryCount, "Number of retries for failed file copies in native engine.")
 	nativeRetryWaitFlag := flag.Int("native-retry-wait", baseConfig.Engine.NativeEngineRetryWaitSeconds, "Seconds to wait between retries in native engine.")
-	excludeFilesFlag := flag.String("exclude-files", strings.Join(baseConfig.Paths.ExcludeFiles, ","), "Comma-separated list of file names to exclude.")
-	excludeDirsFlag := flag.String("exclude-dirs", strings.Join(baseConfig.Paths.ExcludeDirs, ","), "Comma-separated list of directory names to exclude.")
+	excludeFilesFlag := flag.String("exclude-files", strings.Join(baseConfig.Paths.ExcludeFiles, ","), "Comma-separated list of file names to exclude (supports glob patterns).")
+	excludeDirsFlag := flag.String("exclude-dirs", strings.Join(baseConfig.Paths.ExcludeDirs, ","), "Comma-separated list of directory names to exclude (supports glob patterns).")
 
 	flag.Parse()
 

@@ -222,6 +222,28 @@ func (r *nativeSyncRun) processPathSync(currentPath, relPath string) error {
 	}
 }
 
+// isExcluded checks if a given relative path matches any of the exclusion patterns.
+// It logs a warning if a pattern is invalid but continues checking other patterns.
+func (r *nativeSyncRun) isExcluded(relPath string, isDir bool) bool {
+	patterns := r.excludeFiles
+	if isDir {
+		patterns = r.excludeDirs
+	}
+
+	for _, pattern := range patterns {
+		match, err := filepath.Match(pattern, relPath)
+		if err != nil {
+			// Log the error for the invalid pattern but continue checking others.
+			plog.Warn("Invalid exclusion pattern", "pattern", pattern, "error", err)
+			continue
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
 // syncWalker is a dedicated goroutine that walks the source directory tree,
 // sending each path to the syncTasks channel for processing by workers.
 func (r *nativeSyncRun) syncWalker() {
@@ -237,17 +259,27 @@ func (r *nativeSyncRun) syncWalker() {
 			return nil
 		}
 
+		relPath, err := filepath.Rel(r.src, path)
+		if err != nil {
+			// This should not happen if path is from WalkDir on r.src
+			plog.Warn("Could not get relative path, skipping", "path", path, "error", err)
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
 		if d.IsDir() {
-			for _, dirToExclude := range r.excludeDirs {
-				if d.Name() == dirToExclude {
-					return filepath.SkipDir
-				}
+			if r.isExcluded(relPath, true) {
+				plog.Info("SKIPDIR", "reason", "excluded by pattern", "dir", relPath)
+				return filepath.SkipDir // Don't descend into this directory.
 			}
 		} else {
-			for _, fileToExclude := range r.excludeFiles {
-				if d.Name() == fileToExclude {
-					return nil // It's a file, just skip it.
+			if r.isExcluded(relPath, false) {
+				if !r.quiet {
+					plog.Info("SKIP", "reason", "excluded by pattern", "file", relPath)
 				}
+				return nil // It's a file, just skip it.
 			}
 		}
 
@@ -405,21 +437,13 @@ func (r *nativeSyncRun) handleDelete() error {
 			return nil
 		}
 
-		// Never delete the metadata file. It's essential for the engine's retention logic
-		// and is intentionally not present in the source directory.
-		if d.IsDir() {
-			for _, dirToExclude := range r.excludeDirs {
-				if d.Name() == dirToExclude {
-					// Return SkipDir so we don't delete contents
-					return filepath.SkipDir
-				}
+		// Check excluded files and folders
+		// We explicitly check for match errors to prevent silent failures on bad patterns
+		if r.isExcluded(relPath, d.IsDir()) {
+			if d.IsDir() {
+				return filepath.SkipDir
 			}
-		} else {
-			for _, fileToExclude := range r.excludeFiles {
-				if d.Name() == fileToExclude {
-					return nil
-				}
-			}
+			return nil
 		}
 
 		// FUTURE NOTE: Case Sensitivity (Windows/macOS) Go maps are case-sensitive.
