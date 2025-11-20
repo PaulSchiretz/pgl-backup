@@ -437,13 +437,12 @@ func (r *nativeSyncRun) handleDelete() error {
 			return nil
 		}
 
-		// Check excluded files and folders
-		// We explicitly check for match errors to prevent silent failures on bad patterns
+		// If a path is excluded, it should be ignored by the deletion logic.
 		if r.isExcluded(relPath, d.IsDir()) {
 			if d.IsDir() {
-				return filepath.SkipDir
+				return filepath.SkipDir // Don't descend into excluded directories.
 			}
-			return nil
+			return nil // It's an excluded file, just skip it.
 		}
 
 		// FUTURE NOTE: Case Sensitivity (Windows/macOS) Go maps are case-sensitive.

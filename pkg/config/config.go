@@ -320,7 +320,8 @@ func (c *Config) LogSummary() {
 }
 
 // getConfigPath determines the absolute path to the configuration file.
-func getConfigPath() (string, error) {
+// It is a variable to allow for mocking during tests.
+var getConfigPath = func() (string, error) {
 	exePath, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("could not determine executable path: %w", err)
