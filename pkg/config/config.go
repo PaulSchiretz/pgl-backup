@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
@@ -142,13 +143,14 @@ type BackupEngineConfig struct {
 }
 
 type Config struct {
-	Mode            BackupMode                  `json:"mode"`
-	Engine          BackupEngineConfig          `json:"engine"`
-	Quiet           bool                        `json:"quiet"`
-	DryRun          bool                        `json:"dryRun"`
-	Naming          BackupNamingConfig          `json:"naming"`
-	Paths           BackupPathConfig            `json:"paths"`
-	RetentionPolicy BackupRetentionPolicyConfig `json:"retentionPolicy"`
+	Mode             BackupMode                  `json:"mode"`
+	RolloverInterval time.Duration               `json:"rolloverInterval"`
+	Engine           BackupEngineConfig          `json:"engine"`
+	Quiet            bool                        `json:"quiet"`
+	DryRun           bool                        `json:"dryRun"`
+	Naming           BackupNamingConfig          `json:"naming"`
+	Paths            BackupPathConfig            `json:"paths"`
+	RetentionPolicy  BackupRetentionPolicyConfig `json:"retentionPolicy"`
 }
 
 // NewDefault creates and returns a Config struct with sensible default
@@ -160,9 +162,10 @@ func NewDefault() Config {
 		defaultEngine = RobocopyEngine
 	}
 	return Config{
-		Mode:   IncrementalMode, // Default mode
-		Quiet:  false,
-		DryRun: false,
+		Mode:             IncrementalMode, // Default mode
+		RolloverInterval: 24 * time.Hour,  // Default rollover interval is daily.
+		Quiet:            false,
+		DryRun:           false,
 		Engine: BackupEngineConfig{
 			Type:                         defaultEngine,
 			NativeEngineWorkers:          runtime.NumCPU(), // Default to the number of CPU cores.
@@ -276,6 +279,9 @@ func (c *Config) Validate() error {
 	if c.Engine.NativeEngineRetryCount < 0 {
 		return fmt.Errorf("nativeEngineRetryCount cannot be negative")
 	}
+	if c.Mode == IncrementalMode && c.RolloverInterval <= 0 {
+		return fmt.Errorf("rolloverInterval must be a positive duration (e.g., '24h', '90m')")
+	}
 
 	if err := validateGlobPatterns("excludeFiles", c.Paths.ExcludeFiles); err != nil {
 		return err
@@ -299,6 +305,9 @@ func (c *Config) LogSummary() {
 		"target", c.Paths.TargetBase,
 		"sync_engine", c.Engine.Type,
 		"dry_run", c.DryRun,
+	}
+	if c.Mode == IncrementalMode {
+		logArgs = append(logArgs, "rollover_interval", c.RolloverInterval)
 	}
 	if len(c.Paths.ExcludeFiles) > 0 {
 		logArgs = append(logArgs, "exclude_files", strings.Join(c.Paths.ExcludeFiles, ", "))

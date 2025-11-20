@@ -60,6 +60,8 @@ func (e *Engine) Execute(ctx context.Context) error {
 		plog.Info("--- Starting Backup ---")
 	}
 
+	e.checkRetentionGranularity()
+
 	e.currentTimestamp = time.Now() // Capture a consistent timestamp for the entire run.
 
 	plog.Info("Backup source", "path", e.config.Paths.Source)
@@ -141,10 +143,12 @@ func (e *Engine) performRollover(ctx context.Context) error {
 	// Use the precise time from the file content, not the file's modification time.
 	lastBackupTime := metaData.BackupTime
 
-	// Check if the last backup was on a different day.
-	isDifferentDay := e.currentTimestamp.Year() != lastBackupTime.Year() || e.currentTimestamp.YearDay() != lastBackupTime.YearDay()
+	if e.shouldRollover(lastBackupTime) {
+		plog.Info("Rollover threshold crossed, creating new archive.",
+			"last_backup_time", lastBackupTime,
+			"current_time", e.currentTimestamp,
+			"rollover_interval", e.config.RolloverInterval)
 
-	if isDifferentDay {
 		// Check for cancellation before performing the rename.
 		select {
 		case <-ctx.Done():
@@ -173,6 +177,98 @@ func (e *Engine) performRollover(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// shouldRollover determines if a new backup archive should be created based on the
+// configured interval and the time of the last backup.
+func (e *Engine) shouldRollover(lastBackupTime time.Time) bool {
+	interval := e.config.RolloverInterval
+	currentTimestamp := e.currentTimestamp
+
+	// Multi-Day Intervals (Weekly, Every 3 Days, etc.)
+	if interval >= 24*time.Hour {
+		// We want to ignore hours/minutes and just compare "Day Numbers".
+
+		// 1. Normalize both times to Local Midnight (strip hours/min/sec)
+		// Force the math to occur in the current system's timezone
+		loc := e.currentTimestamp.Location()
+
+		y1, m1, d1 := lastBackupTime.In(loc).Date() // Convert last backup to current/local time
+		lastDayMidnight := time.Date(y1, m1, d1, 0, 0, 0, 0, loc)
+
+		y2, m2, d2 := e.currentTimestamp.Date()
+		currentDayMidnight := time.Date(y2, m2, d2, 0, 0, 0, 0, loc)
+
+		// 2. Calculate days since a fixed anchor (Unix Epoch Local).
+		//    We use 24h logic here because we have already normalized to midnight.
+		// Force the math to occur in the current system's timezone
+		anchor := time.Date(1970, 1, 1, 0, 0, 0, 0, loc)
+
+		lastDayNum := int64(lastDayMidnight.Sub(anchor).Hours() / 24)
+		currentDayNum := int64(currentDayMidnight.Sub(anchor).Hours() / 24)
+
+		// 3. Calculate the Bucket Size in Days (e.g., 168h / 24h = 7 days)
+		daysInBucket := int64(interval / (24 * time.Hour))
+
+		// 4. Check if we have crossed a bucket boundary
+		//    Example: Interval = 7 days.
+		//    Day 10 / 7 = 1.  Day 12 / 7 = 1.  (No Rollover)
+		//    Day 13 / 7 = 1.  Day 14 / 7 = 2.  (Rollover!)
+		return (currentDayNum / daysInBucket) != (lastDayNum / daysInBucket)
+	}
+	// Sub-Daily Intervals (Hourly, 6-Hourly)
+	// Use standard truncation for clean UTC time buckets.
+	lastBackupBoundary := lastBackupTime.Truncate(interval)
+	currentBackupBoundary := currentTimestamp.Truncate(interval)
+
+	return !currentBackupBoundary.Equal(lastBackupBoundary)
+}
+
+// checkRetentionGranularity warns the user if their retention policy expects
+// backups more frequently than the rollover interval allows.
+func (e *Engine) checkRetentionGranularity() {
+	policy := e.config.RetentionPolicy
+	interval := e.config.RolloverInterval
+
+	// Handle the default (0 = 24h) for comparison logic
+	effectiveInterval := interval
+	if effectiveInterval <= 0 {
+		effectiveInterval = 24 * time.Hour
+	}
+
+	// 1. Check Hourly Mismatch
+	if policy.Hours > 0 && effectiveInterval > 1*time.Hour {
+		plog.Warn("Configuration Mismatch: Hourly retention is enabled, but rollover is too slow.",
+			"keep_hourly", policy.Hours,
+			"rollover_interval", interval,
+			"impact", "Hourly slots will fill at the speed of the rollover interval.")
+	}
+
+	// 2. Check Daily Mismatch
+	if policy.Days > 0 && effectiveInterval > 24*time.Hour {
+		plog.Warn("Configuration Mismatch: Daily retention is enabled, but rollover is too slow.",
+			"keep_daily", policy.Days,
+			"rollover_interval", interval,
+			"impact", "Daily slots will be filled by Weekly/Monthly backups, delaying the 'Weekly' retention rule.")
+	}
+
+	// 3. Check Weekly Mismatch
+	if policy.Weeks > 0 && effectiveInterval > 168*time.Hour {
+		plog.Warn("Configuration Mismatch: Weekly retention is enabled, but rollover is too slow.",
+			"keep_weekly", policy.Weeks,
+			"rollover_interval", interval)
+	}
+
+	// 4. Check Monthly Mismatch
+	// We use 30 days (720h) as the rough approximation for a month.
+	// If the rollover is slower than 30 days (e.g., 60 days), we cannot satisfy "Keep N Monthly".
+	avgMonth := 30 * 24 * time.Hour
+	if policy.Months > 0 && effectiveInterval > avgMonth {
+		plog.Warn("Configuration Mismatch: Monthly retention is enabled, but rollover is too slow.",
+			"keep_monthly", policy.Months,
+			"rollover_interval", interval,
+			"impact", "Backups occur less frequently than once a month; some calendar months will have no backup.")
+	}
 }
 
 // applyRetentionPolicy scans the backup target directory and deletes snapshots
@@ -272,18 +368,40 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 	}
 
 	// Build a descriptive log message for the retention plan
+	// Note we add slow fill warnings cause:
+	// If the user asked for Daily backups for instance, but the interval is > 24h (e.g. Weekly),
+	// add a note so they understand why they don't see 7 daily backups immediately.
 	var planParts []string
 	if retentionPolicy.Hours > 0 {
-		planParts = append(planParts, fmt.Sprintf("%d hourly", len(savedHourly)))
+		msg := fmt.Sprintf("%d hourly", len(savedHourly))
+		if e.config.RolloverInterval > 1*time.Hour {
+			msg += " (slow-fill)"
+		}
+		planParts = append(planParts, msg)
 	}
 	if retentionPolicy.Days > 0 {
-		planParts = append(planParts, fmt.Sprintf("%d daily", len(savedDaily)))
+		msg := fmt.Sprintf("%d daily", len(savedDaily))
+		if e.config.RolloverInterval > 24*time.Hour {
+			msg += " (slow-fill)"
+		}
+		planParts = append(planParts, msg)
 	}
 	if retentionPolicy.Weeks > 0 {
-		planParts = append(planParts, fmt.Sprintf("%d weekly", len(savedWeekly)))
+		msg := fmt.Sprintf("%d weekly", len(savedWeekly))
+		// 168 hours is exactly 7 days
+		if e.config.RolloverInterval > 168*time.Hour {
+			msg += " (slow-fill)"
+		}
+		planParts = append(planParts, msg)
 	}
 	if retentionPolicy.Months > 0 {
-		planParts = append(planParts, fmt.Sprintf("%d monthly", len(savedMonthly)))
+		msg := fmt.Sprintf("%d monthly", len(savedMonthly))
+		// Use 30 days (720 hours) as the monthly threshold
+		avgMonth := 30 * 24 * time.Hour
+		if e.config.RolloverInterval > avgMonth {
+			msg += " (slow-fill)"
+		}
+		planParts = append(planParts, msg)
 	}
 	plog.Info("Retention plan", "details", strings.Join(planParts, ", "))
 	plog.Info("Total unique backups to be kept", "count", len(backupsToKeep))
