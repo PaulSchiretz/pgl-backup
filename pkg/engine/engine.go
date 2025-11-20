@@ -15,6 +15,37 @@ import (
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
 
+// --- ARCHITECTURAL OVERVIEW: Rollover vs. Retention Time Handling ---
+//
+// This engine employs two distinct time-handling strategies for creating and deleting backups,
+// each designed to address a separate user concern:
+//
+// 1. Rollover (Snapshot Creation) - Predictable Creation
+//    - Goal: To honor the user's configured `RolloverInterval` as literally as possible.
+//    - Logic: The `shouldRollover` function uses time-based "bucketing". If the interval is
+//      `7 * 24h`, it creates a new snapshot exactly 7 days after the previous one started its
+//      bucket. This gives the user direct, predictable control over the *frequency* of new archives.
+//
+// 2. Retention (Snapshot Deletion) - Consistent History
+//    - Goal: To organize the backup history into intuitive, calendar-based slots for cleanup.
+//    - Logic: The `determineBackupsToKeep` function uses fixed calendar concepts (e.g.,
+//      `time.ISOWeek()`, `time.Format("2006-01-02")`). It doesn't care about the rollover
+//      interval; it only cares about which calendar day, week, or month a backup falls into.
+//      This ensures that "keep one backup from last week" always refers to a standard
+//      calendar week (e.g., Monday-Sunday).
+//
+// By decoupling these two concepts, the system provides the best of both worlds: a predictable
+// creation schedule based on user-defined duration, and a clean, consistent historical view
+// based on standard calendar periods.
+
+// Constants for time formats used in retention bucketing
+const (
+	hourFormat  = "2006-01-02-15" // YYYY-MM-DD-HH
+	dayFormat   = "2006-01-02"    // YYYY-MM-DD
+	weekFormat  = "%d-%d"         // Sprintf format for "YYYY-WW" using year and ISO week number (weeks start on Monday). Go's time package does not have a layout code (like WW). The only way to get the ISO week is to call the time.ISOWeek() method
+	monthFormat = "2006-01"       // YYYY-MM
+)
+
 // backupInfo holds the parsed time and name of a backup directory.
 type backupInfo struct {
 	Time time.Time
@@ -129,7 +160,7 @@ func (e *Engine) performSync(ctx context.Context) error {
 	return writeBackupMetafile(e.currentTarget, e.version, e.config.Mode.String(), source, e.currentTimestamp, e.config.DryRun)
 }
 
-// performRollover checks if the incremental backup directory is from a previous day.
+// performRollover checks if the incremental backup directory is from a previous day > RolloverInterval.
 // If so, it renames it to a permanent timestamped archive.
 func (e *Engine) performRollover(ctx context.Context) error {
 	currentDirName := e.config.Naming.Prefix + e.config.Naming.IncrementalModeSuffix
@@ -189,6 +220,10 @@ func (e *Engine) shouldRollover(lastBackupTime time.Time) bool {
 	}
 
 	currentTimestamp := e.currentTimestamp
+
+	// NOTE: For multi-day intervals, the full implementation requires normalizing to local midnight
+	// and calculating epoch day buckets to correctly handle DST and guarantee a new snapshot
+	// at the start of every N-day cycle.
 
 	// Multi-Day Intervals (Weekly, Every 3 Days, etc.)
 	if effectiveInterval >= 24*time.Hour {
@@ -340,7 +375,7 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 		// This "promotes" a backup to the highest-frequency slot it qualifies for.
 
 		// Rule: Keep N hourly backups
-		hourKey := b.Time.Format("2006-01-02-15") // YYYY-MM-DD-HH
+		hourKey := b.Time.Format(hourFormat)
 		if retentionPolicy.Hours > 0 && len(savedHourly) < retentionPolicy.Hours && !savedHourly[hourKey] {
 			backupsToKeep[b.Name] = true
 			savedHourly[hourKey] = true
@@ -348,7 +383,7 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 		}
 
 		// Rule: Keep N daily backups
-		dayKey := b.Time.Format("2006-01-02")
+		dayKey := b.Time.Format(dayFormat)
 		if retentionPolicy.Days > 0 && len(savedDaily) < retentionPolicy.Days && !savedDaily[dayKey] {
 			backupsToKeep[b.Name] = true
 			savedDaily[dayKey] = true
@@ -357,7 +392,7 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 
 		// Rule: Keep N weekly backups
 		year, week := b.Time.ISOWeek()
-		weekKey := fmt.Sprintf("%d-%d", year, week)
+		weekKey := fmt.Sprintf(weekFormat, year, week)
 		if retentionPolicy.Weeks > 0 && len(savedWeekly) < retentionPolicy.Weeks && !savedWeekly[weekKey] {
 			backupsToKeep[b.Name] = true
 			savedWeekly[weekKey] = true
@@ -365,7 +400,7 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 		}
 
 		// Rule: Keep N monthly backups
-		monthKey := b.Time.Format("2006-01")
+		monthKey := b.Time.Format(monthFormat)
 		if retentionPolicy.Months > 0 && len(savedMonthly) < retentionPolicy.Months && !savedMonthly[monthKey] {
 			backupsToKeep[b.Name] = true
 			savedMonthly[monthKey] = true
