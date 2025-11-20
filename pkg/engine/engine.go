@@ -182,11 +182,16 @@ func (e *Engine) performRollover(ctx context.Context) error {
 // shouldRollover determines if a new backup archive should be created based on the
 // configured interval and the time of the last backup.
 func (e *Engine) shouldRollover(lastBackupTime time.Time) bool {
-	interval := e.config.RolloverInterval
+	// Handle the default (0 = 24h) for comparison logic
+	effectiveInterval := e.config.RolloverInterval
+	if effectiveInterval <= 0 {
+		effectiveInterval = 24 * time.Hour
+	}
+
 	currentTimestamp := e.currentTimestamp
 
 	// Multi-Day Intervals (Weekly, Every 3 Days, etc.)
-	if interval >= 24*time.Hour {
+	if effectiveInterval >= 24*time.Hour {
 		// We want to ignore hours/minutes and just compare "Day Numbers".
 
 		// 1. Normalize both times to Local Midnight (strip hours/min/sec)
@@ -208,7 +213,7 @@ func (e *Engine) shouldRollover(lastBackupTime time.Time) bool {
 		currentDayNum := int64(currentDayMidnight.Sub(anchor).Hours() / 24)
 
 		// 3. Calculate the Bucket Size in Days (e.g., 168h / 24h = 7 days)
-		daysInBucket := int64(interval / (24 * time.Hour))
+		daysInBucket := int64(effectiveInterval / (24 * time.Hour))
 
 		// 4. Check if we have crossed a bucket boundary
 		//    Example: Interval = 7 days.
@@ -218,8 +223,8 @@ func (e *Engine) shouldRollover(lastBackupTime time.Time) bool {
 	}
 	// Sub-Daily Intervals (Hourly, 6-Hourly)
 	// Use standard truncation for clean UTC time buckets.
-	lastBackupBoundary := lastBackupTime.Truncate(interval)
-	currentBackupBoundary := currentTimestamp.Truncate(interval)
+	lastBackupBoundary := lastBackupTime.Truncate(effectiveInterval)
+	currentBackupBoundary := currentTimestamp.Truncate(effectiveInterval)
 
 	return !currentBackupBoundary.Equal(lastBackupBoundary)
 }
