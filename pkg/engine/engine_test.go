@@ -297,13 +297,18 @@ func TestPerformRollover_NoRollover(t *testing.T) {
 	cfg.Naming.IncrementalModeSuffix = "current"
 	cfg.RolloverInterval = 24 * time.Hour
 
+	// To test this reliably, we need to control the timestamps precisely.
+	// Let's set the "current" run to be on a specific day.
+	currentRunTime := time.Date(2023, 10, 27, 14, 0, 0, 0, time.Local)
+
 	e := newTestEngine(cfg)
-	e.currentTimestamp = time.Now() // Today
+	e.currentTimestamp = currentRunTime
 
 	// Create a "current" backup from a few hours ago (same day)
-	lastBackupTime := e.currentTimestamp.Add(-2 * time.Hour)
+	// This is the timestamp that will be written to the metafile.
+	lastBackupTimeInMeta := currentRunTime.Add(-2 * time.Hour)
 	currentBackupDirName := "backup_current"
-	createTestBackup(t, tempDir, currentBackupDirName, lastBackupTime)
+	createTestBackup(t, tempDir, currentBackupDirName, lastBackupTimeInMeta)
 
 	// Act
 	err := e.performRollover(context.Background())
