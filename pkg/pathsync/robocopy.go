@@ -25,7 +25,7 @@ func isRobocopySuccessHelper(err error) bool {
 // handleSyncRobocopy uses the Windows `robocopy` utility to perform a highly
 // efficient and robust directory mirror. It is much faster for incremental
 // backups than a manual walk. It returns a list of copied files.
-func (s *PathSyncer) handleRobocopy(ctx context.Context, src, dst string, mirror bool, filesToIgnore []string) error {
+func (s *PathSyncer) handleRobocopy(ctx context.Context, src, dst string, mirror bool, excludeFiles, excludeDirs []string) error {
 	// Robocopy command arguments:
 	// /MIR :: MIRror a directory tree (equivalent to /E plus /PURGE).
 	// /E :: copy subdirectories, including Empty ones.
@@ -52,13 +52,15 @@ func (s *PathSyncer) handleRobocopy(ctx context.Context, src, dst string, mirror
 		args = append(args, "/L") // /L :: List only - don't copy, delete, or timestamp files.
 	}
 
-	// Add files and directories to exclude. We add each item to both /XF (files)
-	// and /XD (directories) to match the behavior of the native walker.
-	if len(filesToIgnore) > 0 {
+	// Add files to exclude.
+	if len(excludeFiles) > 0 {
 		args = append(args, "/XF")
-		args = append(args, filesToIgnore...)
+		args = append(args, excludeFiles...)
+	}
+	// Add directories to exclude.
+	if len(excludeDirs) > 0 {
 		args = append(args, "/XD")
-		args = append(args, filesToIgnore...)
+		args = append(args, excludeDirs...)
 	}
 
 	plog.Info("Starting sync with robocopy")

@@ -26,7 +26,7 @@ func NewPathSyncer(cfg config.Config) *PathSyncer {
 }
 
 // Sync is the main entry point for synchronization. It dispatches to the configured sync engine.
-func (s *PathSyncer) Sync(ctx context.Context, src, dst string, mirror bool, filesToIgnore []string) error {
+func (s *PathSyncer) Sync(ctx context.Context, src, dst string, mirror bool, excludeFiles, excludeDirs []string) error {
 	if err := s.validateSyncPaths(src, dst); err != nil {
 		return err
 	}
@@ -40,9 +40,9 @@ func (s *PathSyncer) Sync(ctx context.Context, src, dst string, mirror bool, fil
 
 	switch s.engine.Type {
 	case config.RobocopyEngine:
-		return s.handleRobocopy(ctx, src, dst, mirror, filesToIgnore)
+		return s.handleRobocopy(ctx, src, dst, mirror, excludeFiles, excludeDirs)
 	case config.NativeEngine:
-		return s.handleNative(ctx, src, dst, mirror, filesToIgnore)
+		return s.handleNative(ctx, src, dst, mirror, excludeFiles, excludeDirs)
 	default:
 		return fmt.Errorf("unknown sync engine configured: %v", s.engine.Type)
 	}

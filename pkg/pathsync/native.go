@@ -17,7 +17,8 @@ type nativeSyncRun struct {
 	src, dst              string
 	mirror, dryRun, quiet bool
 	numSyncWorkers        int
-	filesToIgnore         []string
+	excludeFiles          []string
+	excludeDirs           []string
 
 	// syncedSourcePaths is populated by the Collector and read by the Deletion phase.
 	syncedSourcePaths map[string]bool
@@ -180,13 +181,17 @@ func (r *nativeSyncRun) syncWalker() {
 			return err
 		}
 
-		// Check if the file or directory should be ignored.
-		for _, fileToIgnore := range r.filesToIgnore {
-			if d.Name() == fileToIgnore {
-				if d.IsDir() {
-					return filepath.SkipDir // Don't descend into this directory.
+		if d.IsDir() {
+			for _, dirToExclude := range r.excludeDirs {
+				if d.Name() == dirToExclude {
+					return filepath.SkipDir
 				}
-				return nil // It's a file, just skip it.
+			}
+		} else {
+			for _, fileToExclude := range r.excludeFiles {
+				if d.Name() == fileToExclude {
+					return nil // It's a file, just skip it.
+				}
 			}
 		}
 
@@ -341,9 +346,17 @@ func (r *nativeSyncRun) handleDelete() error {
 
 		// Never delete the metadata file. It's essential for the engine's retention logic
 		// and is intentionally not present in the source directory.
-		for _, fileToIgnore := range r.filesToIgnore {
-			if d.Name() == fileToIgnore {
-				return nil
+		if d.IsDir() {
+			for _, dirToExclude := range r.excludeDirs {
+				if d.Name() == dirToExclude {
+					return nil
+				}
+			}
+		} else {
+			for _, fileToExclude := range r.excludeFiles {
+				if d.Name() == fileToExclude {
+					return nil
+				}
 			}
 		}
 
@@ -417,7 +430,7 @@ func (r *nativeSyncRun) execute() error {
 }
 
 // handleNative initializes the sync run structure and kicks off the execution.
-func (s *PathSyncer) handleNative(ctx context.Context, src, dst string, mirror bool, filesToIgnore []string) error {
+func (s *PathSyncer) handleNative(ctx context.Context, src, dst string, mirror bool, excludeFiles, excludeDirs []string) error {
 	plog.Info("Starting native sync", "from", src, "to", dst)
 
 	run := &nativeSyncRun{
@@ -427,7 +440,8 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, dst string, mirror b
 		dryRun:            s.dryRun,
 		quiet:             s.quiet,
 		numSyncWorkers:    s.engine.NativeEngineWorkers,
-		filesToIgnore:     filesToIgnore,
+		excludeFiles:      excludeFiles,
+		excludeDirs:       excludeDirs,
 		syncedSourcePaths: make(map[string]bool), // Initialize the map for the collector.
 		// Buffer 'syncTasks' to handle bursts of rapid file discovery by the walker.
 		syncTasks: make(chan string, s.engine.NativeEngineWorkers*2),

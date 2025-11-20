@@ -24,9 +24,10 @@ type BackupNamingConfig struct {
 }
 
 type BackupPathConfig struct {
-	Source     string   `json:"source"`
-	TargetBase string   `json:"targetBase"`
-	Ignore     []string `json:"ignore,omitempty"`
+	Source       string   `json:"source"`
+	TargetBase   string   `json:"targetBase"`
+	ExcludeFiles []string `json:"excludeFiles,omitempty"`
+	ExcludeDirs  []string `json:"excludeDirs,omitempty"`
 }
 
 type BackupRetentionPolicyConfig struct {
@@ -170,9 +171,10 @@ func NewDefault() Config {
 			IncrementalModeSuffix: "current",
 		},
 		Paths: BackupPathConfig{
-			Source:     "",         // Intentionally empty to force user configuration.
-			TargetBase: "",         // Intentionally empty to force user configuration.
-			Ignore:     []string{}, // User-defined list of files/directories to ignore.
+			Source:       "",         // Intentionally empty to force user configuration.
+			TargetBase:   "",         // Intentionally empty to force user configuration.
+			ExcludeFiles: []string{}, // User-defined list of files to exclude.
+			ExcludeDirs:  []string{}, // User-defined list of directories to exclude.
 		},
 		RetentionPolicy: BackupRetentionPolicyConfig{
 			Hours:  24, // N > 0: keep the N most recent hourly backups.
@@ -283,8 +285,11 @@ func (c *Config) LogSummary() {
 		"sync_engine", c.Engine.Type,
 		"dry_run", c.DryRun,
 	}
-	if len(c.Paths.Ignore) > 0 {
-		logArgs = append(logArgs, "ignore", strings.Join(c.Paths.Ignore, ", "))
+	if len(c.Paths.ExcludeFiles) > 0 {
+		logArgs = append(logArgs, "exclude_files", strings.Join(c.Paths.ExcludeFiles, ", "))
+	}
+	if len(c.Paths.ExcludeDirs) > 0 {
+		logArgs = append(logArgs, "exclude_dirs", strings.Join(c.Paths.ExcludeDirs, ", "))
 	}
 
 	plog.Info("Backup run configuration loaded", logArgs...)

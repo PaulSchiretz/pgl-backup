@@ -52,7 +52,8 @@ func buildRunConfig(baseConfig config.Config) (config.Config, action, error) {
 	versionFlag := flag.Bool("version", false, "Print the application version and exit.")
 	syncEngineFlag := flag.String("syncEngine", baseConfig.Engine.Type.String(), "Sync engine to use: 'native' or 'robocopy' (Windows only).")
 	nativeEngineWorkersFlag := flag.Int("nativeEngineWorkers", baseConfig.Engine.NativeEngineWorkers, "Number of worker goroutines for native sync.")
-	ignoreFlag := flag.String("ignore", strings.Join(baseConfig.Paths.Ignore, ","), "Comma-separated list of file/directory names to ignore.")
+	excludeFilesFlag := flag.String("excludeFiles", strings.Join(baseConfig.Paths.ExcludeFiles, ","), "Comma-separated list of file names to exclude.")
+	excludeDirsFlag := flag.String("excludeDirs", strings.Join(baseConfig.Paths.ExcludeDirs, ","), "Comma-separated list of directory names to exclude.")
 
 	flag.Parse()
 
@@ -64,10 +65,13 @@ func buildRunConfig(baseConfig config.Config) (config.Config, action, error) {
 	baseConfig.Engine.NativeEngineWorkers = *nativeEngineWorkersFlag
 
 	// If the ignore flag was set, parse it and override the config.
-	// We check against the default to see if the user provided the flag.
-	if *ignoreFlag != strings.Join(baseConfig.Paths.Ignore, ",") {
-		// Split even if empty to produce an empty slice, not a slice with one empty string.
-		baseConfig.Paths.Ignore = strings.Split(strings.TrimSpace(*ignoreFlag), ",")
+	if *excludeFilesFlag != strings.Join(baseConfig.Paths.ExcludeFiles, ",") {
+		baseConfig.Paths.ExcludeFiles = strings.Split(strings.TrimSpace(*excludeFilesFlag), ",")
+	}
+
+	// If the ignore flag was set, parse it and override the config.
+	if *excludeDirsFlag != strings.Join(baseConfig.Paths.ExcludeDirs, ",") {
+		baseConfig.Paths.ExcludeDirs = strings.Split(strings.TrimSpace(*excludeDirsFlag), ",")
 	}
 
 	// Parse string flags into their corresponding enum types.

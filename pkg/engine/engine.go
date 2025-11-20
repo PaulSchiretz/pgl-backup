@@ -113,11 +113,13 @@ func (e *Engine) performSync(ctx context.Context) error {
 	source := e.config.Paths.Source
 	mirror := e.config.Mode == config.IncrementalMode
 
-	// Combine system-required ignored files with user-defined ones.
-	filesToIgnore := []string{config.MetaFileName}
-	filesToIgnore = append(filesToIgnore, e.config.Paths.Ignore...)
+	// Combine system-required ignored files with user-defined ones. The meta file is critical.
+	excludeFiles := []string{config.MetaFileName}
+	excludeFiles = append(excludeFiles, e.config.Paths.ExcludeFiles...)
+	excludeDirs := e.config.Paths.ExcludeDirs
+
 	// Sync and check for errors after attempting the sync.
-	if syncErr := pathSyncer.Sync(ctx, source, e.currentTarget, mirror, filesToIgnore); syncErr != nil {
+	if syncErr := pathSyncer.Sync(ctx, source, e.currentTarget, mirror, excludeFiles, excludeDirs); syncErr != nil {
 		return fmt.Errorf("sync failed: %w", syncErr)
 	}
 
