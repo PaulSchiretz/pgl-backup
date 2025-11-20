@@ -112,8 +112,12 @@ func (e *Engine) performSync(ctx context.Context) error {
 	pathSyncer := pathsync.NewPathSyncer(e.config)
 	source := e.config.Paths.Source
 	mirror := e.config.Mode == config.IncrementalMode
+
+	// Combine system-required ignored files with user-defined ones.
+	filesToIgnore := []string{config.MetaFileName}
+	filesToIgnore = append(filesToIgnore, e.config.Paths.Ignore...)
 	// Sync and check for errors after attempting the sync.
-	if syncErr := pathSyncer.Sync(ctx, source, e.currentTarget, mirror); syncErr != nil {
+	if syncErr := pathSyncer.Sync(ctx, source, e.currentTarget, mirror, filesToIgnore); syncErr != nil {
 		return fmt.Errorf("sync failed: %w", syncErr)
 	}
 
@@ -292,7 +296,7 @@ func writeBackupMetafile(dirPath, version, mode, source string, backupTime time.
 		return nil
 	}
 
-	metaFilePath := filepath.Join(dirPath, ".pgl-backup.meta")
+	metaFilePath := filepath.Join(dirPath, config.MetaFileName)
 	metaData := runMetadata{
 		Version:    version,
 		BackupTime: backupTime,
@@ -315,11 +319,11 @@ func writeBackupMetafile(dirPath, version, mode, source string, backupTime time.
 // readBackupMetafile opens and parses the .pgl-backup.meta file within a given directory.
 // It returns the parsed metadata or an error if the file cannot be read.
 func readBackupMetafile(dirPath string) (*runMetadata, error) {
-	metaFilePath := filepath.Join(dirPath, ".pgl-backup.meta")
+	metaFilePath := filepath.Join(dirPath, config.MetaFileName)
 	metaFile, err := os.Open(metaFilePath)
 	if err != nil {
 		// Note: os.IsNotExist errors are handled by the caller.
-		return nil, fmt.Errorf("could not open metafile in %s: %w", dirPath, err)
+		return nil, err // Return the original error so os.IsNotExist works.
 	}
 	defer metaFile.Close()
 

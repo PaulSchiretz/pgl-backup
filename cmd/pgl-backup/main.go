@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
 	"pixelgardenlabs.io/pgl-backup/pkg/engine"
@@ -51,6 +52,7 @@ func buildRunConfig(baseConfig config.Config) (config.Config, action, error) {
 	versionFlag := flag.Bool("version", false, "Print the application version and exit.")
 	syncEngineFlag := flag.String("syncEngine", baseConfig.Engine.Type.String(), "Sync engine to use: 'native' or 'robocopy' (Windows only).")
 	nativeEngineWorkersFlag := flag.Int("nativeEngineWorkers", baseConfig.Engine.NativeEngineWorkers, "Number of worker goroutines for native sync.")
+	ignoreFlag := flag.String("ignore", strings.Join(baseConfig.Paths.Ignore, ","), "Comma-separated list of file/directory names to ignore.")
 
 	flag.Parse()
 
@@ -60,6 +62,13 @@ func buildRunConfig(baseConfig config.Config) (config.Config, action, error) {
 	baseConfig.DryRun = *dryRunFlag
 	baseConfig.Quiet = *quietFlag
 	baseConfig.Engine.NativeEngineWorkers = *nativeEngineWorkersFlag
+
+	// If the ignore flag was set, parse it and override the config.
+	// We check against the default to see if the user provided the flag.
+	if *ignoreFlag != strings.Join(baseConfig.Paths.Ignore, ",") {
+		// Split even if empty to produce an empty slice, not a slice with one empty string.
+		baseConfig.Paths.Ignore = strings.Split(strings.TrimSpace(*ignoreFlag), ",")
+	}
 
 	// Parse string flags into their corresponding enum types.
 	mode, err := config.BackupModeFromString(*modeFlag)

@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
-	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
 
 // PathSyncer orchestrates the file synchronization process.
@@ -27,7 +26,7 @@ func NewPathSyncer(cfg config.Config) *PathSyncer {
 }
 
 // Sync is the main entry point for synchronization. It dispatches to the configured sync engine.
-func (s *PathSyncer) Sync(ctx context.Context, src, dst string, mirror bool) error {
+func (s *PathSyncer) Sync(ctx context.Context, src, dst string, mirror bool, filesToIgnore []string) error {
 	if err := s.validateSyncPaths(src, dst); err != nil {
 		return err
 	}
@@ -41,10 +40,9 @@ func (s *PathSyncer) Sync(ctx context.Context, src, dst string, mirror bool) err
 
 	switch s.engine.Type {
 	case config.RobocopyEngine:
-		return s.handleRobocopy(ctx, src, dst, mirror)
+		return s.handleRobocopy(ctx, src, dst, mirror, filesToIgnore)
 	case config.NativeEngine:
-		plog.Info("Using native Go implementation for synchronization")
-		return s.handleNative(ctx, src, dst, mirror)
+		return s.handleNative(ctx, src, dst, mirror, filesToIgnore)
 	default:
 		return fmt.Errorf("unknown sync engine configured: %v", s.engine.Type)
 	}

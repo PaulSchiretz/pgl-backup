@@ -14,6 +14,9 @@ import (
 // configFileName is the name of the configuration file.
 const configFileName = "pgl-backup.conf"
 
+// MetaFileName is the name of the backup metadata file.
+const MetaFileName = ".pgl-backup.meta"
+
 type BackupNamingConfig struct {
 	Prefix                string `json:"prefix"`
 	TimeFormat            string `json:"timeFormat"`
@@ -21,8 +24,9 @@ type BackupNamingConfig struct {
 }
 
 type BackupPathConfig struct {
-	Source     string `json:"source"`
-	TargetBase string `json:"targetBase"`
+	Source     string   `json:"source"`
+	TargetBase string   `json:"targetBase"`
+	Ignore     []string `json:"ignore,omitempty"`
 }
 
 type BackupRetentionPolicyConfig struct {
@@ -166,8 +170,9 @@ func NewDefault() Config {
 			IncrementalModeSuffix: "current",
 		},
 		Paths: BackupPathConfig{
-			Source:     "", // Intentionally empty to force user configuration.
-			TargetBase: "", // Intentionally empty to force user configuration.
+			Source:     "",         // Intentionally empty to force user configuration.
+			TargetBase: "",         // Intentionally empty to force user configuration.
+			Ignore:     []string{}, // User-defined list of files/directories to ignore.
 		},
 		RetentionPolicy: BackupRetentionPolicyConfig{
 			Hours:  24, // N > 0: keep the N most recent hourly backups.
@@ -271,13 +276,18 @@ func (c *Config) LogSummary() {
 	if c.Quiet {
 		return
 	}
-	plog.Info("Backup run configuration loaded",
+	logArgs := []interface{}{
 		"mode", c.Mode,
 		"source", c.Paths.Source,
 		"target", c.Paths.TargetBase,
 		"sync_engine", c.Engine.Type,
 		"dry_run", c.DryRun,
-	)
+	}
+	if len(c.Paths.Ignore) > 0 {
+		logArgs = append(logArgs, "ignore", strings.Join(c.Paths.Ignore, ", "))
+	}
+
+	plog.Info("Backup run configuration loaded", logArgs...)
 }
 
 // getConfigPath determines the absolute path to the configuration file.

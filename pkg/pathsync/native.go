@@ -17,6 +17,7 @@ type nativeSyncRun struct {
 	src, dst              string
 	mirror, dryRun, quiet bool
 	numSyncWorkers        int
+	filesToIgnore         []string
 
 	// syncedSourcePaths is populated by the Collector and read by the Deletion phase.
 	syncedSourcePaths map[string]bool
@@ -57,38 +58,46 @@ func copyFileHelper(src, dst string) error {
 
 	// Clean up the temporary file if any step fails before the final rename.
 	// If Rename succeeds, this Remove call will simply fail (harmlessly) or do nothing.
-	defer os.Remove(out.Name())
-	defer out.Close()
+	tempPath := out.Name()
+	defer os.Remove(tempPath)
 
 	// 2. Copy content
 	if _, err = io.Copy(out, in); err != nil {
-		return fmt.Errorf("failed to copy content from %s to %s: %w", src, out.Name(), err)
+		out.Close() // Close before returning on error
+		return fmt.Errorf("failed to copy content from %s to %s: %w", src, tempPath, err)
 	}
 
 	// 3. Copy file metadata (Permissions and Timestamps)
 	info, err := os.Stat(src)
 	if err != nil {
+		out.Close() // Close before returning on error
 		return fmt.Errorf("failed to get stat for source file %s: %w", src, err)
 	}
 
 	if err := out.Chmod(info.Mode()); err != nil {
-		return fmt.Errorf("failed to set permissions on temporary file %s: %w", out.Name(), err)
+		out.Close() // Close before returning on error
+		return fmt.Errorf("failed to set permissions on temporary file %s: %w", tempPath, err)
+	}
+
+	// Explicitly close the file handle before any filesystem operations that require it (like Chtimes or Rename).
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("failed to close temporary file %s: %w", tempPath, err)
 	}
 
 	// We must sync timestamps so future runs can skip this file if it hasn't changed.
-	if err := os.Chtimes(out.Name(), info.ModTime(), info.ModTime()); err != nil {
-		return fmt.Errorf("failed to set timestamps on %s: %w", out.Name(), err)
+	if err := os.Chtimes(tempPath, info.ModTime(), info.ModTime()); err != nil {
+		return fmt.Errorf("failed to set timestamps on %s: %w", tempPath, err)
 	}
 
 	// 4. Atomically move the temporary file to the final destination.
-	return os.Rename(out.Name(), dst)
+	return os.Rename(tempPath, dst)
 }
 
 // processDirectorySync ensures the destination directory exists with the correct permissions.
 // Note: This function only handles the directory itself; children are handled by the Walker.
 func (r *nativeSyncRun) processDirectorySync(path, dstPath, relPath string, srcInfo os.FileInfo) error {
 	if r.dryRun {
-		plog.Info("[DRY RUN] MKDIR", "path", relPath)
+		plog.Info("[DRY RUN] SYNCDIR", "path", relPath)
 		return nil
 	}
 
@@ -99,7 +108,7 @@ func (r *nativeSyncRun) processDirectorySync(path, dstPath, relPath string, srcI
 	}
 
 	if !r.quiet {
-		plog.Info("MKDIR", "path", relPath)
+		plog.Info("SYNCDIR", "path", relPath)
 	}
 	return nil
 }
@@ -170,6 +179,17 @@ func (r *nativeSyncRun) syncWalker() {
 			// If we can't access a path, stop the walk.
 			return err
 		}
+
+		// Check if the file or directory should be ignored.
+		for _, fileToIgnore := range r.filesToIgnore {
+			if d.Name() == fileToIgnore {
+				if d.IsDir() {
+					return filepath.SkipDir // Don't descend into this directory.
+				}
+				return nil // It's a file, just skip it.
+			}
+		}
+
 		select {
 		case <-r.ctx.Done():
 			return r.ctx.Err()
@@ -249,8 +269,6 @@ func (r *nativeSyncRun) syncCollector(syncCollectorDone chan struct{}) {
 // handleSync coordinates the concurrent synchronization pipeline.
 // It uses a Producer-Consumer-Collector pattern.
 func (r *nativeSyncRun) handleSync() error {
-	plog.Info("Spawning worker goroutines for sync phase", "count", r.numSyncWorkers)
-
 	// 1. Start the syncCollector (Collector).
 	// This single goroutine owns the syncedSourcePaths map. It reads from 'syncResults'
 	// and writes to the map. This avoids the need for a Mutex on the map.
@@ -319,6 +337,14 @@ func (r *nativeSyncRun) handleDelete() error {
 
 		if relPath == "." {
 			return nil
+		}
+
+		// Never delete the metadata file. It's essential for the engine's retention logic
+		// and is intentionally not present in the source directory.
+		for _, fileToIgnore := range r.filesToIgnore {
+			if d.Name() == fileToIgnore {
+				return nil
+			}
 		}
 
 		// FUTURE NOTE: Case Sensitivity (Windows/macOS) Go maps are case-sensitive.
@@ -391,7 +417,7 @@ func (r *nativeSyncRun) execute() error {
 }
 
 // handleNative initializes the sync run structure and kicks off the execution.
-func (s *PathSyncer) handleNative(ctx context.Context, src, dst string, mirror bool) error {
+func (s *PathSyncer) handleNative(ctx context.Context, src, dst string, mirror bool, filesToIgnore []string) error {
 	plog.Info("Starting native sync", "from", src, "to", dst)
 
 	run := &nativeSyncRun{
@@ -401,6 +427,7 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, dst string, mirror b
 		dryRun:            s.dryRun,
 		quiet:             s.quiet,
 		numSyncWorkers:    s.engine.NativeEngineWorkers,
+		filesToIgnore:     filesToIgnore,
 		syncedSourcePaths: make(map[string]bool), // Initialize the map for the collector.
 		// Buffer 'syncTasks' to handle bursts of rapid file discovery by the walker.
 		syncTasks: make(chan string, s.engine.NativeEngineWorkers*2),
