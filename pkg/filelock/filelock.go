@@ -35,9 +35,8 @@ func (e *ErrLockActive) Error() string {
 
 // Lock manages the state of the acquired lock file.
 type Lock struct {
-	path              string
-	appID             string
-	heartbeatInterval time.Duration
+	path  string
+	appID string
 	// The context and cancel function are used to stop the background heartbeat goroutine.
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -46,15 +45,18 @@ type Lock struct {
 	held bool
 }
 
-const (
-	// staleTimeout: If a lock hasn't been updated in 3 minutes, it's considered dead.
-	staleTimeout = 3 * time.Minute
-	lockFileMode = 0644
+// These are vars to allow modification during testing.
+var (
+	heartbeatInterval = 1 * time.Minute
+	// staleTimeout is defined in relation to the heartbeat to ensure a safe margin.
+	staleTimeout = 3 * heartbeatInterval
 )
+
+const lockFileMode = 0644
 
 // Acquire attempts to acquire the lock.
 // ctx is used for the lifecycle of the acquisition attempt, not the background heartbeat.
-func Acquire(ctx context.Context, lockFilePath string, appID string, heartbeatInterval time.Duration) (*Lock, error) {
+func Acquire(ctx context.Context, lockFilePath string, appID string) (*Lock, error) {
 	// We will attempt to acquire multiple times in case of race conditions during cleanup
 	maxAttempts := 3
 
@@ -65,7 +67,7 @@ func Acquire(ctx context.Context, lockFilePath string, appID string, heartbeatIn
 		}
 
 		// --- 1. Attempt Atomic Acquisition ---
-		lock, err := tryAcquire(lockFilePath, appID, heartbeatInterval)
+		lock, err := tryAcquire(lockFilePath, appID)
 		if err == nil {
 			return lock, nil
 		}
@@ -116,7 +118,7 @@ func Acquire(ctx context.Context, lockFilePath string, appID string, heartbeatIn
 }
 
 // tryAcquire attempts atomic creation using O_EXCL
-func tryAcquire(path string, appID string, heartbeatInterval time.Duration) (*Lock, error) {
+func tryAcquire(path string, appID string) (*Lock, error) {
 	// O_CREATE|O_EXCL guarantees we only succeed if file doesn't exist
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, lockFileMode)
 	if err != nil {
@@ -128,12 +130,11 @@ func tryAcquire(path string, appID string, heartbeatInterval time.Duration) (*Lo
 	ctx, cancel := context.WithCancel(context.Background())
 
 	l := &Lock{
-		path:              path,
-		appID:             appID,
-		heartbeatInterval: heartbeatInterval,
-		ctx:               ctx,
-		cancel:            cancel,
-		held:              true,
+		path:   path,
+		appID:  appID,
+		ctx:    ctx,
+		cancel: cancel,
+		held:   true,
 	}
 
 	// Write initial data immediately.
@@ -174,7 +175,7 @@ func (l *Lock) cleanup() {
 }
 
 func (l *Lock) heartbeat() {
-	ticker := time.NewTicker(l.heartbeatInterval)
+	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
 	for {

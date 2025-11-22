@@ -98,7 +98,7 @@ func (e *Engine) Execute(ctx context.Context) error {
 	appID := fmt.Sprintf("pgl-backup:%s", e.config.Paths.Source)
 
 	plog.Info("Attempting to acquire lock", "path", lockFilePath)
-	lock, err := filelock.Acquire(ctx, lockFilePath, appID, 1*time.Minute)
+	lock, err := filelock.Acquire(ctx, lockFilePath, appID)
 	if err != nil {
 		var lockErr *filelock.ErrLockActive
 		if errors.As(err, &lockErr) {

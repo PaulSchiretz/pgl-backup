@@ -16,7 +16,7 @@ func TestAcquireAndRelease(t *testing.T) {
 	lockPath := filepath.Join(t.TempDir(), "test.lock")
 
 	// Acquire the lock
-	lock, err := Acquire(context.Background(), lockPath, "test-app", 1*time.Minute)
+	lock, err := Acquire(context.Background(), lockPath, "test-app")
 	if err != nil {
 		t.Fatalf("expected to acquire lock, but got error: %v", err)
 	}
@@ -40,14 +40,14 @@ func TestContention(t *testing.T) {
 	lockPath := filepath.Join(t.TempDir(), "test.lock")
 
 	// Process 1 acquires the lock
-	lock1, err := Acquire(context.Background(), lockPath, "app-1", 1*time.Minute)
+	lock1, err := Acquire(context.Background(), lockPath, "app-1")
 	if err != nil {
 		t.Fatalf("Process 1 failed to acquire lock: %v", err)
 	}
 	defer lock1.Release()
 
 	// Process 2 attempts to acquire the same lock
-	_, err = Acquire(context.Background(), lockPath, "app-2", 1*time.Minute)
+	_, err = Acquire(context.Background(), lockPath, "app-2")
 	if err == nil {
 		t.Fatal("Process 2 unexpectedly acquired an active lock")
 	}
@@ -80,7 +80,7 @@ func TestStaleLockCleanup(t *testing.T) {
 	}
 
 	// Attempt to acquire the stale lock
-	lock, err := Acquire(context.Background(), lockPath, "new-app", 1*time.Minute)
+	lock, err := Acquire(context.Background(), lockPath, "new-app")
 	if err != nil {
 		t.Fatalf("failed to acquire stale lock: %v", err)
 	}
@@ -99,23 +99,30 @@ func TestStaleLockCleanup(t *testing.T) {
 
 // TestHeartbeatEffect ensures an active lock with a heartbeat is not considered stale.
 func TestHeartbeatEffect(t *testing.T) {
-	// Use a very short heartbeat for this test to run quickly.
-	testHeartbeat := 50 * time.Millisecond
+	// Temporarily override package-level vars for a fast test.
+	originalHeartbeat := heartbeatInterval
+	originalStale := staleTimeout
+	heartbeatInterval = 50 * time.Millisecond
+	staleTimeout = 3 * heartbeatInterval
+	t.Cleanup(func() {
+		heartbeatInterval = originalHeartbeat
+		staleTimeout = originalStale
+	})
 
 	lockPath := filepath.Join(t.TempDir(), "test.lock")
 
 	// Acquire the lock, which starts the heartbeat
-	lock1, err := Acquire(context.Background(), lockPath, "app-1", testHeartbeat)
+	lock1, err := Acquire(context.Background(), lockPath, "app-1")
 	if err != nil {
 		t.Fatalf("failed to acquire initial lock: %v", err)
 	}
 	defer lock1.Release()
 
 	// Wait for a period longer than one heartbeat but shorter than the stale timeout
-	time.Sleep(testHeartbeat + 25*time.Millisecond)
+	time.Sleep(heartbeatInterval + 25*time.Millisecond)
 
 	// Attempt to acquire the lock again. It should fail because the heartbeat kept it fresh.
-	_, err = Acquire(context.Background(), lockPath, "app-2", testHeartbeat)
+	_, err = Acquire(context.Background(), lockPath, "app-2")
 	if err == nil {
 		t.Fatal("expected lock acquisition to fail, but it succeeded")
 	}
@@ -130,7 +137,7 @@ func TestHeartbeatEffect(t *testing.T) {
 func TestReleaseIdempotency(t *testing.T) {
 	lockPath := filepath.Join(t.TempDir(), "test.lock")
 
-	lock, err := Acquire(context.Background(), lockPath, "test-app", 1*time.Minute)
+	lock, err := Acquire(context.Background(), lockPath, "test-app")
 	if err != nil {
 		t.Fatalf("failed to acquire lock: %v", err)
 	}
