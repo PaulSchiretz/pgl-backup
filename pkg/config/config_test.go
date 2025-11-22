@@ -101,7 +101,7 @@ func TestLoad(t *testing.T) {
 
 	t.Run("Valid Config File", func(t *testing.T) {
 		tempDir := t.TempDir()
-		confPath := filepath.Join(tempDir, configFileName)
+		confPath := filepath.Join(tempDir, ConfigFileName)
 		// Create a config file with a custom prefix
 		content := `{"naming": {"prefix": "custom_prefix_"}}`
 		if err := os.WriteFile(confPath, []byte(content), 0644); err != nil {
@@ -129,7 +129,7 @@ func TestLoad(t *testing.T) {
 
 	t.Run("Malformed Config File", func(t *testing.T) {
 		tempDir := t.TempDir()
-		confPath := filepath.Join(tempDir, configFileName)
+		confPath := filepath.Join(tempDir, ConfigFileName)
 		// Create a malformed JSON file
 		content := `{"naming": {"prefix": "custom_prefix_"},}` // Extra comma
 		if err := os.WriteFile(confPath, []byte(content), 0644); err != nil {

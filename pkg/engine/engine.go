@@ -48,9 +48,6 @@ const (
 	monthFormat = "2006-01"       // YYYY-MM
 )
 
-// lockFileName is the name of the lock file created in the target directory.
-const lockFileName = ".pgl-backup.lock"
-
 // backupInfo holds the parsed time and name of a backup directory.
 type backupInfo struct {
 	Time time.Time
@@ -96,7 +93,7 @@ func (e *Engine) Execute(ctx context.Context) error {
 		return fmt.Errorf("failed to create target directory %s: %w", e.config.Paths.TargetBase, err)
 	}
 
-	lockFilePath := filepath.Join(e.config.Paths.TargetBase, lockFileName)
+	lockFilePath := filepath.Join(e.config.Paths.TargetBase, config.LockFileName)
 	// Use a descriptive appID for the lock file content
 	appID := fmt.Sprintf("pgl-backup:%s", e.config.Paths.Source)
 
@@ -176,8 +173,8 @@ func (e *Engine) performSync(ctx context.Context) error {
 	source := e.config.Paths.Source
 	mirror := e.config.Mode == config.IncrementalMode
 
-	// Combine system-required ignored files with user-defined ones. The meta file is critical.
-	excludeFiles := []string{config.MetaFileName}
+	// Combine system-required ignored files with user-defined ones for the sync operation.
+	excludeFiles := config.GetSystemExcludeFilePatterns()
 	excludeFiles = append(excludeFiles, e.config.Paths.ExcludeFiles...)
 	excludeDirs := e.config.Paths.ExcludeDirs
 

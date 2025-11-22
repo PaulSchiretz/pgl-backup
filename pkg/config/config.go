@@ -13,10 +13,19 @@ import (
 )
 
 // configFileName is the name of the configuration file.
-const configFileName = "pgl-backup.conf"
+const ConfigFileName = "pgl-backup.conf"
 
 // MetaFileName is the name of the backup metadata file.
 const MetaFileName = ".pgl-backup.meta"
+
+// LockFileName is the name of the lock file created in the target directory.
+const LockFileName = ".pgl-backup.lock"
+
+// GetSystemExcludeFilePatterns returns a slice of file patterns that should
+// always be excluded from synchronization for the system to function correctly.
+func GetSystemExcludeFilePatterns() []string {
+	return []string{MetaFileName, LockFileName, ConfigFileName}
+}
 
 type BackupNamingConfig struct {
 	Prefix                string `json:"prefix"`
@@ -327,7 +336,7 @@ var getConfigPath = func() (string, error) {
 		return "", fmt.Errorf("could not determine executable path: %w", err)
 	}
 	configDir := filepath.Dir(exePath)
-	return filepath.Join(configDir, configFileName), nil
+	return filepath.Join(configDir, ConfigFileName), nil
 }
 
 // expandPath expands the tilde (~) prefix in a path to the user's home directory.
