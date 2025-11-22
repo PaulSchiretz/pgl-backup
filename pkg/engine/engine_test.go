@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -8,11 +9,33 @@ import (
 	"time"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
+	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
+
+// mockSyncer is a mock implementation of pathsync.Syncer for testing.
+type mockSyncer struct {
+	// Store the arguments that Sync was called with.
+	calledWith struct {
+		src, dst string
+	}
+}
+
+// Sync records the src and dst paths it was called with and returns nil.
+func (m *mockSyncer) Sync(ctx context.Context, src, dst string, mirror bool, excludeFiles, excludeDirs []string) error {
+	m.calledWith.src = src
+	m.calledWith.dst = dst
+	// To make the test more realistic, we need to simulate the real syncer's
+	// behavior of creating the destination directory.
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
+	}
+	return nil
+}
 
 // Helper to create a dummy engine for testing.
 func newTestEngine(cfg config.Config) *Engine {
-	return New(cfg, "test-version")
+	e := New(cfg, "test-version")
+	return e
 }
 
 // Helper to create a temporary directory structure for a backup.
@@ -191,6 +214,62 @@ func TestDetermineBackupsToKeep(t *testing.T) {
 		if kept[name] {
 			t.Errorf("expected backup %s to be deleted, but it was kept", name)
 		}
+	}
+}
+
+func TestPerformSync_PreserveSourceDirectoryName(t *testing.T) {
+	// Suppress log output for this test to keep the test output clean.
+	var buf bytes.Buffer
+	plog.SetOutput(&buf)
+	t.Cleanup(func() { plog.SetOutput(os.Stderr) })
+
+	srcDir := t.TempDir()
+	targetBase := t.TempDir()
+
+	testCases := []struct {
+		name                        string
+		preserveSourceDirectoryName bool
+		expectedDst                 string
+	}{
+		{
+			name:                        "PreserveSourceDirectoryName is true",
+			preserveSourceDirectoryName: true,
+			expectedDst:                 filepath.Join(targetBase, "current", filepath.Base(srcDir)),
+		},
+		{
+			name:                        "PreserveSourceDirectoryName is false",
+			preserveSourceDirectoryName: false,
+			expectedDst:                 filepath.Join(targetBase, "current"),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Arrange
+			cfg := config.NewDefault()
+			cfg.Mode = config.IncrementalMode
+			cfg.Paths.Source = srcDir
+			cfg.Paths.TargetBase = targetBase
+			cfg.Naming.IncrementalModeSuffix = "current"
+			cfg.Paths.PreserveSourceDirectoryName = tc.preserveSourceDirectoryName
+
+			e := newTestEngine(cfg)
+			e.currentTarget = filepath.Join(targetBase, "current") // Set by prepareDestination
+
+			// Inject the mock syncer
+			mock := &mockSyncer{}
+			e.syncer = mock
+
+			// Act
+			err := e.performSync(context.Background())
+			if err != nil {
+				t.Fatalf("performSync failed: %v", err)
+			}
+
+			if mock.calledWith.dst != tc.expectedDst {
+				t.Errorf("expected destination path to be %q, but got %q", tc.expectedDst, mock.calledWith.dst)
+			}
+		})
 	}
 }
 

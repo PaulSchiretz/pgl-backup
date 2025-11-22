@@ -9,6 +9,11 @@ import (
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
 )
 
+// Syncer defines the interface for a file synchronization implementation.
+type Syncer interface {
+	Sync(ctx context.Context, src, dst string, mirror bool, excludeFiles, excludeDirs []string) error
+}
+
 // PathSyncer orchestrates the file synchronization process.
 type PathSyncer struct {
 	engine config.BackupEngineConfig

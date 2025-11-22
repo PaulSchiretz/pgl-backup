@@ -68,6 +68,7 @@ type Engine struct {
 	version          string
 	currentTarget    string
 	currentTimestamp time.Time // The timestamp of the current backup run for consistency.
+	syncer           pathsync.Syncer
 }
 
 // New creates a new backup engine with the given configuration and version.
@@ -75,6 +76,7 @@ func New(cfg config.Config, version string) *Engine {
 	return &Engine{
 		config:  cfg,
 		version: version,
+		syncer:  pathsync.NewPathSyncer(cfg), // Default to the real implementation.
 	}
 }
 
@@ -169,9 +171,14 @@ func (e *Engine) prepareDestination(ctx context.Context) error {
 
 // performSync is the main entry point for synchronization.
 func (e *Engine) performSync(ctx context.Context) error {
-	pathSyncer := pathsync.NewPathSyncer(e.config)
 	source := e.config.Paths.Source
+	destination := e.currentTarget
 	mirror := e.config.Mode == config.IncrementalMode
+
+	// If configured, append the source's base directory name to the destination path.
+	if e.config.Paths.PreserveSourceDirectoryName {
+		destination = filepath.Join(destination, filepath.Base(source))
+	}
 
 	// Combine system-required ignored files with user-defined ones for the sync operation.
 	excludeFiles := config.GetSystemExcludeFilePatterns()
@@ -179,7 +186,7 @@ func (e *Engine) performSync(ctx context.Context) error {
 	excludeDirs := e.config.Paths.ExcludeDirs
 
 	// Sync and check for errors after attempting the sync.
-	if syncErr := pathSyncer.Sync(ctx, source, e.currentTarget, mirror, excludeFiles, excludeDirs); syncErr != nil {
+	if syncErr := e.syncer.Sync(ctx, source, destination, mirror, excludeFiles, excludeDirs); syncErr != nil {
 		return fmt.Errorf("sync failed: %w", syncErr)
 	}
 

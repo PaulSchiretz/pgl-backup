@@ -2,6 +2,7 @@ package plog
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"os"
 )
@@ -44,6 +45,11 @@ func (h *LevelDispatchHandler) WithGroup(name string) slog.Handler {
 }
 
 var defaultLogger *slog.Logger
+
+// SetOutput allows redirecting the logger's output, primarily for testing.
+func SetOutput(w io.Writer) {
+	defaultLogger = slog.New(slog.NewTextHandler(w, nil))
+}
 
 func init() {
 	// Handler for info-level logs (and below) to stdout

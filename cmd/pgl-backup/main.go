@@ -56,6 +56,7 @@ func buildRunConfig(baseConfig config.Config) (config.Config, action, error) {
 	nativeRetryWaitFlag := flag.Int("native-retry-wait", baseConfig.Engine.NativeEngineRetryWaitSeconds, "Seconds to wait between retries in native engine.")
 	excludeFilesFlag := flag.String("exclude-files", strings.Join(baseConfig.Paths.ExcludeFiles, ","), "Comma-separated list of file names to exclude (supports glob patterns).")
 	excludeDirsFlag := flag.String("exclude-dirs", strings.Join(baseConfig.Paths.ExcludeDirs, ","), "Comma-separated list of directory names to exclude (supports glob patterns).")
+	preserveSourceNameFlag := flag.Bool("preserve-source-name", baseConfig.Paths.PreserveSourceDirectoryName, "Preserve the source directory's name in the destination path.")
 
 	flag.Parse()
 
@@ -67,6 +68,7 @@ func buildRunConfig(baseConfig config.Config) (config.Config, action, error) {
 	baseConfig.Engine.NativeEngineWorkers = *nativeEngineWorkersFlag
 	baseConfig.Engine.NativeEngineRetryCount = *nativeRetryCountFlag
 	baseConfig.Engine.NativeEngineRetryWaitSeconds = *nativeRetryWaitFlag
+	baseConfig.Paths.PreserveSourceDirectoryName = *preserveSourceNameFlag
 
 	// If the ignore flag was set, parse it and override the config.
 	if *excludeFilesFlag != strings.Join(baseConfig.Paths.ExcludeFiles, ",") {

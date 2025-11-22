@@ -109,6 +109,20 @@ func TestBuildRunConfig(t *testing.T) {
 		})
 	})
 
+	t.Run("Override PreserveSourceDirectoryName", func(t *testing.T) {
+		// The default is true, so we test setting it to false.
+		args := []string{"-preserve-source-name=false"}
+		runTestWithFlags(t, args, func() {
+			cfg, _, err := buildRunConfig(baseConf)
+			if err != nil {
+				t.Fatalf("expected no error, but got: %v", err)
+			}
+			if cfg.Paths.PreserveSourceDirectoryName {
+				t.Errorf("expected PreserveSourceDirectoryName to be false, but got %v", cfg.Paths.PreserveSourceDirectoryName)
+			}
+		})
+	})
+
 	t.Run("Invalid Mode Flag", func(t *testing.T) {
 		args := []string{"-mode=invalid-mode"}
 		runTestWithFlags(t, args, func() {

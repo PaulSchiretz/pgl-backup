@@ -34,10 +34,11 @@ type BackupNamingConfig struct {
 }
 
 type BackupPathConfig struct {
-	Source       string   `json:"source"`
-	TargetBase   string   `json:"targetBase"`
-	ExcludeFiles []string `json:"excludeFiles,omitempty"`
-	ExcludeDirs  []string `json:"excludeDirs,omitempty"`
+	Source                      string   `json:"source"`
+	TargetBase                  string   `json:"targetBase"`
+	PreserveSourceDirectoryName bool     `json:"preserveSourceDirectoryName"`
+	ExcludeFiles                []string `json:"excludeFiles,omitempty"`
+	ExcludeDirs                 []string `json:"excludeDirs,omitempty"`
 }
 
 type BackupRetentionPolicyConfig struct {
@@ -187,10 +188,11 @@ func NewDefault() Config {
 			IncrementalModeSuffix: "current",
 		},
 		Paths: BackupPathConfig{
-			Source:       "",         // Intentionally empty to force user configuration.
-			TargetBase:   "",         // Intentionally empty to force user configuration.
-			ExcludeFiles: []string{}, // User-defined list of files to exclude.
-			ExcludeDirs:  []string{}, // User-defined list of directories to exclude.
+			Source:                      "",         // Intentionally empty to force user configuration.
+			TargetBase:                  "",         // Intentionally empty to force user configuration.
+			PreserveSourceDirectoryName: true,       // Default to preserving the source folder name in the destination.
+			ExcludeFiles:                []string{}, // User-defined list of files to exclude.
+			ExcludeDirs:                 []string{}, // User-defined list of directories to exclude.
 		},
 		RetentionPolicy: BackupRetentionPolicyConfig{
 			Hours:  24, // N > 0: keep the N most recent hourly backups.
