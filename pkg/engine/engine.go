@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
+	"pixelgardenlabs.io/pgl-backup/pkg/filelock"
 	"pixelgardenlabs.io/pgl-backup/pkg/pathsync"
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
@@ -45,6 +47,9 @@ const (
 	weekFormat  = "%d-%d"         // Sprintf format for "YYYY-WW" using year and ISO week number (weeks start on Monday). Go's time package does not have a layout code (like WW). The only way to get the ISO week is to call the time.ISOWeek() method
 	monthFormat = "2006-01"       // YYYY-MM
 )
+
+// lockFileName is the name of the lock file created in the target directory.
+const lockFileName = ".pgl-backup.lock"
 
 // backupInfo holds the parsed time and name of a backup directory.
 type backupInfo struct {
@@ -84,6 +89,31 @@ func (e *Engine) Execute(ctx context.Context) error {
 		return ctx.Err()
 	default:
 	}
+
+	// --- 0. Acquire Lock ---
+	// Ensure the target directory exists so we can place a lock file in it.
+	if err := os.MkdirAll(e.config.Paths.TargetBase, 0755); err != nil {
+		return fmt.Errorf("failed to create target directory %s: %w", e.config.Paths.TargetBase, err)
+	}
+
+	lockFilePath := filepath.Join(e.config.Paths.TargetBase, lockFileName)
+	// Use a descriptive appID for the lock file content
+	appID := fmt.Sprintf("pgl-backup:%s", e.config.Paths.Source)
+
+	plog.Info("Attempting to acquire lock", "path", lockFilePath)
+	lock, err := filelock.Acquire(ctx, lockFilePath, appID)
+	if err != nil {
+		var lockErr *filelock.ErrLockActive
+		if errors.As(err, &lockErr) {
+			// This is not a fatal error, but a signal that another process is running.
+			plog.Warn("Backup is already running for this target.", "details", lockErr.Error())
+			return nil // Exit gracefully
+		}
+		// Any other error during lock acquisition is a real problem.
+		return fmt.Errorf("failed to acquire lock: %w", err)
+	}
+	defer lock.Release()
+	plog.Info("Lock acquired successfully.")
 
 	if e.config.DryRun {
 		plog.Info("--- Starting Backup (DRY RUN) ---")
