@@ -42,7 +42,7 @@ type Lock struct {
 	cancel context.CancelFunc
 	mu     sync.Mutex
 	// We keep track if we actually hold the lock to prevent double release
-	acquired bool
+	held bool
 }
 
 const (
@@ -128,11 +128,11 @@ func tryAcquire(path string, appID string) (*Lock, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	l := &Lock{
-		path:     path,
-		appID:    appID,
-		ctx:      ctx,
-		cancel:   cancel,
-		acquired: true,
+		path:   path,
+		appID:  appID,
+		ctx:    ctx,
+		cancel: cancel,
+		held:   true,
 	}
 
 	// Write initial data immediately.
@@ -152,13 +152,13 @@ func (l *Lock) Release() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if !l.acquired {
+	if !l.held {
 		return
 	}
 
 	l.cancel() // Stop heartbeat
 	l.cleanup()
-	l.acquired = false
+	l.held = false
 }
 
 func (l *Lock) cleanup() {
