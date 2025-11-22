@@ -177,7 +177,25 @@ func (e *Engine) performSync(ctx context.Context) error {
 
 	// If configured, append the source's base directory name to the destination path.
 	if e.config.Paths.PreserveSourceDirectoryName {
-		destination = filepath.Join(destination, filepath.Base(source))
+		var nameToAppend string
+
+		// Check if the path is a root path (e.g., "/" or "C:\")
+		if filepath.Dir(source) == source {
+			// Handle Windows Drive Roots (e.g. "D:\") -> "D"
+			vol := filepath.VolumeName(source)
+			if vol != "" {
+				nameToAppend = strings.TrimSuffix(vol, ":")
+			}
+			// If vol is empty (Unix "/"), we append nothing.
+		} else {
+			// Standard folder
+			nameToAppend = filepath.Base(source)
+		}
+
+		// Append if valid
+		if nameToAppend != "" && nameToAppend != "." && nameToAppend != string(filepath.Separator) {
+			destination = filepath.Join(destination, nameToAppend)
+		}
 	}
 
 	// Combine system-required ignored files with user-defined ones for the sync operation.

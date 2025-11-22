@@ -263,16 +263,19 @@ func Generate() error {
 
 // Validate checks the configuration for logical errors and inconsistencies.
 func (c *Config) Validate() error {
-	// Expand tilde in paths for user convenience.
+	// Clean and expand paths for canonical representation before use.
 	var err error
 	c.Paths.Source, err = expandPath(c.Paths.Source)
 	if err != nil {
 		return fmt.Errorf("could not expand source path: %w", err)
 	}
+	c.Paths.Source = filepath.Clean(c.Paths.Source)
+
 	c.Paths.TargetBase, err = expandPath(c.Paths.TargetBase)
 	if err != nil {
 		return fmt.Errorf("could not expand target path: %w", err)
 	}
+	c.Paths.TargetBase = filepath.Clean(c.Paths.TargetBase)
 
 	if c.Paths.Source == "" {
 		return fmt.Errorf("source path cannot be empty")
