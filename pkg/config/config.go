@@ -389,12 +389,12 @@ func validateGlobPatterns(fieldName string, patterns []string) error {
 // FormatTimestampWithOffset formats a UTC timestamp into a string that includes
 // the local timezone offset for user-friendliness, while keeping the base time in UTC.
 // Example: 2023-10-27-14-00-00-123456789-0400
-func FormatTimestampWithOffset(t time.Time) string {
+func FormatTimestampWithOffset(timestampUTC time.Time) string {
 	// We format the UTC time for the timestamp, then format it again in the local
 	// timezone just to get the offset string, and combine them.
-	mainPart := t.Format(backupTimeFormat)
-	nanoPart := fmt.Sprintf("%09d", t.Nanosecond())
-	offsetPart := t.In(time.Local).Format("Z0700")
+	mainPartUTC := timestampUTC.Format(backupTimeFormat)
+	nanoPartUTC := fmt.Sprintf("%09d", timestampUTC.Nanosecond())
+	offsetPartLocal := timestampUTC.In(time.Local).Format("Z0700")
 
-	return fmt.Sprintf("%s-%s%s", mainPart, nanoPart, offsetPart)
+	return fmt.Sprintf("%s-%s%s", mainPartUTC, nanoPartUTC, offsetPartLocal)
 }
