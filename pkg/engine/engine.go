@@ -282,11 +282,6 @@ func (e *Engine) performRollover(ctx context.Context) error {
 func (e *Engine) shouldRollover(lastBackupTime time.Time) bool {
 	// Handle the default (0 = 24h) for comparison logic
 	effectiveInterval := e.config.RolloverInterval
-	if effectiveInterval <= 0 {
-		effectiveInterval = 24 * time.Hour
-	}
-
-	currentTimestamp := e.currentTimestampUTC
 
 	// NOTE: For multi-day intervals, the full implementation requires normalizing to local midnight
 	// and calculating epoch day buckets to correctly handle DST and guarantee a new snapshot
@@ -329,7 +324,7 @@ func (e *Engine) shouldRollover(lastBackupTime time.Time) bool {
 	// Sub-Daily Intervals (Hourly, 6-Hourly)
 	// Use standard truncation for clean UTC time buckets.
 	lastBackupBoundary := lastBackupTime.Truncate(effectiveInterval)
-	currentBackupBoundary := currentTimestamp.Truncate(effectiveInterval)
+	currentBackupBoundary := e.currentTimestampUTC.Truncate(effectiveInterval)
 
 	return !currentBackupBoundary.Equal(lastBackupBoundary)
 }
@@ -338,19 +333,13 @@ func (e *Engine) shouldRollover(lastBackupTime time.Time) bool {
 // backups more frequently than the rollover interval allows.
 func (e *Engine) checkRetentionGranularity() {
 	policy := e.config.RetentionPolicy
-	interval := e.config.RolloverInterval
-
-	// Handle the default (0 = 24h) for comparison logic
-	effectiveInterval := interval
-	if effectiveInterval <= 0 {
-		effectiveInterval = 24 * time.Hour
-	}
+	effectiveInterval := e.config.RolloverInterval
 
 	// 1. Check Hourly Mismatch
 	if policy.Hours > 0 && effectiveInterval > 1*time.Hour {
 		plog.Warn("Configuration Mismatch: Hourly retention is enabled, but rollover is too slow.",
 			"keep_hourly", policy.Hours,
-			"rollover_interval", interval,
+			"rollover_interval", effectiveInterval,
 			"impact", "Hourly slots will fill at the speed of the rollover interval.")
 	}
 
@@ -358,7 +347,7 @@ func (e *Engine) checkRetentionGranularity() {
 	if policy.Days > 0 && effectiveInterval > 24*time.Hour {
 		plog.Warn("Configuration Mismatch: Daily retention is enabled, but rollover is too slow.",
 			"keep_daily", policy.Days,
-			"rollover_interval", interval,
+			"rollover_interval", effectiveInterval,
 			"impact", "Daily slots will be filled by Weekly/Monthly backups, delaying the 'Weekly' retention rule.")
 	}
 
@@ -366,7 +355,7 @@ func (e *Engine) checkRetentionGranularity() {
 	if policy.Weeks > 0 && effectiveInterval > 168*time.Hour {
 		plog.Warn("Configuration Mismatch: Weekly retention is enabled, but rollover is too slow.",
 			"keep_weekly", policy.Weeks,
-			"rollover_interval", interval)
+			"rollover_interval", effectiveInterval)
 	}
 
 	// 4. Check Monthly Mismatch
@@ -376,7 +365,7 @@ func (e *Engine) checkRetentionGranularity() {
 	if policy.Months > 0 && effectiveInterval > avgMonth {
 		plog.Warn("Configuration Mismatch: Monthly retention is enabled, but rollover is too slow.",
 			"keep_monthly", policy.Months,
-			"rollover_interval", interval,
+			"rollover_interval", effectiveInterval,
 			"impact", "Backups occur less frequently than once a month; some calendar months will have no backup.")
 	}
 }

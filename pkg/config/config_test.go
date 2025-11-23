@@ -66,6 +66,15 @@ func TestConfig_Validate(t *testing.T) {
 		}
 	})
 
+	t.Run("Invalid RolloverInterval", func(t *testing.T) {
+		cfg := newValidConfig(t)
+		cfg.Mode = IncrementalMode
+		cfg.RolloverInterval = 0
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected error for zero rollover interval in incremental mode, but got nil")
+		}
+	})
+
 	t.Run("Invalid Glob Pattern", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Paths.ExcludeFiles = []string{"["} // Invalid glob pattern

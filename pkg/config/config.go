@@ -265,6 +265,10 @@ func Generate() error {
 // Validate checks the configuration for logical errors and inconsistencies.
 func (c *Config) Validate() error {
 	// Clean and expand paths for canonical representation before use.
+	if c.Paths.Source == "" {
+		return fmt.Errorf("source path cannot be empty")
+	}
+
 	var err error
 	c.Paths.Source, err = expandPath(c.Paths.Source)
 	if err != nil {
@@ -272,22 +276,20 @@ func (c *Config) Validate() error {
 	}
 	c.Paths.Source = filepath.Clean(c.Paths.Source)
 
+	if c.Paths.TargetBase == "" {
+		return fmt.Errorf("target path cannot be empty")
+	}
+
 	c.Paths.TargetBase, err = expandPath(c.Paths.TargetBase)
 	if err != nil {
 		return fmt.Errorf("could not expand target path: %w", err)
 	}
 	c.Paths.TargetBase = filepath.Clean(c.Paths.TargetBase)
 
-	if c.Paths.Source == "" {
-		return fmt.Errorf("source path cannot be empty")
-	}
 	if _, err := os.Stat(c.Paths.Source); os.IsNotExist(err) {
 		return fmt.Errorf("source path '%s' does not exist", c.Paths.Source)
 	}
 
-	if c.Paths.TargetBase == "" {
-		return fmt.Errorf("target path cannot be empty")
-	}
 	if c.Engine.NativeEngineWorkers < 1 {
 		return fmt.Errorf("nativeEngineWorkers must be at least 1")
 	}

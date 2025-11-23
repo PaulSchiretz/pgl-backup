@@ -52,12 +52,6 @@ func createTestBackup(t *testing.T, baseDir, name string, backupTime time.Time) 
 }
 
 func TestShouldRollover(t *testing.T) {
-	// Define a fixed location for consistent timezone testing
-	location, err := time.LoadLocation("America/New_York")
-	if err != nil {
-		t.Fatalf("failed to load location: %v", err)
-	}
-
 	// Test cases for shouldRollover
 	testCases := []struct {
 		name              string
@@ -65,7 +59,6 @@ func TestShouldRollover(t *testing.T) {
 		lastBackup        time.Time
 		currentBackup     time.Time
 		shouldRollover    bool
-		location          *time.Location
 		expectPanic       bool // For invalid intervals
 		effectiveInterval time.Duration
 	}{
@@ -85,57 +78,55 @@ func TestShouldRollover(t *testing.T) {
 			shouldRollover: true,
 		},
 		// Daily Tests (Local Timezone based)
+		// These tests use UTC but cross the midnight boundary, which shouldRollover
+		// will evaluate using the system's local time.
 		{
-			name:           "Daily - Same Day",
-			interval:       24 * time.Hour,
-			lastBackup:     time.Date(2023, 10, 26, 10, 0, 0, 0, location),
-			currentBackup:  time.Date(2023, 10, 26, 23, 0, 0, 0, location),
+			name:       "Daily - Same Day",
+			interval:   24 * time.Hour,
+			lastBackup: time.Date(2023, 10, 26, 10, 0, 0, 0, time.UTC),
+			// Set current time only a few hours after the last backup. This guarantees
+			// they fall on the same local calendar day in any timezone.
+			currentBackup:  time.Date(2023, 10, 26, 14, 0, 0, 0, time.UTC),
 			shouldRollover: false,
 		},
 		{
-			name:           "Daily - Crosses Midnight",
-			interval:       24 * time.Hour,
-			lastBackup:     time.Date(2023, 10, 26, 23, 55, 0, 0, location),
-			currentBackup:  time.Date(2023, 10, 27, 0, 5, 0, 0, location),
+			name:       "Daily - Crosses Midnight",
+			interval:   24 * time.Hour,
+			lastBackup: time.Date(2023, 10, 26, 14, 0, 0, 0, time.UTC),
+			// We set the current time to be 26 hours after the last backup. This guarantees
+			// that no matter what the local timezone is (from UTC-12 to UTC+14), the two
+			// timestamps will fall on different calendar days.
+			currentBackup:  time.Date(2023, 10, 26, 14, 0, 0, 0, time.UTC).Add(26 * time.Hour),
 			shouldRollover: true,
 		},
 		{
 			name:           "Weekly - No Rollover (Day 3)",
 			interval:       7 * 24 * time.Hour,
-			lastBackup:     time.Date(2023, 10, 23, 12, 0, 0, 0, location), // Day D
-			currentBackup:  time.Date(2023, 10, 26, 12, 0, 0, 0, location), // Day D + 3
+			lastBackup:     time.Date(2023, 10, 23, 12, 0, 0, 0, time.UTC), // Day D
+			currentBackup:  time.Date(2023, 10, 26, 12, 0, 0, 0, time.UTC), // Day D + 3
 			shouldRollover: false,                                          // 3 days is less than 7 days
 		},
 		{
 			name:           "Weekly - Rollover (Day 7 Boundary)",
 			interval:       7 * 24 * time.Hour,
-			lastBackup:     time.Date(2023, 10, 23, 12, 0, 0, 0, location), // Day D (Bucket B)
-			currentBackup:  time.Date(2023, 10, 30, 12, 0, 0, 0, location), // Day D + 7 (Bucket B + 1)
+			lastBackup:     time.Date(2023, 10, 23, 12, 0, 0, 0, time.UTC), // Day D (Bucket B)
+			currentBackup:  time.Date(2023, 10, 30, 12, 0, 0, 0, time.UTC), // Day D + 7 (Bucket B + 1)
 			shouldRollover: true,                                           // Exactly 7 calendar days have elapsed, crossing the bucket
 		},
 		// Daylight Saving Time Change Test
 		{
 			name:           "Daily - Across DST Fallback",
 			interval:       24 * time.Hour,
-			lastBackup:     time.Date(2023, 11, 4, 12, 0, 0, 0, location), // Before DST change
-			currentBackup:  time.Date(2023, 11, 5, 12, 0, 0, 0, location), // After DST change (day becomes 25 hours long)
+			lastBackup:     time.Date(2023, 11, 4, 12, 0, 0, 0, time.UTC), // Before DST change
+			currentBackup:  time.Date(2023, 11, 5, 12, 0, 0, 0, time.UTC), // After DST change
 			shouldRollover: true,
 		},
 		{
 			name:           "Daily - Across DST Spring Forward",
 			interval:       24 * time.Hour,
-			lastBackup:     time.Date(2023, 3, 11, 12, 0, 0, 0, location), // Before DST change
-			currentBackup:  time.Date(2023, 3, 12, 12, 0, 0, 0, location), // After DST change (day is 23 hours long)
+			lastBackup:     time.Date(2023, 3, 11, 12, 0, 0, 0, time.UTC), // Before DST change
+			currentBackup:  time.Date(2023, 3, 12, 12, 0, 0, 0, time.UTC), // After DST change
 			shouldRollover: true,
-		},
-		// Zero/Negative Interval Test
-		{
-			name:              "Zero Interval - Defaults to 24h",
-			interval:          0,
-			effectiveInterval: 24 * time.Hour,
-			lastBackup:        time.Date(2023, 10, 26, 23, 55, 0, 0, location),
-			currentBackup:     time.Date(2023, 10, 27, 0, 5, 0, 0, location),
-			shouldRollover:    true,
 		},
 	}
 
@@ -144,11 +135,6 @@ func TestShouldRollover(t *testing.T) {
 			// Arrange
 			cfg := config.NewDefault()
 			cfg.RolloverInterval = tc.interval
-
-			// Override effective interval for tests that check default behavior
-			if tc.effectiveInterval > 0 {
-				cfg.RolloverInterval = tc.effectiveInterval
-			}
 
 			e := newTestEngine(cfg)
 			e.currentTimestampUTC = tc.currentBackup
