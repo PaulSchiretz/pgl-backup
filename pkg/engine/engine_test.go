@@ -151,7 +151,7 @@ func TestShouldRollover(t *testing.T) {
 			}
 
 			e := newTestEngine(cfg)
-			e.currentTimestamp = tc.currentBackup
+			e.currentTimestampUTC = tc.currentBackup
 
 			// Act
 			result := e.shouldRollover(tc.lastBackup)
@@ -336,10 +336,10 @@ func TestPerformRollover(t *testing.T) {
 	cfg.RolloverInterval = 24 * time.Hour
 
 	e := newTestEngine(cfg)
-	e.currentTimestamp = time.Now() // Today
+	e.currentTimestampUTC = time.Now().UTC() // Today
 
 	// Create a "current" backup from yesterday
-	lastBackupTime := e.currentTimestamp.Add(-25 * time.Hour)
+	lastBackupTime := e.currentTimestampUTC.Add(-25 * time.Hour)
 	currentBackupDirName := "backup_current"
 	createTestBackup(t, tempDir, currentBackupDirName, lastBackupTime)
 
@@ -381,7 +381,7 @@ func TestPerformRollover_NoRollover(t *testing.T) {
 	currentRunTime := time.Date(2023, 10, 27, 14, 0, 0, 0, time.Local)
 
 	e := newTestEngine(cfg)
-	e.currentTimestamp = currentRunTime
+	e.currentTimestampUTC = currentRunTime
 
 	// Create a "current" backup from a few hours ago (same day)
 	// This is the timestamp that will be written to the metafile.
@@ -466,7 +466,7 @@ func TestPrepareDestination(t *testing.T) {
 		cfg.Naming.TimeFormat = "2006-01-02"
 
 		e := newTestEngine(cfg)
-		e.currentTimestamp = time.Date(2023, 10, 27, 0, 0, 0, 0, time.UTC)
+		e.currentTimestampUTC = time.Date(2023, 10, 27, 0, 0, 0, 0, time.UTC)
 
 		// Act
 		err := e.prepareDestination(context.Background())
@@ -491,7 +491,7 @@ func TestPrepareDestination(t *testing.T) {
 		cfg.Naming.IncrementalModeSuffix = "latest"
 
 		e := newTestEngine(cfg)
-		e.currentTimestamp = time.Now()
+		e.currentTimestampUTC = time.Now().UTC()
 
 		// Act
 		err := e.prepareDestination(context.Background())

@@ -16,8 +16,8 @@ import (
 // LockContent defines the structure of the data written to the lock file.
 type LockContent struct {
 	PID        int64     `json:"pid"`
-	LastUpdate time.Time `json:"last_update"`
-	AppID      string    `json:"app_id"` // Optional identifier for clarity
+	LastUpdate time.Time `json:"lastUpdate"`
+	AppID      string    `json:"appID"`
 }
 
 // ErrLockActive is a structured error returned when a lock is already held by another process.
@@ -198,8 +198,9 @@ func (l *Lock) heartbeat() {
 // Given the readLockContentSafely implementation, truncation is acceptable.
 func (l *Lock) updateContent() error {
 	content := LockContent{
-		PID:        int64(os.Getpid()),
-		LastUpdate: time.Now(),
+		PID: int64(os.Getpid()),
+		// Always use UTC for timestamps to avoid issues with time zones and daylight saving.
+		LastUpdate: time.Now().UTC(),
 		AppID:      l.appID,
 	}
 

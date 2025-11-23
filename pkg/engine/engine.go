@@ -23,22 +23,22 @@ import (
 // each designed to address a separate user concern:
 //
 // 1. Rollover (Snapshot Creation) - Predictable Creation
-//    - Goal: To honor the user's configured `RolloverInterval` as literally as possible.
-//    - Logic: The `shouldRollover` function uses time-based "bucketing". If the interval is
-//      `7 * 24h`, it creates a new snapshot exactly 7 days after the previous one started its
-//      bucket. This gives the user direct, predictable control over the *frequency* of new archives.
+//    - Goal: To honor the user's configured `RolloverInterval` as literally as possible.
+//    - Logic: The `shouldRollover` function calculates time-based "bucketing" based on the
+//      **local system's midnight** for day-or-longer intervals. This gives the user direct,
+//      predictable control over the *frequency* of new archives, anchored to their local day.
 //
 // 2. Retention (Snapshot Deletion) - Consistent History
-//    - Goal: To organize the backup history into intuitive, calendar-based slots for cleanup.
-//    - Logic: The `determineBackupsToKeep` function uses fixed calendar concepts (e.g.,
-//      `time.ISOWeek()`, `time.Format("2006-01-02")`). It doesn't care about the rollover
-//      interval; it only cares about which calendar day, week, or month a backup falls into.
-//      This ensures that "keep one backup from last week" always refers to a standard
-//      calendar week (e.g., Monday-Sunday).
+//    - Goal: To organize the backup history into intuitive, calendar-based slots for cleanup.
+//    - Logic: The `determineBackupsToKeep` function uses fixed calendar concepts (e.g.,
+//      `time.ISOWeek()`, `time.Format("2006-01-02")`) by examining the **UTC time** stored in
+//      the backup's metadata (`BackupTime`). This ensures that "keep one backup from last week"
+//      always refers to a standard calendar week as defined in the UTC timezone, providing a
+//      clean, portable history.
 //
 // By decoupling these two concepts, the system provides the best of both worlds: a predictable
-// creation schedule based on user-defined duration, and a clean, consistent historical view
-// based on standard calendar periods.
+// creation schedule based on local time duration, and a clean, consistent historical view
+// based on standard UTC calendar periods.
 
 // Constants for time formats used in retention bucketing
 const (
@@ -64,11 +64,11 @@ type runMetadata struct {
 
 // Engine orchestrates the entire backup process.
 type Engine struct {
-	config           config.Config
-	version          string
-	currentTarget    string
-	currentTimestamp time.Time // The timestamp of the current backup run for consistency.
-	syncer           pathsync.Syncer
+	config              config.Config
+	version             string
+	currentTarget       string
+	currentTimestampUTC time.Time // The UTC timestamp of the current backup run for consistency.
+	syncer              pathsync.Syncer
 }
 
 // New creates a new backup engine with the given configuration and version.
@@ -78,6 +78,18 @@ func New(cfg config.Config, version string) *Engine {
 		version: version,
 		syncer:  pathsync.NewPathSyncer(cfg), // Default to the real implementation.
 	}
+}
+
+// formatTimestampWithOffset formats a UTC timestamp into a string that includes
+// the local timezone offset for user-friendliness, while keeping the base time in UTC.
+// Example: 2023-10-27-14-00-00-000-0400
+func (e *Engine) formatTimestampWithOffset(t time.Time) string {
+	// We format the UTC time for the timestamp, then format it again in the local
+	// timezone just to get the offset string, and combine them.
+	// The `Z0700` layout produces the time zone offset (e.g., "+0100").
+	utcPart := t.Format(e.config.Naming.TimeFormat)
+	offsetPart := t.In(time.Local).Format("Z0700")
+	return utcPart + offsetPart
 }
 
 // Execute runs the entire backup job from start to finish.
@@ -122,7 +134,9 @@ func (e *Engine) Execute(ctx context.Context) error {
 
 	e.checkRetentionGranularity()
 
-	e.currentTimestamp = time.Now() // Capture a consistent timestamp for the entire run.
+	// Capture a consistent UTC timestamp for the entire run to ensure unambiguous folder names
+	// and avoid daylight saving time conflicts.
+	e.currentTimestampUTC = time.Now().UTC()
 
 	plog.Info("Backup source", "path", e.config.Paths.Source)
 	plog.Info("Backup mode", "mode", e.config.Mode)
@@ -155,7 +169,10 @@ func (e *Engine) Execute(ctx context.Context) error {
 func (e *Engine) prepareDestination(ctx context.Context) error {
 	if e.config.Mode == config.SnapshotMode {
 		// SNAPSHOT MODE
-		timestamp := e.currentTimestamp.Format(e.config.Naming.TimeFormat)
+		//
+		// The directory name must remain uniquely based on UTC time to avoid DST conflicts,
+		// but we add the user's local offset to make the timezone clear to the user.
+		timestamp := e.formatTimestampWithOffset(e.currentTimestampUTC)
 		backupDirName := e.config.Naming.Prefix + timestamp
 		e.currentTarget = filepath.Join(e.config.Paths.TargetBase, backupDirName)
 	} else {
@@ -209,7 +226,7 @@ func (e *Engine) performSync(ctx context.Context) error {
 	}
 
 	// If the sync was successful, write the metafile for retention purposes.
-	return writeBackupMetafile(e.currentTarget, e.version, e.config.Mode.String(), source, e.currentTimestamp, e.config.DryRun)
+	return writeBackupMetafile(e.currentTarget, e.version, e.config.Mode.String(), source, e.currentTimestampUTC, e.config.DryRun)
 }
 
 // performRollover checks if the incremental backup directory is from a previous day > RolloverInterval.
@@ -229,7 +246,7 @@ func (e *Engine) performRollover(ctx context.Context) error {
 	if e.shouldRollover(lastBackupTime) {
 		plog.Info("Rollover threshold crossed, creating new archive.",
 			"last_backup_time", lastBackupTime,
-			"current_time", e.currentTimestamp,
+			"current_time_utc", e.currentTimestampUTC,
 			"rollover_interval", e.config.RolloverInterval)
 
 		// Check for cancellation before performing the rename.
@@ -239,7 +256,9 @@ func (e *Engine) performRollover(ctx context.Context) error {
 		default:
 		}
 
-		archiveTimestamp := lastBackupTime.Format(e.config.Naming.TimeFormat)
+		// The directory name must remain uniquely based on UTC time to avoid DST conflicts,
+		// but we add the user's local offset to make the timezone clear to the user.
+		archiveTimestamp := e.formatTimestampWithOffset(lastBackupTime)
 		archiveDirName := fmt.Sprintf("%s%s", e.config.Naming.Prefix, archiveTimestamp)
 		archivePath := filepath.Join(e.config.Paths.TargetBase, archiveDirName)
 
@@ -264,6 +283,14 @@ func (e *Engine) performRollover(ctx context.Context) error {
 
 // shouldRollover determines if a new backup archive should be created based on the
 // configured interval and the time of the last backup.
+//
+// DESIGN NOTE on time zones:
+// For intervals of 24 hours or longer, this function intentionally calculates
+// rollover boundaries based on the **local system's midnight** (`time.Local`).
+// This ensures that rollovers align with a user's calendar day ("start a new
+// weekly backup on Sunday night"), even though all stored timestamps are UTC.
+// The conversion handles Daylight Saving Time (DST) shifts correctly by checking
+// for midnight-to-midnight boundary crossings (epoch day counting).
 func (e *Engine) shouldRollover(lastBackupTime time.Time) bool {
 	// Handle the default (0 = 24h) for comparison logic
 	effectiveInterval := e.config.RolloverInterval
@@ -271,7 +298,7 @@ func (e *Engine) shouldRollover(lastBackupTime time.Time) bool {
 		effectiveInterval = 24 * time.Hour
 	}
 
-	currentTimestamp := e.currentTimestamp
+	currentTimestamp := e.currentTimestampUTC
 
 	// NOTE: For multi-day intervals, the full implementation requires normalizing to local midnight
 	// and calculating epoch day buckets to correctly handle DST and guarantee a new snapshot
@@ -281,14 +308,17 @@ func (e *Engine) shouldRollover(lastBackupTime time.Time) bool {
 	if effectiveInterval >= 24*time.Hour {
 		// We want to ignore hours/minutes and just compare "Day Numbers".
 
-		// 1. Normalize both times to Local Midnight (strip hours/min/sec)
-		// Force the math to occur in the current system's timezone
-		loc := e.currentTimestamp.Location()
+		// Ensure Rollover happens at Local Midnight ---
+		// To align the rollover boundary with the user's local calendar day (e.g.,
+		// a daily backup always rolls over at 00:00 local time, regardless of DST),
+		// we must perform the "day number" comparison in the system's local timezone.
+		// 1. Normalize both times to the system's local midnight.
+		loc := time.Local
 
 		y1, m1, d1 := lastBackupTime.In(loc).Date() // Convert last backup to current/local time
 		lastDayMidnight := time.Date(y1, m1, d1, 0, 0, 0, 0, loc)
 
-		y2, m2, d2 := e.currentTimestamp.Date()
+		y2, m2, d2 := e.currentTimestampUTC.In(loc).Date()
 		currentDayMidnight := time.Date(y2, m2, d2, 0, 0, 0, 0, loc)
 
 		// 2. Calculate days since a fixed anchor (Unix Epoch Local).
