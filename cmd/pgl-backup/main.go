@@ -70,14 +70,28 @@ func buildRunConfig(baseConfig config.Config) (config.Config, action, error) {
 	baseConfig.Engine.NativeEngineRetryWaitSeconds = *nativeRetryWaitFlag
 	baseConfig.Paths.PreserveSourceDirectoryName = *preserveSourceNameFlag
 
-	// If the ignore flag was set, parse it and override the config.
+	// If the exclude-files flag was set, parse it and override the config.
 	if *excludeFilesFlag != strings.Join(baseConfig.Paths.ExcludeFiles, ",") {
-		baseConfig.Paths.ExcludeFiles = strings.Split(strings.TrimSpace(*excludeFilesFlag), ",")
+		parts := strings.Split(*excludeFilesFlag, ",")
+		baseConfig.Paths.ExcludeFiles = make([]string, 0, len(parts))
+		for _, part := range parts {
+			trimmed := strings.TrimSpace(part)
+			if trimmed != "" {
+				baseConfig.Paths.ExcludeFiles = append(baseConfig.Paths.ExcludeFiles, trimmed)
+			}
+		}
 	}
 
-	// If the ignore flag was set, parse it and override the config.
+	// If the exclude-dirs flag was set, parse it and override the config.
 	if *excludeDirsFlag != strings.Join(baseConfig.Paths.ExcludeDirs, ",") {
-		baseConfig.Paths.ExcludeDirs = strings.Split(strings.TrimSpace(*excludeDirsFlag), ",")
+		parts := strings.Split(*excludeDirsFlag, ",")
+		baseConfig.Paths.ExcludeDirs = make([]string, 0, len(parts))
+		for _, part := range parts {
+			trimmed := strings.TrimSpace(part)
+			if trimmed != "" {
+				baseConfig.Paths.ExcludeDirs = append(baseConfig.Paths.ExcludeDirs, trimmed)
+			}
+		}
 	}
 
 	// Parse string flags into their corresponding enum types.
