@@ -22,7 +22,7 @@ const MetaFileName = ".pgl-backup.meta"
 const LockFileName = ".pgl-backup.lock"
 
 // backupTimeFormat defines the standard, non-configurable time format for backup directory names.
-const backupTimeFormat = "2006-01-02-15-04-05-000"
+const backupTimeFormat = "2006-01-02-15-04-05"
 
 // GetSystemExcludeFilePatterns returns a slice of file patterns that should
 // always be excluded from synchronization for the system to function correctly.
@@ -265,31 +265,35 @@ func Generate() error {
 // Validate checks the configuration for logical errors and inconsistencies.
 func (c *Config) Validate() error {
 	// Clean and expand paths for canonical representation before use.
+	var err error
+
+	// --- Validate Source Path ---
 	if c.Paths.Source == "" {
 		return fmt.Errorf("source path cannot be empty")
 	}
-
-	var err error
 	c.Paths.Source, err = expandPath(c.Paths.Source)
 	if err != nil {
 		return fmt.Errorf("could not expand source path: %w", err)
 	}
 	c.Paths.Source = filepath.Clean(c.Paths.Source)
+	if _, err := os.Stat(c.Paths.Source); os.IsNotExist(err) {
+		return fmt.Errorf("source path '%s' does not exist", c.Paths.Source)
+	}
 
+	// --- Validate Target Path ---
 	if c.Paths.TargetBase == "" {
 		return fmt.Errorf("target path cannot be empty")
 	}
-
 	c.Paths.TargetBase, err = expandPath(c.Paths.TargetBase)
 	if err != nil {
 		return fmt.Errorf("could not expand target path: %w", err)
 	}
 	c.Paths.TargetBase = filepath.Clean(c.Paths.TargetBase)
-
-	if _, err := os.Stat(c.Paths.Source); os.IsNotExist(err) {
-		return fmt.Errorf("source path '%s' does not exist", c.Paths.Source)
+	if c.Paths.TargetBase == "." || c.Paths.TargetBase == string(filepath.Separator) {
+		return fmt.Errorf("target path cannot be the current directory ('.') or the root directory ('/')")
 	}
 
+	// --- Validate Engine and Mode Settings ---
 	if c.Engine.NativeEngineWorkers < 1 {
 		return fmt.Errorf("nativeEngineWorkers must be at least 1")
 	}
@@ -384,12 +388,13 @@ func validateGlobPatterns(fieldName string, patterns []string) error {
 
 // FormatTimestampWithOffset formats a UTC timestamp into a string that includes
 // the local timezone offset for user-friendliness, while keeping the base time in UTC.
-// Example: 2023-10-27-14-00-00-000-0400
+// Example: 2023-10-27-14-00-00-123456789-0400
 func FormatTimestampWithOffset(t time.Time) string {
 	// We format the UTC time for the timestamp, then format it again in the local
 	// timezone just to get the offset string, and combine them.
-	// The `Z0700` layout produces the time zone offset (e.g., "+0100").
-	utcPart := t.Format(backupTimeFormat)
+	mainPart := t.Format(backupTimeFormat)
+	nanoPart := fmt.Sprintf("%09d", t.Nanosecond())
 	offsetPart := t.In(time.Local).Format("Z0700")
-	return utcPart + offsetPart
+
+	return fmt.Sprintf("%s-%s%s", mainPart, nanoPart, offsetPart)
 }

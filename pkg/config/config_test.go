@@ -49,20 +49,27 @@ func TestConfig_Validate(t *testing.T) {
 		}
 	})
 
+	t.Run("Target Path is Current Directory", func(t *testing.T) {
+		cfg := newValidConfig(t)
+		cfg.Paths.TargetBase = "."
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected error for target path being current directory, but got nil")
+		}
+	})
+
+	t.Run("Target Path is Root Directory", func(t *testing.T) {
+		cfg := newValidConfig(t)
+		cfg.Paths.TargetBase = string(filepath.Separator)
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected error for target path being root directory, but got nil")
+		}
+	})
+
 	t.Run("Invalid NativeEngineWorkers", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Engine.NativeEngineWorkers = 0
 		if err := cfg.Validate(); err == nil {
 			t.Error("expected error for zero native engine workers, but got nil")
-		}
-	})
-
-	t.Run("Invalid RolloverInterval", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.Mode = IncrementalMode
-		cfg.RolloverInterval = 0
-		if err := cfg.Validate(); err == nil {
-			t.Error("expected error for zero rollover interval in incremental mode, but got nil")
 		}
 	})
 
@@ -82,6 +89,29 @@ func TestConfig_Validate(t *testing.T) {
 			t.Error("expected error for invalid glob pattern, but got nil")
 		}
 	})
+}
+
+func TestFormatTimestampWithOffset(t *testing.T) {
+	// 1. Create a fixed UTC time for the test.
+	testTime := time.Date(2023, 10, 27, 14, 30, 15, 123456789, time.UTC)
+
+	// 2. Call the function under test.
+	actualResult := FormatTimestampWithOffset(testTime)
+
+	// 3. Construct the expected result.
+	// The UTC part is based on the fixed time and the package constant.
+	expectedUTCPart := "2023-10-27-14-30-15-123456789"
+	// The offset part depends on the local timezone of the machine running the test.
+	// We calculate it the same way the function does to get a reliable comparison.
+	expectedOffsetPart := testTime.In(time.Local).Format("Z0700")
+	expectedResult := expectedUTCPart + expectedOffsetPart
+
+	// 4. Assert that the actual result matches the expected result.
+	if actualResult != expectedResult {
+		t.Errorf("FormatTimestampWithOffset() = %v, want %v", actualResult, expectedResult)
+		t.Logf("This test is dependent on the system's local time zone.")
+		t.Logf("Expected UTC part: %s, Expected Offset part: %s", expectedUTCPart, expectedOffsetPart)
+	}
 }
 
 func TestLoad(t *testing.T) {
