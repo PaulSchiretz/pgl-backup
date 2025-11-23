@@ -358,7 +358,7 @@ func TestPerformRollover(t *testing.T) {
 	}
 
 	// 2. A new archived directory should exist.
-	archiveTimestamp := lastBackupTime.Format(cfg.Naming.TimeFormat)
+	archiveTimestamp := config.FormatTimestampWithOffset(lastBackupTime)
 	archiveDirName := "backup_" + archiveTimestamp
 	newPath := filepath.Join(tempDir, archiveDirName)
 	_, err = os.Stat(newPath)
@@ -463,10 +463,10 @@ func TestPrepareDestination(t *testing.T) {
 		cfg.Mode = config.SnapshotMode
 		cfg.Paths.TargetBase = tempDir
 		cfg.Naming.Prefix = "snap_"
-		cfg.Naming.TimeFormat = "2006-01-02"
 
 		e := newTestEngine(cfg)
-		e.currentTimestampUTC = time.Date(2023, 10, 27, 0, 0, 0, 0, time.UTC)
+		testTime := time.Date(2023, 10, 27, 14, 30, 0, 0, time.UTC)
+		e.currentTimestampUTC = testTime
 
 		// Act
 		err := e.prepareDestination(context.Background())
@@ -475,7 +475,7 @@ func TestPrepareDestination(t *testing.T) {
 		}
 
 		// Assert
-		expectedPath := filepath.Join(tempDir, "snap_2023-10-27")
+		expectedPath := filepath.Join(tempDir, "snap_"+config.FormatTimestampWithOffset(testTime))
 		if expectedPath != e.currentTarget {
 			t.Errorf("expected target path %q, but got %q", expectedPath, e.currentTarget)
 		}

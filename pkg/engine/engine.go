@@ -80,18 +80,6 @@ func New(cfg config.Config, version string) *Engine {
 	}
 }
 
-// formatTimestampWithOffset formats a UTC timestamp into a string that includes
-// the local timezone offset for user-friendliness, while keeping the base time in UTC.
-// Example: 2023-10-27-14-00-00-000-0400
-func (e *Engine) formatTimestampWithOffset(t time.Time) string {
-	// We format the UTC time for the timestamp, then format it again in the local
-	// timezone just to get the offset string, and combine them.
-	// The `Z0700` layout produces the time zone offset (e.g., "+0100").
-	utcPart := t.Format(e.config.Naming.TimeFormat)
-	offsetPart := t.In(time.Local).Format("Z0700")
-	return utcPart + offsetPart
-}
-
 // Execute runs the entire backup job from start to finish.
 func (e *Engine) Execute(ctx context.Context) error {
 	// Check for cancellation at the very beginning.
@@ -172,7 +160,7 @@ func (e *Engine) prepareDestination(ctx context.Context) error {
 		//
 		// The directory name must remain uniquely based on UTC time to avoid DST conflicts,
 		// but we add the user's local offset to make the timezone clear to the user.
-		timestamp := e.formatTimestampWithOffset(e.currentTimestampUTC)
+		timestamp := config.FormatTimestampWithOffset(e.currentTimestampUTC)
 		backupDirName := e.config.Naming.Prefix + timestamp
 		e.currentTarget = filepath.Join(e.config.Paths.TargetBase, backupDirName)
 	} else {
@@ -258,7 +246,7 @@ func (e *Engine) performRollover(ctx context.Context) error {
 
 		// The directory name must remain uniquely based on UTC time to avoid DST conflicts,
 		// but we add the user's local offset to make the timezone clear to the user.
-		archiveTimestamp := e.formatTimestampWithOffset(lastBackupTime)
+		archiveTimestamp := config.FormatTimestampWithOffset(lastBackupTime)
 		archiveDirName := fmt.Sprintf("%s%s", e.config.Naming.Prefix, archiveTimestamp)
 		archivePath := filepath.Join(e.config.Paths.TargetBase, archiveDirName)
 

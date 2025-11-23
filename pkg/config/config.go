@@ -21,6 +21,9 @@ const MetaFileName = ".pgl-backup.meta"
 // LockFileName is the name of the lock file created in the target directory.
 const LockFileName = ".pgl-backup.lock"
 
+// backupTimeFormat defines the standard, non-configurable time format for backup directory names.
+const backupTimeFormat = "2006-01-02-15-04-05-000"
+
 // GetSystemExcludeFilePatterns returns a slice of file patterns that should
 // always be excluded from synchronization for the system to function correctly.
 func GetSystemExcludeFilePatterns() []string {
@@ -29,7 +32,6 @@ func GetSystemExcludeFilePatterns() []string {
 
 type BackupNamingConfig struct {
 	Prefix                string `json:"prefix"`
-	TimeFormat            string `json:"timeFormat"`
 	IncrementalModeSuffix string `json:"incrementalModeSuffix"`
 }
 
@@ -184,7 +186,6 @@ func NewDefault() Config {
 		},
 		Naming: BackupNamingConfig{
 			Prefix:                "5ive_Backup_",
-			TimeFormat:            "2006-01-02-15-04-05-000",
 			IncrementalModeSuffix: "current",
 		},
 		Paths: BackupPathConfig{
@@ -377,4 +378,16 @@ func validateGlobPatterns(fieldName string, patterns []string) error {
 		}
 	}
 	return nil
+}
+
+// FormatTimestampWithOffset formats a UTC timestamp into a string that includes
+// the local timezone offset for user-friendliness, while keeping the base time in UTC.
+// Example: 2023-10-27-14-00-00-000-0400
+func FormatTimestampWithOffset(t time.Time) string {
+	// We format the UTC time for the timestamp, then format it again in the local
+	// timezone just to get the offset string, and combine them.
+	// The `Z0700` layout produces the time zone offset (e.g., "+0100").
+	utcPart := t.Format(backupTimeFormat)
+	offsetPart := t.In(time.Local).Format("Z0700")
+	return utcPart + offsetPart
 }
