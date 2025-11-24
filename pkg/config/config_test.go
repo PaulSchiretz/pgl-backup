@@ -1,8 +1,11 @@
 package config
 
 import (
+	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -91,6 +94,157 @@ func TestConfig_Validate(t *testing.T) {
 	})
 }
 
+// runMergeTestWithFlags is a helper to safely run tests for MergeConfigWithFlags.
+// It creates a new FlagSet, defines the necessary flags, parses the provided args,
+// and then runs the test function. This isolates each test from global flag state.
+func runMergeTestWithFlags(t *testing.T, args []string, testFunc func()) {
+	t.Helper()
+
+	// 1. Create a new, isolated FlagSet for this test.
+	fs := flag.NewFlagSet(t.Name(), flag.ContinueOnError)
+
+	// 2. Define all the flags that MergeConfigWithFlags checks for.
+	fs.String("source", "", "")
+	fs.String("target", "", "")
+	fs.String("mode", "", "")
+	fs.Bool("quiet", false, "")
+	fs.Bool("dryrun", false, "")
+	fs.String("sync-engine", "", "")
+	fs.Int("native-engine-workers", 0, "")
+	fs.Int("native-retry-count", 0, "")
+	fs.Int("native-retry-wait", 0, "")
+	fs.String("exclude-files", "", "")
+	fs.String("exclude-dirs", "", "")
+	fs.Bool("preserve-source-name", false, "")
+
+	// 3. Parse the provided arguments into our isolated FlagSet.
+	if err := fs.Parse(args); err != nil {
+		t.Fatalf("failed to parse flags: %v", err)
+	}
+
+	// 4. Temporarily replace the global flag set with our isolated one.
+	originalCommandLine := flag.CommandLine
+	flag.CommandLine = fs
+	defer func() { flag.CommandLine = originalCommandLine }()
+
+	// 5. Run the actual test logic.
+	testFunc()
+}
+
+func TestMergeConfigWithFlags(t *testing.T) {
+	t.Run("Flag overrides base config", func(t *testing.T) {
+		runMergeTestWithFlags(t, []string{"-quiet=true"}, func() {
+			base := NewDefault() // base.Quiet is false
+			flags := Config{Quiet: true}
+
+			merged := MergeConfigWithFlags(base, flags)
+			if !merged.Quiet {
+				t.Error("expected flag 'quiet=true' to override base 'false'")
+			}
+		})
+	})
+
+	t.Run("Base config is used when flag is not set", func(t *testing.T) {
+		runMergeTestWithFlags(t, []string{}, func() { // No flags provided
+			base := NewDefault()
+			base.Quiet = true // Set a non-default base value
+			flags := Config{}
+
+			merged := MergeConfigWithFlags(base, flags)
+			if !merged.Quiet {
+				t.Error("expected base 'quiet=true' to be used when flag is not set")
+			}
+		})
+	})
+
+	t.Run("Flag explicitly set to default overrides base", func(t *testing.T) {
+		runMergeTestWithFlags(t, []string{"-preserve-source-name=true"}, func() {
+			base := NewDefault()
+			base.Paths.PreserveSourceDirectoryName = false // Non-default base
+			flags := Config{Paths: BackupPathConfig{PreserveSourceDirectoryName: true}}
+
+			merged := MergeConfigWithFlags(base, flags)
+			if !merged.Paths.PreserveSourceDirectoryName {
+				t.Error("expected flag 'preserve-source-name=true' to override base 'false'")
+			}
+		})
+	})
+
+	t.Run("Slice flags override base slice", func(t *testing.T) {
+		runMergeTestWithFlags(t, []string{"-exclude-files=from_flag.txt"}, func() {
+			base := NewDefault()
+			base.Paths.ExcludeFiles = []string{"from_base.txt"}
+			flags := Config{Paths: BackupPathConfig{ExcludeFiles: []string{"from_flag.txt"}}}
+
+			merged := MergeConfigWithFlags(base, flags)
+			if len(merged.Paths.ExcludeFiles) != 1 || merged.Paths.ExcludeFiles[0] != "from_flag.txt" {
+				t.Errorf("expected exclude files from flag to override base, but got %v", merged.Paths.ExcludeFiles)
+			}
+		})
+	})
+}
+
+func TestGenerate(t *testing.T) {
+	t.Run("Generates file in target dir", func(t *testing.T) {
+		targetDir := t.TempDir()
+		err := Generate(targetDir, NewDefault())
+		if err != nil {
+			t.Fatalf("Generate() failed: %v", err)
+		}
+
+		expectedPath := filepath.Join(targetDir, ConfigFileName)
+		if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
+			t.Errorf("expected config file to be created at %s, but it was not", expectedPath)
+		}
+	})
+
+	t.Run("Overwrites existing file", func(t *testing.T) {
+		targetDir := t.TempDir()
+		configPath := filepath.Join(targetDir, ConfigFileName)
+
+		// Create a dummy file first.
+		if err := os.WriteFile(configPath, []byte("old content"), 0644); err != nil {
+			t.Fatalf("failed to create dummy config file: %v", err)
+		}
+
+		err := Generate(targetDir, NewDefault())
+		if err != nil {
+			t.Fatalf("Generate() should not fail when overwriting, but got: %v", err)
+		}
+
+		// Check that the file was overwritten with default JSON content.
+		content, _ := os.ReadFile(configPath)
+		if string(content) == "old content" {
+			t.Error("config file was not overwritten, but it should have been")
+		}
+	})
+
+	t.Run("Generates file with custom values", func(t *testing.T) {
+		targetDir := t.TempDir()
+		customCfg := NewDefault()
+		customCfg.Paths.Source = "/my/custom/source"
+		customCfg.Quiet = true
+		// Set the targetBase in the config to match the directory it's being generated in.
+		// This is required for the Load function's validation to pass.
+		customCfg.Paths.TargetBase = targetDir
+
+		err := Generate(targetDir, customCfg)
+		if err != nil {
+			t.Fatalf("Generate() with custom config failed: %v", err)
+		}
+
+		// Load the generated file and check its contents
+		loadedCfg, err := Load(targetDir)
+		if err != nil {
+			t.Fatalf("Failed to load generated config for verification: %v", err)
+		}
+
+		if loadedCfg.Paths.Source != "/my/custom/source" || !loadedCfg.Quiet {
+			t.Errorf("Generated config did not contain the custom values. Got source=%s, quiet=%v", loadedCfg.Paths.Source, loadedCfg.Quiet)
+		}
+	})
+}
+
 func TestFormatTimestampWithOffset(t *testing.T) {
 	// 1. Create a fixed UTC time for the test.
 	testTime := time.Date(2023, 10, 27, 14, 30, 15, 123456789, time.UTC)
@@ -115,21 +269,12 @@ func TestFormatTimestampWithOffset(t *testing.T) {
 }
 
 func TestLoad(t *testing.T) {
-	// Override getConfigPath for testing to control where Load looks for the file.
-	originalGetConfigPath := getConfigPath
-	t.Cleanup(func() {
-		getConfigPath = originalGetConfigPath
-	})
-
 	t.Run("No Config File", func(t *testing.T) {
 		tempDir := t.TempDir()
-		getConfigPath = func() (string, error) {
-			return filepath.Join(tempDir, "nonexistent.conf"), nil
-		}
 
-		cfg, err := Load()
+		cfg, err := Load(tempDir)
 		if err != nil {
-			t.Fatalf("expected no error when config file is missing, but got: %v", err)
+			t.Fatalf("Load() with no config file should not return an error, but got: %v", err)
 		}
 
 		// Check if it returned the default config
@@ -141,17 +286,16 @@ func TestLoad(t *testing.T) {
 	t.Run("Valid Config File", func(t *testing.T) {
 		tempDir := t.TempDir()
 		confPath := filepath.Join(tempDir, ConfigFileName)
-		// Create a config file with a custom prefix
-		content := `{"naming": {"prefix": "custom_prefix_"}}`
+		// Create a config file that is self-consistent: its targetBase must
+		// point to the directory it resides in.
+		content := fmt.Sprintf(`{"naming": {"prefix": "custom_prefix_"}, "paths": {"targetBase": "%s"}}`, tempDir)
+		// Use double backslashes for JSON compatibility on Windows
+		content = strings.ReplaceAll(content, `\`, `\\`)
 		if err := os.WriteFile(confPath, []byte(content), 0644); err != nil {
 			t.Fatalf("failed to write test config file: %v", err)
 		}
 
-		getConfigPath = func() (string, error) {
-			return confPath, nil
-		}
-
-		cfg, err := Load()
+		cfg, err := Load(tempDir)
 		if err != nil {
 			t.Fatalf("expected no error when loading valid config, but got: %v", err)
 		}
@@ -175,13 +319,29 @@ func TestLoad(t *testing.T) {
 			t.Fatalf("failed to write test config file: %v", err)
 		}
 
-		getConfigPath = func() (string, error) {
-			return confPath, nil
-		}
-
-		_, err := Load()
+		_, err := Load(tempDir)
 		if err == nil {
 			t.Fatal("expected an error when loading malformed config, but got nil")
+		}
+	})
+
+	t.Run("Mismatched TargetBase in Config", func(t *testing.T) {
+		loadDir := t.TempDir()
+		otherDir := t.TempDir()
+		confPath := filepath.Join(loadDir, ConfigFileName)
+
+		// Create a config file where the targetBase points to a different directory.
+		content := fmt.Sprintf(`{"paths": {"targetBase": "%s"}}`, otherDir)
+		// Use double backslashes for JSON compatibility on Windows
+		content = strings.ReplaceAll(content, `\`, `\\`)
+
+		if err := os.WriteFile(confPath, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write test config file: %v", err)
+		}
+
+		_, err := Load(loadDir)
+		if err == nil {
+			t.Fatal("expected an error for mismatched targetBase, but got nil")
 		}
 	})
 }

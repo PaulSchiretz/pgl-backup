@@ -2,15 +2,18 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
 	"pixelgardenlabs.io/pgl-backup/pkg/engine"
+	"pixelgardenlabs.io/pgl-backup/pkg/filelock"
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
 
@@ -38,126 +41,194 @@ func init() {
 	}
 }
 
-// buildRunConfig defines and parses command-line flags, using a base
-// configuration for defaults. It then constructs and returns the final,
-// effective configuration for the application to use.
-func buildRunConfig(baseConfig config.Config) (config.Config, action, error) {
-	// Define flags, using the base config for default values.
-	srcFlag := flag.String("source", baseConfig.Paths.Source, "Source directory to copy from")
-	targetFlag := flag.String("target", baseConfig.Paths.TargetBase, "Base destination directory for backups")
-	modeFlag := flag.String("mode", baseConfig.Mode.String(), "Set the backup mode: 'incremental' or 'snapshot'.")
-	quietFlag := flag.Bool("quiet", baseConfig.Quiet, "Suppress individual file operation logs.")
-	dryRunFlag := flag.Bool("dryrun", baseConfig.DryRun, "Show what would be done without making any changes.")
+// parseFlagConfig defines and parses command-line flags, and constructs a
+// configuration object containing only the values provided by those flags.
+func parseFlagConfig() (config.Config, action, error) {
+	// Define flags with zero-value defaults. We will merge them later.
+	srcFlag := flag.String("source", "", "Source directory to copy from")
+	targetFlag := flag.String("target", "", "Base destination directory for backups")
+	modeFlag := flag.String("mode", "", "Backup mode: 'incremental' or 'snapshot'.")
+	quietFlag := flag.Bool("quiet", false, "Suppress individual file operation logs.")
+	dryRunFlag := flag.Bool("dryrun", false, "Show what would be done without making any changes.")
 	initFlag := flag.Bool("init", false, "Generate a default pgl-backup.conf file and exit.")
 	versionFlag := flag.Bool("version", false, "Print the application version and exit.")
-	syncEngineFlag := flag.String("sync-engine", baseConfig.Engine.Type.String(), "Sync engine to use: 'native' or 'robocopy' (Windows only).")
-	nativeEngineWorkersFlag := flag.Int("native-engine-workers", baseConfig.Engine.NativeEngineWorkers, "Number of worker goroutines for native sync.")
-	nativeRetryCountFlag := flag.Int("native-retry-count", baseConfig.Engine.NativeEngineRetryCount, "Number of retries for failed file copies in native engine.")
-	nativeRetryWaitFlag := flag.Int("native-retry-wait", baseConfig.Engine.NativeEngineRetryWaitSeconds, "Seconds to wait between retries in native engine.")
-	excludeFilesFlag := flag.String("exclude-files", strings.Join(baseConfig.Paths.ExcludeFiles, ","), "Comma-separated list of file names to exclude (supports glob patterns).")
-	excludeDirsFlag := flag.String("exclude-dirs", strings.Join(baseConfig.Paths.ExcludeDirs, ","), "Comma-separated list of directory names to exclude (supports glob patterns).")
-	preserveSourceNameFlag := flag.Bool("preserve-source-name", baseConfig.Paths.PreserveSourceDirectoryName, "Preserve the source directory's name in the destination path.")
+	syncEngineFlag := flag.String("sync-engine", "", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
+	nativeEngineWorkersFlag := flag.Int("native-engine-workers", 0, "Number of worker goroutines for native sync.")
+	nativeRetryCountFlag := flag.Int("native-retry-count", 0, "Number of retries for failed file copies in native engine.")
+	nativeRetryWaitFlag := flag.Int("native-retry-wait", 0, "Seconds to wait between retries in native engine.")
+	excludeFilesFlag := flag.String("exclude-files", "", "Comma-separated list of file names to exclude (supports glob patterns).")
+	excludeDirsFlag := flag.String("exclude-dirs", "", "Comma-separated list of directory names to exclude (supports glob patterns).")
+	preserveSourceNameFlag := flag.Bool("preserve-source-name", false, "Preserve the source directory's name in the destination path.")
 
 	flag.Parse()
 
-	// Overwrite the base config with any values provided by flags.
-	baseConfig.Paths.Source = *srcFlag
-	baseConfig.Paths.TargetBase = *targetFlag
-	baseConfig.DryRun = *dryRunFlag
-	baseConfig.Quiet = *quietFlag
-	baseConfig.Engine.NativeEngineWorkers = *nativeEngineWorkersFlag
-	baseConfig.Engine.NativeEngineRetryCount = *nativeRetryCountFlag
-	baseConfig.Engine.NativeEngineRetryWaitSeconds = *nativeRetryWaitFlag
-	baseConfig.Paths.PreserveSourceDirectoryName = *preserveSourceNameFlag
+	// Create a config struct populated *only* with values from flags.
+	flagConfig := config.Config{
+		Paths: config.BackupPathConfig{
+			Source:                      *srcFlag,
+			TargetBase:                  *targetFlag,
+			PreserveSourceDirectoryName: *preserveSourceNameFlag,
+		},
+		Engine: config.BackupEngineConfig{
+			NativeEngineWorkers:          *nativeEngineWorkersFlag,
+			NativeEngineRetryCount:       *nativeRetryCountFlag,
+			NativeEngineRetryWaitSeconds: *nativeRetryWaitFlag,
+		},
+		DryRun: *dryRunFlag,
+		Quiet:  *quietFlag,
+	}
 
 	// If the exclude-files flag was set, parse it and override the config.
-	if *excludeFilesFlag != strings.Join(baseConfig.Paths.ExcludeFiles, ",") {
+	if *excludeFilesFlag != "" {
 		parts := strings.Split(*excludeFilesFlag, ",")
-		baseConfig.Paths.ExcludeFiles = make([]string, 0, len(parts))
+		flagConfig.Paths.ExcludeFiles = make([]string, 0, len(parts))
 		for _, part := range parts {
 			trimmed := strings.TrimSpace(part)
 			if trimmed != "" {
-				baseConfig.Paths.ExcludeFiles = append(baseConfig.Paths.ExcludeFiles, trimmed)
+				flagConfig.Paths.ExcludeFiles = append(flagConfig.Paths.ExcludeFiles, trimmed)
 			}
 		}
 	}
 
 	// If the exclude-dirs flag was set, parse it and override the config.
-	if *excludeDirsFlag != strings.Join(baseConfig.Paths.ExcludeDirs, ",") {
+	if *excludeDirsFlag != "" {
 		parts := strings.Split(*excludeDirsFlag, ",")
-		baseConfig.Paths.ExcludeDirs = make([]string, 0, len(parts))
+		flagConfig.Paths.ExcludeDirs = make([]string, 0, len(parts))
 		for _, part := range parts {
 			trimmed := strings.TrimSpace(part)
 			if trimmed != "" {
-				baseConfig.Paths.ExcludeDirs = append(baseConfig.Paths.ExcludeDirs, trimmed)
+				flagConfig.Paths.ExcludeDirs = append(flagConfig.Paths.ExcludeDirs, trimmed)
 			}
 		}
 	}
 
 	// Parse string flags into their corresponding enum types.
-	mode, err := config.BackupModeFromString(*modeFlag)
-	if err != nil {
-		return config.Config{}, actionRunBackup, err
+	if *modeFlag != "" {
+		mode, err := config.BackupModeFromString(*modeFlag)
+		if err != nil {
+			return config.Config{}, actionRunBackup, err
+		}
+		flagConfig.Mode = mode
 	}
-	baseConfig.Mode = mode
 
-	engineType, err := config.SyncEngineFromString(*syncEngineFlag)
-	if err != nil {
-		return config.Config{}, actionRunBackup, err
+	if *syncEngineFlag != "" {
+		engineType, err := config.SyncEngineFromString(*syncEngineFlag)
+		if err != nil {
+			return config.Config{}, actionRunBackup, err
+		}
+		flagConfig.Engine.Type = engineType
 	}
-	baseConfig.Engine.Type = engineType
 
 	// Final sanity check: ensure robocopy is disabled if not on Windows.
-	if runtime.GOOS != "windows" && baseConfig.Engine.Type == config.RobocopyEngine {
+	if runtime.GOOS != "windows" && flagConfig.Engine.Type == config.RobocopyEngine {
 		plog.Warn("Robocopy is not available on this OS. Forcing 'native' sync engine.")
-		baseConfig.Engine.Type = config.NativeEngine
+		flagConfig.Engine.Type = config.NativeEngine
 	}
 
 	// Determine which action to take based on flags.
 	if *versionFlag {
-		return baseConfig, actionShowVersion, nil
+		return flagConfig, actionShowVersion, nil
 	}
 	if *initFlag {
-		return baseConfig, actionInitConfig, nil
+		return flagConfig, actionInitConfig, nil
 	}
-	return baseConfig, actionRunBackup, nil
+	return flagConfig, actionRunBackup, nil
+}
+
+// acquireTargetLock ensures the target directory exists and acquires a file lock within it.
+// It returns a release function that must be called to unlock the directory.
+func acquireTargetLock(ctx context.Context, targetPath, sourcePath string) (func(), error) {
+	if err := os.MkdirAll(targetPath, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create target directory %s: %w", targetPath, err)
+	}
+
+	lockFilePath := filepath.Join(targetPath, config.LockFileName)
+	appID := fmt.Sprintf("pgl-backup:%s", sourcePath)
+
+	plog.Info("Attempting to acquire lock", "path", lockFilePath)
+	lock, err := filelock.Acquire(ctx, lockFilePath, appID)
+	if err != nil {
+		var lockErr *filelock.ErrLockActive
+		if errors.As(err, &lockErr) {
+			plog.Warn("Operation is already running for this target.", "details", lockErr.Error())
+			return nil, nil // Return nil error to indicate a graceful exit.
+		}
+		return nil, fmt.Errorf("failed to acquire lock: %w", err)
+	}
+	plog.Info("Lock acquired successfully.")
+
+	return lock.Release, nil
+}
+
+// executeBackup handles the complete workflow for running a backup.
+func executeBackup(ctx context.Context, flagConfig config.Config) error {
+	// Now, load the config from the (now locked) target directory, or load the defaults.
+	loadedConfig, err := config.Load(flagConfig.Paths.TargetBase)
+	if err != nil {
+		return fmt.Errorf("failed to load configuration from target: %w", err)
+	}
+
+	// Merge the flag values over the loaded config to get the final run config.
+	runConfig := config.MergeConfigWithFlags(loadedConfig, flagConfig)
+
+	// If not in quiet mode, log the final configuration for user confirmation.
+	runConfig.LogSummary()
+
+	// Perform final validation on the merged configuration.
+	if err := runConfig.Validate(); err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	backupEngine := engine.New(runConfig, version)
+	return backupEngine.Execute(ctx)
 }
 
 // run encapsulates the main application logic and returns an error if something
 // goes wrong, allowing the main function to handle exit codes.
 func run(ctx context.Context) error {
-	loadedConfig, err := config.Load()
-	// If a config file exists but is invalid, we should fail fast.
-	// Running with defaults when a config is present but broken is unexpected.
-	// We ignore os.IsNotExist, as that simply means we'll use the defaults.
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to load configuration file 'pgl-backup.conf': %w. Please fix the file or remove it to use defaults", err)
-	}
-
-	runConfig, actionToRun, err := buildRunConfig(loadedConfig)
+	// --- 1. Parse command-line flags ---
+	// This is done only once. It gives us the user's explicit command-line intent.
+	flagConfig, action, err := parseFlagConfig()
 	if err != nil {
 		return err
 	}
 
-	switch actionToRun {
-	case actionShowVersion:
+	// Handle actions that don't need a config file or lock.
+	if action == actionShowVersion {
 		fmt.Printf("pgl-backup version %s\n", version)
 		return nil
+	}
+
+	// For init or backup, the target flag is mandatory.
+	if flagConfig.Paths.TargetBase == "" {
+		return fmt.Errorf("the -target flag is required for this operation")
+	}
+
+	// --- 2. Acquire Lock on Target Directory ---
+	releaseLock, err := acquireTargetLock(ctx, flagConfig.Paths.TargetBase, flagConfig.Paths.Source)
+	if err != nil {
+		return err // A real error occurred during lock acquisition.
+	}
+	if releaseLock == nil {
+		return nil // Lock was already held, exit gracefully.
+	}
+	defer releaseLock()
+
+	// --- 3. Execute the requested action ---
+	switch action {
+	case actionShowVersion:
+		// This case is handled above, but we keep it here for exhaustive switch.
+		return nil // Should not be reached.
 	case actionInitConfig:
-		return config.Generate()
+		// Create a base default config.
+		baseConfig := config.NewDefault()
+		// Merge the flags provided by the user on top of the defaults.
+		configToGenerate := config.MergeConfigWithFlags(baseConfig, flagConfig)
+		return config.Generate(flagConfig.Paths.TargetBase, configToGenerate)
 	case actionRunBackup:
-		// If not in quiet mode, log the final configuration for user confirmation.
-		runConfig.LogSummary()
-
-		// Perform final validation on the merged configuration.
-		if err := runConfig.Validate(); err != nil {
-			return fmt.Errorf("invalid configuration: %w", err)
-		}
-
-		backupEngine := engine.New(runConfig, version)
-		return backupEngine.Execute(ctx)
+		return executeBackup(ctx, flagConfig)
 	default:
-		return fmt.Errorf("internal error: unknown action %d", actionToRun)
+		return fmt.Errorf("internal error: unknown action %d", action)
 	}
 }
 

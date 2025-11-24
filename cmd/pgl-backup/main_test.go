@@ -5,8 +5,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	"pixelgardenlabs.io/pgl-backup/pkg/config"
 )
 
 // runTestWithFlags is a helper to safely run tests that use the global flag package.
@@ -30,20 +28,19 @@ func runTestWithFlags(t *testing.T, args []string, testFunc func()) {
 	testFunc()
 }
 
-func TestBuildRunConfig(t *testing.T) {
-	baseConf := config.NewDefault()
-
-	t.Run("No Flags - Uses Defaults", func(t *testing.T) {
+func TestParseFlagConfig(t *testing.T) {
+	t.Run("No Flags - Returns Zero-Value Config", func(t *testing.T) {
 		runTestWithFlags(t, []string{}, func() {
-			cfg, act, err := buildRunConfig(baseConf)
+			cfg, act, err := parseFlagConfig()
 			if err != nil {
 				t.Fatalf("expected no error, but got: %v", err)
 			}
 			if act != actionRunBackup {
 				t.Errorf("expected action to be actionRunBackup, but got %v", act)
 			}
-			if cfg.Paths.Source != baseConf.Paths.Source {
-				t.Errorf("expected source to be default, but got %s", cfg.Paths.Source)
+			// With no flags, paths should be empty (zero-value for string)
+			if cfg.Paths.Source != "" {
+				t.Errorf("expected source to be empty, but got %s", cfg.Paths.Source)
 			}
 		})
 	})
@@ -51,7 +48,7 @@ func TestBuildRunConfig(t *testing.T) {
 	t.Run("Override Source and Target", func(t *testing.T) {
 		args := []string{"-source=/new/src", "-target=/new/dst"}
 		runTestWithFlags(t, args, func() {
-			cfg, _, err := buildRunConfig(baseConf)
+			cfg, _, err := parseFlagConfig()
 			if err != nil {
 				t.Fatalf("expected no error, but got: %v", err)
 			}
@@ -77,7 +74,7 @@ func TestBuildRunConfig(t *testing.T) {
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				runTestWithFlags(t, []string{tc.arg}, func() {
-					_, act, err := buildRunConfig(baseConf)
+					_, act, err := parseFlagConfig()
 					if err != nil {
 						t.Fatalf("expected no error, but got: %v", err)
 					}
@@ -92,7 +89,7 @@ func TestBuildRunConfig(t *testing.T) {
 	t.Run("Parse Exclude Flags", func(t *testing.T) {
 		args := []string{"-exclude-files=*.tmp,*.log", "-exclude-dirs=node_modules,.cache"}
 		runTestWithFlags(t, args, func() {
-			cfg, _, err := buildRunConfig(baseConf)
+			cfg, _, err := parseFlagConfig()
 			if err != nil {
 				t.Fatalf("expected no error, but got: %v", err)
 			}
@@ -110,10 +107,9 @@ func TestBuildRunConfig(t *testing.T) {
 	})
 
 	t.Run("Override PreserveSourceDirectoryName", func(t *testing.T) {
-		// The default is true, so we test setting it to false.
 		args := []string{"-preserve-source-name=false"}
 		runTestWithFlags(t, args, func() {
-			cfg, _, err := buildRunConfig(baseConf)
+			cfg, _, err := parseFlagConfig()
 			if err != nil {
 				t.Fatalf("expected no error, but got: %v", err)
 			}
@@ -126,7 +122,7 @@ func TestBuildRunConfig(t *testing.T) {
 	t.Run("Invalid Mode Flag", func(t *testing.T) {
 		args := []string{"-mode=invalid-mode"}
 		runTestWithFlags(t, args, func() {
-			_, _, err := buildRunConfig(baseConf)
+			_, _, err := parseFlagConfig()
 			if err == nil {
 				t.Fatal("expected an error for invalid mode, but got nil")
 			}
@@ -139,7 +135,7 @@ func TestBuildRunConfig(t *testing.T) {
 	t.Run("Invalid Sync Engine Flag", func(t *testing.T) {
 		args := []string{"-sync-engine=invalid-engine"}
 		runTestWithFlags(t, args, func() {
-			_, _, err := buildRunConfig(baseConf)
+			_, _, err := parseFlagConfig()
 			if err == nil {
 				t.Fatal("expected an error for invalid sync engine, but got nil")
 			}

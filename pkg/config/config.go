@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -207,11 +208,8 @@ func NewDefault() Config {
 // Load attempts to load a configuration from "pgl-backup.conf".
 // If the file doesn't exist, it returns the provided default config without an error.
 // If the file exists but fails to parse, it returns an error and a zero-value config.
-func Load() (Config, error) {
-	configPath, err := getConfigPath()
-	if err != nil {
-		return Config{}, err // Can't load if we can't determine the path.
-	}
+func Load(targetBase string) (Config, error) {
+	configPath := filepath.Join(targetBase, ConfigFileName)
 
 	file, err := os.Open(configPath)
 	if err != nil {
@@ -230,25 +228,36 @@ func Load() (Config, error) {
 	if err := decoder.Decode(&config); err != nil {
 		return Config{}, fmt.Errorf("error parsing config file %s: %w", configPath, err)
 	}
+
+	// After loading, validate that the targetBase in the config file matches the
+	// directory it was loaded from. This prevents using a config file in the wrong directory.
+	absLoadDir, err := filepath.Abs(targetBase)
+	if err != nil {
+		return Config{}, fmt.Errorf("could not determine absolute path for load directory %s: %w", targetBase, err)
+	}
+
+	absTargetInConfig, err := filepath.Abs(config.Paths.TargetBase)
+	if err != nil {
+		return Config{}, fmt.Errorf("could not determine absolute path for targetBase in config %s: %w", config.Paths.TargetBase, err)
+	}
+
+	if absLoadDir != absTargetInConfig {
+		return Config{}, fmt.Errorf("targetBase in config file (%s) does not match the directory it was loaded from (%s)", absTargetInConfig, absLoadDir)
+	}
 	return config, nil
 }
 
-// Generate creates a default pgl-backup.conf file in the executable's
-// directory. It will not overwrite an existing file.
-func Generate() error {
-	configPath, err := getConfigPath()
-	if err != nil {
-		return err // Error is already descriptive
-	}
-	// Check if the file already exists to prevent overwriting.
-	if _, err := os.Stat(configPath); err == nil {
-		return fmt.Errorf("config file already exists at %s, will not overwrite", configPath)
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("could not check for existing config file: %w", err)
+// Generate creates or overwrites a default pgl-backup.conf file in the specified
+// target directory.
+func Generate(targetBase string, configToGenerate Config) error {
+	// Ensure the target directory exists.
+	if err := os.MkdirAll(targetBase, 0755); err != nil {
+		return fmt.Errorf("failed to create target directory %s for config file: %w", targetBase, err)
 	}
 
+	configPath := filepath.Join(targetBase, ConfigFileName)
 	// Marshal the default config into nicely formatted JSON.
-	jsonData, err := json.MarshalIndent(NewDefault(), "", "  ")
+	jsonData, err := json.MarshalIndent(configToGenerate, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal default config to JSON: %w", err)
 	}
@@ -340,17 +349,6 @@ func (c *Config) LogSummary() {
 	plog.Info("Backup run configuration loaded", logArgs...)
 }
 
-// getConfigPath determines the absolute path to the configuration file.
-// It is a variable to allow for mocking during tests.
-var getConfigPath = func() (string, error) {
-	exePath, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("could not determine executable path: %w", err)
-	}
-	configDir := filepath.Dir(exePath)
-	return filepath.Join(configDir, ConfigFileName), nil
-}
-
 // expandPath expands the tilde (~) prefix in a path to the user's home directory.
 func expandPath(path string) (string, error) {
 	if !strings.HasPrefix(path, "~") {
@@ -397,4 +395,63 @@ func FormatTimestampWithOffset(timestampUTC time.Time) string {
 	offsetPartLocal := timestampUTC.In(time.Local).Format("Z0700")
 
 	return fmt.Sprintf("%s-%s%s", mainPartUTC, nanoPartUTC, offsetPartLocal)
+}
+
+// MergeConfigWithFlags overlays the configuration values from flags on top of a base
+// configuration (loaded from a file or defaults).
+func MergeConfigWithFlags(base, flags Config) Config {
+	merged := base
+
+	// A helper to check if a flag was actually set by the user on the command line.
+	// This is crucial for merging, as it allows us to distinguish between a flag
+	// that was not provided versus a flag that was explicitly set to its default value
+	// (e.g., `-quiet=false`). We want to honor the user's explicit choice in all cases.
+	isFlagSet := func(name string) bool {
+		isSet := false
+		flag.Visit(func(f *flag.Flag) { // flag.Visit iterates only over flags that were set.
+			if f.Name == name {
+				isSet = true
+			}
+		})
+		return isSet
+	}
+
+	if isFlagSet("source") {
+		merged.Paths.Source = flags.Paths.Source
+	}
+	if isFlagSet("target") {
+		merged.Paths.TargetBase = flags.Paths.TargetBase
+	}
+	if isFlagSet("mode") {
+		merged.Mode = flags.Mode
+	}
+	if isFlagSet("quiet") {
+		merged.Quiet = flags.Quiet
+	}
+	if isFlagSet("dryrun") {
+		merged.DryRun = flags.DryRun
+	}
+	if isFlagSet("sync-engine") {
+		merged.Engine.Type = flags.Engine.Type
+	}
+	if isFlagSet("native-engine-workers") {
+		merged.Engine.NativeEngineWorkers = flags.Engine.NativeEngineWorkers
+	}
+	if isFlagSet("native-retry-count") {
+		merged.Engine.NativeEngineRetryCount = flags.Engine.NativeEngineRetryCount
+	}
+	if isFlagSet("native-retry-wait") {
+		merged.Engine.NativeEngineRetryWaitSeconds = flags.Engine.NativeEngineRetryWaitSeconds
+	}
+	if isFlagSet("exclude-files") {
+		merged.Paths.ExcludeFiles = flags.Paths.ExcludeFiles
+	}
+	if isFlagSet("exclude-dirs") {
+		merged.Paths.ExcludeDirs = flags.Paths.ExcludeDirs
+	}
+	if isFlagSet("preserve-source-name") {
+		merged.Paths.PreserveSourceDirectoryName = flags.Paths.PreserveSourceDirectoryName
+	}
+
+	return merged
 }
