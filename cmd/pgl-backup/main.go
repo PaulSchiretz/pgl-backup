@@ -15,6 +15,7 @@ import (
 	"pixelgardenlabs.io/pgl-backup/pkg/engine"
 	"pixelgardenlabs.io/pgl-backup/pkg/filelock"
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
+	"pixelgardenlabs.io/pgl-backup/pkg/preflight"
 )
 
 // version holds the application's version string.
@@ -137,9 +138,16 @@ func parseFlagConfig() (config.Config, action, error) {
 
 // acquireTargetLock ensures the target directory exists and acquires a file lock within it.
 // It returns a release function that must be called to unlock the directory.
-func acquireTargetLock(ctx context.Context, targetPath, sourcePath string) (func(), error) {
-	if err := os.MkdirAll(targetPath, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create target directory %s: %w", targetPath, err)
+func acquireTargetLock(ctx context.Context, targetPath, sourcePath string, dryRun bool) (func(), error) {
+	if err := preflight.CheckBackupTargetAccessible(targetPath); err != nil {
+		return nil, fmt.Errorf("target path accessibility check failed: %w", err)
+	}
+
+	// If not a dry run, perform the actual write check and create the directory.
+	if !dryRun {
+		if err := preflight.CheckBackupTargetWritable(targetPath); err != nil {
+			return nil, fmt.Errorf("target path writable check failed: %w", err)
+		}
 	}
 
 	lockFilePath := filepath.Join(targetPath, config.LockFileName)
@@ -179,6 +187,11 @@ func executeBackup(ctx context.Context, flagConfig config.Config) error {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
+	// Perform pre-flight check on the source path.
+	if err := preflight.CheckBackupSourceAccessible(runConfig.Paths.Source); err != nil {
+		return fmt.Errorf("source path validation failed: %w", err)
+	}
+
 	backupEngine := engine.New(runConfig, version)
 	return backupEngine.Execute(ctx)
 }
@@ -205,7 +218,7 @@ func run(ctx context.Context) error {
 	}
 
 	// --- 2. Acquire Lock on Target Directory ---
-	releaseLock, err := acquireTargetLock(ctx, flagConfig.Paths.TargetBase, flagConfig.Paths.Source)
+	releaseLock, err := acquireTargetLock(ctx, flagConfig.Paths.TargetBase, flagConfig.Paths.Source, flagConfig.DryRun)
 	if err != nil {
 		return err // A real error occurred during lock acquisition.
 	}
