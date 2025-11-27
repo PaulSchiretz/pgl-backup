@@ -79,28 +79,27 @@ func parseFlagConfig() (config.Config, action, error) {
 		Quiet:  *quietFlag,
 	}
 
-	// If the exclude-files flag was set, parse it and override the config.
-	if *excludeFilesFlag != "" {
-		parts := strings.Split(*excludeFilesFlag, ",")
-		flagConfig.Paths.ExcludeFiles = make([]string, 0, len(parts))
+	// Helper to parse comma-separated string flags into a string slice.
+	parseStringList := func(s string) []string {
+		parts := strings.Split(s, ",")
+		list := make([]string, 0, len(parts))
 		for _, part := range parts {
 			trimmed := strings.TrimSpace(part)
 			if trimmed != "" {
-				flagConfig.Paths.ExcludeFiles = append(flagConfig.Paths.ExcludeFiles, trimmed)
+				list = append(list, trimmed)
 			}
 		}
+		return list
+	}
+
+	// If the exclude-files flag was set, parse it and override the config.
+	if *excludeFilesFlag != "" {
+		flagConfig.Paths.ExcludeFiles = parseStringList(*excludeFilesFlag)
 	}
 
 	// If the exclude-dirs flag was set, parse it and override the config.
 	if *excludeDirsFlag != "" {
-		parts := strings.Split(*excludeDirsFlag, ",")
-		flagConfig.Paths.ExcludeDirs = make([]string, 0, len(parts))
-		for _, part := range parts {
-			trimmed := strings.TrimSpace(part)
-			if trimmed != "" {
-				flagConfig.Paths.ExcludeDirs = append(flagConfig.Paths.ExcludeDirs, trimmed)
-			}
-		}
+		flagConfig.Paths.ExcludeDirs = parseStringList(*excludeDirsFlag)
 	}
 
 	// Parse string flags into their corresponding enum types.
@@ -206,39 +205,47 @@ func run(ctx context.Context) error {
 		return err
 	}
 
-	// Handle actions that don't need a config file or lock.
-	if action == actionShowVersion {
-		fmt.Printf("pgl-backup version %s\n", version)
-		return nil
-	}
-
-	// For init or backup, the target flag is mandatory.
-	if flagConfig.Paths.TargetBase == "" {
-		return fmt.Errorf("the -target flag is required for this operation")
-	}
-
-	// --- 2. Acquire Lock on Target Directory ---
-	releaseLock, err := acquireTargetLock(ctx, flagConfig.Paths.TargetBase, flagConfig.Paths.Source, flagConfig.DryRun)
-	if err != nil {
-		return err // A real error occurred during lock acquisition.
-	}
-	if releaseLock == nil {
-		return nil // Lock was already held, exit gracefully.
-	}
-	defer releaseLock()
-
 	// --- 3. Execute the requested action ---
 	switch action {
 	case actionShowVersion:
-		// This case is handled above, but we keep it here for exhaustive switch.
-		return nil // Should not be reached.
+		fmt.Printf("pgl-backup version %s\n", version)
+		return nil
 	case actionInitConfig:
+		// For init, the target flag is mandatory.
+		if flagConfig.Paths.TargetBase == "" {
+			return fmt.Errorf("the -target flag is required for the -init operation")
+		}
+
+		// Acquire lock for config generation to prevent race conditions.
+		releaseLock, err := acquireTargetLock(ctx, flagConfig.Paths.TargetBase, flagConfig.Paths.Source, flagConfig.DryRun)
+		if err != nil {
+			return err
+		}
+		if releaseLock == nil {
+			return nil // Lock was already held, exit gracefully.
+		}
+		defer releaseLock()
+
 		// Create a base default config.
 		baseConfig := config.NewDefault()
 		// Merge the flags provided by the user on top of the defaults.
 		configToGenerate := config.MergeConfigWithFlags(baseConfig, flagConfig)
 		return config.Generate(flagConfig.Paths.TargetBase, configToGenerate)
 	case actionRunBackup:
+		// For backup, the target flag is mandatory.
+		if flagConfig.Paths.TargetBase == "" {
+			return fmt.Errorf("the -target flag is required to run a backup")
+		}
+
+		// Acquire Lock on Target Directory
+		releaseLock, err := acquireTargetLock(ctx, flagConfig.Paths.TargetBase, flagConfig.Paths.Source, flagConfig.DryRun)
+		if err != nil {
+			return err // A real error occurred during lock acquisition.
+		}
+		if releaseLock == nil {
+			return nil // Lock was already held, exit gracefully.
+		}
+		defer releaseLock()
 		return executeBackup(ctx, flagConfig)
 	default:
 		return fmt.Errorf("internal error: unknown action %d", action)
