@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -69,14 +68,17 @@ type Engine struct {
 	currentTarget       string
 	currentTimestampUTC time.Time // The UTC timestamp of the current backup run for consistency.
 	syncer              pathsync.Syncer
+	// hookCommandExecutor allows mocking os/exec for testing hooks.
+	hookCommandExecutor func(ctx context.Context, name string, arg ...string) *exec.Cmd
 }
 
 // New creates a new backup engine with the given configuration and version.
 func New(cfg config.Config, version string) *Engine {
 	return &Engine{
-		config:  cfg,
-		version: version,
-		syncer:  pathsync.NewPathSyncer(cfg), // Default to the real implementation.
+		config:              cfg,
+		version:             version,
+		syncer:              pathsync.NewPathSyncer(cfg), // Default to the real implementation.
+		hookCommandExecutor: exec.CommandContext,         // Default to the real implementation.
 	}
 }
 
@@ -158,18 +160,18 @@ func (e *Engine) runHooks(ctx context.Context, commands []string, hookType strin
 			continue
 		}
 
-		var cmd *exec.Cmd
-		if runtime.GOOS == "windows" {
-			cmd = exec.CommandContext(ctx, "cmd", "/C", command)
-		} else {
-			cmd = exec.CommandContext(ctx, "/bin/sh", "-c", command)
-		}
+		cmd := e.createHookCommand(ctx, command)
 
 		// Pipe output to our logger for visibility
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 
 		if err := cmd.Run(); err != nil {
+			// Check if the context was canceled, which can cause cmd.Wait() to return an error.
+			// If so, we should return the context's error to be more specific.
+			if ctx.Err() == context.Canceled {
+				return context.Canceled
+			}
 			return fmt.Errorf("command '%s' failed: %w", command, err)
 		}
 	}

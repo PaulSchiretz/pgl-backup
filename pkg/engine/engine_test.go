@@ -3,8 +3,13 @@ package engine
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -203,6 +208,132 @@ func TestDetermineBackupsToKeep(t *testing.T) {
 	}
 }
 
+// TestHelperProcess isn't a real test. It's a helper process that the exec-based
+// tests can run. It's a standard pattern for testing code that uses os/exec.
+func TestHelperProcess(t *testing.T) {
+	// Check if the special environment variable is set. If not, this is a normal
+	// test run, so we do nothing.
+	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
+		return
+	}
+
+	// The arguments passed to the command are available in os.Args.
+	// The command structure is: `... -test.run=TestHelperProcess -- <shell> <shell_arg> <command>`
+	// The actual hook command we want to check is at index 5.
+	if len(os.Args) < 6 {
+		os.Exit(1)
+	}
+	command := os.Args[5]
+
+	switch command {
+	case "hook_success":
+		fmt.Fprintln(os.Stdout, "success output")
+		os.Exit(0)
+	case "hook_fail":
+		fmt.Fprintln(os.Stderr, "failure output")
+		os.Exit(1)
+	case "hook_sleep":
+		time.Sleep(2 * time.Second)
+		os.Exit(0)
+	default:
+		os.Exit(1)
+	}
+}
+
+func TestRunHooks(t *testing.T) {
+	// This helper function sets up the command execution to call our TestHelperProcess.
+	// It's a crucial part of mocking os/exec.
+	mockExecCommand := func(ctx context.Context, command string, args ...string) *exec.Cmd {
+		cs := []string{"-test.run=TestHelperProcess", "--", command}
+		cs = append(cs, args...)
+		cmd := exec.CommandContext(ctx, os.Args[0], cs...)
+		// This is the crucial fix: The real `createHookCommand` sets SysProcAttr
+		// on the command it creates. Our mock must preserve this setting when it
+		// creates its own command that calls the test helper process.
+		originalCmd := exec.CommandContext(ctx, command, args...)
+		cmd.SysProcAttr = originalCmd.SysProcAttr
+		cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
+		return cmd
+	}
+
+	// Suppress log output for this test to keep the test output clean.
+	var logBuf bytes.Buffer
+	plog.SetOutput(&logBuf)
+	t.Cleanup(func() { plog.SetOutput(os.Stderr) })
+
+	t.Run("No Hooks", func(t *testing.T) {
+		cfg := config.NewDefault()
+		e := newTestEngine(cfg)
+		err := e.runHooks(context.Background(), []string{}, "test")
+		if err != nil {
+			t.Errorf("expected no error for empty hooks, but got: %v", err)
+		}
+	})
+
+	t.Run("Successful Hook", func(t *testing.T) {
+		cfg := config.NewDefault()
+		e := newTestEngine(cfg)
+		e.hookCommandExecutor = mockExecCommand // Inject our mock executor
+
+		err := e.runHooks(context.Background(), []string{"hook_success"}, "test")
+		if err != nil {
+			t.Errorf("expected no error for successful hook, but got: %v", err)
+		}
+	})
+
+	t.Run("Failing Hook", func(t *testing.T) {
+		cfg := config.NewDefault()
+		e := newTestEngine(cfg)
+		e.hookCommandExecutor = mockExecCommand // Inject our mock executor
+
+		err := e.runHooks(context.Background(), []string{"hook_fail"}, "test")
+		if err == nil {
+			t.Fatal("expected an error for failing hook, but got nil")
+		}
+		if !strings.Contains(err.Error(), "failed: exit status 1") {
+			t.Errorf("expected error to contain 'exit status 1', but got: %v", err)
+		}
+	})
+
+	t.Run("Dry Run", func(t *testing.T) {
+		logBuf.Reset()
+		cfg := config.NewDefault()
+		cfg.DryRun = true
+		e := newTestEngine(cfg)
+		e.hookCommandExecutor = mockExecCommand
+
+		err := e.runHooks(context.Background(), []string{"hook_success"}, "test")
+		if err != nil {
+			t.Errorf("expected no error in dry run, but got: %v", err)
+		}
+
+		logOutput := logBuf.String()
+		if !strings.Contains(logOutput, "[DRY RUN] Would execute command") {
+			t.Errorf("expected dry run log message, but got: %q", logOutput)
+		}
+	})
+
+	t.Run("Context Cancellation", func(t *testing.T) {
+		cfg := config.NewDefault()
+		e := newTestEngine(cfg)
+		e.hookCommandExecutor = mockExecCommand
+
+		ctx, cancel := context.WithCancel(context.Background())
+		// Cancel the context almost immediately
+		time.AfterFunc(50*time.Millisecond, cancel)
+
+		// Use a hook that sleeps, so it will be interrupted by the cancellation.
+		err := e.runHooks(ctx, []string{"hook_sleep"}, "test")
+
+		if err == nil {
+			t.Fatal("expected a context cancellation error, but got nil")
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("expected error to wrap context.Canceled, but got: %v", err)
+		}
+	})
+}
+
 func TestPerformSync_PreserveSourceDirectoryName(t *testing.T) {
 	// Suppress log output for this test to keep the test output clean.
 	var buf bytes.Buffer
@@ -216,6 +347,7 @@ func TestPerformSync_PreserveSourceDirectoryName(t *testing.T) {
 		name                        string
 		preserveSourceDirectoryName bool
 		expectedDst                 string
+		srcDir                      string // Optional: Override the default srcDir for specific cases
 	}{
 		{
 			name:                        "PreserveSourceDirectoryName is true",
@@ -227,6 +359,28 @@ func TestPerformSync_PreserveSourceDirectoryName(t *testing.T) {
 			preserveSourceDirectoryName: false,
 			expectedDst:                 filepath.Join(targetBase, "current"),
 		},
+		{
+			name:                        "PreserveSourceDirectoryName is true - Windows Drive Root",
+			preserveSourceDirectoryName: true,
+			expectedDst:                 filepath.Join(targetBase, "current", "C"),
+			// This test case will only run on Windows, otherwise it will be skipped.
+			// On non-Windows, "C:" is not a root, so filepath.Base("C:") would be "C:".
+			// The logic should handle this gracefully.
+			srcDir: "C:\\",
+		},
+		{
+			name:                        "PreserveSourceDirectoryName is true - Unix Root",
+			preserveSourceDirectoryName: true,
+			expectedDst:                 filepath.Join(targetBase, "current"), // Should not append anything for "/"
+			srcDir:                      "/",
+		},
+		{
+			name:                        "PreserveSourceDirectoryName is true - Relative Path",
+			preserveSourceDirectoryName: true,
+			expectedDst:                 filepath.Join(targetBase, "current", "my_relative_dir"),
+			srcDir:                      "./my_relative_dir",
+		},
+		// Add more cases as needed, e.g., paths ending with a separator.
 	}
 
 	for _, tc := range testCases {
@@ -234,7 +388,20 @@ func TestPerformSync_PreserveSourceDirectoryName(t *testing.T) {
 			// Arrange
 			cfg := config.NewDefault()
 			cfg.Mode = config.IncrementalMode
-			cfg.Paths.Source = srcDir
+
+			// Use the test-case specific srcDir if provided, otherwise use the default.
+			testSrcDir := srcDir // Default temp dir
+			if tc.srcDir != "" {
+				testSrcDir = tc.srcDir
+			}
+
+			// Skip platform-specific tests on the wrong OS.
+			if (runtime.GOOS != "windows" && strings.HasPrefix(testSrcDir, "C:\\")) ||
+				(runtime.GOOS == "windows" && testSrcDir == "/") {
+				t.Skipf("Skipping platform-specific test case %q on %s", tc.name, runtime.GOOS)
+			}
+
+			cfg.Paths.Source = testSrcDir
 			cfg.Paths.TargetBase = targetBase
 			cfg.Naming.IncrementalModeSuffix = "current"
 			cfg.Paths.PreserveSourceDirectoryName = tc.preserveSourceDirectoryName
