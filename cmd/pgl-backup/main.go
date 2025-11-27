@@ -60,6 +60,8 @@ func parseFlagConfig() (config.Config, action, error) {
 	excludeFilesFlag := flag.String("exclude-files", "", "Comma-separated list of file names to exclude (supports glob patterns).")
 	excludeDirsFlag := flag.String("exclude-dirs", "", "Comma-separated list of directory names to exclude (supports glob patterns).")
 	preserveSourceNameFlag := flag.Bool("preserve-source-name", false, "Preserve the source directory's name in the destination path.")
+	preBackupHooksFlag := flag.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
+	postBackupHooksFlag := flag.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
 
 	flag.Parse()
 
@@ -100,6 +102,16 @@ func parseFlagConfig() (config.Config, action, error) {
 	// If the exclude-dirs flag was set, parse it and override the config.
 	if *excludeDirsFlag != "" {
 		flagConfig.Paths.ExcludeDirs = parseStringList(*excludeDirsFlag)
+	}
+
+	// If the pre-backup-hooks flag was set, parse it and override the config.
+	if *preBackupHooksFlag != "" {
+		flagConfig.Hooks.PreBackup = parseStringList(*preBackupHooksFlag)
+	}
+
+	// If the post-backup-hooks flag was set, parse it and override the config.
+	if *postBackupHooksFlag != "" {
+		flagConfig.Hooks.PostBackup = parseStringList(*postBackupHooksFlag)
 	}
 
 	// Parse string flags into their corresponding enum types.

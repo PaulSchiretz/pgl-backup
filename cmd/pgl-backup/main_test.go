@@ -106,6 +106,26 @@ func TestParseFlagConfig(t *testing.T) {
 		})
 	})
 
+	t.Run("Parse Hook Flags", func(t *testing.T) {
+		args := []string{"-pre-backup-hooks=cmd1, 'cmd2 with space'", "-post-backup-hooks=cmd3"}
+		runTestWithFlags(t, args, func() {
+			cfg, _, err := parseFlagConfig()
+			if err != nil {
+				t.Fatalf("expected no error, but got: %v", err)
+			}
+
+			expectedPre := []string{"cmd1", "'cmd2 with space'"}
+			if !equalSlices(cfg.Hooks.PreBackup, expectedPre) {
+				t.Errorf("expected pre-backup hooks %v, but got %v", expectedPre, cfg.Hooks.PreBackup)
+			}
+
+			expectedPost := []string{"cmd3"}
+			if !equalSlices(cfg.Hooks.PostBackup, expectedPost) {
+				t.Errorf("expected post-backup hooks %v, but got %v", expectedPost, cfg.Hooks.PostBackup)
+			}
+		})
+	})
+
 	t.Run("Override PreserveSourceDirectoryName", func(t *testing.T) {
 		args := []string{"-preserve-source-name=false"}
 		runTestWithFlags(t, args, func() {

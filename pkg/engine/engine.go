@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -87,6 +89,18 @@ func (e *Engine) Execute(ctx context.Context) error {
 	default:
 	}
 
+	// --- Pre-Backup Hooks ---
+	if err := e.runHooks(ctx, e.config.Hooks.PreBackup, "pre-backup"); err != nil {
+		return fmt.Errorf("pre-backup hook failed: %w", err) // This is a fatal error.
+	}
+
+	// --- Post-Backup Hooks (deferred) ---
+	// These will run at the end of the function, even if the backup fails.
+	defer func() {
+		plog.Info("--- Running Post-Backup Hooks ---")
+		_ = e.runHooks(ctx, e.config.Hooks.PostBackup, "post-backup") // Log errors but don't fail the entire run.
+	}()
+
 	if e.config.DryRun {
 		plog.Info("--- Starting Backup (DRY RUN) ---")
 	} else {
@@ -121,6 +135,43 @@ func (e *Engine) Execute(ctx context.Context) error {
 	if err := e.applyRetentionPolicy(ctx); err != nil {
 		// We log this as a non-fatal error because the main backup was successful.
 		plog.Warn("Error applying retention policy", "error", err)
+	}
+	return nil
+}
+
+// runHooks executes a list of shell commands for a given hook type.
+func (e *Engine) runHooks(ctx context.Context, commands []string, hookType string) error {
+	if len(commands) == 0 {
+		return nil
+	}
+
+	for _, command := range commands {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		plog.Info(fmt.Sprintf("Executing %s hook", hookType), "command", command)
+		if e.config.DryRun {
+			plog.Info("[DRY RUN] Would execute command", "command", command)
+			continue
+		}
+
+		var cmd *exec.Cmd
+		if runtime.GOOS == "windows" {
+			cmd = exec.CommandContext(ctx, "cmd", "/C", command)
+		} else {
+			cmd = exec.CommandContext(ctx, "/bin/sh", "-c", command)
+		}
+
+		// Pipe output to our logger for visibility
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("command '%s' failed: %w", command, err)
+		}
 	}
 	return nil
 }

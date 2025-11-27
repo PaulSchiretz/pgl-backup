@@ -51,6 +51,11 @@ type BackupRetentionPolicyConfig struct {
 	Months int `json:"months"`
 }
 
+type BackupHooksConfig struct {
+	PreBackup  []string `json:"preBackup,omitempty"`
+	PostBackup []string `json:"postBackup,omitempty"`
+}
+
 // BackupMode represents the operational mode of the backup (incremental or snapshot).
 type BackupMode int
 
@@ -164,6 +169,7 @@ type Config struct {
 	Naming           BackupNamingConfig          `json:"naming"`
 	Paths            BackupPathConfig            `json:"paths"`
 	RetentionPolicy  BackupRetentionPolicyConfig `json:"retentionPolicy"`
+	Hooks            BackupHooksConfig           `json:"hooks,omitempty"`
 }
 
 // NewDefault creates and returns a Config struct with sensible default
@@ -201,6 +207,10 @@ func NewDefault() Config {
 			Days:   7,  // N > 0: keep one backup for each of the last N days.
 			Weeks:  4,  // N > 0: keep one backup for each of the last N weeks.
 			Months: 12, // N > 0: keep one backup for each of the last N months.
+		},
+		Hooks: BackupHooksConfig{
+			PreBackup:  []string{},
+			PostBackup: []string{},
 		},
 	}
 }
@@ -345,6 +355,12 @@ func (c *Config) LogSummary() {
 	if len(c.Paths.ExcludeDirs) > 0 {
 		logArgs = append(logArgs, "exclude_dirs", strings.Join(c.Paths.ExcludeDirs, ", "))
 	}
+	if len(c.Hooks.PreBackup) > 0 {
+		logArgs = append(logArgs, "pre_backup_hooks", strings.Join(c.Hooks.PreBackup, "; "))
+	}
+	if len(c.Hooks.PostBackup) > 0 {
+		logArgs = append(logArgs, "post_backup_hooks", strings.Join(c.Hooks.PostBackup, "; "))
+	}
 
 	plog.Info("Backup run configuration loaded", logArgs...)
 }
@@ -451,6 +467,13 @@ func MergeConfigWithFlags(base, flags Config) Config {
 	}
 	if isFlagSet("preserve-source-name") {
 		merged.Paths.PreserveSourceDirectoryName = flags.Paths.PreserveSourceDirectoryName
+	}
+
+	if isFlagSet("pre-backup-hooks") {
+		merged.Hooks.PreBackup = flags.Hooks.PreBackup
+	}
+	if isFlagSet("post-backup-hooks") {
+		merged.Hooks.PostBackup = flags.Hooks.PostBackup
 	}
 
 	return merged
