@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 // platformValidateMountPoint checks if the path resides on the root filesystem.
@@ -23,9 +24,9 @@ func platformValidateMountPoint(path string) error {
 	if err != nil {
 		return fmt.Errorf("failed to stat root: %w", err)
 	}
-	rootStat, ok := rootInfo.Sys().(*syscall.Stat_t)
+	rootStat, ok := rootInfo.Sys().(*unix.Stat_t)
 	if !ok {
-		return fmt.Errorf("unsupported platform for syscall.Stat_t")
+		return fmt.Errorf("unsupported platform for unix.Stat_t")
 	}
 
 	// 3. Get the Device ID of the Target path
@@ -33,9 +34,9 @@ func platformValidateMountPoint(path string) error {
 	if err != nil {
 		return fmt.Errorf("failed to stat target path: %w", err)
 	}
-	pathStat, ok := pathInfo.Sys().(*syscall.Stat_t)
+	pathStat, ok := pathInfo.Sys().(*unix.Stat_t)
 	if !ok {
-		return fmt.Errorf("unsupported platform for syscall.Stat_t")
+		return fmt.Errorf("unsupported platform for unix.Stat_t")
 	}
 
 	// 4. Compare Device IDs
