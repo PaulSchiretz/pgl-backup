@@ -52,7 +52,11 @@ type BackupRetentionPolicyConfig struct {
 }
 
 type BackupHooksConfig struct {
-	PreBackup  []string `json:"preBackup,omitempty"`
+	// PreBackup is a list of shell commands to execute before the backup sync begins.
+	// SECURITY: These commands are executed as provided. Ensure they are from a trusted source.
+	PreBackup []string `json:"preBackup,omitempty"`
+	// PostBackup is a list of shell commands to execute before the backup sync begins.
+	// SECURITY: These commands are executed as provided. Ensure they are from a trusted source.
 	PostBackup []string `json:"postBackup,omitempty"`
 }
 
