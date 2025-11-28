@@ -59,21 +59,26 @@ func TestCheckBackupTargetAccessible(t *testing.T) {
 			t.Skip("permission tests are not reliable on Windows")
 		}
 
-		// Create a directory that we can't enter
-		unreadableParent := filepath.Join(t.TempDir(), "unreadable")
-		if err := os.Mkdir(unreadableParent, 0000); err != nil { // no permissions
-			t.Fatalf("failed to create unreadable dir: %v", err)
+		// Setup: Create a grandparent directory we can enter, but a parent directory
+		// that we cannot search (no 'x' permission). This allows the ancestor
+		// search to succeed but the final parent check to fail with a permission error.
+		readableGrandparent := t.TempDir()
+		unsearchableParent := filepath.Join(readableGrandparent, "unsearchable")
+		// Mode 0666 (rw-rw-rw-) allows stat but not listing contents for non-root users.
+		if err := os.Mkdir(unsearchableParent, 0666); err != nil {
+			t.Fatalf("failed to create unsearchable dir: %v", err)
 		}
-		t.Cleanup(func() { os.Chmod(unreadableParent, 0755) }) // Clean up
+		t.Cleanup(func() { os.Chmod(unsearchableParent, 0755) }) // Clean up permissions
 
-		targetDir := filepath.Join(unreadableParent, "target")
+		targetDir := filepath.Join(unsearchableParent, "target")
 
 		err := CheckBackupTargetAccessible(targetDir)
 		if err == nil {
 			t.Fatal("expected a permission error, but got nil")
 		}
-		if !os.IsPermission(err) && !strings.Contains(err.Error(), "permission denied") {
-			t.Errorf("expected a permission error, but got: %v", err)
+		expectedError := "cannot access parent directory"
+		if !strings.Contains(err.Error(), expectedError) {
+			t.Errorf("expected error to contain %q, but got: %v", expectedError, err)
 		}
 	})
 
@@ -132,51 +137,47 @@ func TestCheckBackupTargetAccessible(t *testing.T) {
 	})
 }
 
-func TestIsMountPoint_Windows(t *testing.T) {
+func TestCheckVolumeExists_Windows(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("this test is for windows platforms only")
 	}
 
+	// Get a known existing volume, like C:
+	tempDir := t.TempDir()
+	existingVolume := filepath.VolumeName(tempDir)
+	if existingVolume == "" {
+		t.Skip("could not determine an existing volume for testing")
+	}
+
 	testCases := []struct {
-		name     string
-		path     string
-		expected bool
+		name          string
+		path          string
+		expectAnError bool
 	}{
 		{
-			name:     "Drive root with trailing slash",
-			path:     `C:\`,
-			expected: true,
+			name:          "Happy Path - Existing drive",
+			path:          filepath.Join(existingVolume, "Users", "Test"),
+			expectAnError: false,
 		},
 		{
-			name:     "Drive root without trailing slash",
-			path:     `C:`,
-			expected: false,
+			name:          "Happy Path - Relative path",
+			path:          `some\relative\path`,
+			expectAnError: false, // Should do nothing and not error
 		},
 		{
-			name:     "Subdirectory on a drive",
-			path:     `C:\Users\Test`,
-			expected: false,
-		},
-		{
-			name:     "UNC path root with trailing slash",
-			path:     `\\server\share\`,
-			expected: true,
-		},
-		{
-			name:     "UNC path subdirectory",
-			path:     `\\server\share\folder`,
-			expected: false,
+			name:          "Error - Non-existent drive",
+			path:          `Z:\nonexistent\path`, // Assuming Z: does not exist
+			expectAnError: true,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			isMount, err := IsMountPoint(tc.path)
-			if err != nil {
-				t.Fatalf("IsMountPoint returned an unexpected error: %v", err)
-			}
-			if isMount != tc.expected {
-				t.Errorf("expected IsMountPoint(%q) to be %v, but got %v", tc.path, tc.expected, isMount)
+			err := checkVolumeExists(tc.path)
+			if tc.expectAnError && err == nil {
+				t.Errorf("expected an error for path %q but got nil", tc.path)
+			} else if !tc.expectAnError && err != nil {
+				t.Errorf("expected no error for path %q but got: %v", tc.path, err)
 			}
 		})
 	}

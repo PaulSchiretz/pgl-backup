@@ -1,6 +1,6 @@
 // Package preflight provides functions for validation and checks that run before
-// a main operation begins. These checks are designed to be stateless and
-// idempotent, ensuring the system is in a suitable state for an operation to
+// a main operation begins. These checks are usually designed to be stateless and
+// idempotent, on exception are dir exists checks, ensuring the system is in a suitable state for an operation to
 // proceed without changing the system's state itself.
 package preflight
 
@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
-	"strings"
 )
 
 // CheckBackupTargetAccessible performs pre-flight checks to ensure the backup target is usable.
@@ -23,64 +21,64 @@ import (
 //     to prevent writing to a "ghost" directory on the root filesystem. This is done by walking
 //     up from the target path and checking the highest-level existing directory.
 func CheckBackupTargetAccessible(targetPath string) error {
-	// --- 1. Windows: Check if the Volume/Drive exists ---
-	// This specifically catches "Device not ready" or missing mapped drives (e.g., Z:)
-	volume := filepath.VolumeName(targetPath)
-	if volume != "" {
-		// On Windows, this is "C:", on Unix it's ""
-		if _, err := os.Stat(volume); os.IsNotExist(err) {
-			return fmt.Errorf("target path root does not exist: %s. Ensure the drive is connected and accessible", volume)
-		}
+	// --- 1. Check if the Volume/Drive exists, windows only ---
+	if err := checkVolumeExists(targetPath); err != nil {
+		return err
 	}
 
 	// --- 2. Check existence and type ---
 	info, err := os.Stat(targetPath)
 	if os.IsNotExist(err) {
-		// --- 3. If it doesn't exist, check if the parent directory is accessible
-		parentDir := filepath.Dir(targetPath)
-		if _, err := os.Stat(parentDir); os.IsNotExist(err) {
-			return fmt.Errorf("target path and parent directory do not exist: %s", targetPath)
+		// Target doesn't exist. We must check the potential parent.
+		// If /mnt/backup/my-backup doesn't exist, is /mnt/backup mounted?
+
+		// Find the Deepest Existing Ancestor
+		ancestor := targetPath
+		for {
+			parent := filepath.Dir(ancestor)
+			if parent == ancestor {
+				break // Hit root
+			}
+			if _, err := os.Stat(parent); err == nil {
+				ancestor = parent
+				break // Found the deepest directory that actually exists
+			}
+			ancestor = parent
 		}
-		// The parent directory exists, so it's okay to create the target directory later
+
+		// Validate the ancestor
+		if err := validateMountPoint(ancestor); err != nil {
+			return err
+		}
+
+		// If we got here, the ancestor exists and (if required) is a mount.
+		// However, we still need to ensure the immediate parent of the target is accessible
+		// so MkdirAll won't fail due to permissions on the parent.
+		parentDir := filepath.Dir(targetPath)
+		if _, err := os.Stat(parentDir); err != nil {
+			if os.IsNotExist(err) {
+				// Parent doesn't exist, which is fine. MkdirAll will create it.
+				return nil
+			}
+			return fmt.Errorf("cannot access parent directory %s: %w", parentDir, err)
+		}
+
 		return nil
 	} else if err != nil {
-		// Some other error occurred during stat (e.g., permission denied)
 		return fmt.Errorf("cannot access target path: %w", err)
-	} else {
-		// The target path exists. Make sure it's a directory.
-		if !info.IsDir() {
-			return fmt.Errorf("target path exists but is not a directory: %s", targetPath)
-		}
-
-		// --- 4. Unix: Check for unmounted "ghost" directories ---
-		// This prevents writing to the root filesystem if a drive is not mounted.
-		// We walk up from the target path to find the highest-level directory that
-		// actually exists and check if it's a mount point.
-		if runtime.GOOS != "windows" {
-			// Heuristic: only apply this check for paths outside /home.
-			// Backups to a user's home directory are less likely to be on a separate mount.
-			homeDir, _ := os.UserHomeDir()
-			if !strings.HasPrefix(targetPath, homeDir) {
-				// Walk up the path to find the highest existing directory.
-				// e.g., for "/mnt/backup/data", if "/mnt/backup" exists, we check that.
-				pathToCheck := targetPath
-				for {
-					parent := filepath.Dir(pathToCheck)
-					if _, err := os.Stat(parent); os.IsNotExist(err) || parent == pathToCheck {
-						break // Stop if parent doesn't exist or we've hit the root.
-					}
-					pathToCheck = parent
-				}
-
-				isMounted, err := IsMountPoint(pathToCheck)
-				if err == nil && !isMounted && pathToCheck != "/" {
-					return fmt.Errorf("path '%s' appears to be on the system disk but is expected to be a mount point. Ensure drive is connected before proceeding", pathToCheck)
-				}
-			}
-		}
-
-		return nil
 	}
+
+	// --- 3. The Target Path Exists ---
+	if !info.IsDir() {
+		return fmt.Errorf("target path exists but is not a directory: %s", targetPath)
+	}
+
+	// If the folder exists, we check it specifically.
+	if err := validateMountPoint(targetPath); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // CheckBackupSourceAccessible validates that the source path exists and is a directory.
@@ -110,12 +108,11 @@ func CheckBackupTargetWritable(targetPath string) error {
 
 	// Perform a thorough write check by creating and deleting a temporary file.
 	tempFile := filepath.Join(targetPath, ".pgl-backup-writetest.tmp")
-	if f, err := os.Create(tempFile); err != nil {
+	f, err := os.Create(tempFile)
+	if err != nil {
 		return fmt.Errorf("target directory %s is not writable: %w", targetPath, err)
-	} else {
-		f.Close()
-		_ = os.Remove(tempFile) // We don't need to handle the error on this cleanup.
 	}
-
+	f.Close()
+	_ = os.Remove(tempFile)
 	return nil
 }

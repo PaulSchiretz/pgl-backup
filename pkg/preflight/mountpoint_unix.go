@@ -5,37 +5,51 @@ package preflight
 import (
 	"fmt"
 	"os"
-	"path/filepath"
+	"strings"
 	"syscall"
 )
 
-// IsMountPoint checks if the given path is a mount point on Unix-like systems.
-// It returns true if path is a mount point, false otherwise.
-func IsMountPoint(path string) (bool, error) {
-	fileInfo, err := os.Stat(path)
+// validateMountPoint checks if the path resides on the root filesystem.
+// If it does, it assumes the drive is NOT mounted (Ghost detection).
+func validateMountPoint(path string) error {
+	// 1. Allow Home Directory (backups to local user folders are usually intentional)
+	homeDir, _ := os.UserHomeDir()
+	if strings.HasPrefix(path, homeDir) {
+		return nil
+	}
+
+	// 2. Get the Device ID of the Root partition
+	rootInfo, err := os.Stat("/")
 	if err != nil {
-		return false, err
+		return fmt.Errorf("failed to stat root: %w", err)
+	}
+	rootStat, ok := rootInfo.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("unsupported platform for syscall.Stat_t")
 	}
 
-	// Get the parent directory
-	parent := filepath.Dir(path)
-	parentInfo, err := os.Stat(parent)
+	// 3. Get the Device ID of the Target path
+	pathInfo, err := os.Stat(path)
 	if err != nil {
-		return false, err
+		return fmt.Errorf("failed to stat target path: %w", err)
 	}
-
-	// Extract underlying system stats to compare Device IDs
-	stat, ok := fileInfo.Sys().(*syscall.Stat_t)
+	pathStat, ok := pathInfo.Sys().(*syscall.Stat_t)
 	if !ok {
-		return false, fmt.Errorf("unsupported platform for syscall.Stat_t")
+		return fmt.Errorf("unsupported platform for syscall.Stat_t")
 	}
 
-	parentStat, ok := parentInfo.Sys().(*syscall.Stat_t)
-	if !ok {
-		return false, fmt.Errorf("unsupported platform for syscall.Stat_t")
+	// 4. Compare Device IDs
+	// If pathDev == rootDev, we are writing to the system partition (Ghost).
+	// Exception: The user specifically targeted "/" (unlikely, but valid).
+	if pathStat.Dev == rootStat.Dev && path != "/" {
+		return fmt.Errorf("path '%s' is on the root filesystem (system disk). "+
+			"Ensure your external drive is mounted", path)
 	}
 
-	// If the directory and its parent have different Device IDs, it's a mount point.
-	// Also handle the edge case of the root path "/" where path == parent.
-	return stat.Dev != parentStat.Dev || path == parent, nil
+	return nil
+}
+
+// checkVolumeExists is a no-op on Unix-like systems.
+func checkVolumeExists(targetPath string) error {
+	return nil
 }
