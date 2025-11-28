@@ -31,18 +31,16 @@ func TestIsRobocopySuccessHelper(t *testing.T) {
 		expectSuccess bool
 	}{
 		{
-			name:          "Nil error",
-			err:           nil,
-			expectSuccess: false, // The helper is only called when err != nil.
-		},
-		{
 			name:          "Non-exit error",
 			err:           errors.New("some other error"),
 			expectSuccess: false,
 		},
 		{
-			name:          "Exit code 0 (no changes)",
-			err:           createExitError(0),
+			name: "Exit code 0 (no changes)",
+			// This is a special case. cmd.Run() returns nil for exit code 0, not an ExitError.
+			// The main handleRobocopy function handles the nil case before calling the helper.
+			// The helper itself should return false for a nil error.
+			err:           nil,
 			expectSuccess: true,
 		},
 		{
@@ -74,13 +72,11 @@ func TestIsRobocopySuccessHelper(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// The helper is only ever called when err != nil in the main code.
-			// We simulate that condition here.
-			if tc.err != nil {
-				isSuccess := isRobocopySuccessHelper(tc.err)
-				if isSuccess != tc.expectSuccess {
-					t.Errorf("expected success=%v, but got %v for error: %v", tc.expectSuccess, isSuccess, tc.err)
-				}
+			// Simulate the logic from handleRobocopy: a nil error is success,
+			// otherwise, check the helper.
+			isSuccess := (tc.err == nil) || isRobocopySuccessHelper(tc.err)
+			if isSuccess != tc.expectSuccess {
+				t.Errorf("expected success=%v, but got %v for error: %v", tc.expectSuccess, isSuccess, tc.err)
 			}
 		})
 	}

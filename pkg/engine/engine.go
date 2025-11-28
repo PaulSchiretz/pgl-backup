@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -100,7 +101,13 @@ func (e *Engine) Execute(ctx context.Context) error {
 	// These will run at the end of the function, even if the backup fails.
 	defer func() {
 		plog.Info("--- Running Post-Backup Hooks ---")
-		_ = e.runHooks(ctx, e.config.Hooks.PostBackup, "post-backup") // Log errors but don't fail the entire run.
+		if err := e.runHooks(ctx, e.config.Hooks.PostBackup, "post-backup"); err != nil {
+			if errors.Is(err, context.Canceled) {
+				plog.Info("Post-backup hooks skipped due to cancellation.")
+			} else {
+				plog.Warn("Post-backup hook failed", "error", err)
+			}
+		}
 	}()
 
 	if e.config.DryRun {

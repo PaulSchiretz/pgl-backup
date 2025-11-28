@@ -73,8 +73,12 @@ func (s *PathSyncer) handleRobocopy(ctx context.Context, src, dst string, mirror
 
 	err := cmd.Run()
 	// Robocopy returns non-zero exit codes for success cases (e.g., files were copied).
-	// We check if the error is a "successful" one and return nil if so.
-	if err != nil && !isRobocopySuccessHelper(err) {
+	// A nil error means exit code 0, which is a clean success.
+	if err == nil {
+		return nil
+	}
+	// If the error is not nil, we check if it's one of robocopy's "success" exit codes.
+	if !isRobocopySuccessHelper(err) {
 		return err // It's a real error
 	}
 	return nil // It was a success code or no error

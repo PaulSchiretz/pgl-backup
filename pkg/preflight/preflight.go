@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
 
 // CheckBackupTargetAccessible performs pre-flight checks to ensure the backup target is usable.
@@ -111,11 +113,15 @@ func CheckBackupTargetWritable(targetPath string) error {
 
 	// Perform a thorough write check by creating and deleting a temporary file.
 	tempFile := filepath.Join(targetPath, ".pgl-backup-writetest.tmp")
-	f, err := os.Create(tempFile)
-	if err != nil {
+	if f, err := os.Create(tempFile); err != nil {
 		return fmt.Errorf("target directory %s is not writable: %w", targetPath, err)
+	} else {
+		f.Close()
 	}
-	f.Close()
-	_ = os.Remove(tempFile)
+
+	if err := os.Remove(tempFile); err != nil {
+		// This is not a critical failure, but worth logging.
+		plog.Warn("Failed to remove temporary write-test file", "path", tempFile, "error", err)
+	}
 	return nil
 }
