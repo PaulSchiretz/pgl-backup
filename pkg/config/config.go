@@ -179,18 +179,15 @@ type Config struct {
 // NewDefault creates and returns a Config struct with sensible default
 // values. It dynamically sets the sync engine based on the operating system.
 func NewDefault() Config {
-	// Set a default sync engine based on the OS.
-	defaultEngine := NativeEngine
-	if runtime.GOOS == "windows" {
-		defaultEngine = RobocopyEngine
-	}
+	// Default to the native engine on all platforms for consistency and no external dependencies.
+	// Power users on Windows can still opt-in to 'robocopy' for potential performance gains.
 	return Config{
 		Mode:             IncrementalMode, // Default mode
 		RolloverInterval: 24 * time.Hour,  // Default rollover interval is daily.
 		Quiet:            false,
 		DryRun:           false,
 		Engine: BackupEngineConfig{
-			Type:                         defaultEngine,
+			Type:                         NativeEngine,
 			NativeEngineWorkers:          runtime.NumCPU(), // Default to the number of CPU cores.
 			NativeEngineRetryCount:       3,                // Default retries on failure.
 			NativeEngineRetryWaitSeconds: 5,                // Default wait time between retries.
