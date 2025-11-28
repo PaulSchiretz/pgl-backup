@@ -150,12 +150,27 @@ func parseFlagConfig() (config.Config, action, error) {
 // acquireTargetLock ensures the target directory exists and acquires a file lock within it.
 // It returns a release function that must be called to unlock the directory.
 func acquireTargetLock(ctx context.Context, targetPath, sourcePath string, dryRun bool) (func(), error) {
+	// Perform initial, non-destructive checks on the target path. This validates
+	// the path's structure, permissions on its parent, and mount status (on Unix)
+	// before we attempt to modify the filesystem by creating directories or lock files.
 	if err := preflight.CheckBackupTargetAccessible(targetPath); err != nil {
 		return nil, fmt.Errorf("target path accessibility check failed: %w", err)
 	}
 
-	// If not a dry run, perform the actual write check and create the directory.
+	// If not a dry run, create the directory if it doesn't exist and then perform a write check.
 	if !dryRun {
+		// This is a critical state-changing step. The accessibility check has confirmed
+		// that the path is valid and its parent is accessible. Now, we ensure the
+		// target directory itself exists before we try to create a lock file inside it.
+		// os.MkdirAll is idempotent; it succeeds if the path already exists as a directory.
+		if err := os.MkdirAll(targetPath, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create target directory: %w", err)
+		}
+
+		// With the directory now guaranteed to exist, perform a final, more thorough
+		// check to ensure we can actually create files within it. This catches
+		// permission issues that MkdirAll might not, providing a better user error
+		// before the backup engine starts.
 		if err := preflight.CheckBackupTargetWritable(targetPath); err != nil {
 			return nil, fmt.Errorf("target path writable check failed: %w", err)
 		}

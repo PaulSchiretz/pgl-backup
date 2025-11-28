@@ -9,14 +9,15 @@ import (
 	"strings"
 )
 
-// validateMountPoint encapsulates the Unix logic to keep the main function clean, nothing to do on windows
-func validateMountPoint(path string) error {
+// platformValidateMountPoint is the Windows no-op implementation for the Unix-specific
+// mount point validation.
+func platformValidateMountPoint(path string) error {
 	return nil
 }
 
-// checkVolumeExists verifies that the drive or network share root for a given path exists.
+// platformCheckVolumeExists verifies that the drive or network share root for a given path exists.
 // For example, for "Z:\backup", it checks if "Z:\" exists.
-func checkVolumeExists(targetPath string) error {
+func platformCheckVolumeExists(targetPath string) error {
 	volume := filepath.VolumeName(targetPath)
 	if volume == "" {
 		return nil // Not a path with a volume name (e.g., relative path), so nothing to check.

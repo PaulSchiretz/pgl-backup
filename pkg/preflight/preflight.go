@@ -16,21 +16,21 @@ import (
 // The checks include:
 //  1. On Windows, verifies that the drive or network share (e.g., "Z:", "\\Server\Share") exists.
 //  2. If the target path exists, confirms it is a directory.
-//  3. If the target path does not exist, confirms its parent directory is accessible.
-//  4. On Unix, if the path looks like a mount point, it verifies the device is actually mounted
-//     to prevent writing to a "ghost" directory on the root filesystem. This is done by walking
-//     up from the target path and checking the highest-level existing directory.
+//  3. If the target path does not exist, it confirms its immediate parent directory is accessible.
+//  4. On Unix, it verifies that the target path is not on the system disk when it's expected to be
+//     on a separate mounted drive. This prevents writing to a "ghost" directory if a drive is not
+//     mounted. This check is performed on the target path if it exists, or its deepest existing
+//     ancestor if it does not.
 func CheckBackupTargetAccessible(targetPath string) error {
-	// --- 1. Check if the Volume/Drive exists, windows only ---
-	if err := checkVolumeExists(targetPath); err != nil {
+	// --- 1. Platform-specific: Check if the Volume/Drive exists (Windows) ---
+	if err := platformCheckVolumeExists(targetPath); err != nil {
 		return err
 	}
 
 	// --- 2. Check existence and type ---
 	info, err := os.Stat(targetPath)
 	if os.IsNotExist(err) {
-		// Target doesn't exist. We must check the potential parent.
-		// If /mnt/backup/my-backup doesn't exist, is /mnt/backup mounted?
+		// Target doesn't exist. We must check its ancestors.
 
 		// Find the Deepest Existing Ancestor
 		ancestor := targetPath
@@ -46,8 +46,8 @@ func CheckBackupTargetAccessible(targetPath string) error {
 			ancestor = parent
 		}
 
-		// Validate the ancestor
-		if err := validateMountPoint(ancestor); err != nil {
+		// Platform-specific: Validate the ancestor (e.g., Unix mount point check)
+		if err := platformValidateMountPoint(ancestor); err != nil {
 			return err
 		}
 
@@ -74,8 +74,8 @@ func CheckBackupTargetAccessible(targetPath string) error {
 		return fmt.Errorf("target path exists but is not a directory: %s", targetPath)
 	}
 
-	// If the folder exists, we check it specifically.
-	if err := validateMountPoint(targetPath); err != nil {
+	// Platform-specific: If the folder exists, we check it directly (e.g., Unix mount point check).
+	if err := platformValidateMountPoint(targetPath); err != nil {
 		return err
 	}
 

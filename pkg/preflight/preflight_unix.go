@@ -9,9 +9,9 @@ import (
 	"syscall"
 )
 
-// validateMountPoint checks if the path resides on the root filesystem.
+// platformValidateMountPoint checks if the path resides on the root filesystem.
 // If it does, it assumes the drive is NOT mounted (Ghost detection).
-func validateMountPoint(path string) error {
+func platformValidateMountPoint(path string) error {
 	// 1. Allow Home Directory (backups to local user folders are usually intentional)
 	homeDir, _ := os.UserHomeDir()
 	if strings.HasPrefix(path, homeDir) {
@@ -49,7 +49,8 @@ func validateMountPoint(path string) error {
 	return nil
 }
 
-// checkVolumeExists is a no-op on Unix-like systems.
-func checkVolumeExists(targetPath string) error {
+// platformCheckVolumeExists is a no-op on Unix-like systems. The concept of a
+// volume root like "C:\" doesn't apply in the same way.
+func platformCheckVolumeExists(targetPath string) error {
 	return nil
 }

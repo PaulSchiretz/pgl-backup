@@ -137,7 +137,7 @@ func TestCheckBackupTargetAccessible(t *testing.T) {
 	})
 }
 
-func TestCheckVolumeExists_Windows(t *testing.T) {
+func TestPlatformCheckVolumeExists_Windows(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("this test is for windows platforms only")
 	}
@@ -173,7 +173,7 @@ func TestCheckVolumeExists_Windows(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := checkVolumeExists(tc.path)
+			err := platformCheckVolumeExists(tc.path)
 			if tc.expectAnError && err == nil {
 				t.Errorf("expected an error for path %q but got nil", tc.path)
 			} else if !tc.expectAnError && err != nil {
