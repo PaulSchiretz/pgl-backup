@@ -49,7 +49,7 @@ func TestCheckBackupTargetAccessible(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected an error when target and parent do not exist, but got nil")
 		}
-		if !strings.Contains(err.Error(), "target path and parent directory do not exist") {
+		if !strings.Contains(err.Error(), "target path and its parent directory do not exist") {
 			t.Errorf("expected error about non-existent parent, but got: %v", err)
 		}
 	})

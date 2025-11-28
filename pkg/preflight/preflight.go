@@ -55,11 +55,12 @@ func CheckBackupTargetAccessible(targetPath string) error {
 		// However, we still need to ensure the immediate parent of the target is accessible
 		// so MkdirAll won't fail due to permissions on the parent.
 		parentDir := filepath.Dir(targetPath)
-		if _, err := os.Stat(parentDir); err != nil {
-			if os.IsNotExist(err) {
-				// Parent doesn't exist, which is fine. MkdirAll will create it.
-				return nil
-			}
+		if _, err := os.Stat(parentDir); os.IsNotExist(err) {
+			// The immediate parent does not exist. This is an error condition for this check,
+			// as it implies a deeper non-existent path than expected.
+			return fmt.Errorf("target path and its parent directory do not exist: %s", parentDir)
+		} else if err != nil {
+			// A different error occurred (e.g., permissions).
 			return fmt.Errorf("cannot access parent directory %s: %w", parentDir, err)
 		}
 
