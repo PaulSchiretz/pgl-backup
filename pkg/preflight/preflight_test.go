@@ -238,16 +238,13 @@ func TestCheckBackupSourceAccessible(t *testing.T) {
 }
 
 func TestCheckBackupTargetWritable(t *testing.T) {
-	t.Run("Happy Path - Creates and is writable", func(t *testing.T) {
-		parentDir := t.TempDir()
-		targetDir := filepath.Join(parentDir, "new_backup_target")
+	t.Run("Happy Path - Directory is writable", func(t *testing.T) {
+		// The function expects the directory to exist, so we create it.
+		targetDir := t.TempDir()
+
 		err := CheckBackupTargetWritable(targetDir)
 		if err != nil {
 			t.Errorf("expected no error, but got: %v", err)
-		}
-		// Verify directory was created
-		if _, err := os.Stat(targetDir); os.IsNotExist(err) {
-			t.Error("expected target directory to be created, but it was not")
 		}
 	})
 
@@ -263,14 +260,11 @@ func TestCheckBackupTargetWritable(t *testing.T) {
 		}
 		t.Cleanup(func() { os.Chmod(unwritableDir, 0755) }) // Clean up
 
-		// Try to make a subdirectory in the unwritable one
-		targetDir := filepath.Join(unwritableDir, "sub_target")
-
-		err := CheckBackupTargetWritable(targetDir)
+		err := CheckBackupTargetWritable(unwritableDir)
 		if err == nil {
 			t.Fatal("expected an error for unwritable destination, but got nil")
 		}
-		if !strings.Contains(err.Error(), "not writable") && !os.IsPermission(err) {
+		if !strings.Contains(err.Error(), "not writable") {
 			t.Errorf("expected error about 'not writable' or permission denied, but got: %v", err)
 		}
 	})
@@ -279,8 +273,19 @@ func TestCheckBackupTargetWritable(t *testing.T) {
 		targetFile := filepath.Join(t.TempDir(), "target.txt")
 		os.WriteFile(targetFile, []byte("i am a file"), 0644)
 		err := CheckBackupTargetWritable(targetFile)
-		if err == nil || !strings.Contains(err.Error(), "failed to create target directory") {
-			t.Errorf("expected error about creating directory over a file, but got: %v", err)
+		if err == nil || !strings.Contains(err.Error(), "target path exists but is not a directory") {
+			t.Errorf("expected error about target being a file, but got: %v", err)
+		}
+	})
+
+	t.Run("Error - Target does not exist", func(t *testing.T) {
+		nonExistentPath := filepath.Join(t.TempDir(), "nonexistent")
+		err := CheckBackupTargetWritable(nonExistentPath)
+		if err == nil {
+			t.Fatal("expected an error for non-existent target, but got nil")
+		}
+		if !strings.Contains(err.Error(), "target directory does not exist") {
+			t.Errorf("expected error about non-existent target, but got: %v", err)
 		}
 	})
 }
