@@ -1,6 +1,6 @@
 // Package preflight provides functions for validation and checks that run before
-// a main operation begins. These checks are usually designed to be stateless and
-// idempotent, on exception are dir exists checks, ensuring the system is in a suitable state for an operation to
+// a main operation begins. These checks are designed to be stateless and
+// idempotent, ensuring the system is in a suitable state for an operation to
 // proceed without changing the system's state itself.
 package preflight
 
@@ -102,9 +102,17 @@ func CheckBackupSourceAccessible(srcPath string) error {
 // CheckBackupTargetWritable ensures the target directory can be created and is writable
 // by performing filesystem modifications.
 func CheckBackupTargetWritable(targetPath string) error {
-	// Ensure the destination directory can be created.
-	if err := os.MkdirAll(targetPath, 0755); err != nil {
-		return fmt.Errorf("failed to create target directory %s: %w", targetPath, err)
+	// This function assumes the directory has been created by the caller.
+	// It first verifies the path exists and is a directory.
+	info, err := os.Stat(targetPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("target directory does not exist: %s", targetPath)
+		}
+		return fmt.Errorf("cannot stat target directory %s: %w", targetPath, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("target path exists but is not a directory: %s", targetPath)
 	}
 
 	// Perform a thorough write check by creating and deleting a temporary file.
