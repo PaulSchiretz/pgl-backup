@@ -9,11 +9,11 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strings"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
 	"pixelgardenlabs.io/pgl-backup/pkg/engine"
 	"pixelgardenlabs.io/pgl-backup/pkg/filelock"
+	"pixelgardenlabs.io/pgl-backup/pkg/flagparse"
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 	"pixelgardenlabs.io/pgl-backup/pkg/preflight"
 )
@@ -81,37 +81,24 @@ func parseFlagConfig() (config.Config, action, error) {
 		Quiet:  *quietFlag,
 	}
 
-	// Helper to parse comma-separated string flags into a string slice.
-	parseStringList := func(s string) []string {
-		parts := strings.Split(s, ",")
-		list := make([]string, 0, len(parts))
-		for _, part := range parts {
-			trimmed := strings.TrimSpace(part)
-			if trimmed != "" {
-				list = append(list, trimmed)
-			}
-		}
-		return list
-	}
-
 	// If the exclude-files flag was set, parse it and override the config.
 	if *excludeFilesFlag != "" {
-		flagConfig.Paths.ExcludeFiles = parseStringList(*excludeFilesFlag)
+		flagConfig.Paths.ExcludeFiles = flagparse.ParseExcludeList(*excludeFilesFlag)
 	}
 
 	// If the exclude-dirs flag was set, parse it and override the config.
 	if *excludeDirsFlag != "" {
-		flagConfig.Paths.ExcludeDirs = parseStringList(*excludeDirsFlag)
+		flagConfig.Paths.ExcludeDirs = flagparse.ParseExcludeList(*excludeDirsFlag)
 	}
 
 	// If the pre-backup-hooks flag was set, parse it and override the config.
 	if *preBackupHooksFlag != "" {
-		flagConfig.Hooks.PreBackup = parseStringList(*preBackupHooksFlag)
+		flagConfig.Hooks.PreBackup = flagparse.ParseCmdList(*preBackupHooksFlag)
 	}
 
 	// If the post-backup-hooks flag was set, parse it and override the config.
 	if *postBackupHooksFlag != "" {
-		flagConfig.Hooks.PostBackup = parseStringList(*postBackupHooksFlag)
+		flagConfig.Hooks.PostBackup = flagparse.ParseCmdList(*postBackupHooksFlag)
 	}
 
 	// Parse string flags into their corresponding enum types.
