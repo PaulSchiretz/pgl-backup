@@ -51,17 +51,11 @@ func CheckBackupTargetAccessible(targetPath string) error {
 			return err
 		}
 
-		// If we got here, the ancestor exists and (if required) is a mount.
-		// However, we still need to ensure the immediate parent of the target is accessible
-		// so MkdirAll won't fail due to permissions on the parent.
-		parentDir := filepath.Dir(targetPath)
-		if _, err := os.Stat(parentDir); os.IsNotExist(err) {
-			// The immediate parent does not exist. This is an error condition for this check,
-			// as it implies a deeper non-existent path than expected.
-			return fmt.Errorf("target path and its parent directory do not exist: %s", parentDir)
-		} else if err != nil {
-			// A different error occurred (e.g., permissions).
-			return fmt.Errorf("cannot access parent directory %s: %w", parentDir, err)
+		// The target path doesn't exist. Check accessibility of the deepest existing ancestor
+		// to ensure os.MkdirAll can create the required subdirectories. This provides a
+		// more specific error message on permission failure letting any subsequent os.MkdirAll fail alone.
+		if _, err := os.Stat(ancestor); err != nil {
+			return fmt.Errorf("cannot access ancestor directory %s: %w", ancestor, err)
 		}
 
 		return nil

@@ -42,41 +42,36 @@ func TestCheckBackupTargetAccessible(t *testing.T) {
 		}
 	})
 
-	t.Run("Error - Target and Parent Do Not Exist", func(t *testing.T) {
-		nonExistentPath := filepath.Join(t.TempDir(), "nonexistent", "target")
-
-		err := CheckBackupTargetAccessible(nonExistentPath)
-		if err == nil {
-			t.Fatal("expected an error when target and parent do not exist, but got nil")
-		}
-		if !strings.Contains(err.Error(), "target path and its parent directory do not exist") {
-			t.Errorf("expected error about non-existent parent, but got: %v", err)
-		}
-	})
-
-	t.Run("Error - No Permission to Stat Parent", func(t *testing.T) {
+	t.Run("Error - No Permission on Deepest Existing Ancestor", func(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			t.Skip("permission tests are not reliable on Windows")
 		}
 
-		// Setup: Create a grandparent directory we can enter, but a parent directory
-		// that we cannot search (no 'x' permission). This allows the ancestor
-		// search to succeed but the final parent check to fail with a permission error.
-		readableGrandparent := t.TempDir()
-		unsearchableParent := filepath.Join(readableGrandparent, "unsearchable")
-		// Mode 0666 (rw-rw-rw-) allows stat but not listing contents for non-root users.
-		if err := os.Mkdir(unsearchableParent, 0666); err != nil {
-			t.Fatalf("failed to create unsearchable dir: %v", err)
-		}
-		t.Cleanup(func() { os.Chmod(unsearchableParent, 0755) }) // Clean up permissions
+		// Setup: Create a directory structure where the deepest existing ancestor
+		// of the target path is not accessible.
+		// e.g., /tmp/grandparent/unreadable_ancestor/non_existent_child/target
+		// The check should fail on "unreadable_ancestor".
+		grandparent := t.TempDir()
+		unreadableAncestor := filepath.Join(grandparent, "unreadable_ancestor")
 
-		targetDir := filepath.Join(unsearchableParent, "target")
+		// Create the ancestor with read-only permissions (0444). This prevents
+		// os.Stat from succeeding on it for a non-root user, simulating a
+		// permission error when trying to access it to create subdirectories.
+		// We use 0000 to be more explicit about lack of permissions.
+		if err := os.Mkdir(unreadableAncestor, 0000); err != nil {
+			t.Fatalf("failed to create unreadable ancestor dir: %v", err)
+		}
+		// Make sure we can clean it up later.
+		t.Cleanup(func() { os.Chmod(unreadableAncestor, 0755) })
+
+		// The target path is several levels deep, and does not exist.
+		targetDir := filepath.Join(unreadableAncestor, "non_existent_child", "target")
 
 		err := CheckBackupTargetAccessible(targetDir)
 		if err == nil {
 			t.Fatal("expected a permission error, but got nil")
 		}
-		expectedError := "cannot access parent directory"
+		expectedError := "cannot access ancestor directory"
 		if !strings.Contains(err.Error(), expectedError) {
 			t.Errorf("expected error to contain %q, but got: %v", expectedError, err)
 		}
