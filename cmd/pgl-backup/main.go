@@ -50,7 +50,7 @@ func parseFlagConfig() (config.Config, action, error) {
 	targetFlag := flag.String("target", "", "Base destination directory for backups")
 	modeFlag := flag.String("mode", "", "Backup mode: 'incremental' or 'snapshot'.")
 	quietFlag := flag.Bool("quiet", false, "Suppress individual file operation logs.")
-	dryRunFlag := flag.Bool("dryrun", false, "Show what would be done without making any changes.")
+	dryRunFlag := flag.Bool("dry-run", false, "Show what would be done without making any changes.")
 	initFlag := flag.Bool("init", false, "Generate a default pgl-backup.conf file and exit.")
 	versionFlag := flag.Bool("version", false, "Print the application version and exit.")
 	syncEngineFlag := flag.String("sync-engine", "", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
@@ -137,32 +137,6 @@ func parseFlagConfig() (config.Config, action, error) {
 // acquireTargetLock ensures the target directory exists and acquires a file lock within it.
 // It returns a release function that must be called to unlock the directory.
 func acquireTargetLock(ctx context.Context, targetPath, sourcePath string, dryRun bool) (func(), error) {
-	// Perform initial, non-destructive checks on the target path. This validates
-	// the path's structure, permissions on its parent, and mount status (on Unix)
-	// before we attempt to modify the filesystem by creating directories or lock files.
-	if err := preflight.CheckBackupTargetAccessible(targetPath); err != nil {
-		return nil, fmt.Errorf("target path accessibility check failed: %w", err)
-	}
-
-	// If not a dry run, create the directory if it doesn't exist and then perform a write check.
-	if !dryRun {
-		// This is a critical state-changing step. The accessibility check has confirmed
-		// that the path is valid and its parent is accessible. Now, we ensure the
-		// target directory itself exists before we try to create a lock file inside it.
-		// os.MkdirAll is idempotent; it succeeds if the path already exists as a directory.
-		if err := os.MkdirAll(targetPath, 0755); err != nil {
-			return nil, fmt.Errorf("failed to create target directory: %w", err)
-		}
-
-		// With the directory now guaranteed to exist, perform a final, more thorough
-		// check to ensure we can actually create files within it. This catches
-		// permission issues that MkdirAll might not, providing a better user error
-		// before the backup engine starts.
-		if err := preflight.CheckBackupTargetWritable(targetPath); err != nil {
-			return nil, fmt.Errorf("target path writable check failed: %w", err)
-		}
-	}
-
 	lockFilePath := filepath.Join(targetPath, config.LockFileName)
 	appID := fmt.Sprintf("pgl-backup:%s", sourcePath)
 
@@ -181,6 +155,37 @@ func acquireTargetLock(ctx context.Context, targetPath, sourcePath string, dryRu
 	return lock.Release, nil
 }
 
+// runPreflightChecks performs all necessary validations and setup for the target directory.
+func runPreflightChecks(targetPath string, dryRun bool) error {
+	// Perform initial, non-destructive checks on the target path. This validates
+	// the path's structure, permissions on its parent, and mount status (on Unix)
+	// before we attempt to modify the filesystem by creating directories or lock files.
+	if err := preflight.CheckBackupTargetAccessible(targetPath); err != nil {
+		return fmt.Errorf("target path accessibility check failed: %w", err)
+	}
+
+	// If not a dry run, create the directory if it doesn't exist and then perform a write check.
+	if !dryRun {
+		// This is a critical state-changing step. The accessibility check has confirmed
+		// that the path is valid and its parent is accessible. Now, we ensure the
+		// target directory itself exists before we try to create a lock file inside it.
+		// os.MkdirAll is idempotent; it succeeds if the path already exists as a directory.
+		if err := os.MkdirAll(targetPath, 0755); err != nil {
+			return fmt.Errorf("failed to create target directory: %w", err)
+		}
+
+		// With the directory now guaranteed to exist, perform a final, more thorough
+		// check to ensure we can actually create files within it. This catches
+		// permission issues that MkdirAll might not, providing a better user error
+		// before the backup engine starts.
+		if err := preflight.CheckBackupTargetWritable(targetPath); err != nil {
+			return fmt.Errorf("target path writable check failed: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // executeBackup handles the complete workflow for running a backup.
 func executeBackup(ctx context.Context, flagConfig config.Config) error {
 	// Now, load the config from the (now locked) target directory, or load the defaults.
@@ -196,7 +201,7 @@ func executeBackup(ctx context.Context, flagConfig config.Config) error {
 	runConfig.LogSummary()
 
 	// Perform final validation on the merged configuration.
-	if err := runConfig.Validate(); err != nil {
+	if err := runConfig.Validate(true); err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
@@ -219,6 +224,12 @@ func run(ctx context.Context) error {
 		return err
 	}
 
+	// Perform a lenient validation on the flag configuration to fail fast on
+	// issues like invalid glob patterns, without requiring all paths to be set.
+	if err := flagConfig.Validate(false); err != nil {
+		return fmt.Errorf("invalid flag configuration: %w", err)
+	}
+
 	// --- 3. Execute the requested action ---
 	switch action {
 	case actionShowVersion:
@@ -228,6 +239,11 @@ func run(ctx context.Context) error {
 		// For init, the target flag is mandatory.
 		if flagConfig.Paths.TargetBase == "" {
 			return fmt.Errorf("the -target flag is required for the -init operation")
+		}
+
+		// Perform preflight checks before attempting to lock.
+		if err := runPreflightChecks(flagConfig.Paths.TargetBase, flagConfig.DryRun); err != nil {
+			return err
 		}
 
 		// Acquire lock for config generation to prevent race conditions.
@@ -249,6 +265,11 @@ func run(ctx context.Context) error {
 		// For backup, the target flag is mandatory.
 		if flagConfig.Paths.TargetBase == "" {
 			return fmt.Errorf("the -target flag is required to run a backup")
+		}
+
+		// Perform preflight checks before attempting to lock.
+		if err := runPreflightChecks(flagConfig.Paths.TargetBase, flagConfig.DryRun); err != nil {
+			return err
 		}
 
 		// Acquire Lock on Target Directory

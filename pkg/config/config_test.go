@@ -23,7 +23,7 @@ func TestConfig_Validate(t *testing.T) {
 
 	t.Run("Valid Config", func(t *testing.T) {
 		cfg := newValidConfig(t)
-		if err := cfg.Validate(); err != nil {
+		if err := cfg.Validate(true); err != nil {
 			t.Errorf("expected valid config to pass validation, but got error: %v", err)
 		}
 	})
@@ -31,15 +31,24 @@ func TestConfig_Validate(t *testing.T) {
 	t.Run("Empty Source Path", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Paths.Source = ""
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for empty source path, but got nil")
+		}
+	})
+
+	t.Run("Empty Source Path with Lenient Validation", func(t *testing.T) {
+		cfg := newValidConfig(t)
+		cfg.Paths.Source = ""
+		// With lenient validation, an empty source is allowed.
+		if err := cfg.Validate(false); err != nil {
+			t.Errorf("expected no error for empty source path with lenient validation, but got: %v", err)
 		}
 	})
 
 	t.Run("Non-Existent Source Path", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Paths.Source = filepath.Join(t.TempDir(), "nonexistent")
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for non-existent source path, but got nil")
 		}
 	})
@@ -47,31 +56,15 @@ func TestConfig_Validate(t *testing.T) {
 	t.Run("Empty Target Path", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Paths.TargetBase = ""
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for empty target path, but got nil")
-		}
-	})
-
-	t.Run("Target Path is Current Directory", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.Paths.TargetBase = "."
-		if err := cfg.Validate(); err == nil {
-			t.Error("expected error for target path being current directory, but got nil")
-		}
-	})
-
-	t.Run("Target Path is Root Directory", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.Paths.TargetBase = string(filepath.Separator)
-		if err := cfg.Validate(); err == nil {
-			t.Error("expected error for target path being root directory, but got nil")
 		}
 	})
 
 	t.Run("Invalid NativeEngineWorkers", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Engine.NativeEngineWorkers = 0
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for zero native engine workers, but got nil")
 		}
 	})
@@ -80,7 +73,7 @@ func TestConfig_Validate(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Mode = IncrementalMode
 		cfg.RolloverInterval = 0
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for zero rollover interval in incremental mode, but got nil")
 		}
 	})
@@ -88,7 +81,7 @@ func TestConfig_Validate(t *testing.T) {
 	t.Run("Invalid Glob Pattern", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Paths.ExcludeFiles = []string{"["} // Invalid glob pattern
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for invalid glob pattern, but got nil")
 		}
 	})

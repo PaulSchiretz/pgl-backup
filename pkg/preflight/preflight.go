@@ -24,7 +24,11 @@ import (
 //     mounted. This check is performed on the target path if it exists, or its deepest existing
 //     ancestor if it does not.
 func CheckBackupTargetAccessible(targetPath string) error {
-	// --- 1. Platform-specific: Check if the Volume/Drive exists (Windows) ---
+	// It's unsafe to operate on the current directory or the root of a filesystem.
+	if isUnsafeRoot(targetPath) {
+		return fmt.Errorf("target path cannot be the current directory ('.') or the root directory ('/')")
+	}
+
 	info, err := os.Stat(targetPath)
 	if os.IsNotExist(err) {
 		// Target doesn't exist. We must check its ancestors.

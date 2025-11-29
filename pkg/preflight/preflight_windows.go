@@ -34,3 +34,19 @@ func platformValidateMountPoint(path string) error {
 	}
 	return nil
 }
+
+// isUnsafeRoot checks if the given path is the current directory or a bare drive letter (e.g., "C:").
+func isUnsafeRoot(path string) bool {
+	// On Windows, it's unsafe to target the current directory "." or the root of the current drive "\".
+	if path == "." || path == string(filepath.Separator) {
+		return true
+	}
+
+	// A bare drive letter like "C:" is also unsafe because it's ambiguous.
+	// filepath.Clean("C:") produces "C:.", so we must also check for that pattern.
+	// A UNC path like `\\server\share` is safe because its volume name contains a separator.
+	vol := filepath.VolumeName(path)
+	isBareDrive := vol != "" && path == vol && !strings.Contains(vol, string(filepath.Separator))
+	isCleanedBareDrive := vol != "" && path == vol+"."
+	return isBareDrive || isCleanedBareDrive
+}

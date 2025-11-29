@@ -41,6 +41,20 @@ func TestCheckBackupTargetAccessible(t *testing.T) {
 		}
 	})
 
+	t.Run("Error - Target Path is Current Directory", func(t *testing.T) {
+		err := CheckBackupTargetAccessible(".")
+		if err == nil {
+			t.Error("expected error for target path being current directory, but got nil")
+		}
+	})
+
+	t.Run("Error - Target Path is Root Directory", func(t *testing.T) {
+		err := CheckBackupTargetAccessible(string(filepath.Separator))
+		if err == nil {
+			t.Error("expected error for target path being root directory, but got nil")
+		}
+	})
+
 }
 
 func TestCheckBackupSourceAccessible(t *testing.T) {

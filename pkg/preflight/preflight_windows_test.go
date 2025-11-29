@@ -44,6 +44,39 @@ func TestCheckBackupTargetAccessible_Windows(t *testing.T) {
 			t.Errorf("expected error to contain %q, but got: %v", expectedError, err)
 		}
 	})
+
+	t.Run("Error - Target Path is Bare Drive Letter", func(t *testing.T) {
+		err := CheckBackupTargetAccessible(`C:`)
+		if err == nil {
+			t.Error("expected error for target path being a bare drive letter, but got nil")
+		}
+		if !strings.Contains(err.Error(), "target path cannot be the current directory") {
+			t.Errorf("expected error about unsafe root, but got: %v", err)
+		}
+	})
+
+	t.Run("Happy Path - Target Path is Windows Volume Root", func(t *testing.T) {
+		// This test verifies that an explicit volume root like "C:\" is considered a SAFE target
+		// by CheckBackupTargetAccessible. This function does not perform a write check,
+		// so it should pass as the path is not an unsafe root and it exists.
+		err := CheckBackupTargetAccessible(`C:\`)
+		if err != nil {
+			t.Errorf("expected no error for target path being a volume root, but got: %v", err)
+		}
+	})
+
+	t.Run("Happy Path - Target Path is UNC Path", func(t *testing.T) {
+		// The initial `isUnsafeRoot` check should pass. The function will then fail later
+		// because the path doesn't exist. We verify that the error is the expected
+		// "volume root does not exist" and NOT the "unsafe root" error.
+		err := CheckBackupTargetAccessible(`\\server\share`)
+		if err == nil {
+			t.Fatal("expected an error for a non-existent UNC path, but got nil")
+		}
+		if !strings.Contains(err.Error(), "volume root does not exist") {
+			t.Errorf("expected error to be about non-existent volume, but got: %v", err)
+		}
+	})
 }
 
 func TestPlatformValidateMountPoint_Windows(t *testing.T) {

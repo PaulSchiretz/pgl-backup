@@ -49,3 +49,9 @@ func platformValidateMountPoint(path string) error {
 
 	return nil
 }
+
+// isUnsafeRoot checks if the given path is the current directory or the filesystem root.
+func isUnsafeRoot(path string) bool {
+	// On Unix-like systems, it's unsafe to target the current directory "." or the root "/".
+	return path == "." || path == "/"
+}
