@@ -142,6 +142,7 @@ Run a script before the backup starts. Commands with spaces must be wrapped in s
 ```sh
 pgl-backup -target="..." -pre-backup-hooks="'/usr/local/bin/dump_database.sh', 'echo Backup starting...'"
 ```
+>**Security Note:** Hooks execute arbitrary shell commands. Ensure that any commands in your configuration are from a trusted source and have the correct permissions to prevent unintended side effects.
 
 ## Configuration Details
 
@@ -169,5 +170,3 @@ All command-line flags can be set in the `pgl-backup.conf` file.
 | `native-engine-workers` / `nativeEngineWorkers` | `int` | `runtime.NumCPU()` | Number of concurrent workers for the native sync engine. |
 | `native-retry-count` / `nativeEngineRetryCount` | `int` | `3` | Number of retries for failed file copies in the native engine. |
 | `native-retry-wait` / `nativeEngineRetryWaitSeconds` | `int` | `5` | Seconds to wait between retries in the native engine. |
-
-
