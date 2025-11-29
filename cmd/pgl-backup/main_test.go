@@ -51,17 +51,16 @@ func TestParseFlagConfig(t *testing.T) {
 			if err != nil {
 				t.Fatalf("expected no error, but got: %v", err)
 			}
-			if val, _ := setFlags["source"]; val != "/new/src" {
+			if val, ok := setFlags["source"]; !ok {
+				t.Error("expected 'source' flag to be in setFlags map")
+			} else if val != "/new/src" {
 				t.Errorf("expected source to be '/new/src', but got %v", val)
 			}
-			if val, _ := setFlags["target"]; val != "/new/dst" {
-				t.Errorf("expected target to be '/new/dst', but got %v", val)
-			}
-			if _, ok := setFlags["source"]; !ok {
-				t.Error("expected 'source' flag to be in setFlags map")
-			}
-			if _, ok := setFlags["target"]; !ok {
+
+			if val, ok := setFlags["target"]; !ok {
 				t.Error("expected 'target' flag to be in setFlags map")
+			} else if val != "/new/dst" {
+				t.Errorf("expected target to be '/new/dst', but got %v", val)
 			}
 		})
 	})
@@ -138,8 +137,12 @@ func TestParseFlagConfig(t *testing.T) {
 			if err != nil {
 				t.Fatalf("expected no error, but got: %v", err)
 			}
-			if val, _ := setFlags["preserve-source-name"]; val != false {
-				t.Errorf("expected PreserveSourceDirectoryName to be false, but got %v", val)
+			val, ok := setFlags["preserve-source-name"]
+			if !ok {
+				t.Fatal("expected 'preserve-source-name' flag to be in setFlags map")
+			}
+			if boolVal, typeOK := val.(bool); !typeOK || boolVal != false {
+				t.Errorf("expected PreserveSourceDirectoryName to be false, but got %v (type %T)", val, val)
 			}
 		})
 	})
