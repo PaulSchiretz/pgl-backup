@@ -23,7 +23,7 @@ func TestConfig_Validate(t *testing.T) {
 
 	t.Run("Valid Config", func(t *testing.T) {
 		cfg := newValidConfig(t)
-		if err := cfg.Validate(true); err != nil {
+		if err := cfg.Validate(); err != nil {
 			t.Errorf("expected valid config to pass validation, but got error: %v", err)
 		}
 	})
@@ -31,24 +31,15 @@ func TestConfig_Validate(t *testing.T) {
 	t.Run("Empty Source Path", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Paths.Source = ""
-		if err := cfg.Validate(true); err == nil {
+		if err := cfg.Validate(); err == nil {
 			t.Error("expected error for empty source path, but got nil")
-		}
-	})
-
-	t.Run("Empty Source Path with Lenient Validation", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.Paths.Source = ""
-		// With lenient validation, an empty source is allowed.
-		if err := cfg.Validate(false); err != nil {
-			t.Errorf("expected no error for empty source path with lenient validation, but got: %v", err)
 		}
 	})
 
 	t.Run("Non-Existent Source Path", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Paths.Source = filepath.Join(t.TempDir(), "nonexistent")
-		if err := cfg.Validate(true); err == nil {
+		if err := cfg.Validate(); err == nil {
 			t.Error("expected error for non-existent source path, but got nil")
 		}
 	})
@@ -56,7 +47,7 @@ func TestConfig_Validate(t *testing.T) {
 	t.Run("Empty Target Path", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Paths.TargetBase = ""
-		if err := cfg.Validate(true); err == nil {
+		if err := cfg.Validate(); err == nil {
 			t.Error("expected error for empty target path, but got nil")
 		}
 	})
@@ -64,7 +55,7 @@ func TestConfig_Validate(t *testing.T) {
 	t.Run("Invalid NativeEngineWorkers", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Engine.NativeEngineWorkers = 0
-		if err := cfg.Validate(true); err == nil {
+		if err := cfg.Validate(); err == nil {
 			t.Error("expected error for zero native engine workers, but got nil")
 		}
 	})
@@ -73,7 +64,7 @@ func TestConfig_Validate(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Mode = IncrementalMode
 		cfg.RolloverInterval = 0
-		if err := cfg.Validate(true); err == nil {
+		if err := cfg.Validate(); err == nil {
 			t.Error("expected error for zero rollover interval in incremental mode, but got nil")
 		}
 	})
@@ -81,7 +72,7 @@ func TestConfig_Validate(t *testing.T) {
 	t.Run("Invalid Glob Pattern", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Paths.ExcludeFiles = []string{"["} // Invalid glob pattern
-		if err := cfg.Validate(true); err == nil {
+		if err := cfg.Validate(); err == nil {
 			t.Error("expected error for invalid glob pattern, but got nil")
 		}
 	})
@@ -180,7 +171,10 @@ func TestMergeConfigWithFlags(t *testing.T) {
 func TestGenerate(t *testing.T) {
 	t.Run("Generates file in target dir", func(t *testing.T) {
 		targetDir := t.TempDir()
-		err := Generate(targetDir, NewDefault())
+		cfg := NewDefault()
+		cfg.Paths.TargetBase = targetDir
+
+		err := Generate(cfg)
 		if err != nil {
 			t.Fatalf("Generate() failed: %v", err)
 		}
@@ -200,7 +194,10 @@ func TestGenerate(t *testing.T) {
 			t.Fatalf("failed to create dummy config file: %v", err)
 		}
 
-		err := Generate(targetDir, NewDefault())
+		cfg := NewDefault()
+		cfg.Paths.TargetBase = targetDir
+
+		err := Generate(cfg)
 		if err != nil {
 			t.Fatalf("Generate() should not fail when overwriting, but got: %v", err)
 		}
@@ -221,7 +218,7 @@ func TestGenerate(t *testing.T) {
 		// This is required for the Load function's validation to pass.
 		customCfg.Paths.TargetBase = targetDir
 
-		err := Generate(targetDir, customCfg)
+		err := Generate(customCfg)
 		if err != nil {
 			t.Fatalf("Generate() with custom config failed: %v", err)
 		}

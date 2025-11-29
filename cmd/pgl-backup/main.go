@@ -156,21 +156,31 @@ func acquireTargetLock(ctx context.Context, targetPath, sourcePath string, dryRu
 }
 
 // runPreflightChecks performs all necessary validations and setup for the target directory.
-func runPreflightChecks(targetPath string, dryRun bool) error {
+func runPreflightChecks(c *config.Config) error {
+	// Perform validation on the merged configuration. This is the first and most
+	// critical check. It also cleans and normalizes paths within the config struct.
+	if err := c.Validate(); err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
+	}
+
 	// Perform initial, non-destructive checks on the target path. This validates
 	// the path's structure, permissions on its parent, and mount status (on Unix)
 	// before we attempt to modify the filesystem by creating directories or lock files.
-	if err := preflight.CheckBackupTargetAccessible(targetPath); err != nil {
+	if err := preflight.CheckBackupTargetAccessible(c.Paths.TargetBase); err != nil {
 		return fmt.Errorf("target path accessibility check failed: %w", err)
 	}
 
+	if err := preflight.CheckBackupSourceAccessible(c.Paths.Source); err != nil {
+		return fmt.Errorf("source path validation failed: %w", err)
+	}
+
 	// If not a dry run, create the directory if it doesn't exist and then perform a write check.
-	if !dryRun {
+	if !c.DryRun {
 		// This is a critical state-changing step. The accessibility check has confirmed
 		// that the path is valid and its parent is accessible. Now, we ensure the
 		// target directory itself exists before we try to create a lock file inside it.
 		// os.MkdirAll is idempotent; it succeeds if the path already exists as a directory.
-		if err := os.MkdirAll(targetPath, 0755); err != nil {
+		if err := os.MkdirAll(c.Paths.TargetBase, 0755); err != nil {
 			return fmt.Errorf("failed to create target directory: %w", err)
 		}
 
@@ -178,40 +188,12 @@ func runPreflightChecks(targetPath string, dryRun bool) error {
 		// check to ensure we can actually create files within it. This catches
 		// permission issues that MkdirAll might not, providing a better user error
 		// before the backup engine starts.
-		if err := preflight.CheckBackupTargetWritable(targetPath); err != nil {
+		if err := preflight.CheckBackupTargetWritable(c.Paths.TargetBase); err != nil {
 			return fmt.Errorf("target path writable check failed: %w", err)
 		}
 	}
 
 	return nil
-}
-
-// executeBackup handles the complete workflow for running a backup.
-func executeBackup(ctx context.Context, flagConfig config.Config) error {
-	// Now, load the config from the (now locked) target directory, or load the defaults.
-	loadedConfig, err := config.Load(flagConfig.Paths.TargetBase)
-	if err != nil {
-		return fmt.Errorf("failed to load configuration from target: %w", err)
-	}
-
-	// Merge the flag values over the loaded config to get the final run config.
-	runConfig := config.MergeConfigWithFlags(loadedConfig, flagConfig)
-
-	// If not in quiet mode, log the final configuration for user confirmation.
-	runConfig.LogSummary()
-
-	// Perform final validation on the merged configuration.
-	if err := runConfig.Validate(true); err != nil {
-		return fmt.Errorf("invalid configuration: %w", err)
-	}
-
-	// Perform pre-flight check on the source path.
-	if err := preflight.CheckBackupSourceAccessible(runConfig.Paths.Source); err != nil {
-		return fmt.Errorf("source path validation failed: %w", err)
-	}
-
-	backupEngine := engine.New(runConfig, version)
-	return backupEngine.Execute(ctx)
 }
 
 // run encapsulates the main application logic and returns an error if something
@@ -224,13 +206,6 @@ func run(ctx context.Context) error {
 		return err
 	}
 
-	// Perform a lenient validation on the flag configuration to fail fast on
-	// issues like invalid glob patterns, without requiring all paths to be set.
-	if err := flagConfig.Validate(false); err != nil {
-		return fmt.Errorf("invalid flag configuration: %w", err)
-	}
-
-	// --- 3. Execute the requested action ---
 	switch action {
 	case actionShowVersion:
 		fmt.Printf("pgl-backup version %s\n", version)
@@ -238,16 +213,24 @@ func run(ctx context.Context) error {
 	case actionInitConfig:
 		// For init, the target flag is mandatory.
 		if flagConfig.Paths.TargetBase == "" {
-			return fmt.Errorf("the -target flag is required for the -init operation")
+			return fmt.Errorf("the -target flag is required for the init operation")
+		}
+		if flagConfig.Paths.Source == "" {
+			return fmt.Errorf("the -source flag is required for the init operation")
 		}
 
-		// Perform preflight checks before attempting to lock.
-		if err := runPreflightChecks(flagConfig.Paths.TargetBase, flagConfig.DryRun); err != nil {
+		// Create a base default config.
+		baseConfig := config.NewDefault()
+		// Merge the flags provided by the user on top of the defaults.
+		runConfig := config.MergeConfigWithFlags(baseConfig, flagConfig)
+
+		// Perform preflight checks before attempting to lock or write.
+		if err := runPreflightChecks(&runConfig); err != nil {
 			return err
 		}
 
 		// Acquire lock for config generation to prevent race conditions.
-		releaseLock, err := acquireTargetLock(ctx, flagConfig.Paths.TargetBase, flagConfig.Paths.Source, flagConfig.DryRun)
+		releaseLock, err := acquireTargetLock(ctx, runConfig.Paths.TargetBase, runConfig.Paths.Source, runConfig.DryRun)
 		if err != nil {
 			return err
 		}
@@ -256,24 +239,29 @@ func run(ctx context.Context) error {
 		}
 		defer releaseLock()
 
-		// Create a base default config.
-		baseConfig := config.NewDefault()
-		// Merge the flags provided by the user on top of the defaults.
-		configToGenerate := config.MergeConfigWithFlags(baseConfig, flagConfig)
-		return config.Generate(flagConfig.Paths.TargetBase, configToGenerate)
+		return config.Generate(runConfig)
 	case actionRunBackup:
 		// For backup, the target flag is mandatory.
 		if flagConfig.Paths.TargetBase == "" {
 			return fmt.Errorf("the -target flag is required to run a backup")
 		}
 
-		// Perform preflight checks before attempting to lock.
-		if err := runPreflightChecks(flagConfig.Paths.TargetBase, flagConfig.DryRun); err != nil {
+		// Load config from the target directory, or use defaults if not found.
+		loadedConfig, err := config.Load(flagConfig.Paths.TargetBase)
+		if err != nil {
+			return fmt.Errorf("failed to load configuration from target: %w", err)
+		}
+
+		// Merge the flag values over the loaded config to get the final run config.
+		runConfig := config.MergeConfigWithFlags(loadedConfig, flagConfig)
+
+		// Perform preflight checks on the final, merged configuration.
+		if err := runPreflightChecks(&runConfig); err != nil {
 			return err
 		}
 
-		// Acquire Lock on Target Directory
-		releaseLock, err := acquireTargetLock(ctx, flagConfig.Paths.TargetBase, flagConfig.Paths.Source, flagConfig.DryRun)
+		// Acquire Lock on Target Directory using final config.
+		releaseLock, err := acquireTargetLock(ctx, runConfig.Paths.TargetBase, runConfig.Paths.Source, runConfig.DryRun)
 		if err != nil {
 			return err // A real error occurred during lock acquisition.
 		}
@@ -281,7 +269,11 @@ func run(ctx context.Context) error {
 			return nil // Lock was already held, exit gracefully.
 		}
 		defer releaseLock()
-		return executeBackup(ctx, flagConfig)
+
+		runConfig.LogSummary()
+
+		backupEngine := engine.New(runConfig, version)
+		return backupEngine.Execute(ctx)
 	default:
 		return fmt.Errorf("internal error: unknown action %d", action)
 	}

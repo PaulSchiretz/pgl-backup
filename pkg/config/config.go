@@ -260,13 +260,8 @@ func Load(targetBase string) (Config, error) {
 
 // Generate creates or overwrites a default pgl-backup.conf file in the specified
 // target directory.
-func Generate(targetBase string, configToGenerate Config) error {
-	// Ensure the target directory exists.
-	if err := os.MkdirAll(targetBase, 0755); err != nil {
-		return fmt.Errorf("failed to create target directory %s for config file: %w", targetBase, err)
-	}
-
-	configPath := filepath.Join(targetBase, ConfigFileName)
+func Generate(configToGenerate Config) error {
+	configPath := filepath.Join(configToGenerate.Paths.TargetBase, ConfigFileName)
 	// Marshal the default config into nicely formatted JSON.
 	jsonData, err := json.MarshalIndent(configToGenerate, "", "  ")
 	if err != nil {
@@ -283,10 +278,17 @@ func Generate(targetBase string, configToGenerate Config) error {
 }
 
 // Validate checks the configuration for logical errors and inconsistencies.
-// If fullValidation is true, it performs strict checks, including ensuring
-// the source path is non-empty and exists. If false, it performs lenient checks
-// suitable for partially populated configs (like from flags).
-func (c *Config) Validate(fullValidation bool) error {
+// It performs strict checks, including ensuring the source path is non-empty
+// and exists.
+func (c *Config) Validate() error {
+	// --- Strict Path Validation (Fail-Fast) ---
+	if c.Paths.Source == "" {
+		return fmt.Errorf("source path cannot be empty")
+	}
+	if c.Paths.TargetBase == "" {
+		return fmt.Errorf("target path cannot be empty")
+	}
+
 	// Clean and expand paths for canonical representation before use.
 	var err error
 
@@ -297,6 +299,11 @@ func (c *Config) Validate(fullValidation bool) error {
 			return fmt.Errorf("could not expand source path: %w", err)
 		}
 		c.Paths.Source = filepath.Clean(c.Paths.Source)
+
+		// After cleaning and expanding the path, check for existence.
+		if _, err := os.Stat(c.Paths.Source); os.IsNotExist(err) {
+			return fmt.Errorf("source path '%s' does not exist", c.Paths.Source)
+		}
 	}
 
 	// --- Validate Target Path ---
@@ -325,20 +332,6 @@ func (c *Config) Validate(fullValidation bool) error {
 	if err := validateGlobPatterns("excludeDirs", c.Paths.ExcludeDirs); err != nil {
 		return err
 	}
-
-	// --- Final, Strict Validation ---
-	if fullValidation {
-		if c.Paths.Source == "" {
-			return fmt.Errorf("source path cannot be empty")
-		}
-		if _, err := os.Stat(c.Paths.Source); os.IsNotExist(err) {
-			return fmt.Errorf("source path '%s' does not exist", c.Paths.Source)
-		}
-		if c.Paths.TargetBase == "" {
-			return fmt.Errorf("target path cannot be empty")
-		}
-	}
-
 	return nil
 }
 
