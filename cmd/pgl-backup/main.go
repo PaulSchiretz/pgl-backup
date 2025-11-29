@@ -44,7 +44,7 @@ func init() {
 
 // parseFlagConfig defines and parses command-line flags, and constructs a
 // configuration object containing only the values provided by those flags.
-func parseFlagConfig() (config.Config, action, error) {
+func parseFlagConfig() (action, map[string]interface{}, error) {
 	// Define flags with zero-value defaults. We will merge them later.
 	srcFlag := flag.String("source", "", "Source directory to copy from")
 	targetFlag := flag.String("target", "", "Base destination directory for backups")
@@ -65,73 +65,82 @@ func parseFlagConfig() (config.Config, action, error) {
 
 	flag.Parse()
 
-	// Create a config struct populated *only* with values from flags.
-	flagConfig := config.Config{
-		Paths: config.BackupPathConfig{
-			Source:                      *srcFlag,
-			TargetBase:                  *targetFlag,
-			PreserveSourceDirectoryName: *preserveSourceNameFlag,
-		},
-		Engine: config.BackupEngineConfig{
-			NativeEngineWorkers:          *nativeEngineWorkersFlag,
-			NativeEngineRetryCount:       *nativeRetryCountFlag,
-			NativeEngineRetryWaitSeconds: *nativeRetryWaitFlag,
-		},
-		DryRun: *dryRunFlag,
-		Quiet:  *quietFlag,
-	}
+	// Create a map of the flags that were explicitly set by the user, along with their values.
+	// This map is used to selectively override the base configuration.
+	setFlags := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) {
+		setFlags[f.Name] = true // Mark the flag as set.
+	})
 
-	// If the exclude-files flag was set, parse it and override the config.
-	if *excludeFilesFlag != "" {
-		flagConfig.Paths.ExcludeFiles = flagparse.ParseExcludeList(*excludeFilesFlag)
-	}
-
-	// If the exclude-dirs flag was set, parse it and override the config.
-	if *excludeDirsFlag != "" {
-		flagConfig.Paths.ExcludeDirs = flagparse.ParseExcludeList(*excludeDirsFlag)
-	}
-
-	// If the pre-backup-hooks flag was set, parse it and override the config.
-	if *preBackupHooksFlag != "" {
-		flagConfig.Hooks.PreBackup = flagparse.ParseCmdList(*preBackupHooksFlag)
-	}
-
-	// If the post-backup-hooks flag was set, parse it and override the config.
-	if *postBackupHooksFlag != "" {
-		flagConfig.Hooks.PostBackup = flagparse.ParseCmdList(*postBackupHooksFlag)
-	}
-
-	// Parse string flags into their corresponding enum types.
-	if *modeFlag != "" {
+	// Now, iterate over the set flags and populate a new map with their actual values.
+	flagMap := make(map[string]interface{})
+	if _, ok := setFlags["mode"]; ok {
 		mode, err := config.BackupModeFromString(*modeFlag)
 		if err != nil {
-			return config.Config{}, actionRunBackup, err
+			return actionRunBackup, nil, err
 		}
-		flagConfig.Mode = mode
+		flagMap["mode"] = mode
 	}
-
-	if *syncEngineFlag != "" {
+	if _, ok := setFlags["sync-engine"]; ok {
 		engineType, err := config.SyncEngineFromString(*syncEngineFlag)
 		if err != nil {
-			return config.Config{}, actionRunBackup, err
+			return actionRunBackup, nil, err
 		}
-		flagConfig.Engine.Type = engineType
+		flagMap["sync-engine"] = engineType
+	}
+	if _, ok := setFlags["exclude-files"]; ok {
+		flagMap["exclude-files"] = flagparse.ParseExcludeList(*excludeFilesFlag)
+	}
+	if _, ok := setFlags["exclude-dirs"]; ok {
+		flagMap["exclude-dirs"] = flagparse.ParseExcludeList(*excludeDirsFlag)
+	}
+	if _, ok := setFlags["pre-backup-hooks"]; ok {
+		flagMap["pre-backup-hooks"] = flagparse.ParseCmdList(*preBackupHooksFlag)
+	}
+	if _, ok := setFlags["post-backup-hooks"]; ok {
+		flagMap["post-backup-hooks"] = flagparse.ParseCmdList(*postBackupHooksFlag)
+	}
+	if _, ok := setFlags["source"]; ok {
+		flagMap["source"] = *srcFlag
+	}
+	if _, ok := setFlags["target"]; ok {
+		flagMap["target"] = *targetFlag
+	}
+	if _, ok := setFlags["quiet"]; ok {
+		flagMap["quiet"] = *quietFlag
+	}
+	if _, ok := setFlags["dry-run"]; ok {
+		flagMap["dry-run"] = *dryRunFlag
+	}
+	if _, ok := setFlags["preserve-source-name"]; ok {
+		flagMap["preserve-source-name"] = *preserveSourceNameFlag
+	}
+	if _, ok := setFlags["native-engine-workers"]; ok {
+		flagMap["native-engine-workers"] = *nativeEngineWorkersFlag
+	}
+	if _, ok := setFlags["native-retry-count"]; ok {
+		flagMap["native-retry-count"] = *nativeRetryCountFlag
+	}
+	if _, ok := setFlags["native-retry-wait"]; ok {
+		flagMap["native-retry-wait"] = *nativeRetryWaitFlag
 	}
 
-	// Final sanity check: ensure robocopy is disabled if not on Windows.
-	if runtime.GOOS != "windows" && flagConfig.Engine.Type == config.RobocopyEngine {
-		plog.Warn("Robocopy is not available on this OS. Forcing 'native' sync engine.")
-		flagConfig.Engine.Type = config.NativeEngine
+	// Final sanity check: if robocopy was requested on a non-windows OS, force native.
+	if runtime.GOOS != "windows" {
+		if val, ok := flagMap["sync-engine"]; ok && val.(config.SyncEngine) == config.RobocopyEngine {
+			plog.Warn("Robocopy is not available on this OS. Forcing 'native' sync engine.")
+			flagMap["sync-engine"] = config.NativeEngine
+		}
 	}
 
 	// Determine which action to take based on flags.
 	if *versionFlag {
-		return flagConfig, actionShowVersion, nil
+		return actionShowVersion, flagMap, nil
 	}
 	if *initFlag {
-		return flagConfig, actionInitConfig, nil
+		return actionInitConfig, flagMap, nil
 	}
-	return flagConfig, actionRunBackup, nil
+	return actionRunBackup, flagMap, nil
 }
 
 // acquireTargetLock ensures the target directory exists and acquires a file lock within it.
@@ -160,7 +169,7 @@ func acquireTargetLock(ctx context.Context, targetPath, sourcePath string, dryRu
 func run(ctx context.Context) error {
 	// --- 1. Parse command-line flags ---
 	// This is done only once. It gives us the user's explicit command-line intent.
-	flagConfig, action, err := parseFlagConfig()
+	action, flagMap, err := parseFlagConfig()
 	if err != nil {
 		return err
 	}
@@ -171,17 +180,17 @@ func run(ctx context.Context) error {
 		return nil
 	case actionInitConfig:
 		// For init, the target flag is mandatory.
-		if flagConfig.Paths.TargetBase == "" {
+		if targetPath, ok := flagMap["target"].(string); !ok || targetPath == "" {
 			return fmt.Errorf("the -target flag is required for the init operation")
 		}
-		if flagConfig.Paths.Source == "" {
+		if sourcePath, ok := flagMap["source"].(string); !ok || sourcePath == "" {
 			return fmt.Errorf("the -source flag is required for the init operation")
 		}
 
 		// Create a base default config.
 		baseConfig := config.NewDefault()
 		// Merge the flags provided by the user on top of the defaults.
-		runConfig := config.MergeConfigWithFlags(baseConfig, flagConfig)
+		runConfig := config.MergeConfigWithFlags(baseConfig, flagMap)
 
 		// Perform preflight checks before attempting to lock or write.
 		if err := preflight.RunChecks(&runConfig); err != nil {
@@ -201,18 +210,19 @@ func run(ctx context.Context) error {
 		return config.Generate(runConfig)
 	case actionRunBackup:
 		// For backup, the target flag is mandatory.
-		if flagConfig.Paths.TargetBase == "" {
+		targetPath, ok := flagMap["target"].(string)
+		if !ok || targetPath == "" {
 			return fmt.Errorf("the -target flag is required to run a backup")
 		}
 
 		// Load config from the target directory, or use defaults if not found.
-		loadedConfig, err := config.Load(flagConfig.Paths.TargetBase)
+		loadedConfig, err := config.Load(targetPath)
 		if err != nil {
 			return fmt.Errorf("failed to load configuration from target: %w", err)
 		}
 
 		// Merge the flag values over the loaded config to get the final run config.
-		runConfig := config.MergeConfigWithFlags(loadedConfig, flagConfig)
+		runConfig := config.MergeConfigWithFlags(loadedConfig, flagMap)
 
 		// Perform preflight checks on the final, merged configuration.
 		if err := preflight.RunChecks(&runConfig); err != nil {

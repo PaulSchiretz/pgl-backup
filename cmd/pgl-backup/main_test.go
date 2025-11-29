@@ -31,16 +31,15 @@ func runTestWithFlags(t *testing.T, args []string, testFunc func()) {
 func TestParseFlagConfig(t *testing.T) {
 	t.Run("No Flags - Returns Zero-Value Config", func(t *testing.T) {
 		runTestWithFlags(t, []string{}, func() {
-			cfg, act, err := parseFlagConfig()
+			act, setFlags, err := parseFlagConfig()
 			if err != nil {
 				t.Fatalf("expected no error, but got: %v", err)
 			}
 			if act != actionRunBackup {
 				t.Errorf("expected action to be actionRunBackup, but got %v", act)
 			}
-			// With no flags, paths should be empty (zero-value for string)
-			if cfg.Paths.Source != "" {
-				t.Errorf("expected source to be empty, but got %s", cfg.Paths.Source)
+			if len(setFlags) != 0 {
+				t.Errorf("expected no flags to be set, but got %d", len(setFlags))
 			}
 		})
 	})
@@ -48,15 +47,21 @@ func TestParseFlagConfig(t *testing.T) {
 	t.Run("Override Source and Target", func(t *testing.T) {
 		args := []string{"-source=/new/src", "-target=/new/dst"}
 		runTestWithFlags(t, args, func() {
-			cfg, _, err := parseFlagConfig()
+			_, setFlags, err := parseFlagConfig()
 			if err != nil {
 				t.Fatalf("expected no error, but got: %v", err)
 			}
-			if cfg.Paths.Source != "/new/src" {
-				t.Errorf("expected source to be '/new/src', but got %s", cfg.Paths.Source)
+			if val, _ := setFlags["source"]; val != "/new/src" {
+				t.Errorf("expected source to be '/new/src', but got %v", val)
 			}
-			if cfg.Paths.TargetBase != "/new/dst" {
-				t.Errorf("expected target to be '/new/dst', but got %s", cfg.Paths.TargetBase)
+			if val, _ := setFlags["target"]; val != "/new/dst" {
+				t.Errorf("expected target to be '/new/dst', but got %v", val)
+			}
+			if _, ok := setFlags["source"]; !ok {
+				t.Error("expected 'source' flag to be in setFlags map")
+			}
+			if _, ok := setFlags["target"]; !ok {
+				t.Error("expected 'target' flag to be in setFlags map")
 			}
 		})
 	})
@@ -74,7 +79,7 @@ func TestParseFlagConfig(t *testing.T) {
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				runTestWithFlags(t, []string{tc.arg}, func() {
-					_, act, err := parseFlagConfig()
+					act, _, err := parseFlagConfig()
 					if err != nil {
 						t.Fatalf("expected no error, but got: %v", err)
 					}
@@ -89,19 +94,19 @@ func TestParseFlagConfig(t *testing.T) {
 	t.Run("Parse Exclude Flags", func(t *testing.T) {
 		args := []string{"-exclude-files=*.tmp,*.log", "-exclude-dirs=node_modules,.cache"}
 		runTestWithFlags(t, args, func() {
-			cfg, _, err := parseFlagConfig()
+			_, setFlags, err := parseFlagConfig()
 			if err != nil {
 				t.Fatalf("expected no error, but got: %v", err)
 			}
 
 			expectedFiles := []string{"*.tmp", "*.log"}
-			if !equalSlices(cfg.Paths.ExcludeFiles, expectedFiles) {
-				t.Errorf("expected exclude files %v, but got %v", expectedFiles, cfg.Paths.ExcludeFiles)
+			if !equalSlices(setFlags["exclude-files"].([]string), expectedFiles) {
+				t.Errorf("expected exclude files %v, but got %v", expectedFiles, setFlags["exclude-files"])
 			}
 
 			expectedDirs := []string{"node_modules", ".cache"}
-			if !equalSlices(cfg.Paths.ExcludeDirs, expectedDirs) {
-				t.Errorf("expected exclude dirs %v, but got %v", expectedDirs, cfg.Paths.ExcludeDirs)
+			if !equalSlices(setFlags["exclude-dirs"].([]string), expectedDirs) {
+				t.Errorf("expected exclude dirs %v, but got %v", expectedDirs, setFlags["exclude-dirs"])
 			}
 		})
 	})
@@ -109,19 +114,19 @@ func TestParseFlagConfig(t *testing.T) {
 	t.Run("Parse Hook Flags", func(t *testing.T) {
 		args := []string{"-pre-backup-hooks=cmd1, 'cmd2 with space'", "-post-backup-hooks=cmd3"}
 		runTestWithFlags(t, args, func() {
-			cfg, _, err := parseFlagConfig()
+			_, setFlags, err := parseFlagConfig()
 			if err != nil {
 				t.Fatalf("expected no error, but got: %v", err)
 			}
 
 			expectedPre := []string{"cmd1", "'cmd2 with space'"}
-			if !equalSlices(cfg.Hooks.PreBackup, expectedPre) {
-				t.Errorf("expected pre-backup hooks %v, but got %v", expectedPre, cfg.Hooks.PreBackup)
+			if !equalSlices(setFlags["pre-backup-hooks"].([]string), expectedPre) {
+				t.Errorf("expected pre-backup hooks %v, but got %v", expectedPre, setFlags["pre-backup-hooks"])
 			}
 
 			expectedPost := []string{"cmd3"}
-			if !equalSlices(cfg.Hooks.PostBackup, expectedPost) {
-				t.Errorf("expected post-backup hooks %v, but got %v", expectedPost, cfg.Hooks.PostBackup)
+			if !equalSlices(setFlags["post-backup-hooks"].([]string), expectedPost) {
+				t.Errorf("expected post-backup hooks %v, but got %v", expectedPost, setFlags["post-backup-hooks"])
 			}
 		})
 	})
@@ -129,12 +134,12 @@ func TestParseFlagConfig(t *testing.T) {
 	t.Run("Override PreserveSourceDirectoryName", func(t *testing.T) {
 		args := []string{"-preserve-source-name=false"}
 		runTestWithFlags(t, args, func() {
-			cfg, _, err := parseFlagConfig()
+			_, setFlags, err := parseFlagConfig()
 			if err != nil {
 				t.Fatalf("expected no error, but got: %v", err)
 			}
-			if cfg.Paths.PreserveSourceDirectoryName {
-				t.Errorf("expected PreserveSourceDirectoryName to be false, but got %v", cfg.Paths.PreserveSourceDirectoryName)
+			if val, _ := setFlags["preserve-source-name"]; val != false {
+				t.Errorf("expected PreserveSourceDirectoryName to be false, but got %v", val)
 			}
 		})
 	})

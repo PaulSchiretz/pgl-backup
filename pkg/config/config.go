@@ -2,7 +2,6 @@ package config
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -416,67 +415,42 @@ func FormatTimestampWithOffset(timestampUTC time.Time) string {
 }
 
 // MergeConfigWithFlags overlays the configuration values from flags on top of a base
-// configuration (loaded from a file or defaults).
-func MergeConfigWithFlags(base, flags Config) Config {
+// configuration. It iterates over the setFlags map, which contains only the flags
+// explicitly provided by the user on the command line.
+func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 	merged := base
 
-	// A helper to check if a flag was actually set by the user on the command line.
-	// This is crucial for merging, as it allows us to distinguish between a flag
-	// that was not provided versus a flag that was explicitly set to its default value
-	// (e.g., `-quiet=false`). We want to honor the user's explicit choice in all cases.
-	isFlagSet := func(name string) bool {
-		isSet := false
-		flag.Visit(func(f *flag.Flag) { // flag.Visit iterates only over flags that were set.
-			if f.Name == name {
-				isSet = true
-			}
-		})
-		return isSet
+	for name, value := range setFlags {
+		switch name {
+		case "source":
+			merged.Paths.Source = value.(string)
+		case "target":
+			merged.Paths.TargetBase = value.(string)
+		case "mode":
+			merged.Mode = value.(BackupMode)
+		case "quiet":
+			merged.Quiet = value.(bool)
+		case "dry-run":
+			merged.DryRun = value.(bool)
+		case "sync-engine":
+			merged.Engine.Type = value.(SyncEngine)
+		case "native-engine-workers":
+			merged.Engine.NativeEngineWorkers = value.(int)
+		case "native-retry-count":
+			merged.Engine.NativeEngineRetryCount = value.(int)
+		case "native-retry-wait":
+			merged.Engine.NativeEngineRetryWaitSeconds = value.(int)
+		case "exclude-files":
+			merged.Paths.ExcludeFiles = value.([]string)
+		case "exclude-dirs":
+			merged.Paths.ExcludeDirs = value.([]string)
+		case "preserve-source-name":
+			merged.Paths.PreserveSourceDirectoryName = value.(bool)
+		case "pre-backup-hooks":
+			merged.Hooks.PreBackup = value.([]string)
+		case "post-backup-hooks":
+			merged.Hooks.PostBackup = value.([]string)
+		}
 	}
-
-	if isFlagSet("source") {
-		merged.Paths.Source = flags.Paths.Source
-	}
-	if isFlagSet("target") {
-		merged.Paths.TargetBase = flags.Paths.TargetBase
-	}
-	if isFlagSet("mode") {
-		merged.Mode = flags.Mode
-	}
-	if isFlagSet("quiet") {
-		merged.Quiet = flags.Quiet
-	}
-	if isFlagSet("dryrun") {
-		merged.DryRun = flags.DryRun
-	}
-	if isFlagSet("sync-engine") {
-		merged.Engine.Type = flags.Engine.Type
-	}
-	if isFlagSet("native-engine-workers") {
-		merged.Engine.NativeEngineWorkers = flags.Engine.NativeEngineWorkers
-	}
-	if isFlagSet("native-retry-count") {
-		merged.Engine.NativeEngineRetryCount = flags.Engine.NativeEngineRetryCount
-	}
-	if isFlagSet("native-retry-wait") {
-		merged.Engine.NativeEngineRetryWaitSeconds = flags.Engine.NativeEngineRetryWaitSeconds
-	}
-	if isFlagSet("exclude-files") {
-		merged.Paths.ExcludeFiles = flags.Paths.ExcludeFiles
-	}
-	if isFlagSet("exclude-dirs") {
-		merged.Paths.ExcludeDirs = flags.Paths.ExcludeDirs
-	}
-	if isFlagSet("preserve-source-name") {
-		merged.Paths.PreserveSourceDirectoryName = flags.Paths.PreserveSourceDirectoryName
-	}
-
-	if isFlagSet("pre-backup-hooks") {
-		merged.Hooks.PreBackup = flags.Hooks.PreBackup
-	}
-	if isFlagSet("post-backup-hooks") {
-		merged.Hooks.PostBackup = flags.Hooks.PostBackup
-	}
-
 	return merged
 }

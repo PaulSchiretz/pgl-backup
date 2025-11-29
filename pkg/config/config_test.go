@@ -1,7 +1,6 @@
 package config
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -78,93 +77,48 @@ func TestConfig_Validate(t *testing.T) {
 	})
 }
 
-// runMergeTestWithFlags is a helper to safely run tests for MergeConfigWithFlags.
-// It creates a new FlagSet, defines the necessary flags, parses the provided args,
-// and then runs the test function. This isolates each test from global flag state.
-func runMergeTestWithFlags(t *testing.T, args []string, testFunc func()) {
-	t.Helper()
-
-	// 1. Create a new, isolated FlagSet for this test.
-	fs := flag.NewFlagSet(t.Name(), flag.ContinueOnError)
-
-	// 2. Define all the flags that MergeConfigWithFlags checks for.
-	fs.String("source", "", "")
-	fs.String("target", "", "")
-	fs.String("mode", "", "")
-	fs.Bool("quiet", false, "")
-	fs.Bool("dryrun", false, "")
-	fs.String("sync-engine", "", "")
-	fs.Int("native-engine-workers", 0, "")
-	fs.Int("native-retry-count", 0, "")
-	fs.Int("native-retry-wait", 0, "")
-	fs.String("exclude-files", "", "")
-	fs.String("exclude-dirs", "", "")
-	fs.Bool("preserve-source-name", false, "")
-
-	// 3. Parse the provided arguments into our isolated FlagSet.
-	if err := fs.Parse(args); err != nil {
-		t.Fatalf("failed to parse flags: %v", err)
-	}
-
-	// 4. Temporarily replace the global flag set with our isolated one.
-	originalCommandLine := flag.CommandLine
-	flag.CommandLine = fs
-	defer func() { flag.CommandLine = originalCommandLine }()
-
-	// 5. Run the actual test logic.
-	testFunc()
-}
-
 func TestMergeConfigWithFlags(t *testing.T) {
 	t.Run("Flag overrides base config", func(t *testing.T) {
-		runMergeTestWithFlags(t, []string{"-quiet=true"}, func() {
-			base := NewDefault() // base.Quiet is false
-			flags := Config{Quiet: true}
+		base := NewDefault() // base.Quiet is false
+		setFlags := map[string]interface{}{"quiet": true}
 
-			merged := MergeConfigWithFlags(base, flags)
-			if !merged.Quiet {
-				t.Error("expected flag 'quiet=true' to override base 'false'")
-			}
-		})
+		merged := MergeConfigWithFlags(base, setFlags)
+		if !merged.Quiet {
+			t.Error("expected flag 'quiet=true' to override base 'false'")
+		}
 	})
 
 	t.Run("Base config is used when flag is not set", func(t *testing.T) {
-		runMergeTestWithFlags(t, []string{}, func() { // No flags provided
-			base := NewDefault()
-			base.Quiet = true // Set a non-default base value
-			flags := Config{}
+		base := NewDefault()
+		base.Quiet = true // Set a non-default base value
+		setFlags := map[string]interface{}{}
 
-			merged := MergeConfigWithFlags(base, flags)
-			if !merged.Quiet {
-				t.Error("expected base 'quiet=true' to be used when flag is not set")
-			}
-		})
+		merged := MergeConfigWithFlags(base, setFlags)
+		if !merged.Quiet {
+			t.Error("expected base 'quiet=true' to be used when flag is not set")
+		}
 	})
 
 	t.Run("Flag explicitly set to default overrides base", func(t *testing.T) {
-		runMergeTestWithFlags(t, []string{"-preserve-source-name=true"}, func() {
-			base := NewDefault()
-			base.Paths.PreserveSourceDirectoryName = false // Non-default base
-			flags := Config{Paths: BackupPathConfig{PreserveSourceDirectoryName: true}}
+		base := NewDefault()
+		base.Paths.PreserveSourceDirectoryName = false // Non-default base
+		setFlags := map[string]interface{}{"preserve-source-name": true}
 
-			merged := MergeConfigWithFlags(base, flags)
-			if !merged.Paths.PreserveSourceDirectoryName {
-				t.Error("expected flag 'preserve-source-name=true' to override base 'false'")
-			}
-		})
+		merged := MergeConfigWithFlags(base, setFlags)
+		if !merged.Paths.PreserveSourceDirectoryName {
+			t.Error("expected flag 'preserve-source-name=true' to override base 'false'")
+		}
 	})
 
 	t.Run("Slice flags override base slice", func(t *testing.T) {
-		runMergeTestWithFlags(t, []string{"-exclude-files=from_flag.txt"}, func() {
-			base := NewDefault()
-			base.Paths.ExcludeFiles = []string{"from_base.txt"}
-			flags := Config{Paths: BackupPathConfig{ExcludeFiles: []string{"from_flag.txt"}}}
+		base := NewDefault()
+		base.Paths.ExcludeFiles = []string{"from_base.txt"}
+		setFlags := map[string]interface{}{"exclude-files": []string{"from_flag.txt"}}
 
-			merged := MergeConfigWithFlags(base, flags)
-			if len(merged.Paths.ExcludeFiles) != 1 || merged.Paths.ExcludeFiles[0] != "from_flag.txt" {
-				t.Errorf("expected exclude files from flag to override base, but got %v", merged.Paths.ExcludeFiles)
-			}
-		})
+		merged := MergeConfigWithFlags(base, setFlags)
+		if len(merged.Paths.ExcludeFiles) != 1 || merged.Paths.ExcludeFiles[0] != "from_flag.txt" {
+			t.Errorf("expected exclude files from flag to override base, but got %v", merged.Paths.ExcludeFiles)
+		}
 	})
 }
 

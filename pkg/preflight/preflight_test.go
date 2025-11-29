@@ -181,25 +181,6 @@ func TestRunChecks(t *testing.T) {
 			t.Errorf("expected error to be about source validation, but got: %v", err)
 		}
 	})
-
-	t.Run("Failure - Unwritable Target (Not Dry Run)", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.DryRun = false
-
-		// Create the target directory but make it unwritable.
-		if err := os.Mkdir(cfg.Paths.TargetBase, 0555); err != nil { // r-x permissions
-			t.Fatalf("failed to create unwritable directory: %v", err)
-		}
-		t.Cleanup(func() { os.Chmod(cfg.Paths.TargetBase, 0755) })
-
-		err := RunChecks(cfg)
-		if err == nil {
-			t.Fatal("expected RunChecks() to fail with an unwritable target, but it passed")
-		}
-		if !strings.Contains(err.Error(), "target path writable check failed") {
-			t.Errorf("expected error to be about target writability, but got: %v", err)
-		}
-	})
 }
 
 func TestCheckBackupTargetWritable(t *testing.T) {

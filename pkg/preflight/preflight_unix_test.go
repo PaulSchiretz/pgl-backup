@@ -86,7 +86,7 @@ func TestCheckBackupTargetAccessible_Unix(t *testing.T) {
 }
 
 func TestCheckBackupTargetWritable_Unix(t *testing.T) {
-	t.Run("Error - Destination not writable", func(t *testing.T) {
+	t.Run("Error - Target not writable", func(t *testing.T) {
 		// Create a directory that we can't write into
 		unwritableDir := filepath.Join(t.TempDir(), "unwritable")
 		if err := os.Mkdir(unwritableDir, 0555); err != nil { // r-x r-x r-x
@@ -96,7 +96,7 @@ func TestCheckBackupTargetWritable_Unix(t *testing.T) {
 
 		err := checkBackupTargetWritable(unwritableDir)
 		if err == nil {
-			t.Fatal("expected an error for unwritable destination, but got nil")
+			t.Fatal("expected an error for unwritable target, but got nil")
 		}
 		if !strings.Contains(err.Error(), "not writable") {
 			t.Errorf("expected error about 'not writable' or permission denied, but got: %v", err)
