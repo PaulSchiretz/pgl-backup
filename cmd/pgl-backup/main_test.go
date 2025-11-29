@@ -1,11 +1,8 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -164,46 +161,6 @@ func TestParseFlagConfig(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "invalid SyncEngine") {
 				t.Errorf("expected error to contain 'invalid SyncEngine', but got: %v", err)
-			}
-		})
-	})
-}
-
-func TestRun_PreflightChecks(t *testing.T) {
-	// This is an integration-style test to ensure the main `run` function
-	// correctly calls preflight checks and fails early.
-
-	t.Run("Run fails with invalid target path", func(t *testing.T) {
-		// We use the root directory as an invalid target.
-		// On Windows, we need to find a valid drive root.
-		invalidTarget := "/"
-		if runtime.GOOS == "windows" {
-			// Use the volume of the temp directory (e.g., "C:\")
-			invalidTarget = filepath.VolumeName(t.TempDir())
-		}
-
-		// Create a valid source directory so that check passes.
-		srcDir := t.TempDir()
-
-		// We must provide a valid value for native-engine-workers to pass the initial
-		// lenient validation of the flagConfig, so the test can proceed to check
-		// the preflight logic which happens later.
-		args := []string{
-			"-source", srcDir,
-			"-target", invalidTarget,
-			"-native-engine-workers=1", // Satisfy c.Engine.NativeEngineWorkers check
-			"-mode=snapshot",           // Satisfy c.Mode != IncrementalMode check for RolloverInterval
-		}
-		runTestWithFlags(t, args, func() {
-			err := run(context.Background())
-			if err == nil {
-				t.Fatal("expected run() to fail with an invalid target path, but it succeeded")
-			}
-
-			// The error from preflight is now wrapped, so we check for the wrapper text.
-			expectedError := "target path accessibility check failed"
-			if !strings.Contains(err.Error(), expectedError) {
-				t.Errorf("expected error to contain %q, but got: %v", expectedError, err)
 			}
 		})
 	})

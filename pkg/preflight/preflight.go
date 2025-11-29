@@ -9,10 +9,42 @@ import (
 	"os"
 	"path/filepath"
 
+	"pixelgardenlabs.io/pgl-backup/pkg/config"
+
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
 
-// CheckBackupTargetAccessible performs pre-flight checks to ensure the backup target is usable.
+// RunChecks performs all necessary validations and setup before a backup operation.
+// It's an orchestrator function that calls other checks in a specific order.
+func RunChecks(c *config.Config) error {
+	// 1. Validate the configuration itself. This is the first and most critical check.
+	// It also cleans and normalizes paths within the config struct.
+	if err := c.Validate(); err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	// 2. Perform non-destructive checks on source and target paths.
+	if err := checkBackupTargetAccessible(c.Paths.TargetBase); err != nil {
+		return fmt.Errorf("target path accessibility check failed: %w", err)
+	}
+	if err := checkBackupSourceAccessible(c.Paths.Source); err != nil {
+		return fmt.Errorf("source path validation failed: %w", err)
+	}
+
+	// 3. If not a dry run, perform state-changing checks (create dir, check writability).
+	if !c.DryRun {
+		if err := os.MkdirAll(c.Paths.TargetBase, 0755); err != nil {
+			return fmt.Errorf("failed to create target directory: %w", err)
+		}
+		if err := checkBackupTargetWritable(c.Paths.TargetBase); err != nil {
+			return fmt.Errorf("target path writable check failed: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// checkBackupTargetAccessible performs pre-run checks to ensure the backup target is usable.
 // It provides more user-friendly errors than letting os.MkdirAll fail.
 //
 // The checks include:
@@ -23,7 +55,7 @@ import (
 //     on a separate mounted drive. This prevents writing to a "ghost" directory if a drive is not
 //     mounted. This check is performed on the target path if it exists, or its deepest existing
 //     ancestor if it does not.
-func CheckBackupTargetAccessible(targetPath string) error {
+func checkBackupTargetAccessible(targetPath string) error {
 	// It's unsafe to operate on the current directory or the root of a filesystem.
 	if isUnsafeRoot(targetPath) {
 		return fmt.Errorf("target path cannot be the current directory ('.') or the root directory ('/')")
@@ -77,8 +109,8 @@ func CheckBackupTargetAccessible(targetPath string) error {
 	return nil
 }
 
-// CheckBackupSourceAccessible validates that the source path exists and is a directory.
-func CheckBackupSourceAccessible(srcPath string) error {
+// checkBackupSourceAccessible validates that the source path exists and is a directory.
+func checkBackupSourceAccessible(srcPath string) error {
 	srcInfo, err := os.Stat(srcPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -94,9 +126,9 @@ func CheckBackupSourceAccessible(srcPath string) error {
 	return nil
 }
 
-// CheckBackupTargetWritable ensures the target directory can be created and is writable
+// checkBackupTargetWritable ensures the target directory can be created and is writable
 // by performing filesystem modifications.
-func CheckBackupTargetWritable(targetPath string) error {
+func checkBackupTargetWritable(targetPath string) error {
 	// This function assumes the directory has been created by the caller.
 	// It first verifies the path exists and is a directory.
 	info, err := os.Stat(targetPath)

@@ -155,47 +155,6 @@ func acquireTargetLock(ctx context.Context, targetPath, sourcePath string, dryRu
 	return lock.Release, nil
 }
 
-// runPreflightChecks performs all necessary validations and setup for the target directory.
-func runPreflightChecks(c *config.Config) error {
-	// Perform validation on the merged configuration. This is the first and most
-	// critical check. It also cleans and normalizes paths within the config struct.
-	if err := c.Validate(); err != nil {
-		return fmt.Errorf("invalid configuration: %w", err)
-	}
-
-	// Perform initial, non-destructive checks on the target path. This validates
-	// the path's structure, permissions on its parent, and mount status (on Unix)
-	// before we attempt to modify the filesystem by creating directories or lock files.
-	if err := preflight.CheckBackupTargetAccessible(c.Paths.TargetBase); err != nil {
-		return fmt.Errorf("target path accessibility check failed: %w", err)
-	}
-
-	if err := preflight.CheckBackupSourceAccessible(c.Paths.Source); err != nil {
-		return fmt.Errorf("source path validation failed: %w", err)
-	}
-
-	// If not a dry run, create the directory if it doesn't exist and then perform a write check.
-	if !c.DryRun {
-		// This is a critical state-changing step. The accessibility check has confirmed
-		// that the path is valid and its parent is accessible. Now, we ensure the
-		// target directory itself exists before we try to create a lock file inside it.
-		// os.MkdirAll is idempotent; it succeeds if the path already exists as a directory.
-		if err := os.MkdirAll(c.Paths.TargetBase, 0755); err != nil {
-			return fmt.Errorf("failed to create target directory: %w", err)
-		}
-
-		// With the directory now guaranteed to exist, perform a final, more thorough
-		// check to ensure we can actually create files within it. This catches
-		// permission issues that MkdirAll might not, providing a better user error
-		// before the backup engine starts.
-		if err := preflight.CheckBackupTargetWritable(c.Paths.TargetBase); err != nil {
-			return fmt.Errorf("target path writable check failed: %w", err)
-		}
-	}
-
-	return nil
-}
-
 // run encapsulates the main application logic and returns an error if something
 // goes wrong, allowing the main function to handle exit codes.
 func run(ctx context.Context) error {
@@ -225,7 +184,7 @@ func run(ctx context.Context) error {
 		runConfig := config.MergeConfigWithFlags(baseConfig, flagConfig)
 
 		// Perform preflight checks before attempting to lock or write.
-		if err := runPreflightChecks(&runConfig); err != nil {
+		if err := preflight.RunChecks(&runConfig); err != nil {
 			return err
 		}
 
@@ -256,7 +215,7 @@ func run(ctx context.Context) error {
 		runConfig := config.MergeConfigWithFlags(loadedConfig, flagConfig)
 
 		// Perform preflight checks on the final, merged configuration.
-		if err := runPreflightChecks(&runConfig); err != nil {
+		if err := preflight.RunChecks(&runConfig); err != nil {
 			return err
 		}
 
