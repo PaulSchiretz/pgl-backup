@@ -6,7 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -70,8 +70,10 @@ func TestStaleLockCleanup(t *testing.T) {
 	// Manually create a stale lock file
 	staleTimeVal := time.Now().Add(-(staleTimeout + time.Minute)) // Well past the stale timeout
 	staleContent := LockContent{
-		PID:        12345,
+		PID:        12345, // A fake PID from a "dead" process
+		Hostname:   "stale-host",
 		LastUpdate: staleTimeVal,
+		Nonce:      "stale-nonce",
 		AppID:      "stale-app",
 	}
 	data, _ := json.Marshal(staleContent)
@@ -95,6 +97,63 @@ func TestStaleLockCleanup(t *testing.T) {
 	if content.AppID != "new-app" {
 		t.Errorf("expected new lock to have AppID 'new-app', but got '%s'", content.AppID)
 	}
+}
+
+// TestStaleLockContention simulates a race condition where two processes
+// try to acquire the same stale lock simultaneously.
+func TestStaleLockContention(t *testing.T) {
+	lockPath := filepath.Join(t.TempDir(), "stale-contention.lock")
+
+	// 1. Create a stale lock file that both processes will try to acquire.
+	staleTimeVal := time.Now().Add(-(staleTimeout + time.Minute))
+	staleContent := LockContent{
+		PID:        12345, // A fake PID from a "dead" process
+		Hostname:   "stale-host",
+		LastUpdate: staleTimeVal,
+		Nonce:      "stale-nonce",
+		AppID:      "stale-app",
+	}
+	data, _ := json.Marshal(staleContent)
+	if err := os.WriteFile(lockPath, data, lockFileMode); err != nil {
+		t.Fatalf("failed to create stale lock file: %v", err)
+	}
+
+	// 2. Use a WaitGroup and channels to run two acquisition attempts concurrently.
+	var wg sync.WaitGroup
+	results := make(chan error, 2)
+	acquiredLocks := make(chan *Lock, 2)
+
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			lock, err := Acquire(context.Background(), lockPath, "contender")
+			if err != nil {
+				results <- err
+				return
+			}
+			acquiredLocks <- lock
+		}(i)
+	}
+
+	wg.Wait()
+	close(results)
+	close(acquiredLocks)
+
+	// 3. Analyze the results.
+	// We expect exactly one goroutine to acquire the lock and the other to fail.
+	if len(acquiredLocks) != 1 {
+		t.Fatalf("expected exactly one process to acquire the lock, but %d succeeded", len(acquiredLocks))
+	}
+
+	// Clean up the one successful lock.
+	for lock := range acquiredLocks {
+		lock.Release()
+	}
+
+	// We don't need to check the specific error from the losing goroutine,
+	// as it might be ErrLostRace on one attempt and ErrLockActive on the next.
+	// The critical assertion is that only one goroutine succeeded.
 }
 
 // TestHeartbeatEffect ensures an active lock with a heartbeat is not considered stale.
@@ -157,10 +216,12 @@ func TestReadLockContentSafely(t *testing.T) {
 	lockPath := filepath.Join(t.TempDir(), "test.lock")
 
 	t.Run("Reads valid file", func(t *testing.T) {
-		content := LockContent{PID: 1, AppID: "valid"}
+		hostname, _ := os.Hostname()
+		content := LockContent{PID: 1, AppID: "valid", Hostname: hostname, Nonce: "abc"}
 		data, _ := json.Marshal(content)
-		os.WriteFile(lockPath, data, lockFileMode)
-
+		if err := os.WriteFile(lockPath, data, lockFileMode); err != nil {
+			t.Fatalf("failed to write test lock file: %v", err)
+		}
 		readContent, err := readLockContentSafely(lockPath)
 		if err != nil {
 			t.Fatalf("failed to read valid content: %v", err)
@@ -172,36 +233,46 @@ func TestReadLockContentSafely(t *testing.T) {
 
 	t.Run("Fails on persistently empty file", func(t *testing.T) {
 		os.WriteFile(lockPath, []byte{}, lockFileMode)
+		if err := os.WriteFile(lockPath, []byte{}, lockFileMode); err != nil {
+			t.Fatalf("failed to write empty file: %v", err)
+		}
 		_, err := readLockContentSafely(lockPath)
 		if err == nil {
 			t.Fatal("expected error reading empty file, but got nil")
 		}
-		if !strings.Contains(err.Error(), "lock file is empty") {
-			t.Errorf("expected error about empty file, got: %v", err)
+		if !errors.Is(err, ErrCorruptLockFile) {
+			t.Errorf("expected error to be ErrCorruptLockFile, got: %v", err)
 		}
 	})
 
 	t.Run("Fails on persistently corrupt file", func(t *testing.T) {
-		os.WriteFile(lockPath, []byte("{corrupt"), lockFileMode)
+		if err := os.WriteFile(lockPath, []byte("{corrupt"), lockFileMode); err != nil {
+			t.Fatalf("failed to write corrupt file: %v", err)
+		}
 		_, err := readLockContentSafely(lockPath)
 		if err == nil {
 			t.Fatal("expected error reading corrupt file, but got nil")
 		}
-		// The specific error for "{corrupt" is about the invalid character 'c'.
-		if !strings.Contains(err.Error(), "invalid character 'c' looking for beginning of object key string") {
-			t.Errorf("expected JSON syntax error, got: %v", err)
+		if !errors.Is(err, ErrCorruptLockFile) {
+			t.Errorf("expected error to be ErrCorruptLockFile, got: %v", err)
 		}
 	})
 
 	t.Run("Succeeds after transient empty state", func(t *testing.T) {
 		// Simulate a file being written: empty -> content
-		os.WriteFile(lockPath, []byte{}, lockFileMode)
+		if err := os.WriteFile(lockPath, []byte{}, lockFileMode); err != nil {
+			t.Fatalf("failed to write initial empty file: %v", err)
+		}
 
 		go func() {
 			time.Sleep(20 * time.Millisecond) // Give read a chance to see the empty file
-			content := LockContent{PID: 2, AppID: "transient"}
+			hostname, _ := os.Hostname()
+			content := LockContent{PID: 2, AppID: "transient", Hostname: hostname, Nonce: "xyz"}
 			data, _ := json.Marshal(content)
-			os.WriteFile(lockPath, data, lockFileMode)
+			if err := os.WriteFile(lockPath, data, lockFileMode); err != nil {
+				// Can't t.Fatal in a goroutine, but this will cause the main test to fail.
+				t.Logf("error writing final content in goroutine: %v", err)
+			}
 		}()
 
 		readContent, err := readLockContentSafely(lockPath)
@@ -212,4 +283,36 @@ func TestReadLockContentSafely(t *testing.T) {
 			t.Errorf("expected AppID 'transient', got '%s'", readContent.AppID)
 		}
 	})
+}
+func TestCleanupTempLockFiles(t *testing.T) {
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, "test.lock")
+
+	// 1. Create an old temp file that should be deleted.
+	oldTempPath := filepath.Join(dir, "test.lock.123.tmp")
+	if err := os.WriteFile(oldTempPath, []byte("old"), 0644); err != nil {
+		t.Fatalf("failed to create old temp file: %v", err)
+	}
+	// Set its modification time to be older than the stale timeout.
+	oldTime := time.Now().Add(-(staleTimeout + time.Minute))
+	if err := os.Chtimes(oldTempPath, oldTime, oldTime); err != nil {
+		t.Fatalf("failed to set mod time on old temp file: %v", err)
+	}
+
+	// 2. Create a new temp file that should NOT be deleted.
+	newTempPath := filepath.Join(dir, "test.lock.456.tmp")
+	if err := os.WriteFile(newTempPath, []byte("new"), 0644); err != nil {
+		t.Fatalf("failed to create new temp file: %v", err)
+	}
+
+	// Act
+	cleanupTempLockFiles(lockPath)
+
+	// Assert
+	if _, err := os.Stat(oldTempPath); !os.IsNotExist(err) {
+		t.Error("expected old temporary file to be deleted, but it still exists")
+	}
+	if _, err := os.Stat(newTempPath); err != nil {
+		t.Errorf("expected new temporary file to be kept, but it was deleted or an error occurred: %v", err)
+	}
 }
