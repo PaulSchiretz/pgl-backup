@@ -222,8 +222,8 @@ func TestLoad(t *testing.T) {
 		}
 
 		// Check if it returned the default config
-		if cfg.Naming.Prefix != "5ive_Backup_" {
-			t.Errorf("expected default prefix, but got %s", cfg.Naming.Prefix)
+		if cfg.Naming.Prefix != "PGL_Backup_" {
+			t.Errorf("expected default prefix 'PGL_Backup_', but got %s", cfg.Naming.Prefix)
 		}
 	})
 

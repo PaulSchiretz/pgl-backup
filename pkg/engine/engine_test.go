@@ -421,17 +421,17 @@ func TestPerformSync_PreserveSourceDirectoryName(t *testing.T) {
 		{
 			name:                        "PreserveSourceDirectoryName is true",
 			preserveSourceDirectoryName: true,
-			expectedDst:                 filepath.Join(targetBase, "current", filepath.Base(srcDir)),
+			expectedDst:                 filepath.Join(targetBase, "Current", filepath.Base(srcDir)),
 		},
 		{
 			name:                        "PreserveSourceDirectoryName is false",
 			preserveSourceDirectoryName: false,
-			expectedDst:                 filepath.Join(targetBase, "current"),
+			expectedDst:                 filepath.Join(targetBase, "Current"),
 		},
 		{
 			name:                        "PreserveSourceDirectoryName is true - Windows Drive Root",
 			preserveSourceDirectoryName: true,
-			expectedDst:                 filepath.Join(targetBase, "current", "C"),
+			expectedDst:                 filepath.Join(targetBase, "Current", "C"),
 			// This test case will only run on Windows, otherwise it will be skipped.
 			// On non-Windows, "C:" is not a root, so filepath.Base("C:") would be "C:".
 			// The logic should handle this gracefully.
@@ -440,13 +440,13 @@ func TestPerformSync_PreserveSourceDirectoryName(t *testing.T) {
 		{
 			name:                        "PreserveSourceDirectoryName is true - Unix Root",
 			preserveSourceDirectoryName: true,
-			expectedDst:                 filepath.Join(targetBase, "current"), // Should not append anything for "/"
+			expectedDst:                 filepath.Join(targetBase, "Current"), // Should not append anything for "/"
 			srcDir:                      "/",
 		},
 		{
 			name:                        "PreserveSourceDirectoryName is true - Relative Path",
 			preserveSourceDirectoryName: true,
-			expectedDst:                 filepath.Join(targetBase, "current", "my_relative_dir"),
+			expectedDst:                 filepath.Join(targetBase, "Current", "my_relative_dir"),
 			srcDir:                      "./my_relative_dir",
 		},
 		// Add more cases as needed, e.g., paths ending with a separator.
@@ -472,11 +472,11 @@ func TestPerformSync_PreserveSourceDirectoryName(t *testing.T) {
 
 			cfg.Paths.Source = testSrcDir
 			cfg.Paths.TargetBase = targetBase
-			cfg.Naming.IncrementalModeSuffix = "current"
+			cfg.Naming.IncrementalModeSuffix = "Current"
 			cfg.Paths.PreserveSourceDirectoryName = tc.preserveSourceDirectoryName
 
 			e := newTestEngine(cfg)
-			currentRun := &runState{target: filepath.Join(targetBase, "current"), timestampUTC: time.Now()}
+			currentRun := &runState{target: filepath.Join(targetBase, "Current"), timestampUTC: time.Now()}
 
 			// Inject the mock syncer
 			mock := &mockSyncer{}
@@ -553,8 +553,8 @@ func TestPerformRollover(t *testing.T) {
 	tempDir := t.TempDir()
 	cfg := config.NewDefault()
 	cfg.Paths.TargetBase = tempDir
-	cfg.Naming.Prefix = "backup_"
-	cfg.Naming.IncrementalModeSuffix = "current"
+	cfg.Naming.Prefix = "PGL_Backup_"
+	cfg.Naming.IncrementalModeSuffix = "Current"
 	cfg.RolloverInterval = 24 * time.Hour
 
 	e := newTestEngine(cfg)
@@ -562,7 +562,7 @@ func TestPerformRollover(t *testing.T) {
 
 	// Create a "current" backup from yesterday
 	lastBackupTime := currentRun.timestampUTC.Add(-25 * time.Hour)
-	currentBackupDirName := "backup_current"
+	currentBackupDirName := "PGL_Backup_Current"
 	createTestBackup(t, tempDir, currentBackupDirName, lastBackupTime)
 
 	// Act
@@ -581,7 +581,7 @@ func TestPerformRollover(t *testing.T) {
 
 	// 2. A new archived directory should exist.
 	archiveTimestamp := config.FormatTimestampWithOffset(lastBackupTime)
-	archiveDirName := "backup_" + archiveTimestamp
+	archiveDirName := "PGL_Backup_" + archiveTimestamp
 	newPath := filepath.Join(tempDir, archiveDirName)
 	_, err = os.Stat(newPath)
 	if err != nil {
@@ -594,8 +594,8 @@ func TestPerformRollover_NoRollover(t *testing.T) {
 	tempDir := t.TempDir()
 	cfg := config.NewDefault()
 	cfg.Paths.TargetBase = tempDir
-	cfg.Naming.Prefix = "backup_"
-	cfg.Naming.IncrementalModeSuffix = "current"
+	cfg.Naming.Prefix = "PGL_Backup_"
+	cfg.Naming.IncrementalModeSuffix = "Current"
 	cfg.RolloverInterval = 24 * time.Hour
 
 	// To test this reliably, we need to control the timestamps precisely.
@@ -608,7 +608,7 @@ func TestPerformRollover_NoRollover(t *testing.T) {
 	// Create a "current" backup from a few hours ago (same day)
 	// This is the timestamp that will be written to the metafile.
 	lastBackupTimeInMeta := currentRunTime.Add(-2 * time.Hour)
-	currentBackupDirName := "backup_current"
+	currentBackupDirName := "PGL_Backup_Current"
 	createTestBackup(t, tempDir, currentBackupDirName, lastBackupTimeInMeta)
 
 	// Act

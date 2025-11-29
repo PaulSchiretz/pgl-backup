@@ -71,8 +71,8 @@ Open the newly created `pgl-backup.conf` file. It will look something like this,
   "quiet": false,
   "dryRun": false,
   "naming": {
-    "prefix": "5ive_Backup_",
-    "incrementalModeSuffix": "current"
+    "prefix": "PGL_Backup_",
+    "incrementalModeSuffix": "Current"
   },
   "paths": {
     "source": "/home/user/Documents",
@@ -99,7 +99,7 @@ Now, simply point `pgl-backup` at the target directory. It will automatically lo
 pgl-backup -target="/media/backup-drive/MyDocumentsBackup"
 ```
 
-The first run will copy all files into a `.../5ive_Backup_current` directory. Subsequent runs will update this directory. After 24 hours, the next run will first rename `5ive_Backup_current` to a timestamped archive (e.g., `5ive_Backup_2023-10-27-...`) and then create a new `current` backup.
+The first run will copy all files into a `.../PGL_Backup_current` directory. Subsequent runs will update this directory. After 24 hours, the next run will first rename `PGL_Backup_current` to a timestamped archive (e.g., `PGL_Backup_2023-10-27-...`) and then create a new `current` backup.
 
 ## Usage and Examples
 

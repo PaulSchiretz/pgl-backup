@@ -192,8 +192,8 @@ func NewDefault() Config {
 			NativeEngineRetryWaitSeconds: 5,                // Default wait time between retries.
 		},
 		Naming: BackupNamingConfig{
-			Prefix:                "5ive_Backup_",
-			IncrementalModeSuffix: "current",
+			Prefix:                "PGL_Backup_",
+			IncrementalModeSuffix: "Current",
 		},
 		Paths: BackupPathConfig{
 			Source:                      "",         // Intentionally empty to force user configuration.
