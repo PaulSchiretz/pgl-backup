@@ -74,55 +74,45 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 
 	// Now, iterate over the set flags and populate a new map with their actual values.
 	flagMap := make(map[string]interface{})
-	if _, ok := setFlags["mode"]; ok {
-		mode, err := config.BackupModeFromString(*modeFlag)
-		if err != nil {
-			return actionRunBackup, nil, err
+	for name := range setFlags {
+		switch name {
+		case "mode":
+			mode, err := config.BackupModeFromString(*modeFlag)
+			if err != nil {
+				return actionRunBackup, nil, err
+			}
+			flagMap[name] = mode
+		case "sync-engine":
+			engineType, err := config.SyncEngineFromString(*syncEngineFlag)
+			if err != nil {
+				return actionRunBackup, nil, err
+			}
+			flagMap[name] = engineType
+		case "exclude-files":
+			flagMap[name] = flagparse.ParseExcludeList(*excludeFilesFlag)
+		case "exclude-dirs":
+			flagMap[name] = flagparse.ParseExcludeList(*excludeDirsFlag)
+		case "pre-backup-hooks":
+			flagMap[name] = flagparse.ParseCmdList(*preBackupHooksFlag)
+		case "post-backup-hooks":
+			flagMap[name] = flagparse.ParseCmdList(*postBackupHooksFlag)
+		case "source":
+			flagMap[name] = *srcFlag
+		case "target":
+			flagMap[name] = *targetFlag
+		case "quiet":
+			flagMap[name] = *quietFlag
+		case "dry-run":
+			flagMap[name] = *dryRunFlag
+		case "preserve-source-name":
+			flagMap[name] = *preserveSourceNameFlag
+		case "native-engine-workers":
+			flagMap[name] = *nativeEngineWorkersFlag
+		case "native-retry-count":
+			flagMap[name] = *nativeRetryCountFlag
+		case "native-retry-wait":
+			flagMap[name] = *nativeRetryWaitFlag
 		}
-		flagMap["mode"] = mode
-	}
-	if _, ok := setFlags["sync-engine"]; ok {
-		engineType, err := config.SyncEngineFromString(*syncEngineFlag)
-		if err != nil {
-			return actionRunBackup, nil, err
-		}
-		flagMap["sync-engine"] = engineType
-	}
-	if _, ok := setFlags["exclude-files"]; ok {
-		flagMap["exclude-files"] = flagparse.ParseExcludeList(*excludeFilesFlag)
-	}
-	if _, ok := setFlags["exclude-dirs"]; ok {
-		flagMap["exclude-dirs"] = flagparse.ParseExcludeList(*excludeDirsFlag)
-	}
-	if _, ok := setFlags["pre-backup-hooks"]; ok {
-		flagMap["pre-backup-hooks"] = flagparse.ParseCmdList(*preBackupHooksFlag)
-	}
-	if _, ok := setFlags["post-backup-hooks"]; ok {
-		flagMap["post-backup-hooks"] = flagparse.ParseCmdList(*postBackupHooksFlag)
-	}
-	if _, ok := setFlags["source"]; ok {
-		flagMap["source"] = *srcFlag
-	}
-	if _, ok := setFlags["target"]; ok {
-		flagMap["target"] = *targetFlag
-	}
-	if _, ok := setFlags["quiet"]; ok {
-		flagMap["quiet"] = *quietFlag
-	}
-	if _, ok := setFlags["dry-run"]; ok {
-		flagMap["dry-run"] = *dryRunFlag
-	}
-	if _, ok := setFlags["preserve-source-name"]; ok {
-		flagMap["preserve-source-name"] = *preserveSourceNameFlag
-	}
-	if _, ok := setFlags["native-engine-workers"]; ok {
-		flagMap["native-engine-workers"] = *nativeEngineWorkersFlag
-	}
-	if _, ok := setFlags["native-retry-count"]; ok {
-		flagMap["native-retry-count"] = *nativeRetryCountFlag
-	}
-	if _, ok := setFlags["native-retry-wait"]; ok {
-		flagMap["native-retry-wait"] = *nativeRetryWaitFlag
 	}
 
 	// Final sanity check: if robocopy was requested on a non-windows OS, force native.
