@@ -142,10 +142,10 @@ func TestShouldRollover(t *testing.T) {
 			cfg.RolloverInterval = tc.interval
 
 			e := newTestEngine(cfg)
-			e.currentTimestampUTC = tc.currentBackup
+			currentRun := &runState{timestampUTC: tc.currentBackup}
 
 			// Act
-			result := e.shouldRollover(tc.lastBackup)
+			result := e.shouldRollover(tc.lastBackup, currentRun)
 
 			// Assert
 			if tc.shouldRollover != result {
@@ -407,14 +407,14 @@ func TestPerformSync_PreserveSourceDirectoryName(t *testing.T) {
 			cfg.Paths.PreserveSourceDirectoryName = tc.preserveSourceDirectoryName
 
 			e := newTestEngine(cfg)
-			e.currentTarget = filepath.Join(targetBase, "current") // Set by prepareDestination
+			currentRun := &runState{target: filepath.Join(targetBase, "current"), timestampUTC: time.Now()}
 
 			// Inject the mock syncer
 			mock := &mockSyncer{}
 			e.syncer = mock
 
 			// Act
-			err := e.performSync(context.Background())
+			err := e.performSync(context.Background(), currentRun)
 			if err != nil {
 				t.Fatalf("performSync failed: %v", err)
 			}
@@ -489,15 +489,15 @@ func TestPerformRollover(t *testing.T) {
 	cfg.RolloverInterval = 24 * time.Hour
 
 	e := newTestEngine(cfg)
-	e.currentTimestampUTC = time.Now().UTC() // Today
+	currentRun := &runState{timestampUTC: time.Now().UTC()}
 
 	// Create a "current" backup from yesterday
-	lastBackupTime := e.currentTimestampUTC.Add(-25 * time.Hour)
+	lastBackupTime := currentRun.timestampUTC.Add(-25 * time.Hour)
 	currentBackupDirName := "backup_current"
 	createTestBackup(t, tempDir, currentBackupDirName, lastBackupTime)
 
 	// Act
-	err := e.performRollover(context.Background())
+	err := e.performRollover(context.Background(), currentRun)
 	if err != nil {
 		t.Fatalf("performRollover failed: %v", err)
 	}
@@ -534,7 +534,7 @@ func TestPerformRollover_NoRollover(t *testing.T) {
 	currentRunTime := time.Date(2023, 10, 27, 14, 0, 0, 0, time.Local)
 
 	e := newTestEngine(cfg)
-	e.currentTimestampUTC = currentRunTime
+	currentRun := &runState{timestampUTC: currentRunTime}
 
 	// Create a "current" backup from a few hours ago (same day)
 	// This is the timestamp that will be written to the metafile.
@@ -543,7 +543,7 @@ func TestPerformRollover_NoRollover(t *testing.T) {
 	createTestBackup(t, tempDir, currentBackupDirName, lastBackupTimeInMeta)
 
 	// Act
-	err := e.performRollover(context.Background())
+	err := e.performRollover(context.Background(), currentRun)
 	if err != nil {
 		t.Fatalf("performRollover failed: %v", err)
 	}
@@ -619,18 +619,18 @@ func TestPrepareDestination(t *testing.T) {
 
 		e := newTestEngine(cfg)
 		testTime := time.Date(2023, 10, 27, 14, 30, 0, 0, time.UTC)
-		e.currentTimestampUTC = testTime
+		currentRun := &runState{timestampUTC: testTime}
 
 		// Act
-		err := e.prepareDestination(context.Background())
+		err := e.prepareDestination(context.Background(), currentRun)
 		if err != nil {
 			t.Fatalf("prepareDestination failed: %v", err)
 		}
 
 		// Assert
 		expectedPath := filepath.Join(tempDir, "snap_"+config.FormatTimestampWithOffset(testTime))
-		if expectedPath != e.currentTarget {
-			t.Errorf("expected target path %q, but got %q", expectedPath, e.currentTarget)
+		if expectedPath != currentRun.target {
+			t.Errorf("expected target path %q, but got %q", expectedPath, currentRun.target)
 		}
 	})
 
@@ -644,18 +644,18 @@ func TestPrepareDestination(t *testing.T) {
 		cfg.Naming.IncrementalModeSuffix = "latest"
 
 		e := newTestEngine(cfg)
-		e.currentTimestampUTC = time.Now().UTC()
+		currentRun := &runState{timestampUTC: time.Now().UTC()}
 
 		// Act
-		err := e.prepareDestination(context.Background())
+		err := e.prepareDestination(context.Background(), currentRun)
 		if err != nil {
 			t.Fatalf("prepareDestination failed: %v", err)
 		}
 
 		// Assert
 		expectedPath := filepath.Join(tempDir, "incr_latest")
-		if expectedPath != e.currentTarget {
-			t.Errorf("expected target path %q, but got %q", expectedPath, e.currentTarget)
+		if expectedPath != currentRun.target {
+			t.Errorf("expected target path %q, but got %q", expectedPath, currentRun.target)
 		}
 	})
 }

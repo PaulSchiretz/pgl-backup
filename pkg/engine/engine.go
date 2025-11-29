@@ -54,7 +54,7 @@ type backupInfo struct {
 	Name string
 }
 
-// runMetadata holds metadata about a specific backup run.
+// runMetadata holds metadata for a single execution of the backup engine.
 type runMetadata struct {
 	Version    string    `json:"version"`
 	BackupTime time.Time `json:"backupTime"`
@@ -62,13 +62,18 @@ type runMetadata struct {
 	Source     string    `json:"source"`
 }
 
+// runState holds the mutable state for a single execution of the backup engine.
+// This makes the Engine itself stateless and safe for concurrent use if needed.
+type runState struct {
+	target       string
+	timestampUTC time.Time
+}
+
 // Engine orchestrates the entire backup process.
 type Engine struct {
-	config              config.Config
-	version             string
-	currentTarget       string
-	currentTimestampUTC time.Time // The UTC timestamp of the current backup run for consistency.
-	syncer              pathsync.Syncer
+	config  config.Config
+	version string
+	syncer  pathsync.Syncer
 	// hookCommandExecutor allows mocking os/exec for testing hooks.
 	hookCommandExecutor func(ctx context.Context, name string, arg ...string) *exec.Cmd
 }
@@ -120,21 +125,21 @@ func (e *Engine) Execute(ctx context.Context) error {
 
 	// Capture a consistent UTC timestamp for the entire run to ensure unambiguous folder names
 	// and avoid daylight saving time conflicts.
-	e.currentTimestampUTC = time.Now().UTC()
+	currentRun := &runState{timestampUTC: time.Now().UTC()}
 
 	plog.Info("Backup source", "path", e.config.Paths.Source)
 	plog.Info("Backup mode", "mode", e.config.Mode)
 
 	// --- 1. Pre-backup tasks (rollover) and destination calculation ---
-	if err := e.prepareDestination(ctx); err != nil {
+	if err := e.prepareDestination(ctx, currentRun); err != nil {
 		return err
 	}
 
-	plog.Info("Backup destination", "path", e.currentTarget)
+	plog.Info("Backup destination", "path", currentRun.target)
 	plog.Info("------------------------------")
 
 	// --- 2. Perform the backup ---
-	if err := e.performSync(ctx); err != nil {
+	if err := e.performSync(ctx, currentRun); err != nil {
 		return fmt.Errorf("fatal backup error during sync: %w", err) // This is a fatal error, so we return it.
 	}
 
@@ -187,30 +192,30 @@ func (e *Engine) runHooks(ctx context.Context, commands []string, hookType strin
 
 // prepareDestination calculates the target directory for the backup, performing
 // a rollover if necessary for incremental backups.
-func (e *Engine) prepareDestination(ctx context.Context) error {
+func (e *Engine) prepareDestination(ctx context.Context, currentRun *runState) error {
 	if e.config.Mode == config.SnapshotMode {
 		// SNAPSHOT MODE
 		//
 		// The directory name must remain uniquely based on UTC time to avoid DST conflicts,
 		// but we add the user's local offset to make the timezone clear to the user.
-		timestamp := config.FormatTimestampWithOffset(e.currentTimestampUTC)
+		timestamp := config.FormatTimestampWithOffset(currentRun.timestampUTC)
 		backupDirName := e.config.Naming.Prefix + timestamp
-		e.currentTarget = filepath.Join(e.config.Paths.TargetBase, backupDirName)
+		currentRun.target = filepath.Join(e.config.Paths.TargetBase, backupDirName)
 	} else {
 		// INCREMENTAL MODE (DEFAULT)
-		if err := e.performRollover(ctx); err != nil {
+		if err := e.performRollover(ctx, currentRun); err != nil {
 			return fmt.Errorf("error during backup rollover: %w", err)
 		}
 		currentIncrementalDirName := e.config.Naming.Prefix + e.config.Naming.IncrementalModeSuffix
-		e.currentTarget = filepath.Join(e.config.Paths.TargetBase, currentIncrementalDirName)
+		currentRun.target = filepath.Join(e.config.Paths.TargetBase, currentIncrementalDirName)
 	}
 	return nil
 }
 
 // performSync is the main entry point for synchronization.
-func (e *Engine) performSync(ctx context.Context) error {
+func (e *Engine) performSync(ctx context.Context, currentRun *runState) error {
 	source := e.config.Paths.Source
-	destination := e.currentTarget
+	destination := currentRun.target
 	mirror := e.config.Mode == config.IncrementalMode
 
 	// If configured, append the source's base directory name to the destination path.
@@ -247,12 +252,12 @@ func (e *Engine) performSync(ctx context.Context) error {
 	}
 
 	// If the sync was successful, write the metafile for retention purposes.
-	return writeBackupMetafile(e.currentTarget, e.version, e.config.Mode.String(), source, e.currentTimestampUTC, e.config.DryRun)
+	return writeBackupMetafile(currentRun.target, e.version, e.config.Mode.String(), source, currentRun.timestampUTC, e.config.DryRun)
 }
 
 // performRollover checks if the incremental backup directory is from a previous day > RolloverInterval.
 // If so, it renames it to a permanent timestamped archive.
-func (e *Engine) performRollover(ctx context.Context) error {
+func (e *Engine) performRollover(ctx context.Context, currentRun *runState) error {
 	currentDirName := e.config.Naming.Prefix + e.config.Naming.IncrementalModeSuffix
 	currentBackupPath := filepath.Join(e.config.Paths.TargetBase, currentDirName)
 
@@ -264,10 +269,10 @@ func (e *Engine) performRollover(ctx context.Context) error {
 	// Use the precise time from the file content, not the file's modification time.
 	lastBackupTime := metaData.BackupTime
 
-	if e.shouldRollover(lastBackupTime) {
+	if e.shouldRollover(lastBackupTime, currentRun) {
 		plog.Info("Rollover threshold crossed, creating new archive.",
 			"last_backup_time", lastBackupTime,
-			"current_time_utc", e.currentTimestampUTC,
+			"current_time_utc", currentRun.timestampUTC,
 			"rollover_interval", e.config.RolloverInterval)
 
 		// Check for cancellation before performing the rename.
@@ -312,7 +317,7 @@ func (e *Engine) performRollover(ctx context.Context) error {
 // weekly backup on Sunday night"), even though all stored timestamps are UTC.
 // The conversion handles Daylight Saving Time (DST) shifts correctly by checking
 // for midnight-to-midnight boundary crossings (epoch day counting).
-func (e *Engine) shouldRollover(lastBackupTime time.Time) bool {
+func (e *Engine) shouldRollover(lastBackupTime time.Time, currentRun *runState) bool {
 	// Handle the default (0 = 24h) for comparison logic
 	effectiveInterval := e.config.RolloverInterval
 
@@ -334,7 +339,7 @@ func (e *Engine) shouldRollover(lastBackupTime time.Time) bool {
 		y1, m1, d1 := lastBackupTime.In(loc).Date() // Convert last backup to current/local time
 		lastDayMidnight := time.Date(y1, m1, d1, 0, 0, 0, 0, loc)
 
-		y2, m2, d2 := e.currentTimestampUTC.In(loc).Date()
+		y2, m2, d2 := currentRun.timestampUTC.In(loc).Date()
 		currentDayMidnight := time.Date(y2, m2, d2, 0, 0, 0, 0, loc)
 
 		// 2. Calculate days since a fixed anchor (Unix Epoch Local).
@@ -357,7 +362,7 @@ func (e *Engine) shouldRollover(lastBackupTime time.Time) bool {
 	// Sub-Daily Intervals (Hourly, 6-Hourly)
 	// Use standard truncation for clean UTC time buckets.
 	lastBackupBoundary := lastBackupTime.Truncate(effectiveInterval)
-	currentBackupBoundary := e.currentTimestampUTC.Truncate(effectiveInterval)
+	currentBackupBoundary := currentRun.timestampUTC.Truncate(effectiveInterval)
 
 	return !currentBackupBoundary.Equal(lastBackupBoundary)
 }
