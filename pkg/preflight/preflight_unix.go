@@ -49,9 +49,3 @@ func platformValidateMountPoint(path string) error {
 
 	return nil
 }
-
-// platformCheckVolumeExists is a no-op on Unix-like systems. The concept of a
-// volume root like "C:\" doesn't apply in the same way.
-func platformCheckVolumeExists(targetPath string) error {
-	return nil
-}

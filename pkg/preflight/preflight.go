@@ -25,11 +25,6 @@ import (
 //     ancestor if it does not.
 func CheckBackupTargetAccessible(targetPath string) error {
 	// --- 1. Platform-specific: Check if the Volume/Drive exists (Windows) ---
-	if err := platformCheckVolumeExists(targetPath); err != nil {
-		return err
-	}
-
-	// --- 2. Check existence and type ---
 	info, err := os.Stat(targetPath)
 	if os.IsNotExist(err) {
 		// Target doesn't exist. We must check its ancestors.
@@ -65,7 +60,7 @@ func CheckBackupTargetAccessible(targetPath string) error {
 		return fmt.Errorf("cannot access target path: %w", err)
 	}
 
-	// --- 3. The Target Path Exists ---
+	// --- 2. The Target Path Exists ---
 	if !info.IsDir() {
 		return fmt.Errorf("target path exists but is not a directory: %s", targetPath)
 	}

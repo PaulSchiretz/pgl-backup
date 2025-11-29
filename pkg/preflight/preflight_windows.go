@@ -9,16 +9,11 @@ import (
 	"strings"
 )
 
-// platformValidateMountPoint is the Windows no-op implementation for the Unix-specific
-// mount point validation.
+// platformValidateMountPoint on Windows verifies that the drive or network share root for a given path exists.
+// For example, for "Z:\backup", it checks if "Z:\" exists. This is analogous to the Unix "ghost directory"
+// check, ensuring the target volume is actually available.
 func platformValidateMountPoint(path string) error {
-	return nil
-}
-
-// platformCheckVolumeExists verifies that the drive or network share root for a given path exists.
-// For example, for "Z:\backup", it checks if "Z:\" exists.
-func platformCheckVolumeExists(targetPath string) error {
-	volume := filepath.VolumeName(targetPath)
+	volume := filepath.VolumeName(path)
 	if volume == "" {
 		return nil // Not a path with a volume name (e.g., relative path), so nothing to check.
 	}

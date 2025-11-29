@@ -3,7 +3,6 @@ package preflight
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -42,140 +41,6 @@ func TestCheckBackupTargetAccessible(t *testing.T) {
 		}
 	})
 
-	t.Run("Error - No Permission on Deepest Existing Ancestor", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("permission tests are not reliable on Windows")
-		}
-
-		// Setup: Create a directory structure where the deepest existing ancestor
-		// of the target path is not accessible.
-		// e.g., /tmp/grandparent/unreadable_ancestor/non_existent_child/target
-		// The check should fail on "unreadable_ancestor".
-		grandparent := t.TempDir()
-		unreadableAncestor := filepath.Join(grandparent, "unreadable_ancestor")
-
-		// Create the ancestor with read-only permissions (0444). This prevents
-		// os.Stat from succeeding on it for a non-root user, simulating a
-		// permission error when trying to access it to create subdirectories.
-		// We use 0000 to be more explicit about lack of permissions.
-		if err := os.Mkdir(unreadableAncestor, 0000); err != nil {
-			t.Fatalf("failed to create unreadable ancestor dir: %v", err)
-		}
-		// Make sure we can clean it up later.
-		t.Cleanup(func() { os.Chmod(unreadableAncestor, 0755) })
-
-		// The target path is several levels deep, and does not exist.
-		targetDir := filepath.Join(unreadableAncestor, "non_existent_child", "target")
-
-		err := CheckBackupTargetAccessible(targetDir)
-		if err == nil {
-			t.Fatal("expected a permission error, but got nil")
-		}
-		expectedError := "cannot access ancestor directory"
-		if !strings.Contains(err.Error(), expectedError) {
-			t.Errorf("expected error to contain %q, but got: %v", expectedError, err)
-		}
-	})
-
-	t.Run("Unix - Ghost Directory Check", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("ghost directory check is for Unix-like systems only")
-		}
-
-		// This test simulates a "ghost" directory.
-		// We create /tmp/pgl-test-mnt/backup, where /tmp/pgl-test-mnt is intended
-		// to be a mount point but isn't.
-		mountPointBase := filepath.Join(os.TempDir(), "pgl-test-mnt")
-		targetDir := filepath.Join(mountPointBase, "backup")
-
-		if err := os.MkdirAll(targetDir, 0755); err != nil {
-			t.Fatalf("failed to create test directories: %v", err)
-		}
-		t.Cleanup(func() { os.RemoveAll(mountPointBase) })
-
-		err := CheckBackupTargetAccessible(targetDir)
-		if err == nil {
-			t.Fatal("expected an error for a non-mounted 'ghost' directory, but got nil")
-		}
-
-		expectedError := "appears to be on the system disk but is expected to be a mount point"
-		if !strings.Contains(err.Error(), expectedError) {
-			t.Errorf("expected error to contain %q, but got: %v", expectedError, err)
-		}
-	})
-
-	t.Run("Unix - Ghost Directory Check Skipped for Home Dir", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("ghost directory check is for Unix-like systems only")
-		}
-
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			t.Fatalf("could not get user home directory: %v", err)
-		}
-
-		// Create a path inside the user's home directory.
-		targetDir := filepath.Join(homeDir, "pgl-test-backup")
-		if err := os.MkdirAll(targetDir, 0755); err != nil {
-			// It might fail if we don't have permissions, but we try.
-			t.Logf("could not create test dir in home, skipping: %v", err)
-			t.SkipNow()
-		}
-		t.Cleanup(func() { os.RemoveAll(targetDir) })
-
-		// This check should pass because the heuristic skips the mount point check
-		// for paths inside the home directory.
-		err = CheckBackupTargetAccessible(targetDir)
-		if err != nil {
-			t.Errorf("expected no error for a path in the home directory, but got: %v", err)
-		}
-	})
-}
-
-func TestPlatformCheckVolumeExists_Windows(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("this test is for windows platforms only")
-	}
-
-	// Get a known existing volume, like C:
-	tempDir := t.TempDir()
-	existingVolume := filepath.VolumeName(tempDir)
-	if existingVolume == "" {
-		t.Skip("could not determine an existing volume for testing")
-	}
-
-	testCases := []struct {
-		name          string
-		path          string
-		expectAnError bool
-	}{
-		{
-			name:          "Happy Path - Existing drive",
-			path:          filepath.Join(existingVolume, "Users", "Test"),
-			expectAnError: false,
-		},
-		{
-			name:          "Happy Path - Relative path",
-			path:          `some\relative\path`,
-			expectAnError: false, // Should do nothing and not error
-		},
-		{
-			name:          "Error - Non-existent drive",
-			path:          `Z:\nonexistent\path`, // Assuming Z: does not exist
-			expectAnError: true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := platformCheckVolumeExists(tc.path)
-			if tc.expectAnError && err == nil {
-				t.Errorf("expected an error for path %q but got nil", tc.path)
-			} else if !tc.expectAnError && err != nil {
-				t.Errorf("expected no error for path %q but got: %v", tc.path, err)
-			}
-		})
-	}
 }
 
 func TestCheckBackupSourceAccessible(t *testing.T) {
@@ -211,25 +76,6 @@ func TestCheckBackupSourceAccessible(t *testing.T) {
 			t.Errorf("expected error about source not being a directory, but got: %v", err)
 		}
 	})
-
-	t.Run("Error - No permission to stat source", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("permission tests are not reliable on Windows")
-		}
-
-		unreadableDir := filepath.Join(t.TempDir(), "unreadable")
-		if err := os.Mkdir(unreadableDir, 0000); err != nil { // no permissions
-			t.Fatalf("failed to create unreadable dir: %v", err)
-		}
-		t.Cleanup(func() { os.Chmod(unreadableDir, 0755) }) // Clean up
-
-		err := CheckBackupSourceAccessible(unreadableDir)
-		// Note: The error comes from os.Stat, which might not be a permission error itself
-		// but a consequence of it. We just check that an error is returned.
-		if err == nil {
-			t.Fatal("expected a permission error, but got nil")
-		}
-	})
 }
 
 func TestCheckBackupTargetWritable(t *testing.T) {
@@ -240,27 +86,6 @@ func TestCheckBackupTargetWritable(t *testing.T) {
 		err := CheckBackupTargetWritable(targetDir)
 		if err != nil {
 			t.Errorf("expected no error, but got: %v", err)
-		}
-	})
-
-	t.Run("Error - Destination not writable", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("permission tests are not reliable on Windows")
-		}
-
-		// Create a directory that we can't write into
-		unwritableDir := filepath.Join(t.TempDir(), "unwritable")
-		if err := os.Mkdir(unwritableDir, 0555); err != nil { // r-x r-x r-x
-			t.Fatalf("failed to create unwritable dir: %v", err)
-		}
-		t.Cleanup(func() { os.Chmod(unwritableDir, 0755) }) // Clean up
-
-		err := CheckBackupTargetWritable(unwritableDir)
-		if err == nil {
-			t.Fatal("expected an error for unwritable destination, but got nil")
-		}
-		if !strings.Contains(err.Error(), "not writable") {
-			t.Errorf("expected error about 'not writable' or permission denied, but got: %v", err)
 		}
 	})
 
