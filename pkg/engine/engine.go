@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
+	"pixelgardenlabs.io/pgl-backup/pkg/filelock"
 	"pixelgardenlabs.io/pgl-backup/pkg/pathsync"
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
+	"pixelgardenlabs.io/pgl-backup/pkg/preflight"
 )
 
 // --- ARCHITECTURAL OVERVIEW: Rollover vs. Retention Time Handling ---
@@ -88,14 +90,84 @@ func New(cfg config.Config, version string) *Engine {
 	}
 }
 
-// Execute runs the entire backup job from start to finish.
-func (e *Engine) Execute(ctx context.Context) error {
+// acquireTargetLock ensures the target directory exists and acquires a file lock within it.
+// It returns a release function that must be called to unlock the directory.
+func (e *Engine) acquireTargetLock(ctx context.Context) (func(), error) {
+	lockFilePath := filepath.Join(e.config.Paths.TargetBase, config.LockFileName)
+	appID := fmt.Sprintf("pgl-backup:%s", e.config.Paths.Source)
+
+	plog.Info("Attempting to acquire lock", "path", lockFilePath)
+	lock, err := filelock.Acquire(ctx, lockFilePath, appID)
+	if err != nil {
+		var lockErr *filelock.ErrLockActive
+		if errors.As(err, &lockErr) {
+			plog.Warn("Operation is already running for this target.", "details", lockErr.Error())
+			return nil, nil // Return nil error to indicate a graceful exit.
+		}
+		return nil, fmt.Errorf("failed to acquire lock: %w", err)
+	}
+	plog.Info("Lock acquired successfully.")
+
+	return lock.Release, nil
+}
+
+// InitializeBackupTarget sets up a new backup target directory by running pre-flight checks
+// and generating a default configuration file.
+func (e *Engine) InitializeBackupTarget(ctx context.Context) error {
 	// Check for cancellation at the very beginning.
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
 	}
+
+	plog.Info("--- Initializing New Backup Target ---")
+
+	// Perform preflight checks before attempting to lock or write.
+	// The config is passed by pointer because Validate() can modify it (e.g., cleaning paths).
+	if err := preflight.RunChecks(&e.config); err != nil {
+		return err
+	}
+
+	// Now that pre-flight checks (including directory creation) have passed, acquire the lock.
+	releaseLock, err := e.acquireTargetLock(ctx)
+	if err != nil {
+		return err
+	}
+	if releaseLock == nil {
+		return nil // Lock was already held by another process, exit gracefully.
+	}
+	defer releaseLock()
+
+	plog.Info("Pre-flight checks passed. Generating configuration file.")
+
+	// Generate the pgl-backup.conf file in the target directory.
+	return config.Generate(e.config)
+}
+
+// ExecuteBackup runs the entire backup job from start to finish.
+func (e *Engine) ExecuteBackup(ctx context.Context) error {
+	// Check for cancellation at the very beginning.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	// Perform preflight checks on the final, merged configuration.
+	if err := preflight.RunChecks(&e.config); err != nil {
+		return err
+	}
+
+	// Acquire Lock on Target Directory using final config.
+	releaseLock, err := e.acquireTargetLock(ctx)
+	if err != nil {
+		return err // A real error occurred during lock acquisition.
+	}
+	if releaseLock == nil {
+		return nil // Lock was already held, exit gracefully.
+	}
+	defer releaseLock()
 
 	// --- Pre-Backup Hooks ---
 	if err := e.runHooks(ctx, e.config.Hooks.PreBackup, "pre-backup"); err != nil {

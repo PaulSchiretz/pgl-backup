@@ -56,6 +56,75 @@ func createTestBackup(t *testing.T, baseDir, name string, backupTime time.Time) 
 	}
 }
 
+func TestInitializeBackupTarget(t *testing.T) {
+	t.Run("Happy Path - Creates config file", func(t *testing.T) {
+		// Arrange
+		srcDir := t.TempDir()
+		targetDir := t.TempDir()
+
+		cfg := config.NewDefault()
+		cfg.Paths.Source = srcDir
+		cfg.Paths.TargetBase = targetDir
+
+		e := newTestEngine(cfg)
+
+		// Act
+		err := e.InitializeBackupTarget(context.Background())
+		if err != nil {
+			t.Fatalf("InitializeBackupTarget failed: %v", err)
+		}
+
+		// Assert
+		configPath := filepath.Join(targetDir, config.ConfigFileName)
+		if _, err := os.Stat(configPath); os.IsNotExist(err) {
+			t.Error("expected config file to be created, but it was not")
+		}
+	})
+
+	t.Run("Failure - Preflight check fails", func(t *testing.T) {
+		// Arrange
+		targetDir := t.TempDir()
+
+		cfg := config.NewDefault()
+		cfg.Paths.Source = "/non/existent/path" // Invalid source to trigger preflight failure
+		cfg.Paths.TargetBase = targetDir
+
+		e := newTestEngine(cfg)
+
+		// Act
+		err := e.InitializeBackupTarget(context.Background())
+		if err == nil {
+			t.Fatal("expected an error from preflight check, but got nil")
+		}
+
+		// Assert
+		configPath := filepath.Join(targetDir, config.ConfigFileName)
+		if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+			t.Error("expected config file NOT to be created on failure, but it was")
+		}
+	})
+
+	t.Run("Failure - Lock is already held", func(t *testing.T) {
+		// Arrange
+		srcDir := t.TempDir()
+		targetDir := t.TempDir()
+
+		// Acquire a lock on the target directory beforehand
+		lock, err := os.Create(filepath.Join(targetDir, config.LockFileName))
+		if err != nil {
+			t.Fatalf("failed to create dummy lock file: %v", err)
+		}
+		defer lock.Close()
+
+		cfg := config.NewDefault()
+		cfg.Paths.Source = srcDir
+		cfg.Paths.TargetBase = targetDir
+
+		e := newTestEngine(cfg)
+		e.InitializeBackupTarget(context.Background())
+	})
+}
+
 func TestShouldRollover(t *testing.T) {
 	// Test cases for shouldRollover
 	testCases := []struct {

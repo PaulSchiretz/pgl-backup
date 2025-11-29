@@ -2,20 +2,16 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
 	"pixelgardenlabs.io/pgl-backup/pkg/engine"
-	"pixelgardenlabs.io/pgl-backup/pkg/filelock"
 	"pixelgardenlabs.io/pgl-backup/pkg/flagparse"
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
-	"pixelgardenlabs.io/pgl-backup/pkg/preflight"
 )
 
 // version holds the application's version string.
@@ -133,27 +129,6 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	return actionRunBackup, flagMap, nil
 }
 
-// acquireTargetLock ensures the target directory exists and acquires a file lock within it.
-// It returns a release function that must be called to unlock the directory.
-func acquireTargetLock(ctx context.Context, targetPath, sourcePath string, dryRun bool) (func(), error) {
-	lockFilePath := filepath.Join(targetPath, config.LockFileName)
-	appID := fmt.Sprintf("pgl-backup:%s", sourcePath)
-
-	plog.Info("Attempting to acquire lock", "path", lockFilePath)
-	lock, err := filelock.Acquire(ctx, lockFilePath, appID)
-	if err != nil {
-		var lockErr *filelock.ErrLockActive
-		if errors.As(err, &lockErr) {
-			plog.Warn("Operation is already running for this target.", "details", lockErr.Error())
-			return nil, nil // Return nil error to indicate a graceful exit.
-		}
-		return nil, fmt.Errorf("failed to acquire lock: %w", err)
-	}
-	plog.Info("Lock acquired successfully.")
-
-	return lock.Release, nil
-}
-
 // run encapsulates the main application logic and returns an error if something
 // goes wrong, allowing the main function to handle exit codes.
 func run(ctx context.Context) error {
@@ -169,35 +144,19 @@ func run(ctx context.Context) error {
 		fmt.Printf("pgl-backup version %s\n", version)
 		return nil
 	case actionInitConfig:
-		// For init, the target flag is mandatory.
-		if targetPath, ok := flagMap["target"].(string); !ok || targetPath == "" {
+		// For init, source and target flags are mandatory.
+		if _, ok := flagMap["target"]; !ok {
 			return fmt.Errorf("the -target flag is required for the init operation")
 		}
-		if sourcePath, ok := flagMap["source"].(string); !ok || sourcePath == "" {
+		if _, ok := flagMap["source"]; !ok {
 			return fmt.Errorf("the -source flag is required for the init operation")
 		}
 
-		// Create a base default config.
-		baseConfig := config.NewDefault()
-		// Merge the flags provided by the user on top of the defaults.
-		runConfig := config.MergeConfigWithFlags(baseConfig, flagMap)
+		// Create a config from defaults merged with user flags.
+		runConfig := config.MergeConfigWithFlags(config.NewDefault(), flagMap)
 
-		// Perform preflight checks before attempting to lock or write.
-		if err := preflight.RunChecks(&runConfig); err != nil {
-			return err
-		}
-
-		// Acquire lock for config generation to prevent race conditions.
-		releaseLock, err := acquireTargetLock(ctx, runConfig.Paths.TargetBase, runConfig.Paths.Source, runConfig.DryRun)
-		if err != nil {
-			return err
-		}
-		if releaseLock == nil {
-			return nil // Lock was already held, exit gracefully.
-		}
-		defer releaseLock()
-
-		return config.Generate(runConfig)
+		initEngine := engine.New(runConfig, version)
+		return initEngine.InitializeBackupTarget(ctx)
 	case actionRunBackup:
 		// For backup, the target flag is mandatory.
 		targetPath, ok := flagMap["target"].(string)
@@ -214,25 +173,10 @@ func run(ctx context.Context) error {
 		// Merge the flag values over the loaded config to get the final run config.
 		runConfig := config.MergeConfigWithFlags(loadedConfig, flagMap)
 
-		// Perform preflight checks on the final, merged configuration.
-		if err := preflight.RunChecks(&runConfig); err != nil {
-			return err
-		}
-
-		// Acquire Lock on Target Directory using final config.
-		releaseLock, err := acquireTargetLock(ctx, runConfig.Paths.TargetBase, runConfig.Paths.Source, runConfig.DryRun)
-		if err != nil {
-			return err // A real error occurred during lock acquisition.
-		}
-		if releaseLock == nil {
-			return nil // Lock was already held, exit gracefully.
-		}
-		defer releaseLock()
-
 		runConfig.LogSummary()
 
 		backupEngine := engine.New(runConfig, version)
-		return backupEngine.Execute(ctx)
+		return backupEngine.ExecuteBackup(ctx)
 	default:
 		return fmt.Errorf("internal error: unknown action %d", action)
 	}
