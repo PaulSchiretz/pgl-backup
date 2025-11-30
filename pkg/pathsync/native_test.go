@@ -59,260 +59,189 @@ func getFileModTime(t *testing.T, path string) time.Time {
 	return info.ModTime()
 }
 
+// testFile defines a file to be created for a test case.
+type testFile struct {
+	path    string
+	content string
+	modTime time.Time
+}
+
 func TestNativeSync_EndToEnd(t *testing.T) {
 	baseTime := time.Now().Add(-24 * time.Hour).Truncate(time.Second)
 
 	// --- Test Cases ---
 	testCases := []struct {
-		name         string
-		mirror       bool
-		dryRun       bool
-		excludeFiles []string
-		excludeDirs  []string
-		setup        func(t *testing.T, src, dst string) // Setup source and destination dirs
-		verify       func(t *testing.T, src, dst string) // Verify state of destination dir
+		name                    string
+		mirror                  bool
+		dryRun                  bool
+		excludeFiles            []string
+		excludeDirs             []string
+		srcFiles                []testFile                          // Files to create in the source directory.
+		dstFiles                []testFile                          // Files to create in the destination directory.
+		expectedDstFiles        []testFile                          // Files that must exist in the destination after sync.
+		expectedMissingDstFiles []string                            // Paths that must NOT exist in the destination after sync.
+		verify                  func(t *testing.T, src, dst string) // Optional custom verification.
 	}{
 		{
 			name:   "Simple Copy",
 			mirror: false,
-			setup: func(t *testing.T, src, dst string) {
-				createFile(t, filepath.Join(src, "file1.txt"), "hello", baseTime)
-				createFile(t, filepath.Join(src, "subdir", "file2.txt"), "world", baseTime)
+			srcFiles: []testFile{
+				{path: "file1.txt", content: "hello", modTime: baseTime},
+				{path: "subdir/file2.txt", content: "world", modTime: baseTime},
 			},
-			verify: func(t *testing.T, src, dst string) {
-				if !pathExists(t, filepath.Join(dst, "file1.txt")) {
-					t.Error("expected file1.txt to be copied")
-				}
-				if !pathExists(t, filepath.Join(dst, "subdir", "file2.txt")) {
-					t.Error("expected subdir/file2.txt to be copied")
-				}
+			expectedDstFiles: []testFile{
+				{path: "file1.txt", content: "hello", modTime: baseTime},
+				{path: "subdir/file2.txt", content: "world", modTime: baseTime},
 			},
 		},
 		{
 			name:   "Update File",
 			mirror: false,
-			setup: func(t *testing.T, src, dst string) {
-				// Source is newer
-				createFile(t, filepath.Join(src, "file1.txt"), "new content", baseTime.Add(time.Hour))
-				// Destination is older
-				createFile(t, filepath.Join(dst, "file1.txt"), "old content", baseTime)
+			srcFiles: []testFile{
+				{path: "file1.txt", content: "new content", modTime: baseTime.Add(time.Hour)},
 			},
-			verify: func(t *testing.T, src, dst string) {
-				dstFile := filepath.Join(dst, "file1.txt")
-				if content := getFileContent(t, dstFile); content != "new content" {
-					t.Errorf("expected file content to be updated, got %q", content)
-				}
-				// Truncate to second for comparison as some filesystems have lower precision.
-				if modTime := getFileModTime(t, dstFile).Truncate(time.Second); !modTime.Equal(baseTime.Add(time.Hour)) {
-					t.Errorf("expected file mod time to be updated, got %v", modTime)
-				}
+			dstFiles: []testFile{
+				{path: "file1.txt", content: "old content", modTime: baseTime},
+			},
+			expectedDstFiles: []testFile{
+				{path: "file1.txt", content: "new content", modTime: baseTime.Add(time.Hour)},
 			},
 		},
 		{
 			name:   "Skip Unchanged File",
 			mirror: false,
-			setup: func(t *testing.T, src, dst string) {
-				// Both files are identical
-				createFile(t, filepath.Join(src, "file1.txt"), "same", baseTime)
-				createFile(t, filepath.Join(dst, "file1.txt"), "same", baseTime)
+			srcFiles: []testFile{
+				{path: "file1.txt", content: "same", modTime: baseTime},
 			},
-			verify: func(t *testing.T, src, dst string) {
-				// The mod time should not have changed if the file was correctly skipped.
-				dstFile := filepath.Join(dst, "file1.txt")
-				if modTime := getFileModTime(t, dstFile); !modTime.Equal(baseTime) {
-					t.Errorf("expected file to be skipped, but mod time changed to %v", modTime)
-				}
+			dstFiles: []testFile{
+				{path: "file1.txt", content: "same", modTime: baseTime},
+			},
+			expectedDstFiles: []testFile{
+				{path: "file1.txt", content: "same", modTime: baseTime},
 			},
 		},
 		{
 			name:   "Mirror Deletion",
 			mirror: true,
-			setup: func(t *testing.T, src, dst string) {
-				// Source is empty
-				// Destination has files to be deleted
-				createFile(t, filepath.Join(dst, "obsolete.txt"), "delete me", baseTime)
-				createFile(t, filepath.Join(dst, "obsolete_dir", "file.txt"), "delete me too", baseTime)
+			dstFiles: []testFile{
+				{path: "obsolete.txt", content: "delete me", modTime: baseTime},
+				{path: "obsolete_dir/file.txt", content: "delete me too", modTime: baseTime},
 			},
-			verify: func(t *testing.T, src, dst string) {
-				if pathExists(t, filepath.Join(dst, "obsolete.txt")) {
-					t.Error("expected obsolete.txt to be deleted")
-				}
-				if pathExists(t, filepath.Join(dst, "obsolete_dir")) {
-					t.Error("expected obsolete_dir to be deleted")
-				}
-			},
+			expectedMissingDstFiles: []string{"obsolete.txt", "obsolete_dir"},
 		},
 		{
 			name:         "Exclude Files",
 			mirror:       true,
 			excludeFiles: []string{"*.log", "temp.txt"},
-			setup: func(t *testing.T, src, dst string) {
-				createFile(t, filepath.Join(src, "important.dat"), "data", baseTime)
-				createFile(t, filepath.Join(src, "app.log"), "logging", baseTime)
-				createFile(t, filepath.Join(src, "temp.txt"), "temporary", baseTime)
+			srcFiles: []testFile{
+				{path: "important.dat", content: "data", modTime: baseTime},
+				{path: "app.log", content: "logging", modTime: baseTime},
+				{path: "temp.txt", content: "temporary", modTime: baseTime},
 			},
-			verify: func(t *testing.T, src, dst string) {
-				if !pathExists(t, filepath.Join(dst, "important.dat")) {
-					t.Error("expected important.dat to be copied")
-				}
-				if pathExists(t, filepath.Join(dst, "app.log")) {
-					t.Error("expected app.log to be excluded")
-				}
-				if pathExists(t, filepath.Join(dst, "temp.txt")) {
-					t.Error("expected temp.txt to be excluded")
-				}
+			expectedDstFiles: []testFile{
+				{path: "important.dat", content: "data", modTime: baseTime},
 			},
+			expectedMissingDstFiles: []string{"app.log", "temp.txt"},
 		},
 		{
 			name:         "Exclusion with literal and wildcard",
 			mirror:       true,
 			excludeFiles: []string{"*.log", "temp.txt"},
-			setup: func(t *testing.T, src, dst string) {
-				createFile(t, filepath.Join(src, "important.dat"), "data", baseTime)
-				createFile(t, filepath.Join(src, "app.log"), "logging", baseTime)
-				createFile(t, filepath.Join(src, "temp.txt"), "temporary", baseTime)
+			srcFiles: []testFile{
+				{path: "important.dat", content: "data", modTime: baseTime},
+				{path: "app.log", content: "logging", modTime: baseTime},
+				{path: "temp.txt", content: "temporary", modTime: baseTime},
 			},
-			verify: func(t *testing.T, src, dst string) {
-				if !pathExists(t, filepath.Join(dst, "important.dat")) {
-					t.Error("expected important.dat to be copied")
-				}
-				if pathExists(t, filepath.Join(dst, "app.log")) {
-					t.Error("expected app.log to be excluded by wildcard")
-				}
-				if pathExists(t, filepath.Join(dst, "temp.txt")) {
-					t.Error("expected temp.txt to be excluded by literal match")
-				}
+			expectedDstFiles: []testFile{
+				{path: "important.dat", content: "data", modTime: baseTime},
 			},
+			expectedMissingDstFiles: []string{"app.log", "temp.txt"},
 		},
 		{
 			name:         "Exclude Files with Suffix Pattern",
 			mirror:       true,
 			excludeFiles: []string{"*.tmp"},
-			setup: func(t *testing.T, src, dst string) {
-				createFile(t, filepath.Join(src, "document.txt"), "content", baseTime)
-				createFile(t, filepath.Join(src, "session.tmp"), "temporary", baseTime)
+			srcFiles: []testFile{
+				{path: "document.txt", content: "content", modTime: baseTime},
+				{path: "session.tmp", content: "temporary", modTime: baseTime},
 			},
-			verify: func(t *testing.T, src, dst string) {
-				if !pathExists(t, filepath.Join(dst, "document.txt")) {
-					t.Error("expected document.txt to be copied")
-				}
-				if pathExists(t, filepath.Join(dst, "session.tmp")) {
-					t.Error("expected session.tmp to be excluded by suffix match")
-				}
+			expectedDstFiles: []testFile{
+				{path: "document.txt", content: "content", modTime: baseTime},
 			},
+			expectedMissingDstFiles: []string{"session.tmp"},
 		},
 		{
 			name:        "Exclude Dirs",
 			mirror:      true,
 			excludeDirs: []string{"node_modules", "tmp"},
-			setup: func(t *testing.T, src, dst string) {
-				createFile(t, filepath.Join(src, "index.js"), "code", baseTime)
-				createFile(t, filepath.Join(src, "node_modules", "lib.js"), "library", baseTime)
-				createFile(t, filepath.Join(src, "tmp", "cache.dat"), "cache", baseTime)
+			srcFiles: []testFile{
+				{path: "index.js", content: "code", modTime: baseTime},
+				{path: "node_modules/lib.js", content: "library", modTime: baseTime},
+				{path: "tmp/cache.dat", content: "cache", modTime: baseTime},
 			},
-			verify: func(t *testing.T, src, dst string) {
-				if !pathExists(t, filepath.Join(dst, "index.js")) {
-					t.Error("expected index.js to be copied")
-				}
-				if pathExists(t, filepath.Join(dst, "node_modules")) {
-					t.Error("expected node_modules to be excluded")
-				}
-				if pathExists(t, filepath.Join(dst, "tmp")) {
-					t.Error("expected tmp to be excluded")
-				}
+			expectedDstFiles: []testFile{
+				{path: "index.js", content: "code", modTime: baseTime},
 			},
+			expectedMissingDstFiles: []string{"node_modules", "tmp"},
 		},
 		{
 			name:        "Exclude Dirs with Prefix Pattern",
 			mirror:      true,
-			excludeDirs: []string{"build/"}, // Trailing slash triggers prefix match
-			setup: func(t *testing.T, src, dst string) {
-				createFile(t, filepath.Join(src, "index.html"), "root file", baseTime)
-				createFile(t, filepath.Join(src, "build", "app.js"), "should be excluded", baseTime)
-				createFile(t, filepath.Join(src, "build", "assets", "icon.png"), "should also be excluded", baseTime)
+			excludeDirs: []string{"build/"},
+			srcFiles: []testFile{
+				{path: "index.html", content: "root file", modTime: baseTime},
+				{path: "build/app.js", content: "should be excluded", modTime: baseTime},
+				{path: "build/assets/icon.png", content: "should also be excluded", modTime: baseTime},
 			},
-			verify: func(t *testing.T, src, dst string) {
-				if !pathExists(t, filepath.Join(dst, "index.html")) {
-					t.Error("expected index.html to be copied")
-				}
-				if pathExists(t, filepath.Join(dst, "build")) {
-					t.Error("expected 'build' directory to be excluded by prefix")
-				}
-				if pathExists(t, filepath.Join(dst, "build", "assets")) {
-					t.Error("expected nested directory inside excluded prefix dir to not be copied")
-				}
+			expectedDstFiles: []testFile{
+				{path: "index.html", content: "root file", modTime: baseTime},
 			},
+			expectedMissingDstFiles: []string{"build"},
 		},
 		{
 			name:        "Exclude Dirs without Trailing Slash",
 			mirror:      true,
-			excludeDirs: []string{"dist"}, // No trailing slash, should still be treated as a prefix
-			setup: func(t *testing.T, src, dst string) {
-				createFile(t, filepath.Join(src, "index.html"), "root file", baseTime)
-				createFile(t, filepath.Join(src, "dist", "bundle.js"), "should be excluded", baseTime)
+			excludeDirs: []string{"dist"},
+			srcFiles: []testFile{
+				{path: "index.html", content: "root file", modTime: baseTime},
+				{path: "dist/bundle.js", content: "should be excluded", modTime: baseTime},
 			},
-			verify: func(t *testing.T, src, dst string) {
-				if !pathExists(t, filepath.Join(dst, "index.html")) {
-					t.Error("expected index.html to be copied")
-				}
-				if pathExists(t, filepath.Join(dst, "dist")) {
-					t.Error("expected 'dist' directory to be excluded even without trailing slash")
-				}
-				if pathExists(t, filepath.Join(dst, "dist", "bundle.js")) {
-					t.Error("expected file inside excluded dir to not be copied")
-				}
+			expectedDstFiles: []testFile{
+				{path: "index.html", content: "root file", modTime: baseTime},
 			},
+			expectedMissingDstFiles: []string{"dist"},
 		},
 		{
 			name:         "Mirror Deletion - Keep Excluded File in Dest",
 			mirror:       true,
 			excludeFiles: []string{"*.log"},
-			setup: func(t *testing.T, src, dst string) {
-				// This file exists only in the destination and should be preserved due to exclusion.
-				createFile(t, filepath.Join(dst, "app.log"), "existing log", baseTime)
-				// This file exists only in the destination and should be deleted.
-				createFile(t, filepath.Join(dst, "obsolete.txt"), "delete me", baseTime)
+			dstFiles: []testFile{
+				{path: "app.log", content: "existing log", modTime: baseTime},
+				{path: "obsolete.txt", content: "delete me", modTime: baseTime},
 			},
-			verify: func(t *testing.T, src, dst string) {
-				// Verify the excluded file was NOT deleted from destination
-				if !pathExists(t, filepath.Join(dst, "app.log")) {
-					t.Error("expected excluded file app.log to be preserved in destination")
-				}
-				// Verify the non-excluded, obsolete file WAS deleted
-				if pathExists(t, filepath.Join(dst, "obsolete.txt")) {
-					t.Error("expected obsolete.txt to be deleted from destination")
-				}
+			expectedDstFiles: []testFile{
+				{path: "app.log", content: "existing log", modTime: baseTime},
 			},
+			expectedMissingDstFiles: []string{"obsolete.txt"},
 		},
 		{
 			name:   "Dry Run - No Copy",
 			mirror: false,
 			dryRun: true,
-			setup: func(t *testing.T, src, dst string) {
-				createFile(t, filepath.Join(src, "file1.txt"), "hello", baseTime)
+			srcFiles: []testFile{
+				{path: "file1.txt", content: "hello", modTime: baseTime},
 			},
-			verify: func(t *testing.T, src, dst string) {
-				if pathExists(t, dst) {
-					// We check if the whole dst dir exists, because it shouldn't even be created.
-					files, _ := os.ReadDir(dst)
-					if len(files) > 0 {
-						t.Error("expected destination to be empty in dry run")
-					}
-				}
-			},
+			expectedMissingDstFiles: []string{"file1.txt"},
 		},
 		{
 			name:   "Dry Run - No Deletion",
 			mirror: true,
 			dryRun: true,
-			setup: func(t *testing.T, src, dst string) {
-				// Source is empty
-				createFile(t, filepath.Join(dst, "obsolete.txt"), "do not delete", baseTime)
+			dstFiles: []testFile{
+				{path: "obsolete.txt", content: "do not delete", modTime: baseTime},
 			},
-			verify: func(t *testing.T, src, dst string) {
-				if !pathExists(t, filepath.Join(dst, "obsolete.txt")) {
-					t.Error("expected obsolete.txt to NOT be deleted in dry run")
-				}
+			expectedDstFiles: []testFile{
+				{path: "obsolete.txt", content: "do not delete", modTime: baseTime},
 			},
 		},
 	}
@@ -329,8 +258,13 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				t.Fatalf("failed to clean up dst dir before test: %v", err)
 			}
 
-			// Setup initial state
-			tc.setup(t, srcDir, dstDir)
+			// Setup initial state from file matrices
+			for _, f := range tc.srcFiles {
+				createFile(t, filepath.Join(srcDir, f.path), f.content, f.modTime)
+			}
+			for _, f := range tc.dstFiles {
+				createFile(t, filepath.Join(dstDir, f.path), f.content, f.modTime)
+			}
 
 			// In the real app, `validateSyncPaths` creates the destination directory
 			// before `handleNative` is called. We must simulate that here to prevent
@@ -353,7 +287,28 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			}
 
 			// Assert
-			tc.verify(t, srcDir, dstDir)
+			for _, f := range tc.expectedDstFiles {
+				fullPath := filepath.Join(dstDir, f.path)
+				if !pathExists(t, fullPath) {
+					t.Errorf("expected file to exist in destination: %s", f.path)
+					continue
+				}
+				if content := getFileContent(t, fullPath); content != f.content {
+					t.Errorf("expected content for %s to be %q, but got %q", f.path, f.content, content)
+				}
+				if modTime := getFileModTime(t, fullPath).Truncate(time.Second); !modTime.Equal(f.modTime.Truncate(time.Second)) {
+					t.Errorf("expected modTime for %s to be %v, but got %v", f.path, f.modTime, modTime)
+				}
+			}
+			for _, p := range tc.expectedMissingDstFiles {
+				if pathExists(t, filepath.Join(dstDir, p)) {
+					t.Errorf("expected path to be missing from destination: %s", p)
+				}
+			}
+			// Allow for additional custom verification
+			if tc.verify != nil {
+				tc.verify(t, srcDir, dstDir)
+			}
 		})
 	}
 }
