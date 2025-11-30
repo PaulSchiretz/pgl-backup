@@ -164,6 +164,44 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
+			name:         "Exclusion with literal and wildcard",
+			mirror:       true,
+			excludeFiles: []string{"*.log", "temp.txt"},
+			setup: func(t *testing.T, src, dst string) {
+				createFile(t, filepath.Join(src, "important.dat"), "data", baseTime)
+				createFile(t, filepath.Join(src, "app.log"), "logging", baseTime)
+				createFile(t, filepath.Join(src, "temp.txt"), "temporary", baseTime)
+			},
+			verify: func(t *testing.T, src, dst string) {
+				if !pathExists(t, filepath.Join(dst, "important.dat")) {
+					t.Error("expected important.dat to be copied")
+				}
+				if pathExists(t, filepath.Join(dst, "app.log")) {
+					t.Error("expected app.log to be excluded by wildcard")
+				}
+				if pathExists(t, filepath.Join(dst, "temp.txt")) {
+					t.Error("expected temp.txt to be excluded by literal match")
+				}
+			},
+		},
+		{
+			name:         "Exclude Files with Suffix Pattern",
+			mirror:       true,
+			excludeFiles: []string{"*.tmp"},
+			setup: func(t *testing.T, src, dst string) {
+				createFile(t, filepath.Join(src, "document.txt"), "content", baseTime)
+				createFile(t, filepath.Join(src, "session.tmp"), "temporary", baseTime)
+			},
+			verify: func(t *testing.T, src, dst string) {
+				if !pathExists(t, filepath.Join(dst, "document.txt")) {
+					t.Error("expected document.txt to be copied")
+				}
+				if pathExists(t, filepath.Join(dst, "session.tmp")) {
+					t.Error("expected session.tmp to be excluded by suffix match")
+				}
+			},
+		},
+		{
 			name:        "Exclude Dirs",
 			mirror:      true,
 			excludeDirs: []string{"node_modules", "tmp"},
@@ -181,6 +219,27 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				}
 				if pathExists(t, filepath.Join(dst, "tmp")) {
 					t.Error("expected tmp to be excluded")
+				}
+			},
+		},
+		{
+			name:        "Exclude Dirs with Prefix Pattern",
+			mirror:      true,
+			excludeDirs: []string{"build/"}, // Trailing slash triggers prefix match
+			setup: func(t *testing.T, src, dst string) {
+				createFile(t, filepath.Join(src, "index.html"), "root file", baseTime)
+				createFile(t, filepath.Join(src, "build", "app.js"), "should be excluded", baseTime)
+				createFile(t, filepath.Join(src, "build", "assets", "icon.png"), "should also be excluded", baseTime)
+			},
+			verify: func(t *testing.T, src, dst string) {
+				if !pathExists(t, filepath.Join(dst, "index.html")) {
+					t.Error("expected index.html to be copied")
+				}
+				if pathExists(t, filepath.Join(dst, "build")) {
+					t.Error("expected 'build' directory to be excluded by prefix")
+				}
+				if pathExists(t, filepath.Join(dst, "build", "assets")) {
+					t.Error("expected nested directory inside excluded prefix dir to not be copied")
 				}
 			},
 		},

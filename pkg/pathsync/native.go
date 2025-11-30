@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,16 +22,32 @@ type syncTask struct {
 	IsDir   bool
 }
 
+type exclusionType int
+
+const (
+	literalMatch exclusionType = iota
+	prefixMatch
+	suffixMatch
+	globMatch
+)
+
+// preProcessedExclusion stores the pre-analyzed pattern details.
+type preProcessedExclusion struct {
+	pattern      string
+	cleanPattern string // The pattern without the wildcard for prefix/suffix matching
+	matchType    exclusionType
+}
+
 // nativeSyncRun encapsulates the state and logic for a single native sync operation.
 // It coordinates the Producer (Walker), Consumers (Workers), and Collector.
 type nativeSyncRun struct {
-	src, dst              string
-	mirror, dryRun, quiet bool
-	numSyncWorkers        int
-	excludeFiles          []string
-	excludeDirs           []string
-	retryCount            int
-	retryWait             time.Duration
+	src, dst                 string
+	mirror, dryRun, quiet    bool
+	numSyncWorkers           int
+	preProcessedFileExcludes []preProcessedExclusion
+	preProcessedDirExcludes  []preProcessedExclusion
+	retryCount               int
+	retryWait                time.Duration
 
 	// syncedSourcePaths is populated by the Collector and read by the Deletion phase.
 	syncedSourcePaths map[string]bool
@@ -230,23 +247,53 @@ func (r *nativeSyncRun) processPathSync(task syncTask) error {
 	return nil
 }
 
-// isExcluded checks if a given relative path matches any of the exclusion patterns.
-// It logs a warning if a pattern is invalid but continues checking other patterns.
+// isExcluded checks if a given relative path matches any of the exclusion patterns,
+// using a tiered optimization strategy to avoid expensive glob matching when possible.
 func (r *nativeSyncRun) isExcluded(relPath string, isDir bool) bool {
-	patterns := r.excludeFiles
-	if isDir {
-		patterns = r.excludeDirs
+	// On Windows, WalkDir provides paths with `\`. We need to normalize them
+	// to `/` for consistent matching with patterns.
+	if filepath.Separator != '/' {
+		relPath = filepath.ToSlash(relPath)
 	}
 
-	for _, pattern := range patterns {
-		match, err := filepath.Match(pattern, relPath)
-		if err != nil {
-			// Log the error for the invalid pattern but continue checking others.
-			plog.Warn("Invalid exclusion pattern", "pattern", pattern, "error", err)
-			continue
-		}
-		if match {
-			return true
+	var patterns []preProcessedExclusion
+	if isDir {
+		patterns = r.preProcessedDirExcludes
+	} else {
+		patterns = r.preProcessedFileExcludes
+	}
+
+	for _, p := range patterns {
+		switch p.matchType {
+		case literalMatch:
+			if relPath == p.pattern {
+				return true
+			}
+		case prefixMatch:
+			// A pattern like "build/" is cleaned to "build". We must match both the directory
+			// "build" itself (relPath == p.cleanPattern) and any file inside it
+			// ("build/app.js", which has the prefix "build/").
+			if relPath == p.cleanPattern || strings.HasPrefix(relPath, p.cleanPattern+"/") {
+				return true
+			}
+		case suffixMatch:
+			// A pattern like "*.log" is cleaned to ".log". A simple suffix check is sufficient
+			// because we only care if the path ends with this string. Unlike prefix matching,
+			// there is no container/directory that needs a separate literal check.
+			if strings.HasSuffix(relPath, p.cleanPattern) {
+				return true
+			}
+
+		case globMatch:
+			match, err := filepath.Match(p.pattern, relPath)
+			if err != nil {
+				// Log the error for the invalid pattern but continue checking others.
+				plog.Warn("Invalid exclusion pattern", "pattern", p.pattern, "error", err)
+				continue
+			}
+			if match {
+				return true
+			}
 		}
 	}
 	return false
@@ -530,22 +577,64 @@ func (r *nativeSyncRun) execute() error {
 	return r.handleDelete()
 }
 
+// preProcessExclusions analyzes and categorizes patterns to enable optimized matching later.
+func preProcessExclusions(patterns []string) []preProcessedExclusion {
+	preProcessed := make([]preProcessedExclusion, 0, len(patterns))
+	for _, p := range patterns {
+		// Normalize to use forward slashes for consistent matching logic.
+		p = filepath.ToSlash(p)
+
+		if strings.ContainsAny(p, "*?[]") {
+			// If it's a prefix pattern like `node_modules/*`, we can optimize it.
+			if strings.HasSuffix(p, "/*") {
+				preProcessed = append(preProcessed, preProcessedExclusion{
+					pattern:      p,
+					cleanPattern: strings.TrimSuffix(p, "/*"),
+					matchType:    prefixMatch,
+				})
+			} else if strings.HasPrefix(p, "*") && !strings.ContainsAny(p[1:], "*?[]") {
+				// If it's a suffix pattern like `*.log`, we can also optimize it.
+				preProcessed = append(preProcessed, preProcessedExclusion{
+					pattern:      p,
+					cleanPattern: p[1:], // The part after the *, e.g., ".log"
+					matchType:    suffixMatch,
+				})
+			} else {
+				// Otherwise, it's a general glob pattern.
+				preProcessed = append(preProcessed, preProcessedExclusion{pattern: p, matchType: globMatch})
+			}
+		} else {
+			// No wildcards. Check if it's a directory prefix or a literal match.
+			if strings.HasSuffix(p, "/") {
+				preProcessed = append(preProcessed, preProcessedExclusion{
+					pattern:      p,
+					cleanPattern: strings.TrimSuffix(p, "/"),
+					matchType:    prefixMatch,
+				})
+			} else {
+				preProcessed = append(preProcessed, preProcessedExclusion{pattern: p, matchType: literalMatch})
+			}
+		}
+	}
+	return preProcessed
+}
+
 // handleNative initializes the sync run structure and kicks off the execution.
 func (s *PathSyncer) handleNative(ctx context.Context, src, dst string, mirror bool, excludeFiles, excludeDirs []string) error {
 	plog.Info("Starting native sync", "from", src, "to", dst)
 
 	run := &nativeSyncRun{
-		src:               src,
-		dst:               dst,
-		mirror:            mirror,
-		dryRun:            s.dryRun,
-		quiet:             s.quiet,
-		numSyncWorkers:    s.engine.NativeEngineWorkers,
-		excludeFiles:      excludeFiles,
-		excludeDirs:       excludeDirs,
-		retryCount:        s.engine.NativeEngineRetryCount,
-		retryWait:         time.Duration(s.engine.NativeEngineRetryWaitSeconds) * time.Second,
-		syncedSourcePaths: make(map[string]bool), // Initialize the map for the collector.
+		src:                      src,
+		dst:                      dst,
+		mirror:                   mirror,
+		dryRun:                   s.dryRun,
+		quiet:                    s.quiet,
+		numSyncWorkers:           s.engine.NativeEngineWorkers,
+		preProcessedFileExcludes: preProcessExclusions(excludeFiles),
+		preProcessedDirExcludes:  preProcessExclusions(excludeDirs),
+		retryCount:               s.engine.NativeEngineRetryCount,
+		retryWait:                time.Duration(s.engine.NativeEngineRetryWaitSeconds) * time.Second,
+		syncedSourcePaths:        make(map[string]bool), // Initialize the map for the collector.
 		// Buffer 'syncTasks' to handle bursts of rapid file discovery by the walker.
 		syncTasks: make(chan syncTask, s.engine.NativeEngineWorkers*2),
 		// Buffer 'syncResults' to ensure syncWorkers don't block waiting for the collector.
