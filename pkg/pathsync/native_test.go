@@ -185,6 +185,27 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
+			name:         "Mirror Deletion - Keep Excluded File in Dest",
+			mirror:       true,
+			excludeFiles: []string{"*.log"},
+			setup: func(t *testing.T, src, dst string) {
+				// This file exists only in the destination and should be preserved due to exclusion.
+				createFile(t, filepath.Join(dst, "app.log"), "existing log", baseTime)
+				// This file exists only in the destination and should be deleted.
+				createFile(t, filepath.Join(dst, "obsolete.txt"), "delete me", baseTime)
+			},
+			verify: func(t *testing.T, src, dst string) {
+				// Verify the excluded file was NOT deleted from destination
+				if !pathExists(t, filepath.Join(dst, "app.log")) {
+					t.Error("expected excluded file app.log to be preserved in destination")
+				}
+				// Verify the non-excluded, obsolete file WAS deleted
+				if pathExists(t, filepath.Join(dst, "obsolete.txt")) {
+					t.Error("expected obsolete.txt to be deleted from destination")
+				}
+			},
+		},
+		{
 			name:   "Dry Run - No Copy",
 			mirror: false,
 			dryRun: true,
