@@ -12,6 +12,15 @@ import (
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
 
+// syncTask holds all the necessary metadata for a worker to process a file
+// without re-calculating paths or re-fetching filesystem stats.
+type syncTask struct {
+	AbsPath string
+	RelPath string
+	Info    os.FileInfo // Cached info from the Walker
+	IsDir   bool
+}
+
 // nativeSyncRun encapsulates the state and logic for a single native sync operation.
 // It coordinates the Producer (Walker), Consumers (Workers), and Collector.
 type nativeSyncRun struct {
@@ -29,8 +38,8 @@ type nativeSyncRun struct {
 	// syncWg waits for syncWorkers to finish processing tasks.
 	syncWg sync.WaitGroup
 
-	// syncTasks is the channel where the Walker sends paths to be processed.
-	syncTasks chan string
+	// syncTasks is the channel where the Walker sends pre-processed tasks.
+	syncTasks chan syncTask
 
 	// syncResults is the channel where syncWorkers send processed paths to the Collector.
 	syncResults chan string
@@ -112,7 +121,7 @@ func copyFileHelper(src, dst string, retryCount int, retryWait time.Duration) er
 }
 
 // processDirectorySync ensures the destination directory exists and matches source metadata.
-func (r *nativeSyncRun) processDirectorySync(path, dstPath, relPath string, srcInfo os.FileInfo) error {
+func (r *nativeSyncRun) processDirectorySync(dstPath, relPath string, srcInfo os.FileInfo) error {
 	if r.dryRun {
 		plog.Info("[DRY RUN] SYNCDIR", "path", relPath)
 		return nil
@@ -169,6 +178,11 @@ func (r *nativeSyncRun) processDirectorySync(path, dstPath, relPath string, srcI
 // processRegularFileSync checks if a file needs to be copied (based on size/time)
 // and triggers the copy operation if needed.
 func (r *nativeSyncRun) processRegularFileSync(path, dstPath, relPath string, srcInfo os.FileInfo) error {
+	if r.dryRun {
+		plog.Info("[DRY RUN] COPY", "path", relPath)
+		return nil
+	}
+
 	// Check if the destination file exists and if it matches.
 	dstInfo, err := os.Stat(dstPath)
 	if err == nil {
@@ -177,11 +191,6 @@ func (r *nativeSyncRun) processRegularFileSync(path, dstPath, relPath string, sr
 		if !srcInfo.ModTime().After(dstInfo.ModTime()) && srcInfo.Size() == dstInfo.Size() {
 			return nil
 		}
-	}
-
-	if r.dryRun {
-		plog.Info("[DRY RUN] COPY", "path", relPath)
-		return nil
 	}
 
 	if err := copyFileHelper(path, dstPath, r.retryCount, r.retryWait); err != nil {
@@ -196,30 +205,29 @@ func (r *nativeSyncRun) processRegularFileSync(path, dstPath, relPath string, sr
 
 // processPathSync acts as the dispatcher for a specific path.
 // It determines if the path is a directory, file, or something to skip.
-func (r *nativeSyncRun) processPathSync(currentPath, relPath string) error {
-	srcInfo, err := os.Lstat(currentPath) // Lstat prevents following symlinks implicitly
-	if err != nil {
-		return fmt.Errorf("failed to stat source path %s: %w", currentPath, err)
+// It receives the full task struct so it doesn't need to do any discovery.
+func (r *nativeSyncRun) processPathSync(task syncTask) error {
+	dstPath := filepath.Join(r.dst, task.RelPath)
+
+	if task.RelPath == "." {
+		return nil // The root directory itself doesn't need I/O processing
 	}
 
-	dstPath := filepath.Join(r.dst, relPath)
-
-	switch mode := srcInfo.Mode(); {
-	case relPath == ".":
-		// The root directory itself doesn't need I/O processing,
-		// though its existence is recorded by the caller.
-		return nil
-	case mode.IsDir():
-		return r.processDirectorySync(currentPath, dstPath, relPath, srcInfo)
-	case mode.IsRegular():
-		return r.processRegularFileSync(currentPath, dstPath, relPath, srcInfo)
-	default:
-		// Symlinks, Named Pipes, Sockets, etc. are currently skipped.
-		if !r.quiet {
-			plog.Info("SKIP", "type", mode.String(), "path", relPath)
-		}
-		return nil
+	// Drectory
+	if task.IsDir {
+		return r.processDirectorySync(dstPath, task.RelPath, task.Info)
 	}
+
+	// Regular File
+	if task.Info.Mode().IsRegular() {
+		return r.processRegularFileSync(task.AbsPath, dstPath, task.RelPath, task.Info)
+	}
+
+	// Symlinks, Named Pipes, etc.
+	if !r.quiet {
+		plog.Info("SKIP", "type", task.Info.Mode().String(), "path", task.RelPath)
+	}
+	return nil
 }
 
 // isExcluded checks if a given relative path matches any of the exclusion patterns.
@@ -245,7 +253,7 @@ func (r *nativeSyncRun) isExcluded(relPath string, isDir bool) bool {
 }
 
 // syncWalker is a dedicated goroutine that walks the source directory tree,
-// sending each path to the syncTasks channel for processing by workers.
+// sending each syntask to the syncTasks channel for processing by workers.
 func (r *nativeSyncRun) syncWalker() {
 	defer close(r.syncTasks) // Close syncTasks to signal syncWorkers to stop when walk is complete
 
@@ -283,10 +291,27 @@ func (r *nativeSyncRun) syncWalker() {
 			}
 		}
 
+		// 3. Get Info for worker
+		// WalkDir gives us a DirEntry. We need the FileInfo for timestamps/sizes later.
+		// Doing it here saves the worker from doing an Lstat.
+		info, err := d.Info()
+		if err != nil {
+			plog.Warn("Failed to get file info, skipping", "path", path, "error", err)
+			return nil
+		}
+
+		// 4. Create Task
+		task := syncTask{
+			AbsPath: path,
+			RelPath: relPath,
+			Info:    info,
+			IsDir:   d.IsDir(),
+		}
+
 		select {
 		case <-r.ctx.Done():
 			return r.ctx.Err()
-		case r.syncTasks <- path:
+		case r.syncTasks <- task:
 			return nil
 		}
 	})
@@ -309,25 +334,14 @@ func (r *nativeSyncRun) syncWorker() {
 		select {
 		case <-r.ctx.Done():
 			return
-		case path, ok := <-r.syncTasks:
+		case task, ok := <-r.syncTasks:
 			if !ok {
 				// Channel closed by Walker, work is done.
 				return
 			}
 
-			// 1. Derive relative path for this task.
-			// We need this for the destination path calculation and for the Collector.
-			relPath, err := filepath.Rel(r.src, path)
-			if err != nil {
-				select {
-				case r.syncErrs <- fmt.Errorf("worker failed to get relative path for %s: %w", path, err):
-				default:
-				}
-				return // Return to stop the sync safely. To avoid accidential deletion from destination in handleDelete we need to treat this as a critical error and stop the worker.
-			}
-
-			// 2. Do the heavy I/O work (Copy or Mkdir)
-			err = r.processPathSync(path, relPath)
+			// 1. Do the heavy I/O work
+			err := r.processPathSync(task)
 			if err != nil {
 				// If I/O fails, report the error non-blockingly.
 				select {
@@ -336,20 +350,20 @@ func (r *nativeSyncRun) syncWorker() {
 				}
 
 				plog.Warn("Sync failed for path, preserving in destination map to prevent deletion",
-					"path", relPath,
+					"path", task.RelPath,
 					"error", err,
 					"note", "This file may be inconsistent or outdated in the destination")
 				// We purposefully fall through to step 3
 			}
 
-			// 3. Send to the Collector.
+			// 2. Send to the Collector.
 			// Even if processPathSync failed (e.g. permission error), we record that the
 			// path "exists" in the source. This prevents the Deletion Phase from
 			// deleting the file at the destination just because we failed to update it.
 			select { //nolint:gosimple // This select is intentional for context cancellation.
 			case <-r.ctx.Done():
 				return
-			case r.syncResults <- relPath:
+			case r.syncResults <- task.RelPath:
 			}
 		}
 	}
@@ -406,7 +420,7 @@ func (r *nativeSyncRun) handleSync() error {
 	return nil
 }
 
-// handleDelete performs a sequential Breadth-First Search (BFS) on the destination
+// handleDelete performs a sequential walk on the destination
 // to remove files and directories that do not exist in the source.
 func (r *nativeSyncRun) handleDelete() error {
 	plog.Info("Starting deletion phase")
@@ -437,12 +451,14 @@ func (r *nativeSyncRun) handleDelete() error {
 			return nil
 		}
 
-		// If a path is excluded, it should be ignored by the deletion logic.
+		// CRITICAL: We MUST check exclusions here.
+		// If we don't, files that were skipped during the source walk (and thus not in the map)
+		// will be treated as deleted files and removed from the destination.
 		if r.isExcluded(relPath, d.IsDir()) {
 			if d.IsDir() {
 				return filepath.SkipDir // Don't descend into excluded directories.
 			}
-			return nil // It's an excluded file, just skip it.
+			return nil // It's an excluded file, leave it alone.
 		}
 
 		// FUTURE NOTE: Case Sensitivity (Windows/macOS) Go maps are case-sensitive.
@@ -531,7 +547,7 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, dst string, mirror b
 		retryWait:         time.Duration(s.engine.NativeEngineRetryWaitSeconds) * time.Second,
 		syncedSourcePaths: make(map[string]bool), // Initialize the map for the collector.
 		// Buffer 'syncTasks' to handle bursts of rapid file discovery by the walker.
-		syncTasks: make(chan string, s.engine.NativeEngineWorkers*2),
+		syncTasks: make(chan syncTask, s.engine.NativeEngineWorkers*2),
 		// Buffer 'syncResults' to ensure syncWorkers don't block waiting for the collector.
 		syncResults: make(chan string, s.engine.NativeEngineWorkers*4),
 		syncErrs:    make(chan error, 1),
