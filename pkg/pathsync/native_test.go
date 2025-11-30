@@ -244,6 +244,26 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
+			name:        "Exclude Dirs without Trailing Slash",
+			mirror:      true,
+			excludeDirs: []string{"dist"}, // No trailing slash, should still be treated as a prefix
+			setup: func(t *testing.T, src, dst string) {
+				createFile(t, filepath.Join(src, "index.html"), "root file", baseTime)
+				createFile(t, filepath.Join(src, "dist", "bundle.js"), "should be excluded", baseTime)
+			},
+			verify: func(t *testing.T, src, dst string) {
+				if !pathExists(t, filepath.Join(dst, "index.html")) {
+					t.Error("expected index.html to be copied")
+				}
+				if pathExists(t, filepath.Join(dst, "dist")) {
+					t.Error("expected 'dist' directory to be excluded even without trailing slash")
+				}
+				if pathExists(t, filepath.Join(dst, "dist", "bundle.js")) {
+					t.Error("expected file inside excluded dir to not be copied")
+				}
+			},
+		},
+		{
 			name:         "Mirror Deletion - Keep Excluded File in Dest",
 			mirror:       true,
 			excludeFiles: []string{"*.log"},

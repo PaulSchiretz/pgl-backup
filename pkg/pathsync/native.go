@@ -270,10 +270,13 @@ func (r *nativeSyncRun) isExcluded(relPath string, isDir bool) bool {
 				return true
 			}
 		case prefixMatch:
-			// A pattern like "build/" is cleaned to "build". We must match both the directory
-			// "build" itself (relPath == p.cleanPattern) and any file inside it
-			// ("build/app.js", which has the prefix "build/").
-			if relPath == p.cleanPattern || strings.HasPrefix(relPath, p.cleanPattern+"/") {
+			// Check 1: Exact match for the excluded directory/folder name (e.g., relPath == "build")
+			if relPath == p.cleanPattern {
+				return true
+			}
+
+			// Check 2: Match any file/dir inside the excluded folder (e.g., relPath starts with "build/")
+			if strings.HasPrefix(relPath, p.cleanPattern+"/") {
 				return true
 			}
 		case suffixMatch:
@@ -578,7 +581,7 @@ func (r *nativeSyncRun) execute() error {
 }
 
 // preProcessExclusions analyzes and categorizes patterns to enable optimized matching later.
-func preProcessExclusions(patterns []string) []preProcessedExclusion {
+func preProcessExclusions(patterns []string, isDirPatterns bool) []preProcessedExclusion {
 	preProcessed := make([]preProcessedExclusion, 0, len(patterns))
 	for _, p := range patterns {
 		// Normalize to use forward slashes for consistent matching logic.
@@ -605,13 +608,16 @@ func preProcessExclusions(patterns []string) []preProcessedExclusion {
 			}
 		} else {
 			// No wildcards. Check if it's a directory prefix or a literal match.
-			if strings.HasSuffix(p, "/") {
+			// Refinement: If this is the directory exclusion list OR the pattern ends in a slash,
+			// we treat it as a prefix match to exclude contents inside.
+			if isDirPatterns || strings.HasSuffix(p, "/") {
 				preProcessed = append(preProcessed, preProcessedExclusion{
 					pattern:      p,
 					cleanPattern: strings.TrimSuffix(p, "/"),
 					matchType:    prefixMatch,
 				})
 			} else {
+				// Pure literal file match (e.g., "README.md")
 				preProcessed = append(preProcessed, preProcessedExclusion{pattern: p, matchType: literalMatch})
 			}
 		}
@@ -630,8 +636,8 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, dst string, mirror b
 		dryRun:                   s.dryRun,
 		quiet:                    s.quiet,
 		numSyncWorkers:           s.engine.NativeEngineWorkers,
-		preProcessedFileExcludes: preProcessExclusions(excludeFiles),
-		preProcessedDirExcludes:  preProcessExclusions(excludeDirs),
+		preProcessedFileExcludes: preProcessExclusions(excludeFiles, false),
+		preProcessedDirExcludes:  preProcessExclusions(excludeDirs, true),
 		retryCount:               s.engine.NativeEngineRetryCount,
 		retryWait:                time.Duration(s.engine.NativeEngineRetryWaitSeconds) * time.Second,
 		syncedSourcePaths:        make(map[string]bool), // Initialize the map for the collector.
