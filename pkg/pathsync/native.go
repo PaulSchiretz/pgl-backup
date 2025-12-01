@@ -159,8 +159,10 @@ func (r *nativeSyncRun) processFileSync(task syncTask) (syncTask, error) {
 	trgInfo, err := os.Stat(task.TrgAbsPath)
 	if err == nil {
 		// Destination exists.
-		// We skip if Source is NOT newer AND sizes match.
-		if !task.SrcInfo.ModTime().After(trgInfo.ModTime()) && task.SrcInfo.Size() == trgInfo.Size() {
+		// We skip the copy only if the modification times and sizes are identical.
+		// Using Equal for time is important for filesystem precision.
+		// Some filesystems have lower timestamp precision. Truncating can help, but Equal is a good start.
+		if task.SrcInfo.ModTime().Equal(trgInfo.ModTime()) && task.SrcInfo.Size() == trgInfo.Size() {
 			return task, nil
 		}
 	}
