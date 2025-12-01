@@ -3,6 +3,7 @@ package pathsync
 import (
 	"context"
 	"os"
+	"os/user"
 	"path/filepath"
 	"testing"
 	"time"
@@ -22,6 +23,21 @@ func createFile(t *testing.T, path, content string, modTime time.Time) {
 	}
 	if err := os.Chtimes(path, modTime, modTime); err != nil {
 		t.Fatalf("failed to set mod time for test file: %v", err)
+	}
+}
+
+// helper to create a directory with specific permissions and mod time.
+func createDir(t *testing.T, path string, perm os.FileMode, modTime time.Time) {
+	t.Helper()
+	// Create with default perms first, then apply specific ones to bypass umask.
+	if err := os.MkdirAll(path, 0755); err != nil {
+		t.Fatalf("failed to create dir for test: %v", err)
+	}
+	if err := os.Chmod(path, perm); err != nil {
+		t.Fatalf("failed to set perms for test dir: %v", err)
+	}
+	if err := os.Chtimes(path, modTime, modTime); err != nil {
+		t.Fatalf("failed to set mod time for test dir: %v", err)
 	}
 }
 
@@ -59,10 +75,27 @@ func getFileModTime(t *testing.T, path string) time.Time {
 	return info.ModTime()
 }
 
+// helper to get file/dir info.
+func getPathInfo(t *testing.T, path string) os.FileInfo {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("failed to get stat for %s: %v", path, err)
+	}
+	return info
+}
+
 // testFile defines a file to be created for a test case.
 type testFile struct {
 	path    string
 	content string
+	modTime time.Time
+}
+
+// testDir defines a directory to be created for a test case.
+type testDir struct {
+	path    string
+	perm    os.FileMode
 	modTime time.Time
 }
 
@@ -77,6 +110,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 		excludeFiles            []string
 		excludeDirs             []string
 		srcFiles                []testFile                          // Files to create in the source directory.
+		srcDirs                 []testDir                           // Dirs with special metadata to create in source.
 		dstFiles                []testFile                          // Files to create in the destination directory.
 		expectedDstFiles        []testFile                          // Files that must exist in the destination after sync.
 		expectedMissingDstFiles []string                            // Paths that must NOT exist in the destination after sync.
@@ -244,6 +278,40 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				{path: "obsolete.txt", content: "do not delete", modTime: baseTime},
 			},
 		},
+		{
+			name:   "Directory Metadata Sync",
+			mirror: false,
+			srcDirs: []testDir{
+				// Create a source dir with non-default permissions and a specific time.
+				{path: "special_dir", perm: 0700, modTime: baseTime.Add(-time.Hour)},
+			},
+			srcFiles: []testFile{
+				// This file will be created inside the special dir, which in a naive implementation
+				// would overwrite the parent's modTime.
+				{path: "special_dir/file.txt", content: "content", modTime: baseTime},
+			},
+			expectedDstFiles: []testFile{
+				{path: "special_dir/file.txt", content: "content", modTime: baseTime},
+			},
+			verify: func(t *testing.T, src, dst string) {
+				// This is the key assertion: verify the destination directory's metadata
+				// matches the source, proving the two-phase sync worked.
+				srcDirInfo := getPathInfo(t, filepath.Join(src, "special_dir"))
+				dstDirInfo := getPathInfo(t, filepath.Join(dst, "special_dir"))
+
+				// Skip permission check if running as non-root on Unix, as setting 0700 might not be possible
+				// for a directory owned by another user in the temp space.
+				u, err := user.Current()
+				if err == nil && u.Uid == "0" {
+					if srcDirInfo.Mode().Perm() != dstDirInfo.Mode().Perm() {
+						t.Errorf("expected destination dir permissions to be %v, but got %v", srcDirInfo.Mode().Perm(), dstDirInfo.Mode().Perm())
+					}
+				}
+				if !srcDirInfo.ModTime().Truncate(time.Second).Equal(dstDirInfo.ModTime().Truncate(time.Second)) {
+					t.Errorf("expected destination dir modTime to be %v, but got %v", srcDirInfo.ModTime(), dstDirInfo.ModTime())
+				}
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -261,6 +329,9 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			// Setup initial state from file matrices
 			for _, f := range tc.srcFiles {
 				createFile(t, filepath.Join(srcDir, f.path), f.content, f.modTime)
+			}
+			for _, d := range tc.srcDirs {
+				createDir(t, filepath.Join(srcDir, d.path), d.perm, d.modTime)
 			}
 			for _, f := range tc.dstFiles {
 				createFile(t, filepath.Join(dstDir, f.path), f.content, f.modTime)
