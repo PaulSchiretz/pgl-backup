@@ -1,5 +1,47 @@
 package pathsync
 
+// --- ARCHITECTURAL OVERVIEW ---
+//
+// The native sync engine uses a multi-phase approach to ensure both speed and correctness.
+//
+// --- Phase 1: Concurrent Sync (Producer-Consumer-Collector) ---
+//
+// The core of the engine uses a Producer-Consumer-Collector pattern to perform
+// file operations concurrently, maximizing I/O throughput. This pipeline is
+// orchestrated by the `handleSync` function and consists of three main components:
+//
+// 1. The Producer (`syncWalker`):
+//    - A single goroutine that walks the source directory tree (`filepath.WalkDir`).
+//    - For each file/directory, it creates a `syncTask` and sends it to the `syncTasks` channel.
+//    - It closes the `syncTasks` channel upon completion to signal the end of work.
+//
+// 2. The Consumers (`syncWorker`):
+//    - A pool of worker goroutines that read `syncTask` items from the `syncTasks` channel.
+//    - Each worker performs the necessary I/O (e.g., checking, copying files).
+//    - After processing, it sends the updated `syncTask` to the `syncResults` channel.
+//
+// 3. The Collector (`syncCollector`):
+//    - A single goroutine that reads processed tasks from the `syncResults` channel.
+//    - It populates the `syncedSourceTasks` map, which serves as the definitive record
+//      of all items that existed in the source. Using a single collector avoids
+//      the need for a mutex to protect the map.
+//
+// --- Phase 2: Sequential Finalization ---
+//
+// After the concurrent phase completes, two sequential passes are run to ensure
+// data consistency and handle deletions.
+//
+// 4. Metadata Finalization (`handleDirMetadataSync`):
+//    - A single-threaded pass that iterates over all directories that were modified.
+//    - It applies the final permissions and timestamps to directories.
+//    - This is done *after* all file copies are complete to prevent race conditions where
+//      a file copy might alter a parent directory's modification time after it has been set.
+//
+// 5. Mirroring (`handleMirror`):
+//    - If mirroring is enabled, this final pass walks the *destination* directory.
+//    - It checks each item against the `syncedSourceTasks` map created by the Collector.
+//    - Any destination item not found in the map (and not excluded) is deleted.
+//
 // The native sync engine implements a robust, concurrent file synchronization process.
 // A key design principle is ensuring the backup process does not lock itself out.
 // To achieve this, all directories created or modified in the destination will have
