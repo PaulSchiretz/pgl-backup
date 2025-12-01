@@ -16,10 +16,12 @@ import (
 // syncTask holds all the necessary metadata for a worker to process a file
 // without re-calculating paths or re-fetching filesystem stats.
 type syncTask struct {
-	AbsPath string
-	RelPath string
-	Info    os.FileInfo // Cached info from the Walker
-	IsDir   bool
+	SrcAbsPath string
+	SrcRelPath string
+	SrcInfo    os.FileInfo // Cached info from the Walker
+	TrgAbsPath string
+	TrgRelPath string
+	IsDir      bool
 }
 
 type exclusionType int
@@ -41,7 +43,7 @@ type preProcessedExclusion struct {
 // nativeSyncRun encapsulates the state and logic for a single native sync operation.
 // It coordinates the Producer (Walker), Consumers (Workers), and Collector.
 type nativeSyncRun struct {
-	src, dst                 string
+	src, trg                 string
 	mirror, dryRun, quiet    bool
 	numSyncWorkers           int
 	preProcessedFileExcludes []preProcessedExclusion
@@ -70,7 +72,7 @@ type nativeSyncRun struct {
 
 // copyFileHelper handles the low-level details of copying a single file.
 // It ensures atomicity by writing to a temporary file first and then renaming it.
-func copyFileHelper(src, dst string, retryCount int, retryWait time.Duration) error {
+func copyFileHelper(src, trg string, retryCount int, retryWait time.Duration) error {
 	var lastErr error
 	for i := 0; i <= retryCount; i++ {
 		if i > 0 {
@@ -85,31 +87,29 @@ func copyFileHelper(src, dst string, retryCount int, retryWait time.Duration) er
 			}
 			defer in.Close()
 
-			// 1. Create a temporary file in the destination directory.
-			dstDir := filepath.Dir(dst)
-			// Ensure the destination directory exists. This is necessary to prevent a race
-			// condition where a file worker tries to create a temp file in a directory
-			// that hasn't been created by another worker yet.
-			// We use 0755 as a safe default. The actual processDirectorySync task
-			// will eventually come along and correct the permissions/timestamps.
-			if err := os.MkdirAll(dstDir, 0755); err != nil {
-				return fmt.Errorf("failed to ensure destination directory %s exists: %w", dstDir, err)
+			trgDir := filepath.Dir(trg)
+
+			// 1. Ensure the destination directory exists.
+			if err := os.MkdirAll(trgDir, 0755); err != nil {
+				return fmt.Errorf("failed to ensure destination directory %s exists: %w", trgDir, err)
 			}
-			out, err := os.CreateTemp(dstDir, "pgl-backup-*.tmp")
+
+			// 2. Create a temporary file in the destination directory.
+			out, err := os.CreateTemp(trgDir, "pgl-backup-*.tmp")
 			if err != nil {
-				return fmt.Errorf("failed to create temporary file in %s: %w", dstDir, err)
+				return fmt.Errorf("failed to create temporary file in %s: %w", trgDir, err)
 			}
 
 			tempPath := out.Name()
 			defer os.Remove(tempPath)
 
-			// 2. Copy content
+			// 3. Copy content
 			if _, err = io.Copy(out, in); err != nil {
 				out.Close() // Close before returning on error
 				return fmt.Errorf("failed to copy content from %s to %s: %w", src, tempPath, err)
 			}
 
-			// 3. Copy file metadata (Permissions and Timestamps)
+			// 4. Copy file metadata (Permissions and Timestamps)
 			info, err := os.Stat(src)
 			if err != nil {
 				out.Close() // Close before returning on error
@@ -121,21 +121,21 @@ func copyFileHelper(src, dst string, retryCount int, retryWait time.Duration) er
 				return fmt.Errorf("failed to set permissions on temporary file %s: %w", tempPath, err)
 			}
 
-			// 4. Close the file.
+			// 5. Close the file.
 			// This flushes data to disk. It MUST be done before Chtimes,
 			// because closing/flushing might update the modification time.
 			if err := out.Close(); err != nil {
 				return fmt.Errorf("failed to close temporary file %s: %w", tempPath, err)
 			}
 
-			// 5. Copy Timestamps
+			// 6. Copy Timestamps
 			// We do this via os.Chtimes (using the path) after the file is closed.
 			if err := os.Chtimes(tempPath, info.ModTime(), info.ModTime()); err != nil {
 				return fmt.Errorf("failed to set timestamps on %s: %w", tempPath, err)
 			}
 
 			// 6. Atomically move the temporary file to the final destination.
-			return os.Rename(tempPath, dst)
+			return os.Rename(tempPath, trg)
 		}()
 
 		if lastErr == nil {
@@ -145,42 +145,70 @@ func copyFileHelper(src, dst string, retryCount int, retryWait time.Duration) er
 	return fmt.Errorf("failed to copy file %s after %d retries: %w", src, retryCount, lastErr)
 }
 
-// processDirectorySync ensures the destination directory exists and matches source metadata.
-func (r *nativeSyncRun) processDirectorySync(dstPath, relPath string, srcInfo os.FileInfo) error {
+// processFileSync checks if a file needs to be copied (based on size/time)
+// and triggers the copy operation if needed.
+func (r *nativeSyncRun) processFileSync(task syncTask) error {
 	if r.dryRun {
-		plog.Info("[DRY RUN] SYNCDIR", "path", relPath)
+		plog.Info("[DRY RUN] COPY", "path", task.SrcRelPath)
+		return nil
+	}
+
+	// Check if the destination file exists and if it matches.
+	trgInfo, err := os.Stat(task.TrgAbsPath)
+	if err == nil {
+		// Destination exists.
+		// We skip if Source is NOT newer AND sizes match.
+		if !task.SrcInfo.ModTime().After(trgInfo.ModTime()) && task.SrcInfo.Size() == trgInfo.Size() {
+			return nil
+		}
+	}
+
+	if err := copyFileHelper(task.SrcAbsPath, task.TrgAbsPath, r.retryCount, r.retryWait); err != nil {
+		return fmt.Errorf("failed to copy file to %s: %w", task.TrgAbsPath, err)
+	}
+
+	if !r.quiet {
+		plog.Info("COPY", "path", task.SrcRelPath)
+	}
+	return nil
+}
+
+// processDirectorySync ensures the destination directory exists and matches source metadata.
+func (r *nativeSyncRun) processDirectorySync(task syncTask) error {
+	if r.dryRun {
+		plog.Info("[DRY RUN] SYNCDIR", "path", task.SrcRelPath)
 		return nil
 	}
 
 	// 1. Check if destination exists
-	dstInfo, err := os.Stat(dstPath)
+	trgInfo, err := os.Stat(task.TrgAbsPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// It doesn't exist, create it.
-			if err := os.MkdirAll(dstPath, srcInfo.Mode()); err != nil {
-				return fmt.Errorf("failed to create directory %s: %w", dstPath, err)
+			if err := os.MkdirAll(task.TrgAbsPath, task.SrcInfo.Mode()); err != nil {
+				return fmt.Errorf("failed to create directory %s: %w", task.TrgAbsPath, err)
 			}
-			// Refresh dstInfo after creation to check if umask altered permissions
-			dstInfo, err = os.Stat(dstPath)
+			// Refresh trgInfo after creation to check if umask altered permissions
+			trgInfo, err = os.Stat(task.TrgAbsPath)
 			if err != nil {
-				return fmt.Errorf("failed to stat newly created directory %s: %w", dstPath, err)
+				return fmt.Errorf("failed to stat newly created directory %s: %w", task.TrgAbsPath, err)
 			}
 		} else {
 			// Genuine error accessing destination
-			return fmt.Errorf("failed to stat destination %s: %w", dstPath, err)
+			return fmt.Errorf("failed to stat destination %s: %w", task.TrgAbsPath, err)
 		}
 	} else {
 		// It exists. Verify it is actually a directory.
-		if !dstInfo.IsDir() {
-			return fmt.Errorf("destination path %s exists but is not a directory", dstPath)
+		if !trgInfo.IsDir() {
+			return fmt.Errorf("destination path %s exists but is not a directory", task.TrgAbsPath)
 		}
 	}
 
 	// 2. Sync Permissions
 	// We mask with os.ModePerm to compare only permission bits (rwxrwxrwx), ignoring file type bits.
-	if dstInfo.Mode().Perm() != srcInfo.Mode().Perm() {
-		if err := os.Chmod(dstPath, srcInfo.Mode()); err != nil {
-			return fmt.Errorf("failed to chmod directory %s: %w", dstPath, err)
+	if trgInfo.Mode().Perm() != task.SrcInfo.Mode().Perm() {
+		if err := os.Chmod(task.TrgAbsPath, task.SrcInfo.Mode()); err != nil {
+			return fmt.Errorf("failed to chmod directory %s: %w", task.TrgAbsPath, err)
 		}
 	}
 
@@ -188,42 +216,14 @@ func (r *nativeSyncRun) processDirectorySync(dstPath, relPath string, srcInfo os
 	// We strictly sync modTime. We don't check if they differ first because directory
 	// times change frequently (e.g., when a file inside is created), so we force it
 	// to match source at the moment of sync.
-	if !dstInfo.ModTime().Equal(srcInfo.ModTime()) {
-		if err := os.Chtimes(dstPath, srcInfo.ModTime(), srcInfo.ModTime()); err != nil {
-			return fmt.Errorf("failed to chtimes directory %s: %w", dstPath, err)
+	if !trgInfo.ModTime().Equal(task.SrcInfo.ModTime()) {
+		if err := os.Chtimes(task.TrgAbsPath, task.SrcInfo.ModTime(), task.SrcInfo.ModTime()); err != nil {
+			return fmt.Errorf("failed to chtimes directory %s: %w", task.TrgAbsPath, err)
 		}
 	}
 
 	if !r.quiet {
-		plog.Info("SYNCDIR", "path", relPath)
-	}
-	return nil
-}
-
-// processRegularFileSync checks if a file needs to be copied (based on size/time)
-// and triggers the copy operation if needed.
-func (r *nativeSyncRun) processRegularFileSync(path, dstPath, relPath string, srcInfo os.FileInfo) error {
-	if r.dryRun {
-		plog.Info("[DRY RUN] COPY", "path", relPath)
-		return nil
-	}
-
-	// Check if the destination file exists and if it matches.
-	dstInfo, err := os.Stat(dstPath)
-	if err == nil {
-		// Destination exists.
-		// We skip if Source is NOT newer AND sizes match.
-		if !srcInfo.ModTime().After(dstInfo.ModTime()) && srcInfo.Size() == dstInfo.Size() {
-			return nil
-		}
-	}
-
-	if err := copyFileHelper(path, dstPath, r.retryCount, r.retryWait); err != nil {
-		return fmt.Errorf("failed to copy file to %s: %w", dstPath, err)
-	}
-
-	if !r.quiet {
-		plog.Info("COPY", "path", relPath)
+		plog.Info("SYNCDIR", "path", task.SrcRelPath)
 	}
 	return nil
 }
@@ -232,25 +232,24 @@ func (r *nativeSyncRun) processRegularFileSync(path, dstPath, relPath string, sr
 // It determines if the path is a directory, file, or something to skip.
 // It receives the full task struct so it doesn't need to do any discovery.
 func (r *nativeSyncRun) processPathSync(task syncTask) error {
-	dstPath := filepath.Join(r.dst, task.RelPath)
 
-	if task.RelPath == "." {
+	if task.SrcRelPath == "." {
 		return nil // The root directory itself doesn't need I/O processing
 	}
 
 	// Drectory
 	if task.IsDir {
-		return r.processDirectorySync(dstPath, task.RelPath, task.Info)
+		return r.processDirectorySync(task)
 	}
 
 	// Regular File
-	if task.Info.Mode().IsRegular() {
-		return r.processRegularFileSync(task.AbsPath, dstPath, task.RelPath, task.Info)
+	if task.SrcInfo.Mode().IsRegular() {
+		return r.processFileSync(task)
 	}
 
 	// Symlinks, Named Pipes, etc.
 	if !r.quiet {
-		plog.Info("SKIP", "type", task.Info.Mode().String(), "path", task.RelPath)
+		plog.Info("SKIP", "type", task.SrcInfo.Mode().String(), "path", task.SrcRelPath)
 	}
 	return nil
 }
@@ -360,10 +359,12 @@ func (r *nativeSyncRun) syncWalker() {
 
 		// 4. Create Task
 		task := syncTask{
-			AbsPath: path,
-			RelPath: relPath,
-			Info:    info,
-			IsDir:   d.IsDir(),
+			SrcAbsPath: path,
+			SrcRelPath: relPath,
+			TrgRelPath: relPath,
+			TrgAbsPath: filepath.Join(r.trg, relPath),
+			SrcInfo:    info,
+			IsDir:      d.IsDir(),
 		}
 
 		select {
@@ -408,7 +409,7 @@ func (r *nativeSyncRun) syncWorker() {
 				}
 
 				plog.Warn("Sync failed for path, preserving in destination map to prevent deletion",
-					"path", task.RelPath,
+					"path", task.SrcRelPath,
 					"error", err,
 					"note", "This file may be inconsistent or outdated in the destination")
 				// We purposefully fall through to step 3
@@ -421,7 +422,7 @@ func (r *nativeSyncRun) syncWorker() {
 			select { //nolint:gosimple // This select is intentional for context cancellation.
 			case <-r.ctx.Done():
 				return
-			case r.syncResults <- task.RelPath:
+			case r.syncResults <- task.SrcRelPath:
 			}
 		}
 	}
@@ -484,7 +485,7 @@ func (r *nativeSyncRun) handleDelete() error {
 	plog.Info("Starting deletion phase")
 
 	// WalkDir is efficient and allows us to skip trees we delete.
-	err := filepath.WalkDir(r.dst, func(path string, d os.DirEntry, err error) error {
+	err := filepath.WalkDir(r.trg, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			// If path is already gone (e.g. parent deleted), just continue.
 			if os.IsNotExist(err) {
@@ -500,7 +501,7 @@ func (r *nativeSyncRun) handleDelete() error {
 		default:
 		}
 
-		relPath, err := filepath.Rel(r.dst, path)
+		relPath, err := filepath.Rel(r.trg, path)
 		if err != nil {
 			return fmt.Errorf("failed to get relative path for %s: %w", path, err)
 		}
@@ -634,12 +635,12 @@ func preProcessExclusions(patterns []string, isDirPatterns bool) []preProcessedE
 }
 
 // handleNative initializes the sync run structure and kicks off the execution.
-func (s *PathSyncer) handleNative(ctx context.Context, src, dst string, mirror bool, excludeFiles, excludeDirs []string) error {
-	plog.Info("Starting native sync", "from", src, "to", dst)
+func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror bool, excludeFiles, excludeDirs []string) error {
+	plog.Info("Starting native sync", "from", src, "to", trg)
 
 	run := &nativeSyncRun{
 		src:                      src,
-		dst:                      dst,
+		trg:                      trg,
 		mirror:                   mirror,
 		dryRun:                   s.dryRun,
 		quiet:                    s.quiet,
