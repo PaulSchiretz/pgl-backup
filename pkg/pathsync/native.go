@@ -54,6 +54,7 @@ type nativeSyncRun struct {
 	preProcessedDirExcludes  []preProcessedExclusion
 	retryCount               int
 	retryWait                time.Duration
+	modTimeWindow            time.Duration
 
 	// syncedSourceTasks is populated by the Collector and read by the Deletion phase.
 	syncedSourceTasks map[string]syncTask
@@ -162,10 +163,13 @@ func (r *nativeSyncRun) processFileSync(task syncTask) (syncTask, error) {
 	if err == nil {
 		// Destination exists.
 		// We skip the copy only if the modification times and sizes are identical.
-		// Using Equal for time is important for filesystem precision.
-		// We truncate to the second to handle filesystems with different timestamp resolutions (e.g., FAT vs NTFS).
-		srcModTime := task.SrcInfo.ModTime().Truncate(time.Second)
-		trgModTime := trgInfo.ModTime().Truncate(time.Second)
+		// We truncate the times to a configured window to handle filesystems with different timestamp resolutions.
+		srcModTime := task.SrcInfo.ModTime()
+		trgModTime := trgInfo.ModTime()
+		if r.modTimeWindow > 0 {
+			srcModTime = srcModTime.Truncate(r.modTimeWindow)
+			trgModTime = trgModTime.Truncate(r.modTimeWindow)
+		}
 		if srcModTime.Equal(trgModTime) && task.SrcInfo.Size() == trgInfo.Size() {
 			return task, nil
 		}
@@ -204,9 +208,13 @@ func (r *nativeSyncRun) processDirectorySync(task syncTask) (syncTask, error) {
 	}
 
 	// 3. Determine if a finalization pass is needed by comparing metadata.
-	// We truncate to the second to handle filesystems with different timestamp resolutions.
-	srcModTime := task.SrcInfo.ModTime().Truncate(time.Second)
-	trgModTime := trgInfo.ModTime().Truncate(time.Second)
+	// We truncate the times to a configured window to handle filesystems with different timestamp resolutions.
+	srcModTime := task.SrcInfo.ModTime()
+	trgModTime := trgInfo.ModTime()
+	if r.modTimeWindow > 0 {
+		srcModTime = srcModTime.Truncate(r.modTimeWindow)
+		trgModTime = trgModTime.Truncate(r.modTimeWindow)
+	}
 	if trgInfo.Mode().Perm() != task.SrcInfo.Mode().Perm() || !trgModTime.Equal(srcModTime) {
 		// Directory exists, but permissions or modification time are wrong.
 		// Mark as modified so they get fixed in the finalization pass.
@@ -717,6 +725,7 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror b
 		preProcessedDirExcludes:  preProcessExclusions(excludeDirs, true),
 		retryCount:               s.engine.NativeEngineRetryCount,
 		retryWait:                time.Duration(s.engine.NativeEngineRetryWaitSeconds) * time.Second,
+		modTimeWindow:            time.Duration(s.engine.NativeEngineModTimeWindowSeconds) * time.Second,
 		syncedSourceTasks:        make(map[string]syncTask), // Initialize the map for the collector.
 		// Buffer 'syncTasks' to handle bursts of rapid file discovery by the walker.
 		syncTasks: make(chan syncTask, s.engine.NativeEngineWorkers*2),

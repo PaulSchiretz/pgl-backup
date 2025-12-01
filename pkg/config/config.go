@@ -157,10 +157,11 @@ func (se *SyncEngine) UnmarshalJSON(data []byte) error {
 }
 
 type BackupEngineConfig struct {
-	Type                         SyncEngine `json:"type"`
-	NativeEngineWorkers          int        `json:"nativeEngineWorkers"`
-	NativeEngineRetryCount       int        `json:"nativeEngineRetryCount"`
-	NativeEngineRetryWaitSeconds int        `json:"nativeEngineRetryWaitSeconds"`
+	Type                             SyncEngine `json:"type"`
+	NativeEngineWorkers              int        `json:"nativeEngineWorkers"`
+	NativeEngineRetryCount           int        `json:"nativeEngineRetryCount"`
+	NativeEngineRetryWaitSeconds     int        `json:"nativeEngineRetryWaitSeconds"`
+	NativeEngineModTimeWindowSeconds int        `json:"nativeEngineModTimeWindowSeconds" comment:"Time window in seconds to consider file modification times equal. Handles filesystem timestamp precision differences. Default is 1s. 0 means exact match."`
 }
 
 type Config struct {
@@ -186,10 +187,11 @@ func NewDefault() Config {
 		Quiet:            false,
 		DryRun:           false,
 		Engine: BackupEngineConfig{
-			Type:                         NativeEngine,
-			NativeEngineWorkers:          runtime.NumCPU(), // Default to the number of CPU cores.
-			NativeEngineRetryCount:       3,                // Default retries on failure.
-			NativeEngineRetryWaitSeconds: 5,                // Default wait time between retries.
+			Type:                             NativeEngine,
+			NativeEngineWorkers:              runtime.NumCPU(), // Default to the number of CPU cores.
+			NativeEngineRetryCount:           3,                // Default retries on failure.
+			NativeEngineRetryWaitSeconds:     5,                // Default wait time between retries.
+			NativeEngineModTimeWindowSeconds: 1,                // Set the default to 1 second
 		},
 		Naming: BackupNamingConfig{
 			Prefix:                "PGL_Backup_",

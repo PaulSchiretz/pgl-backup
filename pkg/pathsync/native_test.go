@@ -115,6 +115,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 		dstFiles                []testFile                          // Files to create in the destination directory.
 		expectedDstFiles        []testFile                          // Files that must exist in the destination after sync.
 		expectedMissingDstFiles []string                            // Paths that must NOT exist in the destination after sync.
+		modTimeWindow           *int                                // Optional override for mod time window. If nil, uses default.
 		verify                  func(t *testing.T, src, dst string) // Optional custom verification.
 	}{
 		{
@@ -153,6 +154,22 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 			expectedDstFiles: []testFile{
 				{path: "file1.txt", content: "same", modTime: baseTime},
+			},
+		},
+		{
+			name:          "Exact ModTime Match - Window 0",
+			modTimeWindow: new(int), // Set to 0
+			srcFiles: []testFile{
+				// Source file with a high-precision timestamp.
+				{path: "file.txt", content: "content", modTime: baseTime.Add(500 * time.Millisecond)},
+			},
+			dstFiles: []testFile{
+				// Destination file with same content but slightly different time (within the 1s default window).
+				{path: "file.txt", content: "content", modTime: baseTime.Add(600 * time.Millisecond)},
+			},
+			expectedDstFiles: []testFile{
+				// With a 0s window, the times are not equal, so the file MUST be copied.
+				{path: "file.txt", content: "content", modTime: baseTime.Add(500 * time.Millisecond)},
 			},
 		},
 		{
@@ -308,6 +325,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 						t.Errorf("expected destination dir permissions to be %v, but got %v", srcDirInfo.Mode().Perm(), dstDirInfo.Mode().Perm())
 					}
 				}
+				// Use a 1-second window for comparison, matching the default config.
 				if !srcDirInfo.ModTime().Truncate(time.Second).Equal(dstDirInfo.ModTime().Truncate(time.Second)) {
 					t.Errorf("expected destination dir modTime to be %v, but got %v", srcDirInfo.ModTime(), dstDirInfo.ModTime())
 				}
@@ -415,6 +433,11 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			cfg.Engine.NativeEngineWorkers = 2 // Use a small number of workers for tests
 			cfg.Engine.NativeEngineRetryCount = 0
 			syncer := NewPathSyncer(cfg)
+			// Use test-case specific mod time window if provided, otherwise default to 1s.
+			syncer.engine.NativeEngineModTimeWindowSeconds = 1
+			if tc.modTimeWindow != nil {
+				syncer.engine.NativeEngineModTimeWindowSeconds = *tc.modTimeWindow
+			}
 
 			// Act
 			err := syncer.handleNative(context.Background(), srcDir, dstDir, tc.mirror, tc.excludeFiles, tc.excludeDirs)
@@ -432,7 +455,12 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				if content := getFileContent(t, fullPath); content != f.content {
 					t.Errorf("expected content for %s to be %q, but got %q", f.path, f.content, content)
 				}
-				if modTime := getFileModTime(t, fullPath).Truncate(time.Second); !modTime.Equal(f.modTime.Truncate(time.Second)) {
+				// For mod time comparison, use the same window as the syncer.
+				window := time.Duration(syncer.engine.NativeEngineModTimeWindowSeconds) * time.Second
+				modTime := getFileModTime(t, fullPath)
+				expectedModTime := f.modTime
+
+				if window > 0 && !modTime.Truncate(window).Equal(expectedModTime.Truncate(window)) || window == 0 && !modTime.Equal(expectedModTime) {
 					t.Errorf("expected modTime for %s to be %v, but got %v", f.path, f.modTime, modTime)
 				}
 			}
