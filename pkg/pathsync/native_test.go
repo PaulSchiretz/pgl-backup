@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -312,10 +313,74 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:         "Exclusion with Backslashes on Windows",
+			mirror:       true,
+			excludeFiles: []string{`logs\app.log`}, // Use backslash in pattern
+			excludeDirs:  []string{`vendor\`},      // Use backslash in pattern
+			srcFiles: []testFile{
+				{path: "main.go", content: "package main", modTime: baseTime},
+				{path: filepath.Join("logs", "app.log"), content: "log data", modTime: baseTime},
+				{path: filepath.Join("vendor", "lib", "library.go"), content: "lib code", modTime: baseTime},
+			},
+			expectedDstFiles: []testFile{
+				{path: "main.go", content: "package main", modTime: baseTime},
+			},
+			expectedMissingDstFiles: []string{
+				filepath.Join("logs", "app.log"),
+				"vendor",
+			},
+		},
+		{
+			name:   "Case Insensitive Mirror - Keep Mismatched Case",
+			mirror: true,
+			srcFiles: []testFile{
+				{path: "Image.PNG", content: "new content", modTime: baseTime.Add(time.Hour)},
+			},
+			dstFiles: []testFile{
+				{path: "image.png", content: "old content", modTime: baseTime},
+			},
+			expectedDstFiles: []testFile{
+				// On case-insensitive systems, the destination file should be updated, not deleted and recreated.
+				// The final casing might depend on the OS, but the content and time must match the source.
+				// We check against the original destination path `image.png`.
+				{path: "image.png", content: "new content", modTime: baseTime.Add(time.Hour)},
+			},
+			expectedMissingDstFiles: []string{}, // Nothing should be deleted
+			verify: func(t *testing.T, src, dst string) {
+				// Crucially, verify that the differently-cased source file was NOT created.
+				// On a case-insensitive OS, os.Stat("Image.PNG") would succeed even if only "image.png" exists.
+				// We must read the directory to get the actual filename on disk.
+				entries, err := os.ReadDir(dst)
+				if err != nil {
+					t.Fatalf("failed to read destination directory: %v", err)
+				}
+				for _, entry := range entries {
+					// Check if a file with the source's casing was created.
+					// We expect only "image.png" to exist.
+					if entry.Name() == "Image.PNG" {
+						t.Error("expected file 'Image.PNG' not to be created in destination, but it was")
+					}
+				}
+			},
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			// --- Test-specific setup ---
+			if tc.name == "Exclusion with Backslashes on Windows" {
+				if runtime.GOOS != "windows" {
+					t.Skip("Skipping Windows-specific backslash test on non-windows OS")
+				}
+			}
+			// --- Test-specific setup ---
+			if tc.name == "Case Insensitive Mirror - Keep Mismatched Case" {
+				if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
+					t.Skip("Skipping case-insensitive test on case-sensitive OS")
+				}
+			}
+
 			// Arrange
 			srcDir := t.TempDir()
 			dstDir := t.TempDir()

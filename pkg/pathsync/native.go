@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -48,6 +49,7 @@ type nativeSyncRun struct {
 	src, trg                 string
 	mirror, dryRun, quiet    bool
 	numSyncWorkers           int
+	caseInsensitive          bool
 	preProcessedFileExcludes []preProcessedExclusion
 	preProcessedDirExcludes  []preProcessedExclusion
 	retryCount               int
@@ -161,8 +163,10 @@ func (r *nativeSyncRun) processFileSync(task syncTask) (syncTask, error) {
 		// Destination exists.
 		// We skip the copy only if the modification times and sizes are identical.
 		// Using Equal for time is important for filesystem precision.
-		// Some filesystems have lower timestamp precision. Truncating can help, but Equal is a good start.
-		if task.SrcInfo.ModTime().Equal(trgInfo.ModTime()) && task.SrcInfo.Size() == trgInfo.Size() {
+		// We truncate to the second to handle filesystems with different timestamp resolutions (e.g., FAT vs NTFS).
+		srcModTime := task.SrcInfo.ModTime().Truncate(time.Second)
+		trgModTime := trgInfo.ModTime().Truncate(time.Second)
+		if srcModTime.Equal(trgModTime) && task.SrcInfo.Size() == trgInfo.Size() {
 			return task, nil
 		}
 	}
@@ -200,7 +204,10 @@ func (r *nativeSyncRun) processDirectorySync(task syncTask) (syncTask, error) {
 	}
 
 	// 3. Determine if a finalization pass is needed by comparing metadata.
-	if trgInfo.Mode().Perm() != task.SrcInfo.Mode().Perm() || !trgInfo.ModTime().Equal(task.SrcInfo.ModTime()) {
+	// We truncate to the second to handle filesystems with different timestamp resolutions.
+	srcModTime := task.SrcInfo.ModTime().Truncate(time.Second)
+	trgModTime := trgInfo.ModTime().Truncate(time.Second)
+	if trgInfo.Mode().Perm() != task.SrcInfo.Mode().Perm() || !trgModTime.Equal(srcModTime) {
 		// Directory exists, but permissions or modification time are wrong.
 		// Mark as modified so they get fixed in the finalization pass.
 		task.Modified = true
@@ -313,6 +320,11 @@ func (r *nativeSyncRun) syncWalker() {
 		}
 
 		relPath, err := filepath.Rel(r.src, path)
+		// On case-insensitive filesystems, normalize the path for map key consistency.
+		if r.caseInsensitive {
+			relPath = strings.ToLower(relPath)
+		}
+
 		if err != nil {
 			// This should not happen if path is from WalkDir on r.src
 			plog.Warn("Could not get relative path, skipping", "path", path, "error", err)
@@ -420,6 +432,10 @@ func (r *nativeSyncRun) syncWorker() {
 func (r *nativeSyncRun) syncCollector(syncCollectorDone chan struct{}) {
 	defer close(syncCollectorDone)
 	for task := range r.syncResults {
+		// The relPath in the task was already normalized by the walker if needed.
+		// This ensures the map key is consistently cased.
+		// Example: On Windows, both a source `Image.png` and a destination `image.png`
+		// will resolve to the same map key: `image.png`.
 		r.syncedSourceTasks[task.SrcRelPath] = task
 	}
 }
@@ -448,7 +464,9 @@ func (r *nativeSyncRun) handleDirectoryMetadataSync() error {
 	// This is a robust pattern ensuring that child modifications (if any were to occur)
 	// would be complete before processing the parent.
 	sort.Slice(dirTasks, func(i, j int) bool {
-		return len(strings.Split(dirTasks[i].SrcRelPath, string(os.PathSeparator))) > len(strings.Split(dirTasks[j].SrcRelPath, string(os.PathSeparator)))
+		// Sorting by path depth (by counting separators) is the most reliable way to sort from deepest to shallowest.
+		// A previous suggestion to sort by string length was incorrect.
+		return strings.Count(dirTasks[i].SrcRelPath, string(os.PathSeparator)) > strings.Count(dirTasks[j].SrcRelPath, string(os.PathSeparator))
 	})
 
 	// 3. Apply metadata in sorted order.
@@ -547,18 +565,13 @@ func (r *nativeSyncRun) handleMirror() error {
 			return fmt.Errorf("failed to get relative path for %s: %w", path, err)
 		}
 
-		if relPath == "." {
-			return nil
+		// On case-insensitive filesystems, normalize the path for map key consistency.
+		if r.caseInsensitive {
+			relPath = strings.ToLower(relPath)
 		}
 
-		// CRITICAL: We MUST check exclusions here.
-		// If we don't, files that were skipped during the source walk (and thus not in the map)
-		// will be treated as deleted files and removed from the destination.
-		if r.isExcluded(relPath, d.IsDir()) {
-			if d.IsDir() {
-				return filepath.SkipDir // Don't descend into excluded directories.
-			}
-			return nil // It's an excluded file, leave it alone.
+		if relPath == "." {
+			return nil
 		}
 
 		// FUTURE NOTE: Case Sensitivity (Windows/macOS) Go maps are case-sensitive.
@@ -567,9 +580,22 @@ func (r *nativeSyncRun) handleMirror() error {
 		// Result: The map lookup fails, and handleDelete deletes image.png.
 		// Assessment: For a strict sync tool, this is often desired behavior (enforcing case match), but on Windows, it can sometimes surprise users. For now we stick with strict!
 
-		// Check the map to see if this path existed in the source.
+		// Check if the destination path existed in the source.
 		// No lock is needed here because all workers have finished.
-		if _, exists := r.syncedSourceTasks[relPath]; !exists {
+		if _, exists := r.syncedSourceTasks[relPath]; exists {
+			// The path exists in the source, so we keep it.
+			return nil
+		}
+
+		// The path is not in the source. Now we must check if it was excluded.
+		// If it was excluded, we must NOT delete it.
+		if r.isExcluded(relPath, d.IsDir()) {
+			if d.IsDir() {
+				return filepath.SkipDir // It's an excluded dir, leave it and its contents alone.
+			}
+			return nil // It's an excluded file, leave it alone.
+		} else {
+			// The path is not in the source and is not excluded, so it must be deleted.
 
 			if r.dryRun {
 				plog.Info("[DRY RUN] DELETE", "path", relPath)
@@ -685,6 +711,7 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror b
 		mirror:                   mirror,
 		dryRun:                   s.dryRun,
 		quiet:                    s.quiet,
+		caseInsensitive:          runtime.GOOS == "windows" || runtime.GOOS == "darwin",
 		numSyncWorkers:           s.engine.NativeEngineWorkers,
 		preProcessedFileExcludes: preProcessExclusions(excludeFiles, false),
 		preProcessedDirExcludes:  preProcessExclusions(excludeDirs, true),
