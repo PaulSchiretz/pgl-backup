@@ -75,17 +75,20 @@ type nativeSyncRun struct {
 	ctx context.Context
 }
 
+// --- Helpers ---
+
 // copyFileHelper handles the low-level details of copying a single file.
 // It ensures atomicity by writing to a temporary file first and then renaming it.
-func copyFileHelper(src, trg string, retryCount int, retryWait time.Duration) error {
+func copyFileHelper(task syncTask, retryCount int, retryWait time.Duration) error {
 	var lastErr error
 	for i := 0; i <= retryCount; i++ {
 		if i > 0 {
-			plog.Warn("Retrying file copy", "file", src, "attempt", fmt.Sprintf("%d/%d", i, retryCount), "after", retryWait)
+			plog.Warn("Retrying file copy", "file", task.SrcAbsPath, "attempt", fmt.Sprintf("%d/%d", i, retryCount), "after", retryWait)
 			time.Sleep(retryWait)
 		}
 
 		lastErr = func() error {
+			src, trg := task.SrcAbsPath, task.TrgAbsPath
 			in, err := os.Open(src)
 			if err != nil {
 				return fmt.Errorf("failed to open source file %s: %w", src, err)
@@ -106,7 +109,13 @@ func copyFileHelper(src, trg string, retryCount int, retryWait time.Duration) er
 			}
 
 			tempPath := out.Name()
-			defer os.Remove(tempPath)
+			// Defer the removal of the temp file. If the rename succeeds, tempPath will be set to "",
+			// making this a no-op. This prevents an error trying to remove a non-existent file.
+			defer func() {
+				if tempPath != "" {
+					os.Remove(tempPath)
+				}
+			}()
 
 			// 3. Copy content
 			if _, err = io.Copy(out, in); err != nil {
@@ -114,14 +123,8 @@ func copyFileHelper(src, trg string, retryCount int, retryWait time.Duration) er
 				return fmt.Errorf("failed to copy content from %s to %s: %w", src, tempPath, err)
 			}
 
-			// 4. Copy file metadata (Permissions and Timestamps)
-			info, err := os.Stat(src)
-			if err != nil {
-				out.Close() // Close before returning on error
-				return fmt.Errorf("failed to get stat for source file %s: %w", src, err)
-			}
-
-			if err := out.Chmod(info.Mode()); err != nil {
+			// 4. Copy file permissions
+			if err := out.Chmod(task.SrcInfo.Mode()); err != nil {
 				out.Close() // Close before returning on error
 				return fmt.Errorf("failed to set permissions on temporary file %s: %w", tempPath, err)
 			}
@@ -133,21 +136,72 @@ func copyFileHelper(src, trg string, retryCount int, retryWait time.Duration) er
 				return fmt.Errorf("failed to close temporary file %s: %w", tempPath, err)
 			}
 
-			// 6. Copy Timestamps
+			// 6. Copy file timestamps
 			// We do this via os.Chtimes (using the path) after the file is closed.
-			if err := os.Chtimes(tempPath, info.ModTime(), info.ModTime()); err != nil {
+			if err := os.Chtimes(tempPath, task.SrcInfo.ModTime(), task.SrcInfo.ModTime()); err != nil {
 				return fmt.Errorf("failed to set timestamps on %s: %w", tempPath, err)
 			}
 
-			// 6. Atomically move the temporary file to the final destination.
-			return os.Rename(tempPath, trg)
+			// 7. Atomically move the temporary file to the final destination.
+			if err := os.Rename(tempPath, trg); err != nil {
+				return err
+			}
+
+			// 8. Clear tempPath to prevent the deferred os.Remove from running.
+			tempPath = ""
+			return nil
 		}()
 
 		if lastErr == nil {
 			return nil // Success
 		}
 	}
-	return fmt.Errorf("failed to copy file %s after %d retries: %w", src, retryCount, lastErr)
+	return fmt.Errorf("failed to copy file %s after %d retries: %w", task.SrcAbsPath, retryCount, lastErr)
+}
+
+// preProcessExclusions analyzes and categorizes patterns to enable optimized matching later.
+func preProcessExclusions(patterns []string, isDirPatterns bool) []preProcessedExclusion {
+	preProcessed := make([]preProcessedExclusion, 0, len(patterns))
+	for _, p := range patterns {
+		// Normalize to use forward slashes for consistent matching logic.
+		p = filepath.ToSlash(p)
+
+		if strings.ContainsAny(p, "*?[]") {
+			// If it's a prefix pattern like `node_modules/*`, we can optimize it.
+			if strings.HasSuffix(p, "/*") {
+				preProcessed = append(preProcessed, preProcessedExclusion{
+					pattern:      p,
+					cleanPattern: strings.TrimSuffix(p, "/*"),
+					matchType:    prefixMatch,
+				})
+			} else if strings.HasPrefix(p, "*") && !strings.ContainsAny(p[1:], "*?[]") {
+				// If it's a suffix pattern like `*.log`, we can also optimize it.
+				preProcessed = append(preProcessed, preProcessedExclusion{
+					pattern:      p,
+					cleanPattern: p[1:], // The part after the *, e.g., ".log"
+					matchType:    suffixMatch,
+				})
+			} else {
+				// Otherwise, it's a general glob pattern.
+				preProcessed = append(preProcessed, preProcessedExclusion{pattern: p, matchType: globMatch})
+			}
+		} else {
+			// No wildcards. Check if it's a directory prefix or a literal match.
+			// Refinement: If this is the directory exclusion list OR the pattern ends in a slash,
+			// we treat it as a prefix match to exclude contents inside.
+			if isDirPatterns || strings.HasSuffix(p, "/") {
+				preProcessed = append(preProcessed, preProcessedExclusion{
+					pattern:      p,
+					cleanPattern: strings.TrimSuffix(p, "/"),
+					matchType:    prefixMatch,
+				})
+			} else {
+				// Pure literal file match (e.g., "README.md")
+				preProcessed = append(preProcessed, preProcessedExclusion{pattern: p, matchType: literalMatch})
+			}
+		}
+	}
+	return preProcessed
 }
 
 // truncateModTime adjusts a time based on the configured modification time window.
@@ -156,6 +210,73 @@ func (r *nativeSyncRun) truncateModTime(t time.Time) time.Time {
 		return t.Truncate(r.modTimeWindow)
 	}
 	return t
+}
+
+// normalizedRelPath calculates the relative path and normalizes it for case-insensitivity if needed.
+func (r *nativeSyncRun) normalizedRelPath(base, absPath string) (string, error) {
+	relPath, err := filepath.Rel(base, absPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to get relative path for %s: %w", absPath, err)
+	}
+	if r.caseInsensitive {
+		relPath = strings.ToLower(relPath)
+	}
+	return relPath, nil
+}
+
+// isExcluded checks if a given relative path matches any of the exclusion patterns,
+// using a tiered optimization strategy to avoid expensive glob matching when possible.
+func (r *nativeSyncRun) isExcluded(relPath string, isDir bool) bool {
+	// On Windows, WalkDir provides paths with `\`. We need to normalize them
+	// to `/` for consistent matching with patterns.
+	if filepath.Separator != '/' {
+		relPath = filepath.ToSlash(relPath)
+	}
+
+	var patterns []preProcessedExclusion
+	if isDir {
+		patterns = r.preProcessedDirExcludes
+	} else {
+		patterns = r.preProcessedFileExcludes
+	}
+
+	for _, p := range patterns {
+		switch p.matchType {
+		case literalMatch:
+			if relPath == p.pattern {
+				return true
+			}
+		case prefixMatch:
+			// Check 1: Exact match for the excluded directory/folder name (e.g., relPath == "build")
+			if relPath == p.cleanPattern {
+				return true
+			}
+
+			// Check 2: Match any file/dir inside the excluded folder (e.g., relPath starts with "build/")
+			if strings.HasPrefix(relPath, p.cleanPattern+"/") {
+				return true
+			}
+		case suffixMatch:
+			// A pattern like "*.log" is cleaned to ".log". A simple suffix check is sufficient
+			// because we only care if the path ends with this string. Unlike prefix matching,
+			// there is no container/directory that needs a separate literal check.
+			if strings.HasSuffix(relPath, p.cleanPattern) {
+				return true
+			}
+
+		case globMatch:
+			match, err := filepath.Match(p.pattern, relPath)
+			if err != nil {
+				// Log the error for the invalid pattern but continue checking others.
+				plog.Warn("Invalid exclusion pattern", "pattern", p.pattern, "error", err)
+				continue
+			}
+			if match {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // processFileSync checks if a file needs to be copied (based on size/time)
@@ -177,7 +298,7 @@ func (r *nativeSyncRun) processFileSync(task syncTask) (syncTask, error) {
 		}
 	}
 
-	if err := copyFileHelper(task.SrcAbsPath, task.TrgAbsPath, r.retryCount, r.retryWait); err != nil {
+	if err := copyFileHelper(task, r.retryCount, r.retryWait); err != nil {
 		return task, fmt.Errorf("failed to copy file to %s: %w", task.TrgAbsPath, err)
 	}
 
@@ -251,73 +372,6 @@ func (r *nativeSyncRun) processPathSync(task syncTask) (syncTask, error) {
 	}
 	task.Modified = false // Skipped items are not modified
 	return task, nil
-}
-
-// isExcluded checks if a given relative path matches any of the exclusion patterns,
-// using a tiered optimization strategy to avoid expensive glob matching when possible.
-func (r *nativeSyncRun) isExcluded(relPath string, isDir bool) bool {
-	// On Windows, WalkDir provides paths with `\`. We need to normalize them
-	// to `/` for consistent matching with patterns.
-	if filepath.Separator != '/' {
-		relPath = filepath.ToSlash(relPath)
-	}
-
-	var patterns []preProcessedExclusion
-	if isDir {
-		patterns = r.preProcessedDirExcludes
-	} else {
-		patterns = r.preProcessedFileExcludes
-	}
-
-	for _, p := range patterns {
-		switch p.matchType {
-		case literalMatch:
-			if relPath == p.pattern {
-				return true
-			}
-		case prefixMatch:
-			// Check 1: Exact match for the excluded directory/folder name (e.g., relPath == "build")
-			if relPath == p.cleanPattern {
-				return true
-			}
-
-			// Check 2: Match any file/dir inside the excluded folder (e.g., relPath starts with "build/")
-			if strings.HasPrefix(relPath, p.cleanPattern+"/") {
-				return true
-			}
-		case suffixMatch:
-			// A pattern like "*.log" is cleaned to ".log". A simple suffix check is sufficient
-			// because we only care if the path ends with this string. Unlike prefix matching,
-			// there is no container/directory that needs a separate literal check.
-			if strings.HasSuffix(relPath, p.cleanPattern) {
-				return true
-			}
-
-		case globMatch:
-			match, err := filepath.Match(p.pattern, relPath)
-			if err != nil {
-				// Log the error for the invalid pattern but continue checking others.
-				plog.Warn("Invalid exclusion pattern", "pattern", p.pattern, "error", err)
-				continue
-			}
-			if match {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// normalizedRelPath calculates the relative path and normalizes it for case-insensitivity if needed.
-func (r *nativeSyncRun) normalizedRelPath(base, absPath string) (string, error) {
-	relPath, err := filepath.Rel(base, absPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to get relative path for %s: %w", absPath, err)
-	}
-	if r.caseInsensitive {
-		relPath = strings.ToLower(relPath)
-	}
-	return relPath, nil
 }
 
 // syncWalker is a dedicated goroutine that walks the source directory tree,
@@ -660,51 +714,6 @@ func (r *nativeSyncRun) execute() error {
 		return nil
 	}
 	return r.handleMirror()
-}
-
-// preProcessExclusions analyzes and categorizes patterns to enable optimized matching later.
-func preProcessExclusions(patterns []string, isDirPatterns bool) []preProcessedExclusion {
-	preProcessed := make([]preProcessedExclusion, 0, len(patterns))
-	for _, p := range patterns {
-		// Normalize to use forward slashes for consistent matching logic.
-		p = filepath.ToSlash(p)
-
-		if strings.ContainsAny(p, "*?[]") {
-			// If it's a prefix pattern like `node_modules/*`, we can optimize it.
-			if strings.HasSuffix(p, "/*") {
-				preProcessed = append(preProcessed, preProcessedExclusion{
-					pattern:      p,
-					cleanPattern: strings.TrimSuffix(p, "/*"),
-					matchType:    prefixMatch,
-				})
-			} else if strings.HasPrefix(p, "*") && !strings.ContainsAny(p[1:], "*?[]") {
-				// If it's a suffix pattern like `*.log`, we can also optimize it.
-				preProcessed = append(preProcessed, preProcessedExclusion{
-					pattern:      p,
-					cleanPattern: p[1:], // The part after the *, e.g., ".log"
-					matchType:    suffixMatch,
-				})
-			} else {
-				// Otherwise, it's a general glob pattern.
-				preProcessed = append(preProcessed, preProcessedExclusion{pattern: p, matchType: globMatch})
-			}
-		} else {
-			// No wildcards. Check if it's a directory prefix or a literal match.
-			// Refinement: If this is the directory exclusion list OR the pattern ends in a slash,
-			// we treat it as a prefix match to exclude contents inside.
-			if isDirPatterns || strings.HasSuffix(p, "/") {
-				preProcessed = append(preProcessed, preProcessedExclusion{
-					pattern:      p,
-					cleanPattern: strings.TrimSuffix(p, "/"),
-					matchType:    prefixMatch,
-				})
-			} else {
-				// Pure literal file match (e.g., "README.md")
-				preProcessed = append(preProcessed, preProcessedExclusion{pattern: p, matchType: literalMatch})
-			}
-		}
-	}
-	return preProcessed
 }
 
 // handleNative initializes the sync run structure and kicks off the execution.
