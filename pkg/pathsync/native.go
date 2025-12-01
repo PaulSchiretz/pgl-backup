@@ -150,6 +150,14 @@ func copyFileHelper(src, trg string, retryCount int, retryWait time.Duration) er
 	return fmt.Errorf("failed to copy file %s after %d retries: %w", src, retryCount, lastErr)
 }
 
+// truncateModTime adjusts a time based on the configured modification time window.
+func (r *nativeSyncRun) truncateModTime(t time.Time) time.Time {
+	if r.modTimeWindow > 0 {
+		return t.Truncate(r.modTimeWindow)
+	}
+	return t
+}
+
 // processFileSync checks if a file needs to be copied (based on size/time)
 // and triggers the copy operation if needed.
 func (r *nativeSyncRun) processFileSync(task syncTask) (syncTask, error) {
@@ -164,13 +172,7 @@ func (r *nativeSyncRun) processFileSync(task syncTask) (syncTask, error) {
 		// Destination exists.
 		// We skip the copy only if the modification times and sizes are identical.
 		// We truncate the times to a configured window to handle filesystems with different timestamp resolutions.
-		srcModTime := task.SrcInfo.ModTime()
-		trgModTime := trgInfo.ModTime()
-		if r.modTimeWindow > 0 {
-			srcModTime = srcModTime.Truncate(r.modTimeWindow)
-			trgModTime = trgModTime.Truncate(r.modTimeWindow)
-		}
-		if srcModTime.Equal(trgModTime) && task.SrcInfo.Size() == trgInfo.Size() {
+		if r.truncateModTime(task.SrcInfo.ModTime()).Equal(r.truncateModTime(trgInfo.ModTime())) && task.SrcInfo.Size() == trgInfo.Size() {
 			return task, nil
 		}
 	}
@@ -209,13 +211,7 @@ func (r *nativeSyncRun) processDirectorySync(task syncTask) (syncTask, error) {
 
 	// 3. Determine if a finalization pass is needed by comparing metadata.
 	// We truncate the times to a configured window to handle filesystems with different timestamp resolutions.
-	srcModTime := task.SrcInfo.ModTime()
-	trgModTime := trgInfo.ModTime()
-	if r.modTimeWindow > 0 {
-		srcModTime = srcModTime.Truncate(r.modTimeWindow)
-		trgModTime = trgModTime.Truncate(r.modTimeWindow)
-	}
-	if trgInfo.Mode().Perm() != task.SrcInfo.Mode().Perm() || !trgModTime.Equal(srcModTime) {
+	if trgInfo.Mode().Perm() != task.SrcInfo.Mode().Perm() || !r.truncateModTime(trgInfo.ModTime()).Equal(r.truncateModTime(task.SrcInfo.ModTime())) {
 		// Directory exists, but permissions or modification time are wrong.
 		// Mark as modified so they get fixed in the finalization pass.
 		task.Modified = true
@@ -312,6 +308,18 @@ func (r *nativeSyncRun) isExcluded(relPath string, isDir bool) bool {
 	return false
 }
 
+// normalizedRelPath calculates the relative path and normalizes it for case-insensitivity if needed.
+func (r *nativeSyncRun) normalizedRelPath(base, absPath string) (string, error) {
+	relPath, err := filepath.Rel(base, absPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to get relative path for %s: %w", absPath, err)
+	}
+	if r.caseInsensitive {
+		relPath = strings.ToLower(relPath)
+	}
+	return relPath, nil
+}
+
 // syncWalker is a dedicated goroutine that walks the source directory tree,
 // sending each syntask to the syncTasks channel for processing by workers.
 func (r *nativeSyncRun) syncWalker() {
@@ -327,15 +335,10 @@ func (r *nativeSyncRun) syncWalker() {
 			return nil
 		}
 
-		relPath, err := filepath.Rel(r.src, path)
-		// On case-insensitive filesystems, normalize the path for map key consistency.
-		if r.caseInsensitive {
-			relPath = strings.ToLower(relPath)
-		}
-
+		relPath, err := r.normalizedRelPath(r.src, path)
 		if err != nil {
 			// This should not happen if path is from WalkDir on r.src
-			plog.Warn("Could not get relative path, skipping", "path", path, "error", err)
+			plog.Warn("Could not get relative path, skipping", "path", path, "error", err.Error())
 			if d != nil && d.IsDir() {
 				return filepath.SkipDir
 			}
@@ -568,14 +571,9 @@ func (r *nativeSyncRun) handleMirror() error {
 		default:
 		}
 
-		relPath, err := filepath.Rel(r.trg, path)
+		relPath, err := r.normalizedRelPath(r.trg, path)
 		if err != nil {
-			return fmt.Errorf("failed to get relative path for %s: %w", path, err)
-		}
-
-		// On case-insensitive filesystems, normalize the path for map key consistency.
-		if r.caseInsensitive {
-			relPath = strings.ToLower(relPath)
+			return err // The helper function already wraps the error.
 		}
 
 		if relPath == "." {
