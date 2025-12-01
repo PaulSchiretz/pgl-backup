@@ -503,14 +503,14 @@ func (r *nativeSyncRun) handleSync() error {
 	// --- Phase 2: Directory Metadata Finalization ---
 	// This must happen after all files are copied to prevent race conditions.
 	if err := r.handleDirectoryMetadataSync(); err != nil {
-		return fmt.Errorf("failed to sync directory metadata: %w", err)
+		return fmt.Errorf("failed to handle directory metadata sync: %w", err)
 	}
 
 	// 7. Check for any errors captured during the process.
 	select {
 	case err := <-r.syncErrs:
 		if err != nil {
-			return fmt.Errorf("sync failed: %w", err)
+			return fmt.Errorf("sync worker failed: %w", err)
 		}
 	default:
 	}
@@ -518,10 +518,10 @@ func (r *nativeSyncRun) handleSync() error {
 	return nil
 }
 
-// handleDelete performs a sequential walk on the destination
-// to remove files and directories that do not exist in the source.
-func (r *nativeSyncRun) handleDelete() error {
-	plog.Info("Starting deletion phase")
+// handleMirror performs a sequential walk on the destination to remove files
+// and directories that do not exist in the source. This is only active in mirror mode.
+func (r *nativeSyncRun) handleMirror() error {
+	plog.Info("Starting mirror phase (deletions)")
 
 	// WalkDir is efficient and allows us to skip trees we delete.
 	err := filepath.WalkDir(r.trg, func(path string, d os.DirEntry, err error) error {
@@ -620,12 +620,12 @@ func (r *nativeSyncRun) execute() error {
 		return r.ctx.Err()
 	}
 
-	// 2. Deletion Phase
+	// 2. Mirror Phase (Deletions)
 	// Now that the sync is done and the map is fully populated, run the deletion phase.
 	if !r.mirror {
 		return nil
 	}
-	return r.handleDelete()
+	return r.handleMirror()
 }
 
 // preProcessExclusions analyzes and categorizes patterns to enable optimized matching later.
