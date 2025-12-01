@@ -1,5 +1,12 @@
 package pathsync
 
+// The native sync engine implements a robust, concurrent file synchronization process.
+// A key design principle is ensuring the backup process does not lock itself out.
+// To achieve this, all directories created or modified in the destination will have
+// the owner-write permission bit (0200) set, guaranteeing that the user running
+// the backup can always write to them in subsequent runs. This prevents failures
+// when backing up source directories with read-only permissions.
+
 import (
 	"context"
 	"fmt"
@@ -97,8 +104,9 @@ func copyFileHelper(task syncTask, retryCount int, retryWait time.Duration) erro
 
 			trgDir := filepath.Dir(trg)
 
-			// 1. Ensure the destination directory exists.
-			if err := os.MkdirAll(trgDir, 0755); err != nil {
+			// 1. Ensure the destination directory exists. The final permissions for this directory
+			// will be set when its own sync task is processed or in the final handleDirMetadataSync.
+			if err := os.MkdirAll(trgDir, withBackupWritePermission(0755)); err != nil {
 				return fmt.Errorf("failed to ensure destination directory %s exists: %w", trgDir, err)
 			}
 
@@ -224,6 +232,13 @@ func (r *nativeSyncRun) normalizedRelPath(base, absPath string) (string, error) 
 	return relPath, nil
 }
 
+// withBackupWritePermission ensures that any directory/file permission has the owner-write
+// bit set. This prevents the backup user from being locked out on subsequent runs.
+func withBackupWritePermission(basePerm os.FileMode) os.FileMode {
+	// Ensure the backup user always retains write permission.
+	return basePerm | 0200
+}
+
 // isExcluded checks if a given relative path matches any of the exclusion patterns,
 // using a tiered optimization strategy to avoid expensive glob matching when possible.
 func (r *nativeSyncRun) isExcluded(relPath string, isDir bool) bool {
@@ -319,7 +334,7 @@ func (r *nativeSyncRun) processDirectorySync(task syncTask) (syncTask, error) {
 	}
 
 	// 1. Ensure the directory exists. os.MkdirAll is idempotent.
-	if err := os.MkdirAll(task.TrgAbsPath, task.SrcInfo.Mode()); err != nil {
+	if err := os.MkdirAll(task.TrgAbsPath, withBackupWritePermission(task.SrcInfo.Mode().Perm())); err != nil {
 		return task, fmt.Errorf("failed to create directory %s: %w", task.TrgAbsPath, err)
 	}
 
@@ -332,7 +347,9 @@ func (r *nativeSyncRun) processDirectorySync(task syncTask) (syncTask, error) {
 
 	// 3. Determine if a finalization pass is needed by comparing metadata.
 	// We truncate the times to a configured window to handle filesystems with different timestamp resolutions.
-	if trgInfo.Mode().Perm() != task.SrcInfo.Mode().Perm() || !r.truncateModTime(trgInfo.ModTime()).Equal(r.truncateModTime(task.SrcInfo.ModTime())) {
+	// We must compare the target's permissions against the source's permissions *with our modification*.
+	expectedPerms := withBackupWritePermission(task.SrcInfo.Mode().Perm())
+	if trgInfo.Mode().Perm() != expectedPerms || !r.truncateModTime(trgInfo.ModTime()).Equal(r.truncateModTime(task.SrcInfo.ModTime())) {
 		// Directory exists, but permissions or modification time are wrong.
 		// Mark as modified so they get fixed in the finalization pass.
 		task.Modified = true
@@ -505,7 +522,7 @@ func (r *nativeSyncRun) syncCollector(syncCollectorDone chan struct{}) {
 	}
 }
 
-// handleDirectoryMetadataSync iterates through all synced directories and applies their final metadata.
+// handleDirMetadataSync iterates through all synced directories and applies their final metadata.
 // This is done in a separate pass after all files have been copied to prevent race conditions.
 // It processes directories from the deepest level upwards to ensure correctness.
 //
@@ -514,7 +531,7 @@ func (r *nativeSyncRun) syncCollector(syncCollectorDone chan struct{}) {
 // other filesystem operations (like creating files within a directory) can update the parent's modification time.
 // Processing from deepest to highest ensures that all potential child operations are complete before
 // the final metadata is applied to a parent directory, preventing accidental overwrites or inconsistencies.
-func (r *nativeSyncRun) handleDirectoryMetadataSync() error {
+func (r *nativeSyncRun) handleDirMetadataSync() error {
 	plog.Info("Syncing directory metadata")
 
 	// 1. Collect all directory tasks.
@@ -545,7 +562,9 @@ func (r *nativeSyncRun) handleDirectoryMetadataSync() error {
 		if !r.quiet {
 			plog.Info("SETMETA", "path", task.SrcRelPath)
 		}
-		if err := os.Chmod(task.TrgAbsPath, task.SrcInfo.Mode()); err != nil {
+
+		finalPerms := withBackupWritePermission(task.SrcInfo.Mode().Perm())
+		if err := os.Chmod(task.TrgAbsPath, finalPerms); err != nil {
 			return fmt.Errorf("failed to chmod directory %s: %w", task.TrgAbsPath, err)
 		}
 		if err := os.Chtimes(task.TrgAbsPath, task.SrcInfo.ModTime(), task.SrcInfo.ModTime()); err != nil {
@@ -587,8 +606,8 @@ func (r *nativeSyncRun) handleSync() error {
 
 	// --- Phase 2: Directory Metadata Finalization ---
 	// This must happen after all files are copied to prevent race conditions.
-	if err := r.handleDirectoryMetadataSync(); err != nil {
-		return fmt.Errorf("failed to handle directory metadata sync: %w", err)
+	if err := r.handleDirMetadataSync(); err != nil {
+		return fmt.Errorf("failed to handle dir metadata sync: %w", err)
 	}
 
 	// 7. Check for any errors captured during the process.
