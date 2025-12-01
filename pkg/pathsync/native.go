@@ -87,6 +87,14 @@ func copyFileHelper(src, dst string, retryCount int, retryWait time.Duration) er
 
 			// 1. Create a temporary file in the destination directory.
 			dstDir := filepath.Dir(dst)
+			// Ensure the destination directory exists. This is necessary to prevent a race
+			// condition where a file worker tries to create a temp file in a directory
+			// that hasn't been created by another worker yet.
+			// We use 0755 as a safe default. The actual processDirectorySync task
+			// will eventually come along and correct the permissions/timestamps.
+			if err := os.MkdirAll(dstDir, 0755); err != nil {
+				return fmt.Errorf("failed to ensure destination directory %s exists: %w", dstDir, err)
+			}
 			out, err := os.CreateTemp(dstDir, "pgl-backup-*.tmp")
 			if err != nil {
 				return fmt.Errorf("failed to create temporary file in %s: %w", dstDir, err)
