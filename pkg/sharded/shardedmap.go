@@ -35,7 +35,7 @@ func (s *ShardedMap) getShard(key string) *mapShard {
 
 	// Optimization: Use bitwise AND for power-of-2 modulus.
 	// This efficiently maps the hash to a shard index [0, 63].
-	shardIndex := hashValue & (numSetShards - 1)
+	shardIndex := hashValue & (numMapShards - 1)
 
 	return (*s)[shardIndex]
 }
