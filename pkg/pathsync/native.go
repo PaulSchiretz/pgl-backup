@@ -491,18 +491,15 @@ func (r *nativeSyncRun) syncWalker() {
 			return nil
 		}
 
-		if d.IsDir() {
-			if r.isExcluded(relPath, true) {
-				plog.Info("SKIPDIR", "reason", "excluded by pattern", "dir", relPath)
+		// Check for exclusions.
+		if r.isExcluded(relPath, d.IsDir()) {
+			if !r.quiet {
+				plog.Info("SKIP", "reason", "excluded by pattern", "path", relPath)
+			}
+			if d.IsDir() {
 				return filepath.SkipDir // Don't descend into this directory.
 			}
-		} else {
-			if r.isExcluded(relPath, false) {
-				if !r.quiet {
-					plog.Info("SKIP", "reason", "excluded by pattern", "file", relPath)
-				}
-				return nil // It's a file, just skip it.
-			}
+			return nil // It's an excluded file, leave it alone.
 		}
 
 		// 3. Get Info for worker
@@ -735,32 +732,30 @@ func (r *nativeSyncRun) handleMirror() error {
 				return filepath.SkipDir // It's an excluded dir, leave it and its contents alone.
 			}
 			return nil // It's an excluded file, leave it alone.
-		} else {
-			// The path is not in the source and is not excluded, so it must be deleted.
-
-			if r.dryRun {
-				plog.Info("[DRY RUN] DELETE", "path", relPath)
-				// In dry run, we can't skip dir because we didn't actually delete it,
-				// so we must visit children to log their deletion too.
-				return nil
-			}
-
-			if !r.quiet {
-				plog.Info("DELETE", "path", relPath)
-			}
-
-			// RemoveAll handles both files and directories recursively.
-			if err := os.RemoveAll(path); err != nil {
-				return fmt.Errorf("failed to delete %s: %w", path, err)
-			}
-
-			// Optimization: Since we deleted the directory, don't bother
-			// walking into it to check its children. They are gone.
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
 		}
 
+		// The path is not in the source and is not excluded, so it must be deleted.
+		if r.dryRun {
+			plog.Info("[DRY RUN] DELETE", "path", relPath)
+			// In dry run, we can't skip dir because we didn't actually delete it,
+			// so we must visit children to log their deletion too.
+			return nil
+		}
+
+		if !r.quiet {
+			plog.Info("DELETE", "path", relPath)
+		}
+
+		// RemoveAll handles both files and directories recursively.
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("failed to delete %s: %w", path, err)
+		}
+
+		// Optimization: Since we deleted the directory, don't bother
+		// walking into it to check its children. They are gone.
+		if d.IsDir() {
+			return filepath.SkipDir
+		}
 		return nil
 	})
 
