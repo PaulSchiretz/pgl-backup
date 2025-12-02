@@ -12,20 +12,20 @@ package pathsync
 // 1. The Producer (`syncWalker`):
 //    - A single goroutine that walks the source directory tree (`filepath.WalkDir`).
 //    - It handles directories directly: creating them in the destination and recording their
-//      presence in the `syncedTaskResults` map.
+//      presence in the `discoveredSrcPaths` set.
 //    - For files, it creates a `syncTask` and sends it to the `syncTasks` channel for workers.
 //
 // 2. The Consumers (`syncWorker` pool):
 //    - A pool of worker goroutines that read `syncTask` items from the `syncTasks` channel.
 //    - Each worker performs the I/O for a single file (checking, copying).
-//    - If mirroring is enabled, it records the file's presence in the `syncedTaskResults` map.
+//    - The `syncWalker` has already recorded the file's presence in the `discoveredSrcPaths` set.
 //
 // --- Phase 2: Mirroring (Deletions) ---
 //
 // 3. The Mirror Phase (`handleMirror`):
 //    - If mirroring is enabled, this final pass walks the *destination* directory.
-//    - It checks each item against the `syncedTaskResults` map.
-//    - Any destination item not found in the map (and not excluded) is deleted.
+//    - For each item, it checks for its presence in the `discoveredSrcPaths` set.
+//    - Any destination item not found in the set (and not otherwise excluded) is deleted.
 //
 // A key design principle is ensuring the backup process does not lock itself out.
 // To achieve this, all directories created in the destination will have
@@ -95,14 +95,14 @@ type nativeSyncRun struct {
 	modTimeWindow            time.Duration // The time window to consider file modification times equal.
 	ioBufferPool             *sync.Pool    // pointer to avoid copying the noCopy field if the struct is ever passed by value
 
-	// syncedTaskResults is populated by workers and read by the mirror phase.
-	// A standard map with a mutex is used instead of a sync.Map. This is a deliberate
-	// performance choice. The access pattern is many concurrent writes of *new* keys,
-	// followed by a sequential read phase. sync.Map is optimized for stable key sets with
-	// many concurrent reads. For our write-heavy pattern with new keys, the overhead of
-	// sync.Map's internal locking and promotion of its "dirty" map is higher than the
-	// simple, direct locking of a traditional map with a mutex.
-	syncedTaskResults *sharded.ShardedSet
+	// discoveredSrcPaths is a concurrent set populated by the syncWalker. It holds every
+	// non-excluded path found in the source directory. During the mirror phase, it is
+	// read to determine which paths in the destination are no longer present in the source
+	// and should be deleted.
+	// A ShardedSet is used to minimize lock contention, as the syncWalker will be
+	// writing to it, while the handleMirror goroutine might be reading from it
+	// (though in the current design, reads happen after all writes are complete).
+	discoveredSrcPaths *sharded.ShardedSet
 
 	// syncWg waits for syncWorkers to finish processing tasks.
 	syncWg sync.WaitGroup
@@ -420,12 +420,12 @@ func (r *nativeSyncRun) syncWalker() {
 		}
 
 		// --- CRITICAL: Record the path unconditionally here ---
-		// If we mirror and the item exists in the source, it MUST be recorded in the results map
+		// If we mirror and the item exists in the source, it MUST be recorded in the set
 		// to prevent it from being deleted during the mirror phase (Phase 2).
 		if r.mirror {
-			r.syncedTaskResults.Store(relPath)
+			r.discoveredSrcPaths.Store(relPath)
 		}
-		// -----------------------------------------------------------------
+		// ----------------------------------------------------------------
 
 		// The walker is the single producer and discovers directories sequentially.
 		// By making it responsible for creating directories, we remove this task
@@ -496,7 +496,7 @@ func (r *nativeSyncRun) syncWalker() {
 }
 
 // syncWorker acts as a Consumer. It reads tasks from the 'syncTasks' channel,
-// processes them (I/O), and stores the result in the `syncedTaskResults` map.
+// processes them (I/O).
 func (r *nativeSyncRun) syncWorker() {
 	defer r.syncWg.Done()
 
@@ -518,11 +518,11 @@ func (r *nativeSyncRun) syncWorker() {
 				case r.syncErrs <- err:
 				default:
 				}
-				plog.Warn("Sync failed for path, preserving in destination map to prevent deletion",
+				plog.Warn("Sync failed for path; it will be preserved in the destination to prevent deletion",
 					"path", task.RelPath,
 					"error", err,
 					"note", "This file may be inconsistent or outdated in the destination")
-				// We rely on the syncWalker having already protected this path, to prevent it from being deleted in the mirror phase.
+				// We rely on the syncWalker having already added this path to discoveredSrcPaths, preventing it from being deleted in the mirror phase.
 			}
 		}
 	}
@@ -588,7 +588,7 @@ func (r *nativeSyncRun) handleMirror() error {
 		}
 
 		// Check if the destination path existed in the source.
-		exists := r.syncedTaskResults.Has(relPath)
+		exists := r.discoveredSrcPaths.Has(relPath)
 		if exists {
 			// The path exists in the source, so we keep it.
 			return nil
@@ -684,7 +684,7 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror b
 				return &b
 			},
 		},
-		syncedTaskResults: sharded.NewShardedSet(),
+		discoveredSrcPaths: sharded.NewShardedSet(),
 		// Buffer 'syncTasks' increase buffer size to absorb bursts of small files discovery by the walker.
 		syncTasks: make(chan syncTask, s.engine.NativeEngineWorkers*100),
 		syncErrs:  make(chan error, 1),
