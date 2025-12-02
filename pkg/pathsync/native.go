@@ -1,46 +1,34 @@
 package pathsync
 
 // --- ARCHITECTURAL OVERVIEW ---
-// The native sync engine uses a multi-phase approach to ensure both speed and correctness.
+// The native sync engine uses a two-phase approach to ensure both speed and correctness.
 //
 // --- Phase 1: Concurrent Sync (Producer-Consumer) ---
 //
 // The core of the engine uses a Producer-Consumer pattern to perform file
 // operations concurrently, maximizing I/O throughput. This pipeline is
-// orchestrated by the `handleSync` function and consists of two main components:
+// orchestrated by the `handleSync` function.
 //
 // 1. The Producer (`syncWalker`):
 //    - A single goroutine that walks the source directory tree (`filepath.WalkDir`).
-//    - For each file/directory, it creates a `syncTask` and sends it to the `syncTasks` channel.
-//    - It closes the `syncTasks` channel upon completion to signal the end of work.
+//    - It handles directories directly: creating them in the destination and recording their
+//      presence in the `discoveredSrcPaths` set.
+//    - For files, it creates a `syncTask` and sends it to the `syncTasks` channel for workers.
 //
 // 2. The Consumers (`syncWorker` pool):
 //    - A pool of worker goroutines that read `syncTask` items from the `syncTasks` channel.
-//    - Each worker performs the necessary I/O (e.g., checking, copying files).
-//    - After processing, it stores a lightweight `syncTaskResult` directly into a
-//      `sync.Map` (`syncedTaskResults`). This map serves as the definitive record
-//      of all items that existed in the source and their sync status. Using a
-//      `sync.Map` avoids a channel-based collector bottleneck.
+//    - Each worker performs the I/O for a single file (checking, copying).
+//    - The `syncWalker` has already recorded the file's presence in the `discoveredSrcPaths` set.
 //
-// --- Phase 2: Sequential Finalization ---
+// --- Phase 2: Mirroring (Deletions) ---
 //
-// After the concurrent phase completes, two sequential passes are run to ensure
-// data consistency and handle deletions.
-//
-// 3. Metadata Finalization (`handleDirMetadataSync`):
-//    - A single-threaded pass that iterates over all directories that were modified.
-//    - It applies the final permissions and timestamps to directories.
-//    - This is done *after* all file copies are complete to prevent race conditions where
-//      a file copy might alter a parent directory's modification time after it has been set.
-//
-// 4. Mirroring (`handleMirror`):
+// 3. The Mirror Phase (`handleMirror`):
 //    - If mirroring is enabled, this final pass walks the *destination* directory.
-//    - It checks each item against the `syncedTaskResults` map.
-//    - Any destination item not found in the map (and not excluded) is deleted.
+//    - For each item, it checks for its presence in the `discoveredSrcPaths` set.
+//    - Any destination item not found in the set (and not otherwise excluded) is deleted.
 //
-// The native sync engine implements a robust, concurrent file synchronization process.
 // A key design principle is ensuring the backup process does not lock itself out.
-// To achieve this, all directories created or modified in the destination will have
+// To achieve this, all directories created in the destination will have
 // the owner-write permission bit (0200) set, guaranteeing that the user running
 // the backup can always write to them in subsequent runs. This prevents failures
 // when backing up source directories with read-only permissions.
@@ -52,19 +40,24 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
+	"pixelgardenlabs.io/pgl-backup/pkg/sharded"
 )
+
+// isCaseInsensitiveFS checks if the current operating system has a case-insensitive filesystem by default.
+func isCaseInsensitiveFS() bool {
+	return runtime.GOOS == "windows" || runtime.GOOS == "darwin"
+}
 
 // compactFileInfo holds the essential, primitive data from an os.FileInfo.
 // Storing this directly instead of the os.FileInfo interface avoids a pointer
 // lookup and reduces GC pressure, as the data is inlined in the parent struct.
 type compactFileInfo struct {
-	ModTime int64
+	ModTime int64 // Unix Nano. Stored as int64 to avoid GC overhead of time.Time's internal pointer.
 	Size    int64
 	Mode    os.FileMode
 }
@@ -72,21 +65,8 @@ type compactFileInfo struct {
 // syncTask holds all the necessary metadata for a worker to process a file
 // without re-calculating paths or re-fetching filesystem stats.
 type syncTask struct {
-	SrcAbsPath string
-	SrcRelPath string
-	SrcInfo    compactFileInfo // Cached info from the Walker
-	TrgAbsPath string
-	TrgRelPath string
-	IsDir      bool
-}
-
-// syncTaskResult is a lightweight struct stored by workers in the results map.
-// It contains the outcome of the sync operation and the necessary metadata for
-// the finalization and mirror phases.
-// SrcRelPath and TrgAbsPath are omitted as they can be derived from the map key and base paths.
-type syncTaskResult struct {
-	SrcInfo  compactFileInfo
-	Modified bool
+	RelPathKey string          // Normalized, forward-slash, lowercase (if applicable) key. NOT for direct FS access.
+	FileInfo   compactFileInfo // Cached info from the Walker
 }
 
 type exclusionType int
@@ -119,11 +99,14 @@ type nativeSyncRun struct {
 	modTimeWindow            time.Duration // The time window to consider file modification times equal.
 	ioBufferPool             *sync.Pool    // pointer to avoid copying the noCopy field if the struct is ever passed by value
 
-	// syncedTaskResults is a concurrent-safe map populated by workers and read by the finalization/mirror phases.
-	syncedTaskResults sync.Map // map[string]syncTaskResult
-
-	// syncedDirCache memoizes directory creation to avoid redundant os.MkdirAll calls.
-	syncedDirCache sync.Map // map[string]bool (key is relPath)
+	// discoveredSrcPaths is a concurrent set populated by the syncWalker. It holds every
+	// non-excluded path found in the source directory. During the mirror phase, it is
+	// read to determine which paths in the destination are no longer present in the source
+	// and should be deleted.
+	// A ShardedSet is used to minimize lock contention, as the syncWalker will be
+	// writing to it, while the handleMirror goroutine might be reading from it
+	// (though in the current design, reads happen after all writes are complete).
+	discoveredSrcPaths *sharded.ShardedSet
 
 	// syncWg waits for syncWorkers to finish processing tasks.
 	syncWg sync.WaitGroup
@@ -140,60 +123,37 @@ type nativeSyncRun struct {
 
 // --- Helpers ---
 
-// ensureDirExists checks a cache to see if a directory has already been created
-// during this sync run, avoiding redundant calls to os.MkdirAll.
-func (r *nativeSyncRun) ensureDirExists(relPath, absPath string, perm os.FileMode) error {
-	if _, loaded := r.syncedDirCache.Load(relPath); loaded {
-		return nil // Already created in this run.
-	}
-
-	if err := os.MkdirAll(absPath, perm); err != nil {
-		// If it fails, remove from cache so we can retry if the function is called again.
-		r.syncedDirCache.Delete(relPath)
-		return fmt.Errorf("failed to ensure destination directory %s exists: %w", absPath, err)
-	}
-	r.syncedDirCache.Store(relPath, true)
-	return nil
-}
-
 // copyFileHelper handles the low-level details of copying a single file.
 // It ensures atomicity by writing to a temporary file first and then renaming it.
-func (r *nativeSyncRun) copyFileHelper(task syncTask, retryCount int, retryWait time.Duration) error {
+func (r *nativeSyncRun) copyFileHelper(absSrcPath, absTrgPath string, task *syncTask, retryCount int, retryWait time.Duration) error {
 	var lastErr error
 	for i := 0; i <= retryCount; i++ {
 		if i > 0 {
-			plog.Warn("Retrying file copy", "file", task.SrcAbsPath, "attempt", fmt.Sprintf("%d/%d", i, retryCount), "after", retryWait)
+			plog.Warn("Retrying file copy", "file", absSrcPath, "attempt", fmt.Sprintf("%d/%d", i, retryCount), "after", retryWait)
 			time.Sleep(retryWait)
 		}
 
-		lastErr = func() error {
-			src, trg := task.SrcAbsPath, task.TrgAbsPath
-			in, err := os.Open(src)
+		lastErr = func() (err error) {
+			in, err := os.Open(absSrcPath)
 			if err != nil {
-				return fmt.Errorf("failed to open source file %s: %w", src, err)
+				return fmt.Errorf("failed to open source file %s: %w", absSrcPath, err)
 			}
 			defer in.Close()
 
-			trgDir := filepath.Dir(trg)
-
-			// 1. Ensure the destination directory exists. The final permissions for this directory
-			// will be set when its own sync task is processed or in the final handleDirMetadataSync.
-			if err := r.ensureDirExists(filepath.Dir(task.TrgRelPath), trgDir, withBackupWritePermission(0755)); err != nil {
-				return err
-			}
+			absTrgDir := filepath.Dir(absTrgPath)
 
 			// 2. Create a temporary file in the destination directory.
-			out, err := os.CreateTemp(trgDir, "pgl-backup-*.tmp")
+			out, err := os.CreateTemp(absTrgDir, "pgl-backup-*.tmp")
 			if err != nil {
-				return fmt.Errorf("failed to create temporary file in %s: %w", trgDir, err)
+				return fmt.Errorf("failed to create temporary file in %s: %w", absTrgDir, err)
 			}
 
-			tempPath := out.Name()
+			absTempPath := out.Name()
 			// Defer the removal of the temp file. If the rename succeeds, tempPath will be set to "",
 			// making this a no-op. This prevents an error trying to remove a non-existent file.
 			defer func() {
-				if tempPath != "" {
-					os.Remove(tempPath)
+				if absTempPath != "" {
+					os.Remove(absTempPath)
 				}
 			}()
 
@@ -204,35 +164,35 @@ func (r *nativeSyncRun) copyFileHelper(task syncTask, retryCount int, retryWait 
 			// 3. Copy content
 			if _, err = io.CopyBuffer(out, in, *bufPtr); err != nil {
 				out.Close() // Close before returning on error, buffer is released by defer
-				return fmt.Errorf("failed to copy content from %s to %s: %w", src, tempPath, err)
+				return fmt.Errorf("failed to copy content from %s to %s: %w", absSrcPath, absTempPath, err)
 			}
 
 			// 4. Copy file permissions
-			if err := out.Chmod(task.SrcInfo.Mode); err != nil {
+			if err := out.Chmod(task.FileInfo.Mode); err != nil {
 				out.Close() // Close before returning on error
-				return fmt.Errorf("failed to set permissions on temporary file %s: %w", tempPath, err)
+				return fmt.Errorf("failed to set permissions on temporary file %s: %w", absTempPath, err)
 			}
 
 			// 5. Close the file.
 			// This flushes data to disk. It MUST be done before Chtimes,
 			// because closing/flushing might update the modification time.
 			if err := out.Close(); err != nil {
-				return fmt.Errorf("failed to close temporary file %s: %w", tempPath, err)
+				return fmt.Errorf("failed to close temporary file %s: %w", absTempPath, err)
 			}
 
 			// 6. Copy file timestamps
 			// We do this via os.Chtimes (using the path) after the file is closed.
-			if err := os.Chtimes(tempPath, time.Unix(0, task.SrcInfo.ModTime), time.Unix(0, task.SrcInfo.ModTime)); err != nil {
-				return fmt.Errorf("failed to set timestamps on %s: %w", tempPath, err)
+			if err := os.Chtimes(absTempPath, time.Unix(0, task.FileInfo.ModTime), time.Unix(0, task.FileInfo.ModTime)); err != nil {
+				return fmt.Errorf("failed to set timestamps on %s: %w", absTempPath, err)
 			}
 
 			// 7. Atomically move the temporary file to the final destination.
-			if err := os.Rename(tempPath, trg); err != nil {
+			if err := os.Rename(absTempPath, absTrgPath); err != nil {
 				return err
 			}
 
 			// 8. Clear tempPath to prevent the deferred os.Remove from running.
-			tempPath = ""
+			absTempPath = ""
 			return nil
 		}()
 
@@ -240,15 +200,20 @@ func (r *nativeSyncRun) copyFileHelper(task syncTask, retryCount int, retryWait 
 			return nil // Success
 		}
 	}
-	return fmt.Errorf("failed to copy file %s after %d retries: %w", task.SrcAbsPath, retryCount, lastErr)
+	return fmt.Errorf("failed to copy file %s after %d attempts: %w", absSrcPath, retryCount, lastErr)
 }
 
 // preProcessExclusions analyzes and categorizes patterns to enable optimized matching later.
-func preProcessExclusions(patterns []string, isDirPatterns bool) []preProcessedExclusion {
+func preProcessExclusions(patterns []string, isDirPatterns bool, caseInsensitive bool) []preProcessedExclusion {
 	preProcessed := make([]preProcessedExclusion, 0, len(patterns))
 	for _, p := range patterns {
 		// Normalize to use forward slashes for consistent matching logic.
 		p = filepath.ToSlash(p)
+
+		// On case-insensitive systems, convert pattern to lowercase to match normalized paths.
+		if caseInsensitive {
+			p = strings.ToLower(p)
+		}
 
 		if strings.ContainsAny(p, "*?[]") {
 			// If it's a prefix pattern like `node_modules/*`, we can optimize it.
@@ -296,16 +261,29 @@ func (r *nativeSyncRun) truncateModTime(t time.Time) time.Time {
 	return t
 }
 
-// normalizedRelPath calculates the relative path and normalizes it to lowercase if case-insensitivity is enabled.
-func (r *nativeSyncRun) normalizedRelPath(base, absPath string) (string, error) {
-	relPath, err := filepath.Rel(base, absPath)
+// normalizedRelPathKey calculates the relative path and normalizes it to a standardized key format
+// (forward slashes, lowercase if applicable). This key is for internal logic, not direct filesystem access.
+func (r *nativeSyncRun) normalizedRelPathKey(base, absPath string) (string, error) {
+	relPathKey, err := filepath.Rel(base, absPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to get relative path for %s: %w", absPath, err)
 	}
+
+	// 1. Ensures the map key is consistent across all OS types.
+	relPathKey = filepath.ToSlash(relPathKey)
+
+	// 2. Apply case-insensitivity if required (for Windows/macOS key comparison)
 	if r.caseInsensitive {
-		relPath = strings.ToLower(relPath)
+		relPathKey = strings.ToLower(relPathKey)
 	}
-	return relPath, nil
+	return relPathKey, nil
+}
+
+// denormalizedAbsPath converts the standardized (forward-slash) relative path key
+// back into the final, absolute, native OS path for filesystem access.
+func (r *nativeSyncRun) denormalizedAbsPath(base, relPathKey string) string {
+	relPath := filepath.FromSlash(relPathKey)
+	return filepath.Join(base, relPath)
 }
 
 // withBackupWritePermission ensures that any directory/file permission has the owner-write
@@ -315,15 +293,10 @@ func withBackupWritePermission(basePerm os.FileMode) os.FileMode {
 	return basePerm | 0200
 }
 
-// isExcluded checks if a given relative path matches any of the exclusion patterns,
+// isExcluded checks if a given relative path key matches any of the exclusion patterns,
 // using a tiered optimization strategy to avoid expensive glob matching when possible.
-func (r *nativeSyncRun) isExcluded(relPath string, isDir bool) bool {
-	// On Windows, WalkDir provides paths with `\`. We need to normalize them
-	// to `/` for consistent matching with patterns.
-	if filepath.Separator != '/' {
-		relPath = filepath.ToSlash(relPath)
-	}
-
+// It assumes `relPathKey` has already been normalized.
+func (r *nativeSyncRun) isExcluded(relPathKey string, isDir bool) bool {
 	var patterns []preProcessedExclusion
 	if isDir {
 		patterns = r.preProcessedDirExcludes
@@ -334,29 +307,29 @@ func (r *nativeSyncRun) isExcluded(relPath string, isDir bool) bool {
 	for _, p := range patterns {
 		switch p.matchType {
 		case literalMatch:
-			if relPath == p.pattern {
+			if relPathKey == p.pattern {
 				return true
 			}
 		case prefixMatch:
-			// Check 1: Exact match for the excluded directory/folder name (e.g., relPath == "build")
-			if relPath == p.cleanPattern {
+			// Check 1: Exact match for the excluded directory/folder name (e.g., relPathKey == "build")
+			if relPathKey == p.cleanPattern {
 				return true
 			}
 
-			// Check 2: Match any file/dir inside the excluded folder (e.g., relPath starts with "build/")
-			if strings.HasPrefix(relPath, p.cleanPattern+"/") {
+			// Check 2: Match any file/dir inside the excluded folder (e.g., relPathKey starts with "build/")
+			if strings.HasPrefix(relPathKey, p.cleanPattern+"/") {
 				return true
 			}
 		case suffixMatch:
 			// A pattern like "*.log" is cleaned to ".log". A simple suffix check is sufficient
 			// because we only care if the path ends with this string. Unlike prefix matching,
 			// there is no container/directory that needs a separate literal check.
-			if strings.HasSuffix(relPath, p.cleanPattern) {
+			if strings.HasSuffix(relPathKey, p.cleanPattern) {
 				return true
 			}
 
 		case globMatch:
-			match, err := filepath.Match(p.pattern, relPath)
+			match, err := filepath.Match(p.pattern, relPathKey)
 			if err != nil {
 				// Log the error for the invalid pattern but continue checking others.
 				plog.Warn("Invalid exclusion pattern", "pattern", p.pattern, "error", err)
@@ -372,107 +345,50 @@ func (r *nativeSyncRun) isExcluded(relPath string, isDir bool) bool {
 
 // processFileSync checks if a file needs to be copied (based on size/time)
 // and triggers the copy operation if needed.
-func (r *nativeSyncRun) processFileSync(task *syncTask) (bool, error) {
+func (r *nativeSyncRun) processFileSync(task *syncTask) error {
 	if r.dryRun {
-		plog.Info("[DRY RUN] COPY", "path", task.SrcRelPath)
-		return false, nil
+		plog.Info("[DRY RUN] COPY", "path", task.RelPathKey)
+		return nil
 	}
+
+	// Convert the paths to the OS-native format for file access
+	absSrcPath := r.denormalizedAbsPath(r.src, task.RelPathKey)
+	absTrgPath := r.denormalizedAbsPath(r.trg, task.RelPathKey)
 
 	// Check if the destination file exists and if it matches source (size and mod time).
 	// We use os.Lstat to get information about the file itself, not its target if it's a symlink.
-	trgInfo, err := os.Lstat(task.TrgAbsPath)
+	trgInfo, err := os.Lstat(absTrgPath)
 	if err == nil {
 		// Destination path exists.
 		if trgInfo.Mode().IsRegular() {
 			// It's a regular file. Use the info from os.Lstat directly for comparison.
-			// We skip the copy only if the modification times and sizes are identical.
-			// We truncate the times to a configured window to handle filesystems with different timestamp resolutions.srcInfoModTime := time.Unix(0, task.SrcInfo.ModTime)
-			if r.truncateModTime(time.Unix(0, task.SrcInfo.ModTime)).Equal(r.truncateModTime(trgInfo.ModTime())) && task.SrcInfo.Size == trgInfo.Size() {
-				return false, nil // No change needed
+			// We skip the copy only if the modification times (within the configured window) and sizes are identical.
+			// We truncate the times to handle filesystems with different timestamp resolutions.
+			if r.truncateModTime(time.Unix(0, task.FileInfo.ModTime)).Equal(r.truncateModTime(trgInfo.ModTime())) && task.FileInfo.Size == trgInfo.Size() {
+				return nil // Not changed
 			}
 		} else {
 			// The destination exists but is not a regular file (e.g., it's a directory, symlink, or other special file).
 			// To ensure a consistent state, we must remove it before copying the source file.
-			plog.Warn("Destination is not a regular file, removing before copy", "path", task.TrgRelPath, "type", trgInfo.Mode().String())
-			if err := os.RemoveAll(task.TrgAbsPath); err != nil {
-				return false, fmt.Errorf("failed to remove non-regular file at destination %s: %w", task.TrgAbsPath, err)
+			plog.Warn("Destination is not a regular file, removing before copy", "path", task.RelPathKey, "type", trgInfo.Mode().String())
+			if err := os.RemoveAll(absTrgPath); err != nil {
+				return fmt.Errorf("failed to remove non-regular file at destination %s: %w", absTrgPath, err)
 			}
 			// After removal, proceed to copy the file.
 		}
 	} else if !os.IsNotExist(err) {
 		// An unexpected error occurred while Lstat-ing the destination.
-		return false, fmt.Errorf("failed to lstat destination file %s: %w", task.TrgAbsPath, err)
+		return fmt.Errorf("failed to lstat destination file %s: %w", absTrgPath, err)
 	}
 
-	if err := r.copyFileHelper(*task, r.retryCount, r.retryWait); err != nil {
-		return false, fmt.Errorf("failed to copy file to %s: %w", task.TrgAbsPath, err)
-	}
-
-	if !r.quiet {
-		plog.Info("COPY", "path", task.SrcRelPath)
-	}
-	return true, nil // File was actually copied/updated
-}
-
-// processDirectorySync ensures the destination directory exists.
-// It does NOT set final metadata (permissions, timestamps) to avoid race conditions with file workers.
-// Permissions and timestamps are set in the separate `handleDirMetadataSync` phase.
-func (r *nativeSyncRun) processDirectorySync(task *syncTask) (bool, error) {
-	if r.dryRun {
-		plog.Info("[DRY RUN] SYNCDIR", "path", task.SrcRelPath)
-		return false, nil
+	if err := r.copyFileHelper(absSrcPath, absTrgPath, task, r.retryCount, r.retryWait); err != nil {
+		return fmt.Errorf("failed to copy file to %s: %w", absTrgPath, err)
 	}
 
 	if !r.quiet {
-		plog.Info("SYNCDIR", "path", task.SrcRelPath)
+		plog.Info("COPY", "path", task.RelPathKey)
 	}
-
-	// 1. Ensure the directory exists. os.MkdirAll is idempotent.
-	if err := r.ensureDirExists(task.TrgRelPath, task.TrgAbsPath, withBackupWritePermission(task.SrcInfo.Mode.Perm())); err != nil {
-		return false, err
-	}
-
-	// 2. Determine if a finalization pass is needed by comparing metadata.
-	// We check this even if we just created the directory, as the permissions might
-	// already be correct, or we might need to update timestamps on an existing directory.
-	trgInfo, err := os.Stat(task.TrgAbsPath)
-	if err != nil {
-		// If we can't stat it (e.g., permissions), we can't compare metadata.
-		// We'll mark it as modified so the finalization pass will attempt to set metadata,
-		// which will then surface the underlying error if it persists.
-		return true, nil // Mark as modified to trigger finalization.
-	}
-
-	// Compare permissions and modification time. If they don't match, it's "modified".
-	expectedPerms := withBackupWritePermission(task.SrcInfo.Mode.Perm())
-	isModified := trgInfo.Mode().Perm() != expectedPerms || !r.truncateModTime(trgInfo.ModTime()).Equal(r.truncateModTime(time.Unix(0, task.SrcInfo.ModTime)))
-	return isModified, nil
-}
-
-// processPathSync acts as the dispatcher for a specific path.
-// It determines if the path is a directory, file, or something to skip.
-// It receives a pointer to the task struct so it doesn't need to do any discovery.
-func (r *nativeSyncRun) processPathSync(task *syncTask) (bool, error) {
-
-	if task.SrcRelPath == "." {
-		return false, nil // The root directory itself doesn't need I/O processing
-	}
-
-	// Directory
-	if task.IsDir {
-		return r.processDirectorySync(task)
-	}
-
-	// Regular File
-	if task.SrcInfo.Mode.IsRegular() {
-		return r.processFileSync(task)
-	}
-
-	// Symlinks, Named Pipes, etc.
-	if !r.quiet {
-		plog.Info("SKIP", "type", task.SrcInfo.Mode.String(), "path", task.SrcRelPath)
-	}
-	return false, nil // Skipped items are not modified
+	return nil // File was actually copied/updated
 }
 
 // syncWalker is a dedicated goroutine that walks the source directory tree,
@@ -480,30 +396,33 @@ func (r *nativeSyncRun) processPathSync(task *syncTask) (bool, error) {
 func (r *nativeSyncRun) syncWalker() {
 	defer close(r.syncTasks) // Close syncTasks to signal syncWorkers to stop when walk is complete
 
-	err := filepath.WalkDir(r.src, func(path string, d os.DirEntry, err error) error {
+	err := filepath.WalkDir(r.src, func(absSrcPath string, d os.DirEntry, err error) error {
 		if err != nil {
 			// If we can't access a path, log the error but keep walking
-			plog.Warn("Error accessing path, skipping", "path", path, "error", err)
+			plog.Warn("Error accessing path, skipping", "path", absSrcPath, "error", err)
 			if d != nil && d.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 
-		relPath, err := r.normalizedRelPath(r.src, path)
+		relPathKey, err := r.normalizedRelPathKey(r.src, absSrcPath)
 		if err != nil {
-			// This should not happen if path is from WalkDir on r.src
-			plog.Warn("Could not get relative path, skipping", "path", path, "error", err.Error())
-			if d != nil && d.IsDir() {
-				return filepath.SkipDir
-			}
+			// Something really is off, fail fast, this should never happen!
+			return fmt.Errorf("could not get relative path for %s: %w", absSrcPath, err)
+		}
+
+		// Skip the root directory immediately
+		// The root directory is always '.' (after normalization) and should not be processed
+		// for exclusions, mirroring, or creation/chmod, as its existence is assumed.
+		if relPathKey == "." {
 			return nil
 		}
 
 		// Check for exclusions.
-		if r.isExcluded(relPath, d.IsDir()) {
+		if r.isExcluded(relPathKey, d.IsDir()) {
 			if !r.quiet {
-				plog.Info("SKIP", "reason", "excluded by pattern", "path", relPath)
+				plog.Info("SKIP", "reason", "excluded by pattern", "path", relPathKey)
 			}
 			if d.IsDir() {
 				return filepath.SkipDir // Don't descend into this directory.
@@ -516,28 +435,74 @@ func (r *nativeSyncRun) syncWalker() {
 		// Doing it here saves the worker from doing an Lstat.
 		info, err := d.Info()
 		if err != nil {
-			plog.Warn("Failed to get file info, skipping", "path", path, "error", err)
+			plog.Warn("Failed to get file info, skipping", "path", absSrcPath, "error", err)
 			return nil
 		}
 
-		// 4. Create Task
-		task := syncTask{
-			SrcAbsPath: path,
-			SrcRelPath: relPath,
-			TrgRelPath: relPath,
-			TrgAbsPath: filepath.Join(r.trg, relPath),
-			SrcInfo: compactFileInfo{
-				ModTime: info.ModTime().UnixNano(),
-				Size:    info.Size(),
-				Mode:    info.Mode(),
-			},
-			IsDir: d.IsDir(),
+		// --- CRITICAL: Record the path unconditionally here ---
+		// If we mirror and the item exists in the source, it MUST be recorded in the set
+		// to prevent it from being deleted during the mirror phase (Phase 2).
+		if r.mirror {
+			r.discoveredSrcPaths.Store(relPathKey)
 		}
+		// ----------------------------------------------------------------
 
-		select {
-		case <-r.ctx.Done():
-			return r.ctx.Err()
-		case r.syncTasks <- task:
+		// The walker is the single producer and discovers directories sequentially.
+		// By making it responsible for creating directories, we remove this task
+		// and the associated synchronization overhead (syncedDirCache) from the
+		// concurrent workers, simplifying their logic and improving performance.
+		if d.IsDir() {
+			// Directory
+			expectedPerms := withBackupWritePermission(info.Mode().Perm())
+
+			// Convert the path to the OS-native format for file access
+			absTrgPath := r.denormalizedAbsPath(r.trg, relPathKey)
+
+			// Optimistic creation: Try Chmod first (cheapest syscall).
+			// If it works, dir exists. If not, MkdirAll.
+			// This avoids the internal Stat() loop of MkdirAll for existing directories.
+			if err := os.Chmod(absTrgPath, expectedPerms); err != nil {
+				if os.IsNotExist(err) {
+					if err := os.MkdirAll(absTrgPath, expectedPerms); err != nil {
+						plog.Warn("Failed to create destination directory, skipping", "path", absTrgPath, "error", err)
+						// Path is already recorded, but we can't descend.
+						return filepath.SkipDir
+					}
+				} else {
+					plog.Warn("Failed to set permissions on destination directory, skipping", "path", absTrgPath, "error", err)
+					// Error setting permissions, but the directory *exists* and is recorded.
+					// We should NOT skip the directory here, as its contents might still sync fine.
+					// ONLY skip if MkdirAll fails or if a non-MkdirAll error is critical (which is rare).
+					// A Chmod failure on an existing dir should not typically cause a SkipDir.
+					// The existing code uses SkipDir which is too aggressive.
+					// We should only return an error to stop the walk if it's unrecoverable,
+					// otherwise, return nil to continue walking the contents.
+					return nil // We log the warning and continue descent.
+				}
+			}
+			return nil // We've handled the directory
+		} else if info.Mode().IsRegular() {
+			// Regular File
+			task := syncTask{
+				RelPathKey: relPathKey,
+				FileInfo: compactFileInfo{
+					ModTime: info.ModTime().UnixNano(),
+					Size:    info.Size(),
+					Mode:    info.Mode(),
+				},
+			}
+
+			select {
+			case <-r.ctx.Done():
+				return r.ctx.Err()
+			case r.syncTasks <- task:
+				return nil
+			}
+		} else {
+			// Symlinks, Named Pipes, etc.
+			if !r.quiet {
+				plog.Info("SKIP", "type", info.Mode().String(), "path", absSrcPath)
+			}
 			return nil
 		}
 	})
@@ -552,7 +517,7 @@ func (r *nativeSyncRun) syncWalker() {
 }
 
 // syncWorker acts as a Consumer. It reads tasks from the 'syncTasks' channel,
-// processes them (I/O), and stores the result in the `syncedTaskResults` map.
+// processes them (I/O).
 func (r *nativeSyncRun) syncWorker() {
 	defer r.syncWg.Done()
 
@@ -566,101 +531,22 @@ func (r *nativeSyncRun) syncWorker() {
 				return
 			}
 
-			// Process the task, getting back the potentially modified task
-			modified, err := r.processPathSync(&task)
+			// Process the file sync
+			err := r.processFileSync(&task)
 			if err != nil {
 				// If I/O fails, report the error non-blockingly.
 				select {
 				case r.syncErrs <- err:
 				default:
 				}
-				plog.Warn("Sync failed for path, preserving in destination map to prevent deletion",
-					"path", task.SrcRelPath,
+				plog.Warn("Sync failed for path; it will be preserved in the destination to prevent deletion",
+					"path", task.RelPathKey,
 					"error", err,
 					"note", "This file may be inconsistent or outdated in the destination")
-				// Even on failure, we store a result to mark the path as "seen" in the source.
-				// This prevents it from being deleted in the mirror phase.
-			}
-
-			// Store the result directly in the concurrent map.
-			// OPTIMIZATION: If we are not mirroring, we don't need to track individual files
-			// in memory after they are processed. We only need to track directories
-			// so we can finalize their metadata later.
-			if r.mirror || task.IsDir {
-				r.syncedTaskResults.Store(task.SrcRelPath, syncTaskResult{
-					SrcInfo:  task.SrcInfo,
-					Modified: modified,
-				})
+				// We rely on the syncWalker having already added this path to discoveredSrcPaths, preventing it from being deleted in the mirror phase.
 			}
 		}
 	}
-}
-
-func (r *nativeSyncRun) handleDirMetadataSync() error {
-	plog.Info("Syncing directory metadata")
-
-	// dirMetadataSyncTask is a helper struct used only in this function
-	// to associate the relative path (map key) with its syncTaskResult value.
-	type dirMetadataSyncTask struct {
-		RelPath string
-		Result  syncTaskResult
-	}
-
-	// 1. Collect all directory tasks.
-	// We iterate over the syncedDirCache (keyed by relPath) to get a list of all
-	// directories that were touched. Then we look up their full result in syncedTaskResults.
-	var dirTasks []dirMetadataSyncTask
-	r.syncedDirCache.Range(func(key, value interface{}) bool {
-		relPath := key.(string) // syncedDirCache is now keyed by relPath
-		// Look up the full syncTaskResult in the main results map.
-		if resultVal, ok := r.syncedTaskResults.Load(relPath); ok {
-			result := resultVal.(syncTaskResult)
-			// Only add if it's a directory and was modified.
-			// The IsDir check is crucial as syncedDirCache only tracks paths, not types.
-			if result.SrcInfo.Mode.IsDir() && result.Modified {
-				dirTasks = append(dirTasks, dirMetadataSyncTask{RelPath: relPath, Result: result})
-			}
-		} else {
-			// This case should ideally not happen if syncedDirCache is populated correctly.
-			plog.Warn("Directory in syncedDirCache not found in syncedTaskResults", "relPath", relPath)
-		}
-		return true // continue iteration
-	})
-
-	// 2. Sort directories from deepest to shallowest.
-	// This is a robust pattern ensuring that child modifications (if any were to occur)
-	// would be complete before processing the parent.
-	sort.Slice(dirTasks, func(i, j int) bool {
-		// Sorting by path depth (by counting separators) is the most reliable way to sort from deepest to shallowest.
-		// A previous suggestion to sort by string length was incorrect.
-		return strings.Count(dirTasks[i].RelPath, string(os.PathSeparator)) > strings.Count(dirTasks[j].RelPath, string(os.PathSeparator))
-	})
-
-	// 3. Apply metadata in sorted order.
-	for _, task := range dirTasks {
-		select {
-		case <-r.ctx.Done():
-			return r.ctx.Err()
-		default:
-		}
-
-		if !r.quiet {
-			plog.Info("SETMETA", "path", task.RelPath)
-		}
-
-		// Reconstruct TrgAbsPath from the stored SrcRelPath and the target base.
-		trgAbsPath := filepath.Join(r.trg, task.RelPath)
-
-		// We must compare the target's permissions against the source's permissions *with our modification*.
-		expectedPerms := withBackupWritePermission(task.Result.SrcInfo.Mode.Perm())
-		if err := os.Chmod(trgAbsPath, expectedPerms); err != nil {
-			return fmt.Errorf("failed to chmod directory %s: %w", trgAbsPath, err)
-		}
-		if err := os.Chtimes(trgAbsPath, time.Unix(0, task.Result.SrcInfo.ModTime), time.Unix(0, task.Result.SrcInfo.ModTime)); err != nil {
-			return fmt.Errorf("failed to chtimes directory %s: %w", trgAbsPath, err)
-		}
-	}
-	return nil
 }
 
 // handleSync coordinates the concurrent synchronization pipeline.
@@ -688,15 +574,6 @@ func (r *nativeSyncRun) handleSync() error {
 	default:
 		// No errors from workers, proceed.
 	}
-
-	// --- Phase 2: Directory Metadata Finalization ---
-	// This must happen after all files are copied to prevent race conditions.
-	if err := r.handleDirMetadataSync(); err != nil {
-		// We wrap this error because it's a critical failure in the finalization stage.
-		// The error from handleDirMetadataSync is already descriptive.
-		return err
-	}
-
 	return nil
 }
 
@@ -706,7 +583,7 @@ func (r *nativeSyncRun) handleMirror() error {
 	plog.Info("Starting mirror phase (deletions)")
 
 	// WalkDir is efficient and allows us to skip trees we delete.
-	err := filepath.WalkDir(r.trg, func(path string, d os.DirEntry, err error) error {
+	err := filepath.WalkDir(r.trg, func(absTrgPath string, d os.DirEntry, err error) error {
 		if err != nil {
 			// If path is already gone (e.g. parent deleted), just continue.
 			if os.IsNotExist(err) {
@@ -722,25 +599,25 @@ func (r *nativeSyncRun) handleMirror() error {
 		default:
 		}
 
-		relPath, err := r.normalizedRelPath(r.trg, path)
+		relPathKey, err := r.normalizedRelPathKey(r.trg, absTrgPath)
 		if err != nil {
 			return err // The helper function already wraps the error.
 		}
 
-		if relPath == "." {
+		if relPathKey == "." {
 			return nil
 		}
 
 		// Check if the destination path existed in the source.
-		// No lock is needed here because all workers have finished.
-		if _, exists := r.syncedTaskResults.Load(relPath); exists {
+		exists := r.discoveredSrcPaths.Has(relPathKey)
+		if exists {
 			// The path exists in the source, so we keep it.
 			return nil
 		}
 
 		// The path is not in the source. Now we must check if it was excluded.
 		// If it was excluded, we must NOT delete it.
-		if r.isExcluded(relPath, d.IsDir()) {
+		if r.isExcluded(relPathKey, d.IsDir()) {
 			if d.IsDir() {
 				return filepath.SkipDir // It's an excluded dir, leave it and its contents alone.
 			}
@@ -749,19 +626,20 @@ func (r *nativeSyncRun) handleMirror() error {
 
 		// The path is not in the source and is not excluded, so it must be deleted.
 		if r.dryRun {
-			plog.Info("[DRY RUN] DELETE", "path", relPath)
+			plog.Info("[DRY RUN] DELETE", "path", absTrgPath)
 			// In dry run, we can't skip dir because we didn't actually delete it,
 			// so we must visit children to log their deletion too.
 			return nil
 		}
 
 		if !r.quiet {
-			plog.Info("DELETE", "path", relPath)
+			plog.Info("DELETE", "path", absTrgPath)
 		}
 
 		// RemoveAll handles both files and directories recursively.
-		if err := os.RemoveAll(path); err != nil {
-			return fmt.Errorf("failed to delete %s: %w", path, err)
+		// ONLY use the OS-native path format for file access
+		if err := os.RemoveAll(absTrgPath); err != nil {
+			return fmt.Errorf("failed to delete %s: %w", absTrgPath, err)
 		}
 
 		// Optimization: Since we deleted the directory, don't bother
@@ -808,16 +686,18 @@ func (r *nativeSyncRun) execute() error {
 func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror bool, excludeFiles, excludeDirs []string) error {
 	plog.Info("Starting native sync", "from", src, "to", trg)
 
+	isCaseInsensitive := isCaseInsensitiveFS()
+
 	run := &nativeSyncRun{
 		src:                      src,
 		trg:                      trg,
 		mirror:                   mirror,
 		dryRun:                   s.dryRun,
 		quiet:                    s.quiet,
-		caseInsensitive:          runtime.GOOS == "windows" || runtime.GOOS == "darwin",
+		caseInsensitive:          isCaseInsensitive,
 		numSyncWorkers:           s.engine.NativeEngineWorkers,
-		preProcessedFileExcludes: preProcessExclusions(excludeFiles, false),
-		preProcessedDirExcludes:  preProcessExclusions(excludeDirs, true),
+		preProcessedFileExcludes: preProcessExclusions(excludeFiles, false, isCaseInsensitive),
+		preProcessedDirExcludes:  preProcessExclusions(excludeDirs, true, isCaseInsensitive),
 		retryCount:               s.engine.NativeEngineRetryCount,
 		retryWait:                time.Duration(s.engine.NativeEngineRetryWaitSeconds) * time.Second,
 		modTimeWindow:            time.Duration(s.engine.NativeEngineModTimeWindowSeconds) * time.Second,
@@ -828,10 +708,9 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror b
 				return &b
 			},
 		},
-		syncedTaskResults: sync.Map{}, // Initialize the concurrent map for the collector.
-		syncedDirCache:    sync.Map{},
-		// Buffer 'syncTasks' to handle bursts of rapid file discovery by the walker.
-		syncTasks: make(chan syncTask, s.engine.NativeEngineWorkers*2),
+		discoveredSrcPaths: sharded.NewShardedSet(),
+		// Buffer 'syncTasks' increase buffer size to absorb bursts of small files discovery by the walker.
+		syncTasks: make(chan syncTask, s.engine.NativeEngineWorkers*100),
 		syncErrs:  make(chan error, 1),
 		ctx:       ctx,
 	}

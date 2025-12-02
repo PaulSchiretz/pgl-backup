@@ -3,7 +3,6 @@ package pathsync
 import (
 	"context"
 	"os"
-	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -89,7 +88,7 @@ func getPathInfo(t *testing.T, path string) os.FileInfo {
 
 // testFile defines a file to be created for a test case.
 type testFile struct {
-	path          string
+	path          string // This is the OS-specific path for file creation.
 	content       string // For regular files
 	modTime       time.Time
 	symlinkTarget string // If non-empty, creates a symlink instead of a regular file
@@ -134,7 +133,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 		srcDirs                 []testDir                           // Dirs with special metadata to create in source.
 		dstDirs                 []testDir                           // Dirs to create in the destination directory.
 		dstFiles                []testFile                          // Files to create in the destination directory.
-		expectedDstFiles        []testFile                          // Files that must exist in the destination after sync.
+		expectedDstFiles        map[string]testFile                 // Files that must exist in the destination after sync, keyed by normalized path.
 		expectedMissingDstFiles []string                            // Paths that must NOT exist in the destination after sync.
 		modTimeWindow           *int                                // Optional override for mod time window. If nil, uses default.
 		verify                  func(t *testing.T, src, dst string) // Optional custom verification.
@@ -146,9 +145,9 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				{path: "file1.txt", content: "hello", modTime: baseTime},
 				{path: "subdir/file2.txt", content: "world", modTime: baseTime},
 			},
-			expectedDstFiles: []testFile{
-				{path: "file1.txt", content: "hello", modTime: baseTime},
-				{path: "subdir/file2.txt", content: "world", modTime: baseTime},
+			expectedDstFiles: map[string]testFile{
+				"file1.txt":        {path: "file1.txt", content: "hello", modTime: baseTime},
+				"subdir/file2.txt": {path: "subdir/file2.txt", content: "world", modTime: baseTime},
 			},
 		},
 		{
@@ -160,8 +159,8 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			dstFiles: []testFile{
 				{path: "file1.txt", content: "old content", modTime: baseTime},
 			},
-			expectedDstFiles: []testFile{
-				{path: "file1.txt", content: "new content", modTime: baseTime.Add(time.Hour)},
+			expectedDstFiles: map[string]testFile{
+				"file1.txt": {path: "file1.txt", content: "new content", modTime: baseTime.Add(time.Hour)},
 			},
 		},
 		{
@@ -173,8 +172,8 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			dstFiles: []testFile{
 				{path: "file1.txt", content: "same", modTime: baseTime},
 			},
-			expectedDstFiles: []testFile{
-				{path: "file1.txt", content: "same", modTime: baseTime},
+			expectedDstFiles: map[string]testFile{
+				"file1.txt": {path: "file1.txt", content: "same", modTime: baseTime},
 			},
 		},
 		{
@@ -188,9 +187,9 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				// Destination file with same content but slightly different time (within the 1s default window).
 				{path: "file.txt", content: "content", modTime: baseTime.Add(600 * time.Millisecond)},
 			},
-			expectedDstFiles: []testFile{
+			expectedDstFiles: map[string]testFile{
 				// With a 0s window, the times are not equal, so the file MUST be copied.
-				{path: "file.txt", content: "content", modTime: baseTime.Add(500 * time.Millisecond)},
+				"file.txt": {path: "file.txt", content: "content", modTime: baseTime.Add(500 * time.Millisecond)},
 			},
 		},
 		{
@@ -211,8 +210,8 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				{path: "app.log", content: "logging", modTime: baseTime},
 				{path: "temp.txt", content: "temporary", modTime: baseTime},
 			},
-			expectedDstFiles: []testFile{
-				{path: "important.dat", content: "data", modTime: baseTime},
+			expectedDstFiles: map[string]testFile{
+				"important.dat": {path: "important.dat", content: "data", modTime: baseTime},
 			},
 			expectedMissingDstFiles: []string{"app.log", "temp.txt"},
 		},
@@ -225,8 +224,8 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				{path: "app.log", content: "logging", modTime: baseTime},
 				{path: "temp.txt", content: "temporary", modTime: baseTime},
 			},
-			expectedDstFiles: []testFile{
-				{path: "important.dat", content: "data", modTime: baseTime},
+			expectedDstFiles: map[string]testFile{
+				"important.dat": {path: "important.dat", content: "data", modTime: baseTime},
 			},
 			expectedMissingDstFiles: []string{"app.log", "temp.txt"},
 		},
@@ -238,8 +237,8 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				{path: "document.txt", content: "content", modTime: baseTime},
 				{path: "session.tmp", content: "temporary", modTime: baseTime},
 			},
-			expectedDstFiles: []testFile{
-				{path: "document.txt", content: "content", modTime: baseTime},
+			expectedDstFiles: map[string]testFile{
+				"document.txt": {path: "document.txt", content: "content", modTime: baseTime},
 			},
 			expectedMissingDstFiles: []string{"session.tmp"},
 		},
@@ -252,8 +251,8 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				{path: "node_modules/lib.js", content: "library", modTime: baseTime},
 				{path: "tmp/cache.dat", content: "cache", modTime: baseTime},
 			},
-			expectedDstFiles: []testFile{
-				{path: "index.js", content: "code", modTime: baseTime},
+			expectedDstFiles: map[string]testFile{
+				"index.js": {path: "index.js", content: "code", modTime: baseTime},
 			},
 			expectedMissingDstFiles: []string{"node_modules", "tmp"},
 		},
@@ -266,8 +265,8 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				{path: "build/app.js", content: "should be excluded", modTime: baseTime},
 				{path: "build/assets/icon.png", content: "should also be excluded", modTime: baseTime},
 			},
-			expectedDstFiles: []testFile{
-				{path: "index.html", content: "root file", modTime: baseTime},
+			expectedDstFiles: map[string]testFile{
+				"index.html": {path: "index.html", content: "root file", modTime: baseTime},
 			},
 			expectedMissingDstFiles: []string{"build"},
 		},
@@ -279,8 +278,8 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				{path: "index.html", content: "root file", modTime: baseTime},
 				{path: "dist/bundle.js", content: "should be excluded", modTime: baseTime},
 			},
-			expectedDstFiles: []testFile{
-				{path: "index.html", content: "root file", modTime: baseTime},
+			expectedDstFiles: map[string]testFile{
+				"index.html": {path: "index.html", content: "root file", modTime: baseTime},
 			},
 			expectedMissingDstFiles: []string{"dist"},
 		},
@@ -292,8 +291,8 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				{path: "app.log", content: "existing log", modTime: baseTime},
 				{path: "obsolete.txt", content: "delete me", modTime: baseTime},
 			},
-			expectedDstFiles: []testFile{
-				{path: "app.log", content: "existing log", modTime: baseTime},
+			expectedDstFiles: map[string]testFile{
+				"app.log": {path: "app.log", content: "existing log", modTime: baseTime},
 			},
 			expectedMissingDstFiles: []string{"obsolete.txt"},
 		},
@@ -313,42 +312,33 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			dstFiles: []testFile{
 				{path: "obsolete.txt", content: "do not delete", modTime: baseTime},
 			},
-			expectedDstFiles: []testFile{
-				{path: "obsolete.txt", content: "do not delete", modTime: baseTime},
+			expectedDstFiles: map[string]testFile{
+				"obsolete.txt": {path: "obsolete.txt", content: "do not delete", modTime: baseTime},
 			},
 		},
 		{
-			name:   "Directory Metadata Sync",
+			name:   "Directory Permission Sync",
 			mirror: false,
 			srcDirs: []testDir{
-				// Create a source dir with non-default permissions and a specific time.
+				// Create a source dir with non-default permissions.
 				{path: "special_dir", perm: 0700, modTime: baseTime.Add(-time.Hour)},
 			},
 			srcFiles: []testFile{
-				// This file will be created inside the special dir, which in a naive implementation
-				// would overwrite the parent's modTime.
+				// Add a file to ensure the directory is processed.
 				{path: "special_dir/file.txt", content: "content", modTime: baseTime},
 			},
-			expectedDstFiles: []testFile{
-				{path: "special_dir/file.txt", content: "content", modTime: baseTime},
+			expectedDstFiles: map[string]testFile{
+				"special_dir/file.txt": {path: "special_dir/file.txt", content: "content", modTime: baseTime},
 			},
 			verify: func(t *testing.T, src, dst string) {
-				// This is the key assertion: verify the destination directory's metadata
-				// matches the source, proving the two-phase sync worked.
+				// This is the key assertion: verify the destination directory's permissions match the source.
 				srcDirInfo := getPathInfo(t, filepath.Join(src, "special_dir"))
 				dstDirInfo := getPathInfo(t, filepath.Join(dst, "special_dir"))
 
-				// Skip permission check if running as non-root on Unix, as setting 0700 might not be possible
-				// for a directory owned by another user in the temp space.
-				u, err := user.Current()
-				if err == nil && u.Uid == "0" {
-					if srcDirInfo.Mode().Perm() != dstDirInfo.Mode().Perm() {
-						t.Errorf("expected destination dir permissions to be %v, but got %v", srcDirInfo.Mode().Perm(), dstDirInfo.Mode().Perm())
-					}
-				}
-				// Use a 1-second window for comparison, matching the default config.
-				if !srcDirInfo.ModTime().Truncate(time.Second).Equal(dstDirInfo.ModTime().Truncate(time.Second)) {
-					t.Errorf("expected destination dir modTime to be %v, but got %v", srcDirInfo.ModTime(), dstDirInfo.ModTime())
+				// The expected permissions should include the backup write bit.
+				expectedPerm := withBackupWritePermission(srcDirInfo.Mode().Perm())
+				if expectedPerm != dstDirInfo.Mode().Perm() {
+					t.Errorf("expected destination dir permissions to be %v, but got %v", expectedPerm, dstDirInfo.Mode().Perm())
 				}
 			},
 		},
@@ -362,8 +352,8 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				{path: filepath.Join("logs", "app.log"), content: "log data", modTime: baseTime},
 				{path: filepath.Join("vendor", "lib", "library.go"), content: "lib code", modTime: baseTime},
 			},
-			expectedDstFiles: []testFile{
-				{path: "main.go", content: "package main", modTime: baseTime},
+			expectedDstFiles: map[string]testFile{
+				"main.go": {path: "main.go", content: "package main", modTime: baseTime},
 			},
 			expectedMissingDstFiles: []string{
 				filepath.Join("logs", "app.log"),
@@ -379,11 +369,11 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			dstFiles: []testFile{
 				{path: "image.png", content: "old content", modTime: baseTime},
 			},
-			expectedDstFiles: []testFile{
+			expectedDstFiles: map[string]testFile{
 				// On case-insensitive systems, the destination file should be updated, not deleted and recreated.
 				// The final casing might depend on the OS, but the content and time must match the source.
 				// We check against the original destination path `image.png`.
-				{path: "image.png", content: "new content", modTime: baseTime.Add(time.Hour)},
+				"image.png": {path: "image.png", content: "new content", modTime: baseTime.Add(time.Hour)},
 			},
 			expectedMissingDstFiles: []string{}, // Nothing should be deleted
 			verify: func(t *testing.T, src, dst string) {
@@ -394,11 +384,22 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				if err != nil {
 					t.Fatalf("failed to read destination directory: %v", err)
 				}
-				for _, entry := range entries {
-					// Check if a file with the source's casing was created.
-					// We expect only "image.png" to exist.
-					if entry.Name() == "Image.PNG" {
-						t.Error("expected file 'Image.PNG' not to be created in destination, but it was")
+				if isCaseInsensitiveFS() {
+					for _, entry := range entries {
+						// On case-insensitive systems, we expect the original file 'image.png' to be updated in place.
+						// A new file 'Image.PNG' should NOT be created.
+						if entry.Name() == "Image.PNG" {
+							t.Error("expected file 'Image.PNG' not to be created in destination, but it was")
+						}
+						if entry.Name() != "image.png" {
+							t.Errorf("unexpected file found in destination: %s", entry.Name())
+						}
+					}
+				} else {
+					// On case-sensitive systems (like Linux), we expect a NEW file 'Image.PNG' to be created,
+					// and the old 'image.png' to be deleted by the mirror.
+					if !pathExists(t, filepath.Join(dst, "Image.PNG")) {
+						t.Error("expected file 'Image.PNG' to be created on case-sensitive filesystem, but it was not")
 					}
 				}
 			},
@@ -414,8 +415,8 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				{path: "item.txt", perm: 0755, modTime: baseTime},
 			},
 			// After the sync, this directory should be replaced by the file.
-			expectedDstFiles: []testFile{
-				{path: "item.txt", content: "this is a file", modTime: baseTime},
+			expectedDstFiles: map[string]testFile{
+				"item.txt": {path: "item.txt", content: "this is a file", modTime: baseTime},
 			},
 			verify: func(t *testing.T, src, dst string) {
 				// Verify that the destination item is now a regular file.
@@ -441,9 +442,9 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				{path: "file_to_sync.txt", symlinkTarget: "dummy_symlink_target.txt", modTime: baseTime},
 			},
 			// After the sync, this symlink should be replaced by the regular file.
-			expectedDstFiles: []testFile{
-				{path: "file_to_sync.txt", content: "this is the real file", modTime: baseTime.Add(time.Hour)},
-				{path: "symlink_target_file.txt", content: "original target content", modTime: baseTime},
+			expectedDstFiles: map[string]testFile{
+				"file_to_sync.txt":        {path: "file_to_sync.txt", content: "this is the real file", modTime: baseTime.Add(time.Hour)},
+				"symlink_target_file.txt": {path: "symlink_target_file.txt", content: "original target content", modTime: baseTime},
 			},
 			verify: func(t *testing.T, src, dst string) {
 				// Verify that the destination item is now a regular file and not a symlink.
@@ -524,22 +525,22 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			}
 
 			// Assert
-			for _, f := range tc.expectedDstFiles {
-				fullPath := filepath.Join(dstDir, f.path)
+			for relPathKey, expectedFile := range tc.expectedDstFiles {
+				fullPath := filepath.Join(dstDir, expectedFile.path)
 				if !pathExists(t, fullPath) {
-					t.Errorf("expected file to exist in destination: %s", f.path)
+					t.Errorf("expected file to exist in destination: %s", expectedFile.path)
 					continue
 				}
-				if content := getFileContent(t, fullPath); content != f.content {
-					t.Errorf("expected content for %s to be %q, but got %q", f.path, f.content, content)
+				if content := getFileContent(t, fullPath); content != expectedFile.content {
+					t.Errorf("expected content for %s to be %q, but got %q", relPathKey, expectedFile.content, content)
 				}
 				// For mod time comparison, use the same window as the syncer.
 				window := time.Duration(syncer.engine.NativeEngineModTimeWindowSeconds) * time.Second
 				modTime := getFileModTime(t, fullPath)
-				expectedModTime := f.modTime
+				expectedModTime := expectedFile.modTime
 
 				if window > 0 && !modTime.Truncate(window).Equal(expectedModTime.Truncate(window)) || window == 0 && !modTime.Equal(expectedModTime) {
-					t.Errorf("expected modTime for %s to be %v, but got %v", f.path, f.modTime, modTime)
+					t.Errorf("expected modTime for %s to be %v, but got %v", relPathKey, expectedFile.modTime, modTime)
 				}
 			}
 			for _, p := range tc.expectedMissingDstFiles {
