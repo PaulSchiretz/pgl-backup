@@ -45,6 +45,7 @@ import (
 	"time"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
+	"pixelgardenlabs.io/pgl-backup/pkg/sharded"
 )
 
 // compactFileInfo holds the essential, primitive data from an os.FileInfo.
@@ -101,8 +102,7 @@ type nativeSyncRun struct {
 	// many concurrent reads. For our write-heavy pattern with new keys, the overhead of
 	// sync.Map's internal locking and promotion of its "dirty" map is higher than the
 	// simple, direct locking of a traditional map with a mutex.
-	syncedTaskResults      map[string]bool
-	syncedTaskResultsMutex sync.Mutex
+	syncedTaskResults *sharded.ShardedSet
 
 	// syncWg waits for syncWorkers to finish processing tasks.
 	syncWg sync.WaitGroup
@@ -423,9 +423,7 @@ func (r *nativeSyncRun) syncWalker() {
 		// If we mirror and the item exists in the source, it MUST be recorded in the results map
 		// to prevent it from being deleted during the mirror phase (Phase 2).
 		if r.mirror {
-			r.syncedTaskResultsMutex.Lock()
-			r.syncedTaskResults[relPath] = true
-			r.syncedTaskResultsMutex.Unlock()
+			r.syncedTaskResults.Store(relPath)
 		}
 		// -----------------------------------------------------------------
 
@@ -590,11 +588,7 @@ func (r *nativeSyncRun) handleMirror() error {
 		}
 
 		// Check if the destination path existed in the source.
-		// We lock/unlock for each item here because WalkDir is a long-running
-		// operation, and holding the lock for its entire duration is not ideal.
-		r.syncedTaskResultsMutex.Lock()
-		_, exists := r.syncedTaskResults[relPath]
-		r.syncedTaskResultsMutex.Unlock()
+		exists := r.syncedTaskResults.Has(relPath)
 		if exists {
 			// The path exists in the source, so we keep it.
 			return nil
@@ -690,7 +684,7 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror b
 				return &b
 			},
 		},
-		syncedTaskResults: make(map[string]bool),
+		syncedTaskResults: sharded.NewShardedSet(),
 		// Buffer 'syncTasks' increase buffer size to absorb bursts of small files discovery by the walker.
 		syncTasks: make(chan syncTask, s.engine.NativeEngineWorkers*100),
 		syncErrs:  make(chan error, 1),
