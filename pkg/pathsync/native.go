@@ -60,12 +60,21 @@ import (
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
 
+// compactFileInfo holds the essential, primitive data from an os.FileInfo.
+// Storing this directly instead of the os.FileInfo interface avoids a pointer
+// lookup and reduces GC pressure, as the data is inlined in the parent struct.
+type compactFileInfo struct {
+	ModTime int64
+	Size    int64
+	Mode    os.FileMode
+}
+
 // syncTask holds all the necessary metadata for a worker to process a file
 // without re-calculating paths or re-fetching filesystem stats.
 type syncTask struct {
 	SrcAbsPath string
 	SrcRelPath string
-	SrcInfo    os.FileInfo // Cached info from the Walker
+	SrcInfo    compactFileInfo // Cached info from the Walker
 	TrgAbsPath string
 	TrgRelPath string
 	IsDir      bool
@@ -76,7 +85,7 @@ type syncTask struct {
 // the finalization and mirror phases.
 // SrcRelPath and TrgAbsPath are omitted as they can be derived from the map key and base paths.
 type syncTaskResult struct {
-	SrcInfo  os.FileInfo
+	SrcInfo  compactFileInfo
 	Modified bool
 }
 
@@ -199,7 +208,7 @@ func (r *nativeSyncRun) copyFileHelper(task syncTask, retryCount int, retryWait 
 			}
 
 			// 4. Copy file permissions
-			if err := out.Chmod(task.SrcInfo.Mode()); err != nil {
+			if err := out.Chmod(task.SrcInfo.Mode); err != nil {
 				out.Close() // Close before returning on error
 				return fmt.Errorf("failed to set permissions on temporary file %s: %w", tempPath, err)
 			}
@@ -213,7 +222,7 @@ func (r *nativeSyncRun) copyFileHelper(task syncTask, retryCount int, retryWait 
 
 			// 6. Copy file timestamps
 			// We do this via os.Chtimes (using the path) after the file is closed.
-			if err := os.Chtimes(tempPath, task.SrcInfo.ModTime(), task.SrcInfo.ModTime()); err != nil {
+			if err := os.Chtimes(tempPath, time.Unix(0, task.SrcInfo.ModTime), time.Unix(0, task.SrcInfo.ModTime)); err != nil {
 				return fmt.Errorf("failed to set timestamps on %s: %w", tempPath, err)
 			}
 
@@ -377,8 +386,8 @@ func (r *nativeSyncRun) processFileSync(task *syncTask) (bool, error) {
 		if trgInfo.Mode().IsRegular() {
 			// It's a regular file. Use the info from os.Lstat directly for comparison.
 			// We skip the copy only if the modification times and sizes are identical.
-			// We truncate the times to a configured window to handle filesystems with different timestamp resolutions.
-			if r.truncateModTime(task.SrcInfo.ModTime()).Equal(r.truncateModTime(trgInfo.ModTime())) && task.SrcInfo.Size() == trgInfo.Size() {
+			// We truncate the times to a configured window to handle filesystems with different timestamp resolutions.srcInfoModTime := time.Unix(0, task.SrcInfo.ModTime)
+			if r.truncateModTime(time.Unix(0, task.SrcInfo.ModTime)).Equal(r.truncateModTime(trgInfo.ModTime())) && task.SrcInfo.Size == trgInfo.Size() {
 				return false, nil // No change needed
 			}
 		} else {
@@ -419,7 +428,7 @@ func (r *nativeSyncRun) processDirectorySync(task *syncTask) (bool, error) {
 	}
 
 	// 1. Ensure the directory exists. os.MkdirAll is idempotent.
-	if err := r.ensureDirExists(task.TrgRelPath, task.TrgAbsPath, withBackupWritePermission(task.SrcInfo.Mode().Perm())); err != nil {
+	if err := r.ensureDirExists(task.TrgRelPath, task.TrgAbsPath, withBackupWritePermission(task.SrcInfo.Mode.Perm())); err != nil {
 		return false, err
 	}
 
@@ -435,8 +444,8 @@ func (r *nativeSyncRun) processDirectorySync(task *syncTask) (bool, error) {
 	}
 
 	// Compare permissions and modification time. If they don't match, it's "modified".
-	expectedPerms := withBackupWritePermission(task.SrcInfo.Mode().Perm())
-	isModified := trgInfo.Mode().Perm() != expectedPerms || !r.truncateModTime(trgInfo.ModTime()).Equal(r.truncateModTime(task.SrcInfo.ModTime()))
+	expectedPerms := withBackupWritePermission(task.SrcInfo.Mode.Perm())
+	isModified := trgInfo.Mode().Perm() != expectedPerms || !r.truncateModTime(trgInfo.ModTime()).Equal(r.truncateModTime(time.Unix(0, task.SrcInfo.ModTime)))
 	return isModified, nil
 }
 
@@ -455,13 +464,13 @@ func (r *nativeSyncRun) processPathSync(task *syncTask) (bool, error) {
 	}
 
 	// Regular File
-	if task.SrcInfo.Mode().IsRegular() {
+	if task.SrcInfo.Mode.IsRegular() {
 		return r.processFileSync(task)
 	}
 
 	// Symlinks, Named Pipes, etc.
 	if !r.quiet {
-		plog.Info("SKIP", "type", task.SrcInfo.Mode().String(), "path", task.SrcRelPath)
+		plog.Info("SKIP", "type", task.SrcInfo.Mode.String(), "path", task.SrcRelPath)
 	}
 	return false, nil // Skipped items are not modified
 }
@@ -517,8 +526,12 @@ func (r *nativeSyncRun) syncWalker() {
 			SrcRelPath: relPath,
 			TrgRelPath: relPath,
 			TrgAbsPath: filepath.Join(r.trg, relPath),
-			SrcInfo:    info,
-			IsDir:      d.IsDir(),
+			SrcInfo: compactFileInfo{
+				ModTime: info.ModTime().UnixNano(),
+				Size:    info.Size(),
+				Mode:    info.Mode(),
+			},
+			IsDir: d.IsDir(),
 		}
 
 		select {
@@ -604,7 +617,7 @@ func (r *nativeSyncRun) handleDirMetadataSync() error {
 			result := resultVal.(syncTaskResult)
 			// Only add if it's a directory and was modified.
 			// The IsDir check is crucial as syncedDirCache only tracks paths, not types.
-			if result.SrcInfo.IsDir() && result.Modified {
+			if result.SrcInfo.Mode.IsDir() && result.Modified {
 				dirTasks = append(dirTasks, dirMetadataSyncTask{RelPath: relPath, Result: result})
 			}
 		} else {
@@ -639,11 +652,11 @@ func (r *nativeSyncRun) handleDirMetadataSync() error {
 		trgAbsPath := filepath.Join(r.trg, task.RelPath)
 
 		// We must compare the target's permissions against the source's permissions *with our modification*.
-		expectedPerms := withBackupWritePermission(task.Result.SrcInfo.Mode().Perm())
+		expectedPerms := withBackupWritePermission(task.Result.SrcInfo.Mode.Perm())
 		if err := os.Chmod(trgAbsPath, expectedPerms); err != nil {
 			return fmt.Errorf("failed to chmod directory %s: %w", trgAbsPath, err)
 		}
-		if err := os.Chtimes(trgAbsPath, task.Result.SrcInfo.ModTime(), task.Result.SrcInfo.ModTime()); err != nil {
+		if err := os.Chtimes(trgAbsPath, time.Unix(0, task.Result.SrcInfo.ModTime), time.Unix(0, task.Result.SrcInfo.ModTime)); err != nil {
 			return fmt.Errorf("failed to chtimes directory %s: %w", trgAbsPath, err)
 		}
 	}
