@@ -193,7 +193,7 @@ func NewDefault() Config {
 			NativeEngineRetryCount:           3,                // Default retries on failure.
 			NativeEngineRetryWaitSeconds:     5,                // Default wait time between retries.
 			NativeEngineModTimeWindowSeconds: 1,                // Set the default to 1 second
-			NativeEngineCopyBufferSizeKB:     1024,             // Default to 1MB buffer.
+			NativeEngineCopyBufferSizeKB:     4096,             // Default to 4MB buffer. Keep it between 1-8MB
 		},
 		Naming: BackupNamingConfig{
 			Prefix:                "PGL_Backup_",
