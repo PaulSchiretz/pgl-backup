@@ -108,6 +108,9 @@ type nativeSyncRun struct {
 	// syncedSourceTasks is populated by the Collector and read by the Deletion phase.
 	syncedSourceTasks map[string]syncTask
 
+	// syncedDirCache memoizes directory creation to avoid redundant os.MkdirAll calls.
+	syncedDirCache sync.Map // map[string]bool
+
 	// syncWg waits for syncWorkers to finish processing tasks.
 	syncWg sync.WaitGroup
 
@@ -126,9 +129,23 @@ type nativeSyncRun struct {
 
 // --- Helpers ---
 
+// ensureDirExists checks a cache to see if a directory has already been created
+// during this sync run, avoiding redundant calls to os.MkdirAll.
+func (r *nativeSyncRun) ensureDirExists(dirPath string, perm os.FileMode) error {
+	if _, loaded := r.syncedDirCache.Load(dirPath); loaded {
+		return nil // Already created in this run.
+	}
+
+	if err := os.MkdirAll(dirPath, perm); err != nil {
+		return fmt.Errorf("failed to ensure destination directory %s exists: %w", dirPath, err)
+	}
+	r.syncedDirCache.Store(dirPath, true)
+	return nil
+}
+
 // copyFileHelper handles the low-level details of copying a single file.
 // It ensures atomicity by writing to a temporary file first and then renaming it.
-func copyFileHelper(task syncTask, retryCount int, retryWait time.Duration) error {
+func (r *nativeSyncRun) copyFileHelper(task syncTask, retryCount int, retryWait time.Duration) error {
 	var lastErr error
 	for i := 0; i <= retryCount; i++ {
 		if i > 0 {
@@ -148,8 +165,8 @@ func copyFileHelper(task syncTask, retryCount int, retryWait time.Duration) erro
 
 			// 1. Ensure the destination directory exists. The final permissions for this directory
 			// will be set when its own sync task is processed or in the final handleDirMetadataSync.
-			if err := os.MkdirAll(trgDir, withBackupWritePermission(0755)); err != nil {
-				return fmt.Errorf("failed to ensure destination directory %s exists: %w", trgDir, err)
+			if err := r.ensureDirExists(trgDir, withBackupWritePermission(0755)); err != nil {
+				return err
 			}
 
 			// 2. Create a temporary file in the destination directory.
@@ -355,7 +372,7 @@ func (r *nativeSyncRun) processFileSync(task syncTask) (syncTask, error) {
 		}
 	}
 
-	if err := copyFileHelper(task, r.retryCount, r.retryWait); err != nil {
+	if err := r.copyFileHelper(task, r.retryCount, r.retryWait); err != nil {
 		return task, fmt.Errorf("failed to copy file to %s: %w", task.TrgAbsPath, err)
 	}
 
@@ -376,8 +393,8 @@ func (r *nativeSyncRun) processDirectorySync(task syncTask) (syncTask, error) {
 	}
 
 	// 1. Ensure the directory exists. os.MkdirAll is idempotent.
-	if err := os.MkdirAll(task.TrgAbsPath, withBackupWritePermission(task.SrcInfo.Mode().Perm())); err != nil {
-		return task, fmt.Errorf("failed to create directory %s: %w", task.TrgAbsPath, err)
+	if err := r.ensureDirExists(task.TrgAbsPath, withBackupWritePermission(task.SrcInfo.Mode().Perm())); err != nil {
+		return task, err
 	}
 
 	// 2. Get the current state of the destination directory.
@@ -577,12 +594,20 @@ func (r *nativeSyncRun) handleDirMetadataSync() error {
 	plog.Info("Syncing directory metadata")
 
 	// 1. Collect all directory tasks.
+	// We iterate over the syncedDirCache, which contains all directories that were
+	// either created or had their existence verified during the sync.
 	var dirTasks []syncTask
-	for _, task := range r.syncedSourceTasks {
-		if task.IsDir && task.SrcRelPath != "." && task.Modified { // Only process directories that were actually modified
-			dirTasks = append(dirTasks, task)
+	r.syncedDirCache.Range(func(key, value interface{}) bool {
+		dirPath := key.(string)
+		relPath, err := r.normalizedRelPath(r.trg, dirPath)
+		if err == nil {
+			// Check if this directory has a corresponding source task and was modified.
+			if task, ok := r.syncedSourceTasks[relPath]; ok && task.IsDir && task.Modified {
+				dirTasks = append(dirTasks, task)
+			}
 		}
-	}
+		return true // continue iteration
+	})
 
 	// 2. Sort directories from deepest to shallowest.
 	// This is a robust pattern ensuring that child modifications (if any were to occur)
@@ -795,6 +820,7 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror b
 		retryWait:                time.Duration(s.engine.NativeEngineRetryWaitSeconds) * time.Second,
 		modTimeWindow:            time.Duration(s.engine.NativeEngineModTimeWindowSeconds) * time.Second,
 		syncedSourceTasks:        make(map[string]syncTask), // Initialize the map for the collector.
+		syncedDirCache:           sync.Map{},
 		// Buffer 'syncTasks' to handle bursts of rapid file discovery by the walker.
 		syncTasks: make(chan syncTask, s.engine.NativeEngineWorkers*2),
 		// Buffer 'syncResults' to ensure syncWorkers don't block waiting for the collector.
