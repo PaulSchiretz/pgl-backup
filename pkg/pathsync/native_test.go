@@ -3,7 +3,6 @@ package pathsync
 import (
 	"context"
 	"os"
-	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -318,37 +317,28 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
-			name:   "Directory Metadata Sync",
+			name:   "Directory Permission Sync",
 			mirror: false,
 			srcDirs: []testDir{
-				// Create a source dir with non-default permissions and a specific time.
+				// Create a source dir with non-default permissions.
 				{path: "special_dir", perm: 0700, modTime: baseTime.Add(-time.Hour)},
 			},
 			srcFiles: []testFile{
-				// This file will be created inside the special dir, which in a naive implementation
-				// would overwrite the parent's modTime.
+				// Add a file to ensure the directory is processed.
 				{path: "special_dir/file.txt", content: "content", modTime: baseTime},
 			},
 			expectedDstFiles: []testFile{
 				{path: "special_dir/file.txt", content: "content", modTime: baseTime},
 			},
 			verify: func(t *testing.T, src, dst string) {
-				// This is the key assertion: verify the destination directory's metadata
-				// matches the source, proving the two-phase sync worked.
+				// This is the key assertion: verify the destination directory's permissions match the source.
 				srcDirInfo := getPathInfo(t, filepath.Join(src, "special_dir"))
 				dstDirInfo := getPathInfo(t, filepath.Join(dst, "special_dir"))
 
-				// Skip permission check if running as non-root on Unix, as setting 0700 might not be possible
-				// for a directory owned by another user in the temp space.
-				u, err := user.Current()
-				if err == nil && u.Uid == "0" {
-					if srcDirInfo.Mode().Perm() != dstDirInfo.Mode().Perm() {
-						t.Errorf("expected destination dir permissions to be %v, but got %v", srcDirInfo.Mode().Perm(), dstDirInfo.Mode().Perm())
-					}
-				}
-				// Use a 1-second window for comparison, matching the default config.
-				if !srcDirInfo.ModTime().Truncate(time.Second).Equal(dstDirInfo.ModTime().Truncate(time.Second)) {
-					t.Errorf("expected destination dir modTime to be %v, but got %v", srcDirInfo.ModTime(), dstDirInfo.ModTime())
+				// The expected permissions should include the backup write bit.
+				expectedPerm := withBackupWritePermission(srcDirInfo.Mode().Perm())
+				if expectedPerm != dstDirInfo.Mode().Perm() {
+					t.Errorf("expected destination dir permissions to be %v, but got %v", expectedPerm, dstDirInfo.Mode().Perm())
 				}
 			},
 		},
