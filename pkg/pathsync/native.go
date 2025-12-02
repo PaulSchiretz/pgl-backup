@@ -138,6 +138,8 @@ func (r *nativeSyncRun) ensureDirExists(dirPath string, perm os.FileMode) error 
 	}
 
 	if err := os.MkdirAll(dirPath, perm); err != nil {
+		// If it fails, remove from cache so we retry next time
+		r.syncedDirCache.Delete(dirPath)
 		return fmt.Errorf("failed to ensure destination directory %s exists: %w", dirPath, err)
 	}
 	r.syncedDirCache.Store(dirPath, true)
@@ -369,12 +371,25 @@ func (r *nativeSyncRun) processFileSync(task syncTask) (syncTask, error) {
 	// Check if the destination file exists and if it matches source (size and mod time).
 	trgInfo, err := os.Stat(task.TrgAbsPath)
 	if err == nil {
-		// Destination exists.
-		// We skip the copy only if the modification times and sizes are identical.
-		// We truncate the times to a configured window to handle filesystems with different timestamp resolutions.
-		if r.truncateModTime(task.SrcInfo.ModTime()).Equal(r.truncateModTime(trgInfo.ModTime())) && task.SrcInfo.Size() == trgInfo.Size() {
-			return task, nil
+		// Destination exists. Check if it's a regular file.
+		if !trgInfo.Mode().IsRegular() {
+			// The destination exists but is not a regular file (e.g., it's a directory or a symlink).
+			// To ensure a consistent state, we must remove it before copying the source file.
+			plog.Warn("Destination is not a regular file, removing before copy", "path", task.TrgRelPath, "type", trgInfo.Mode().String())
+			if err := os.RemoveAll(task.TrgAbsPath); err != nil {
+				return task, fmt.Errorf("failed to remove non-regular file at destination %s: %w", task.TrgAbsPath, err)
+			}
+		} else {
+			// Destination is a regular file.
+			// We skip the copy only if the modification times and sizes are identical.
+			// We truncate the times to a configured window to handle filesystems with different timestamp resolutions.
+			if r.truncateModTime(task.SrcInfo.ModTime()).Equal(r.truncateModTime(trgInfo.ModTime())) && task.SrcInfo.Size() == trgInfo.Size() {
+				return task, nil
+			}
 		}
+	} else if !os.IsNotExist(err) {
+		// An unexpected error occurred while stating the destination.
+		return task, fmt.Errorf("failed to stat destination file %s: %w", task.TrgAbsPath, err)
 	}
 
 	if err := r.copyFileHelper(task, r.retryCount, r.retryWait); err != nil {
@@ -405,21 +420,22 @@ func (r *nativeSyncRun) processDirectorySync(task syncTask) (syncTask, error) {
 	// 2. Get the current state of the destination directory.
 	trgInfo, err := os.Stat(task.TrgAbsPath)
 	if err != nil {
-		// Genuine error accessing destination
-		return task, fmt.Errorf("failed to stat destination %s: %w", task.TrgAbsPath, err)
-	}
-
-	// 3. Determine if a finalization pass is needed by comparing metadata.
-	// We truncate the times to a configured window to handle filesystems with different timestamp resolutions.
-	// We must compare the target's permissions against the source's permissions *with our modification*.
-	expectedPerms := withBackupWritePermission(task.SrcInfo.Mode().Perm())
-	if trgInfo.Mode().Perm() != expectedPerms || !r.truncateModTime(trgInfo.ModTime()).Equal(r.truncateModTime(task.SrcInfo.ModTime())) {
-		// Directory exists, but permissions or modification time are wrong.
-		// Mark as modified so they get fixed in the finalization pass.
+		// If we can't stat the destination directory (even after trying to create it),
+		// we must assume it's not in the correct state. This could be due to a race
+		// condition or a permissions issue. We'll mark it as modified so the finalization
+		// pass will attempt to create it and set its metadata, which will then
+		// surface the underlying error if it persists.
+		plog.Warn("Could not stat destination directory, marking for finalization", "path", task.TrgAbsPath, "error", err)
 		task.Modified = true
 	} else {
-		// Directory existed and had the correct permissions and timestamp.
-		task.Modified = false
+		// 3. Determine if a finalization pass is needed by comparing metadata.
+		// We truncate the times to a configured window to handle filesystems with different timestamp resolutions.
+		// We must compare the target's permissions against the source's permissions *with our modification*.
+		expectedPerms := withBackupWritePermission(task.SrcInfo.Mode().Perm())
+		if trgInfo.Mode().Perm() != expectedPerms || !r.truncateModTime(trgInfo.ModTime()).Equal(r.truncateModTime(task.SrcInfo.ModTime())) {
+			// Directory exists, but permissions or modification time are wrong. Mark as modified.
+			task.Modified = true
+		}
 	}
 
 	if !r.quiet {
