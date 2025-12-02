@@ -423,27 +423,21 @@ func (r *nativeSyncRun) processDirectorySync(task *syncTask) (bool, error) {
 		return false, err
 	}
 
-	// 2. Get the current state of the destination directory.
+	// 2. Determine if a finalization pass is needed by comparing metadata.
+	// We check this even if we just created the directory, as the permissions might
+	// already be correct, or we might need to update timestamps on an existing directory.
 	trgInfo, err := os.Stat(task.TrgAbsPath)
 	if err != nil {
-		// If we can't stat the destination directory (even after trying to create it),
-		// we must assume it's not in the correct state. This could be due to a race
-		// condition or a permissions issue. We'll mark it as modified so the finalization
-		// pass will attempt to create it and set its metadata, which will then
-		// surface the underlying error if it persists.
-		plog.Warn("Could not stat destination directory, marking for finalization", "path", task.TrgAbsPath, "error", err)
-		return true, nil
+		// If we can't stat it (e.g., permissions), we can't compare metadata.
+		// We'll mark it as modified so the finalization pass will attempt to set metadata,
+		// which will then surface the underlying error if it persists.
+		return true, nil // Mark as modified to trigger finalization.
 	}
 
-	// 3. Determine if a finalization pass is needed by comparing metadata.
-	// We truncate the times to a configured window to handle filesystems with different timestamp resolutions.
-	// We must compare the target's permissions against the source's permissions *with our modification*.
+	// Compare permissions and modification time. If they don't match, it's "modified".
 	expectedPerms := withBackupWritePermission(task.SrcInfo.Mode().Perm())
-	if trgInfo.Mode().Perm() != expectedPerms || !r.truncateModTime(trgInfo.ModTime()).Equal(r.truncateModTime(task.SrcInfo.ModTime())) {
-		// Directory exists, but permissions or modification time are wrong. Mark as modified.
-		return true, nil
-	}
-	return false, nil
+	isModified := trgInfo.Mode().Perm() != expectedPerms || !r.truncateModTime(trgInfo.ModTime()).Equal(r.truncateModTime(task.SrcInfo.ModTime()))
+	return isModified, nil
 }
 
 // processPathSync acts as the dispatcher for a specific path.
