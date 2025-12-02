@@ -401,6 +401,10 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 					if !pathExists(t, filepath.Join(dst, "Image.PNG")) {
 						t.Error("expected file 'Image.PNG' to be created on case-sensitive filesystem, but it was not")
 					}
+					// Also assert the old file is gone.
+					if pathExists(t, filepath.Join(dst, "image.png")) {
+						t.Error("expected file 'image.png' to be deleted by mirror on case-sensitive filesystem, but it still exists")
+					}
 				}
 			},
 		},
@@ -458,12 +462,6 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// --- Test-specific setup ---
-			if tc.name == "Exclusion with Backslashes on Windows" {
-				if runtime.GOOS != "windows" {
-					t.Skip("Skipping Windows-specific backslash test on non-windows OS")
-				}
-			}
 			// --- Test-specific setup ---
 			if tc.name == "Case Insensitive Mirror - Keep Mismatched Case" {
 				if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
