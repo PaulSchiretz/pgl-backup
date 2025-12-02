@@ -6,6 +6,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,9 +89,28 @@ func getPathInfo(t *testing.T, path string) os.FileInfo {
 
 // testFile defines a file to be created for a test case.
 type testFile struct {
-	path    string
-	content string
-	modTime time.Time
+	path          string
+	content       string // For regular files
+	modTime       time.Time
+	symlinkTarget string // If non-empty, creates a symlink instead of a regular file
+}
+
+// helper to create a symlink.
+func createSymlink(t *testing.T, oldname, newname string) {
+	t.Helper()
+	dir := filepath.Dir(newname)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("failed to create dir for test symlink: %v", err)
+	}
+	err := os.Symlink(oldname, newname)
+	if err != nil {
+		// On Windows, creating symlinks requires special privileges.
+		// If the error indicates this, we skip the test gracefully.
+		if runtime.GOOS == "windows" && strings.Contains(err.Error(), "A required privilege is not held by the client") {
+			t.Skip("Skipping symlink test: creating symlinks on Windows requires administrator privileges or Developer Mode.")
+		}
+		t.Fatalf("failed to create symlink from %s to %s: %v", oldname, newname, err)
+	}
 }
 
 // testDir defines a directory to be created for a test case.
@@ -112,6 +132,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 		excludeDirs             []string
 		srcFiles                []testFile                          // Files to create in the source directory.
 		srcDirs                 []testDir                           // Dirs with special metadata to create in source.
+		dstDirs                 []testDir                           // Dirs to create in the destination directory.
 		dstFiles                []testFile                          // Files to create in the destination directory.
 		expectedDstFiles        []testFile                          // Files that must exist in the destination after sync.
 		expectedMissingDstFiles []string                            // Paths that must NOT exist in the destination after sync.
@@ -382,6 +403,56 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:   "Overwrite Destination Directory with File",
+			mirror: false,
+			srcFiles: []testFile{
+				{path: "item.txt", content: "this is a file", modTime: baseTime},
+			},
+			// Pre-create a directory in the destination with the same name as the source file.
+			dstDirs: []testDir{
+				{path: "item.txt", perm: 0755, modTime: baseTime},
+			},
+			// After the sync, this directory should be replaced by the file.
+			expectedDstFiles: []testFile{
+				{path: "item.txt", content: "this is a file", modTime: baseTime},
+			},
+			verify: func(t *testing.T, src, dst string) {
+				// Verify that the destination item is now a regular file.
+				info := getPathInfo(t, filepath.Join(dst, "item.txt"))
+				if !info.Mode().IsRegular() {
+					t.Errorf("expected destination item to be a regular file, but it is %v", info.Mode())
+				}
+			},
+		},
+		{
+			name:   "Overwrite Destination Symlink with File",
+			mirror: false,
+			srcFiles: []testFile{
+				// This is a regular file that will be synced.
+				{path: "file_to_sync.txt", content: "this is the real file", modTime: baseTime.Add(time.Hour)},
+				// This is a file that the symlink in dst *could* point to, but it's irrelevant for the test.
+				// It's here to ensure the symlink target doesn't cause issues if it exists.
+				{path: "symlink_target_file.txt", content: "original target content", modTime: baseTime},
+			},
+			dstFiles: []testFile{
+				// Pre-create a symlink in the destination with the same name as the source file.
+				// It points to a dummy target (which may or may not exist).
+				{path: "file_to_sync.txt", symlinkTarget: "dummy_symlink_target.txt", modTime: baseTime},
+			},
+			// After the sync, this symlink should be replaced by the regular file.
+			expectedDstFiles: []testFile{
+				{path: "file_to_sync.txt", content: "this is the real file", modTime: baseTime.Add(time.Hour)},
+				{path: "symlink_target_file.txt", content: "original target content", modTime: baseTime},
+			},
+			verify: func(t *testing.T, src, dst string) {
+				// Verify that the destination item is now a regular file and not a symlink.
+				info := getPathInfo(t, filepath.Join(dst, "file_to_sync.txt"))
+				if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+					t.Errorf("expected destination item to be a regular file, but it is %v", info.Mode())
+				}
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -416,8 +487,15 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			for _, d := range tc.srcDirs {
 				createDir(t, filepath.Join(srcDir, d.path), d.perm, d.modTime)
 			}
+			for _, d := range tc.dstDirs {
+				createDir(t, filepath.Join(dstDir, d.path), d.perm, d.modTime)
+			}
 			for _, f := range tc.dstFiles {
-				createFile(t, filepath.Join(dstDir, f.path), f.content, f.modTime)
+				if f.symlinkTarget != "" {
+					createSymlink(t, f.symlinkTarget, filepath.Join(dstDir, f.path))
+				} else {
+					createFile(t, filepath.Join(dstDir, f.path), f.content, f.modTime)
+				}
 			}
 
 			// In the real app, `validateSyncPaths` creates the destination directory

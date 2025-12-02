@@ -1,45 +1,41 @@
 package pathsync
 
 // --- ARCHITECTURAL OVERVIEW ---
-//
 // The native sync engine uses a multi-phase approach to ensure both speed and correctness.
 //
-// --- Phase 1: Concurrent Sync (Producer-Consumer-Collector) ---
+// --- Phase 1: Concurrent Sync (Producer-Consumer) ---
 //
-// The core of the engine uses a Producer-Consumer-Collector pattern to perform
-// file operations concurrently, maximizing I/O throughput. This pipeline is
-// orchestrated by the `handleSync` function and consists of three main components:
+// The core of the engine uses a Producer-Consumer pattern to perform file
+// operations concurrently, maximizing I/O throughput. This pipeline is
+// orchestrated by the `handleSync` function and consists of two main components:
 //
 // 1. The Producer (`syncWalker`):
 //    - A single goroutine that walks the source directory tree (`filepath.WalkDir`).
 //    - For each file/directory, it creates a `syncTask` and sends it to the `syncTasks` channel.
 //    - It closes the `syncTasks` channel upon completion to signal the end of work.
 //
-// 2. The Consumers (`syncWorker`):
+// 2. The Consumers (`syncWorker` pool):
 //    - A pool of worker goroutines that read `syncTask` items from the `syncTasks` channel.
 //    - Each worker performs the necessary I/O (e.g., checking, copying files).
-//    - After processing, it sends the updated `syncTask` to the `syncResults` channel.
-//
-// 3. The Collector (`syncCollector`):
-//    - A single goroutine that reads processed tasks from the `syncResults` channel.
-//    - It populates the `syncedSourceTasks` map, which serves as the definitive record
-//      of all items that existed in the source. Using a single collector avoids
-//      the need for a mutex to protect the map.
+//    - After processing, it stores a lightweight `syncTaskResult` directly into a
+//      `sync.Map` (`syncedTaskResults`). This map serves as the definitive record
+//      of all items that existed in the source and their sync status. Using a
+//      `sync.Map` avoids a channel-based collector bottleneck.
 //
 // --- Phase 2: Sequential Finalization ---
 //
 // After the concurrent phase completes, two sequential passes are run to ensure
 // data consistency and handle deletions.
 //
-// 4. Metadata Finalization (`handleDirMetadataSync`):
+// 3. Metadata Finalization (`handleDirMetadataSync`):
 //    - A single-threaded pass that iterates over all directories that were modified.
 //    - It applies the final permissions and timestamps to directories.
 //    - This is done *after* all file copies are complete to prevent race conditions where
 //      a file copy might alter a parent directory's modification time after it has been set.
 //
-// 5. Mirroring (`handleMirror`):
+// 4. Mirroring (`handleMirror`):
 //    - If mirroring is enabled, this final pass walks the *destination* directory.
-//    - It checks each item against the `syncedSourceTasks` map created by the Collector.
+//    - It checks each item against the `syncedTaskResults` map.
 //    - Any destination item not found in the map (and not excluded) is deleted.
 //
 // The native sync engine implements a robust, concurrent file synchronization process.
@@ -73,7 +69,16 @@ type syncTask struct {
 	TrgAbsPath string
 	TrgRelPath string
 	IsDir      bool
-	Modified   bool // True if the item was actually created or updated in the destination
+}
+
+// syncTaskResult is a lightweight struct stored by workers in the results map.
+// It contains the outcome of the sync operation and the necessary metadata for
+// the finalization and mirror phases.
+type syncTaskResult struct {
+	SrcRelPath string
+	SrcInfo    os.FileInfo
+	TrgAbsPath string
+	Modified   bool
 }
 
 type exclusionType int
@@ -103,11 +108,11 @@ type nativeSyncRun struct {
 	preProcessedDirExcludes  []preProcessedExclusion
 	retryCount               int
 	retryWait                time.Duration
-	modTimeWindow            time.Duration
+	modTimeWindow            time.Duration // The time window to consider file modification times equal.
 	ioBufferPool             sync.Pool
 
-	// syncedSourceTasks is populated by the Collector and read by the Deletion phase.
-	syncedSourceTasks map[string]syncTask
+	// syncedTaskResults is a concurrent-safe map populated by workers and read by the finalization/mirror phases.
+	syncedTaskResults sync.Map // map[string]syncTaskResult
 
 	// syncedDirCache memoizes directory creation to avoid redundant os.MkdirAll calls.
 	syncedDirCache sync.Map // map[string]bool
@@ -118,10 +123,7 @@ type nativeSyncRun struct {
 	// syncTasks is the channel where the Walker sends pre-processed tasks.
 	syncTasks chan syncTask
 
-	// syncResults is the channel where syncWorkers send processed tasks to the Collector.
-	syncResults chan syncTask
-
-	// syncErrs captures the first critical error to be reported at the end of the run.
+	// syncErrs captures the first critical error from any worker to be reported at the end of the run.
 	syncErrs chan error
 
 	// ctx is the cancellable context for the entire run.
@@ -138,7 +140,7 @@ func (r *nativeSyncRun) ensureDirExists(dirPath string, perm os.FileMode) error 
 	}
 
 	if err := os.MkdirAll(dirPath, perm); err != nil {
-		// If it fails, remove from cache so we retry next time
+		// If it fails, remove from cache so we can retry if the function is called again.
 		r.syncedDirCache.Delete(dirPath)
 		return fmt.Errorf("failed to ensure destination directory %s exists: %w", dirPath, err)
 	}
@@ -286,7 +288,7 @@ func (r *nativeSyncRun) truncateModTime(t time.Time) time.Time {
 	return t
 }
 
-// normalizedRelPath calculates the relative path and normalizes it for case-insensitivity if needed.
+// normalizedRelPath calculates the relative path and normalizes it to lowercase if case-insensitivity is enabled.
 func (r *nativeSyncRun) normalizedRelPath(base, absPath string) (string, error) {
 	relPath, err := filepath.Rel(base, absPath)
 	if err != nil {
@@ -299,7 +301,7 @@ func (r *nativeSyncRun) normalizedRelPath(base, absPath string) (string, error) 
 }
 
 // withBackupWritePermission ensures that any directory/file permission has the owner-write
-// bit set. This prevents the backup user from being locked out on subsequent runs.
+// bit (0200) set. This prevents the backup user from being locked out on subsequent runs.
 func withBackupWritePermission(basePerm os.FileMode) os.FileMode {
 	// Ensure the backup user always retains write permission.
 	return basePerm | 0200
@@ -362,59 +364,64 @@ func (r *nativeSyncRun) isExcluded(relPath string, isDir bool) bool {
 
 // processFileSync checks if a file needs to be copied (based on size/time)
 // and triggers the copy operation if needed.
-func (r *nativeSyncRun) processFileSync(task syncTask) (syncTask, error) {
+func (r *nativeSyncRun) processFileSync(task *syncTask) (bool, error) {
 	if r.dryRun {
 		plog.Info("[DRY RUN] COPY", "path", task.SrcRelPath)
-		return task, nil
+		return false, nil
 	}
 
 	// Check if the destination file exists and if it matches source (size and mod time).
-	trgInfo, err := os.Stat(task.TrgAbsPath)
+	// We use os.Lstat to get information about the file itself, not its target if it's a symlink.
+	trgInfo, err := os.Lstat(task.TrgAbsPath)
 	if err == nil {
-		// Destination exists. Check if it's a regular file.
-		if !trgInfo.Mode().IsRegular() {
-			// The destination exists but is not a regular file (e.g., it's a directory or a symlink).
-			// To ensure a consistent state, we must remove it before copying the source file.
-			plog.Warn("Destination is not a regular file, removing before copy", "path", task.TrgRelPath, "type", trgInfo.Mode().String())
-			if err := os.RemoveAll(task.TrgAbsPath); err != nil {
-				return task, fmt.Errorf("failed to remove non-regular file at destination %s: %w", task.TrgAbsPath, err)
-			}
-		} else {
-			// Destination is a regular file.
+		// Destination path exists.
+		if trgInfo.Mode().IsRegular() {
+			// It's a regular file. Use the info from os.Lstat directly for comparison.
 			// We skip the copy only if the modification times and sizes are identical.
 			// We truncate the times to a configured window to handle filesystems with different timestamp resolutions.
 			if r.truncateModTime(task.SrcInfo.ModTime()).Equal(r.truncateModTime(trgInfo.ModTime())) && task.SrcInfo.Size() == trgInfo.Size() {
-				return task, nil
+				return false, nil // No change needed
 			}
+		} else {
+			// The destination exists but is not a regular file (e.g., it's a directory, symlink, or other special file).
+			// To ensure a consistent state, we must remove it before copying the source file.
+			plog.Warn("Destination is not a regular file, removing before copy", "path", task.TrgRelPath, "type", trgInfo.Mode().String())
+			if err := os.RemoveAll(task.TrgAbsPath); err != nil {
+				return false, fmt.Errorf("failed to remove non-regular file at destination %s: %w", task.TrgAbsPath, err)
+			}
+			// After removal, proceed to copy the file.
 		}
 	} else if !os.IsNotExist(err) {
-		// An unexpected error occurred while stating the destination.
-		return task, fmt.Errorf("failed to stat destination file %s: %w", task.TrgAbsPath, err)
+		// An unexpected error occurred while Lstat-ing the destination.
+		return false, fmt.Errorf("failed to lstat destination file %s: %w", task.TrgAbsPath, err)
 	}
 
-	if err := r.copyFileHelper(task, r.retryCount, r.retryWait); err != nil {
-		return task, fmt.Errorf("failed to copy file to %s: %w", task.TrgAbsPath, err)
+	if err := r.copyFileHelper(*task, r.retryCount, r.retryWait); err != nil {
+		return false, fmt.Errorf("failed to copy file to %s: %w", task.TrgAbsPath, err)
 	}
 
 	if !r.quiet {
 		plog.Info("COPY", "path", task.SrcRelPath)
 	}
-	task.Modified = true // File was actually copied/updated
-	return task, nil
+	return true, nil // File was actually copied/updated
 }
 
 // processDirectorySync ensures the destination directory exists.
 // It does NOT set final metadata (permissions, timestamps) to avoid race conditions with file workers.
-// permissions, timestamps are set in a separate finalize phase
-func (r *nativeSyncRun) processDirectorySync(task syncTask) (syncTask, error) {
+// Permissions and timestamps are set in the separate `handleDirMetadataSync` phase.
+func (r *nativeSyncRun) processDirectorySync(task *syncTask) (bool, error) {
 	if r.dryRun {
 		plog.Info("[DRY RUN] SYNCDIR", "path", task.SrcRelPath)
-		return task, nil
+		return false, nil
+	}
+
+	if !r.quiet {
+		plog.Info("SYNCDIR", "path", task.SrcRelPath)
 	}
 
 	// 1. Ensure the directory exists. os.MkdirAll is idempotent.
 	if err := r.ensureDirExists(task.TrgAbsPath, withBackupWritePermission(task.SrcInfo.Mode().Perm())); err != nil {
-		return task, err
+		return false, err
 	}
 
 	// 2. Get the current state of the destination directory.
@@ -426,31 +433,27 @@ func (r *nativeSyncRun) processDirectorySync(task syncTask) (syncTask, error) {
 		// pass will attempt to create it and set its metadata, which will then
 		// surface the underlying error if it persists.
 		plog.Warn("Could not stat destination directory, marking for finalization", "path", task.TrgAbsPath, "error", err)
-		task.Modified = true
-	} else {
-		// 3. Determine if a finalization pass is needed by comparing metadata.
-		// We truncate the times to a configured window to handle filesystems with different timestamp resolutions.
-		// We must compare the target's permissions against the source's permissions *with our modification*.
-		expectedPerms := withBackupWritePermission(task.SrcInfo.Mode().Perm())
-		if trgInfo.Mode().Perm() != expectedPerms || !r.truncateModTime(trgInfo.ModTime()).Equal(r.truncateModTime(task.SrcInfo.ModTime())) {
-			// Directory exists, but permissions or modification time are wrong. Mark as modified.
-			task.Modified = true
-		}
+		return true, nil
 	}
 
-	if !r.quiet {
-		plog.Info("SYNCDIR", "path", task.SrcRelPath)
+	// 3. Determine if a finalization pass is needed by comparing metadata.
+	// We truncate the times to a configured window to handle filesystems with different timestamp resolutions.
+	// We must compare the target's permissions against the source's permissions *with our modification*.
+	expectedPerms := withBackupWritePermission(task.SrcInfo.Mode().Perm())
+	if trgInfo.Mode().Perm() != expectedPerms || !r.truncateModTime(trgInfo.ModTime()).Equal(r.truncateModTime(task.SrcInfo.ModTime())) {
+		// Directory exists, but permissions or modification time are wrong. Mark as modified.
+		return true, nil
 	}
-	return task, nil
+	return false, nil
 }
 
 // processPathSync acts as the dispatcher for a specific path.
 // It determines if the path is a directory, file, or something to skip.
-// It receives the full task struct so it doesn't need to do any discovery.
-func (r *nativeSyncRun) processPathSync(task syncTask) (syncTask, error) {
+// It receives a pointer to the task struct so it doesn't need to do any discovery.
+func (r *nativeSyncRun) processPathSync(task *syncTask) (bool, error) {
 
 	if task.SrcRelPath == "." {
-		return task, nil // The root directory itself doesn't need I/O processing
+		return false, nil // The root directory itself doesn't need I/O processing
 	}
 
 	// Directory
@@ -467,12 +470,11 @@ func (r *nativeSyncRun) processPathSync(task syncTask) (syncTask, error) {
 	if !r.quiet {
 		plog.Info("SKIP", "type", task.SrcInfo.Mode().String(), "path", task.SrcRelPath)
 	}
-	task.Modified = false // Skipped items are not modified
-	return task, nil
+	return false, nil // Skipped items are not modified
 }
 
 // syncWalker is a dedicated goroutine that walks the source directory tree,
-// sending each syntask to the syncTasks channel for processing by workers.
+// sending each syncTask to the syncTasks channel for processing by workers.
 func (r *nativeSyncRun) syncWalker() {
 	defer close(r.syncTasks) // Close syncTasks to signal syncWorkers to stop when walk is complete
 
@@ -527,7 +529,6 @@ func (r *nativeSyncRun) syncWalker() {
 			TrgAbsPath: filepath.Join(r.trg, relPath),
 			SrcInfo:    info,
 			IsDir:      d.IsDir(),
-			Modified:   false, // Will be set by worker if actual change occurs
 		}
 
 		select {
@@ -547,8 +548,8 @@ func (r *nativeSyncRun) syncWalker() {
 	}
 }
 
-// syncWorker acts as the Consumer. It reads paths from the 'syncTasks' channel,
-// processes them (IO), and sends the relative path to the 'syncResults' channel.
+// syncWorker acts as a Consumer. It reads tasks from the 'syncTasks' channel,
+// processes them (I/O), and stores the result in the `syncedTaskResults` map.
 func (r *nativeSyncRun) syncWorker() {
 	defer r.syncWg.Done()
 
@@ -563,7 +564,7 @@ func (r *nativeSyncRun) syncWorker() {
 			}
 
 			// Process the task, getting back the potentially modified task
-			processedTask, err := r.processPathSync(task)
+			modified, err := r.processPathSync(&task)
 			if err != nil {
 				// If I/O fails, report the error non-blockingly.
 				select {
@@ -574,57 +575,36 @@ func (r *nativeSyncRun) syncWorker() {
 					"path", task.SrcRelPath,
 					"error", err,
 					"note", "This file may be inconsistent or outdated in the destination")
-				// Even if failed, we still send the task to the collector to mark it as "attempted"
-				// for deletion phase, but its Modified flag will be false if no actual change happened.
+				// Even on failure, we store a result to mark the path as "seen" in the source.
+				// This prevents it from being deleted in the mirror phase.
 			}
 
-			// Send the processed task to the Collector.
-			// The collector will use the 'Modified' flag to decide if metadata needs to be applied later.
-			select {
-			case <-r.ctx.Done():
-				return
-			case r.syncResults <- processedTask:
-			}
+			// Store the result directly in the concurrent map.
+			r.syncedTaskResults.Store(task.SrcRelPath, syncTaskResult{
+				SrcRelPath: task.SrcRelPath,
+				SrcInfo:    task.SrcInfo,
+				TrgAbsPath: task.TrgAbsPath,
+				Modified:   modified,
+			})
 		}
 	}
 }
 
-// syncCollector is a dedicated goroutine that collects relative paths from syncResults
-// and populates the syncedSourcePaths map.
-func (r *nativeSyncRun) syncCollector(syncCollectorDone chan struct{}) {
-	defer close(syncCollectorDone)
-	for task := range r.syncResults {
-		// The relPath in the task was already normalized by the walker if needed.
-		// This ensures the map key is consistently cased.
-		// Example: On Windows, both a source `Image.png` and a destination `image.png`
-		// will resolve to the same map key: `image.png`.
-		r.syncedSourceTasks[task.SrcRelPath] = task
-	}
-}
-
-// handleDirMetadataSync iterates through all synced directories and applies their final metadata.
-// This is done in a separate pass after all files have been copied to prevent race conditions.
-// It processes directories from the deepest level upwards to ensure correctness.
-//
-// Rationale for deepest-to-highest processing:
-// While `os.Chmod` and `os.Chtimes` on a child directory do not directly affect its parent's metadata,
-// other filesystem operations (like creating files within a directory) can update the parent's modification time.
-// Processing from deepest to highest ensures that all potential child operations are complete before
-// the final metadata is applied to a parent directory, preventing accidental overwrites or inconsistencies.
 func (r *nativeSyncRun) handleDirMetadataSync() error {
 	plog.Info("Syncing directory metadata")
 
 	// 1. Collect all directory tasks.
-	// We iterate over the syncedDirCache, which contains all directories that were
-	// either created or had their existence verified during the sync.
-	var dirTasks []syncTask
+	// We iterate over the syncedDirCache (a smaller map of just directories) and
+	// then look up the result in the main results map to see if it was modified.
+	// This is much faster than iterating over all synced tasks.
+	var dirTasks []syncTaskResult
 	r.syncedDirCache.Range(func(key, value interface{}) bool {
-		dirPath := key.(string)
-		relPath, err := r.normalizedRelPath(r.trg, dirPath)
+		dirAbsPath := key.(string)
+		relPath, err := r.normalizedRelPath(r.trg, dirAbsPath)
 		if err == nil {
-			// Check if this directory has a corresponding source task and was modified.
-			if task, ok := r.syncedSourceTasks[relPath]; ok && task.IsDir && task.Modified {
-				dirTasks = append(dirTasks, task)
+			// Check if this directory has a corresponding source task and was marked as modified.
+			if result, ok := r.syncedTaskResults.Load(relPath); ok && result.(syncTaskResult).Modified {
+				dirTasks = append(dirTasks, result.(syncTaskResult))
 			}
 		}
 		return true // continue iteration
@@ -663,16 +643,10 @@ func (r *nativeSyncRun) handleDirMetadataSync() error {
 }
 
 // handleSync coordinates the concurrent synchronization pipeline.
-// It uses a Producer-Consumer-Collector pattern.
+// It uses a Producer-Consumer pattern.
 func (r *nativeSyncRun) handleSync() error {
-	// 1. Start the syncCollector (Collector).
-	// This single goroutine owns the syncedSourcePaths map. It reads from 'syncResults'
-	// and writes to the map. This avoids the need for a Mutex on the map.
-	syncCollectorDone := make(chan struct{})
-	go r.syncCollector(syncCollectorDone)
-
-	// 2. Start syncWorkers (Consumers).
-	// They read from 'syncTasks', perform I/O, and write to 'syncResults'.
+	// 1. Start syncWorkers (Consumers).
+	// They read from 'syncTasks' and store results in a concurrent map.
 	for i := 0; i < r.numSyncWorkers; i++ {
 		r.syncWg.Add(1)
 		go r.syncWorker()
@@ -682,29 +656,24 @@ func (r *nativeSyncRun) handleSync() error {
 	// This goroutine walks the file tree and feeds paths into 'syncTasks'.
 	go r.syncWalker()
 
-	// 4. Wait for syncWorkers to finish processing all syncTasks.
+	// 3. Wait for all workers to finish processing all tasks.
 	r.syncWg.Wait()
 
-	// 5. Close syncResults channel to signal the syncCollector to stop.
-	// We can only do this after all syncWorkers have called syncWg.Done().
-	close(r.syncResults)
-
-	// 6. Wait for syncCollector to finish populating the map.
-	<-syncCollectorDone
+	// 4. Check for any critical errors captured by workers during the sync phase.
+	select {
+	case err := <-r.syncErrs:
+		// A worker encountered a critical I/O error.
+		return fmt.Errorf("sync worker failed: %w", err)
+	default:
+		// No errors from workers, proceed.
+	}
 
 	// --- Phase 2: Directory Metadata Finalization ---
 	// This must happen after all files are copied to prevent race conditions.
 	if err := r.handleDirMetadataSync(); err != nil {
-		return fmt.Errorf("failed to handle dir metadata sync: %w", err)
-	}
-
-	// 7. Check for any errors captured during the process.
-	select {
-	case err := <-r.syncErrs:
-		if err != nil {
-			return fmt.Errorf("sync worker failed: %w", err)
-		}
-	default:
+		// We wrap this error because it's a critical failure in the finalization stage.
+		// The error from handleDirMetadataSync is already descriptive.
+		return err
 	}
 
 	return nil
@@ -741,15 +710,9 @@ func (r *nativeSyncRun) handleMirror() error {
 			return nil
 		}
 
-		// FUTURE NOTE: Case Sensitivity (Windows/macOS) Go maps are case-sensitive.
-		// If Source has Image.png -> Map has key "Image.png".
-		// If Dest has image.png (and the OS is case-insensitive) -> filepath.Rel returns "image.png".
-		// Result: The map lookup fails, and handleDelete deletes image.png.
-		// Assessment: For a strict sync tool, this is often desired behavior (enforcing case match), but on Windows, it can sometimes surprise users. For now we stick with strict!
-
 		// Check if the destination path existed in the source.
 		// No lock is needed here because all workers have finished.
-		if _, exists := r.syncedSourceTasks[relPath]; exists {
+		if _, exists := r.syncedTaskResults.Load(relPath); exists {
 			// The path exists in the source, so we keep it.
 			return nil
 		}
@@ -797,7 +760,6 @@ func (r *nativeSyncRun) handleMirror() error {
 }
 
 // execute coordinates the concurrent synchronization pipeline.
-// It uses a Producer-Consumer-Collector pattern.
 func (r *nativeSyncRun) execute() error {
 	// Create a cancellable context for this run.
 	// If any component fails, 'cancel()' will stop all other components.
@@ -847,14 +809,12 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror b
 				return &b
 			},
 		},
-		syncedSourceTasks: make(map[string]syncTask), // Initialize the map for the collector.
+		syncedTaskResults: sync.Map{}, // Initialize the concurrent map for the collector.
 		syncedDirCache:    sync.Map{},
 		// Buffer 'syncTasks' to handle bursts of rapid file discovery by the walker.
 		syncTasks: make(chan syncTask, s.engine.NativeEngineWorkers*2),
-		// Buffer 'syncResults' to ensure syncWorkers don't block waiting for the collector.
-		syncResults: make(chan syncTask, s.engine.NativeEngineWorkers*4),
-		syncErrs:    make(chan error, 1),
-		ctx:         ctx,
+		syncErrs:  make(chan error, 1),
+		ctx:       ctx,
 	}
 
 	return run.execute()
