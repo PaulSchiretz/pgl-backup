@@ -108,7 +108,7 @@ type nativeSyncRun struct {
 	retryCount               int
 	retryWait                time.Duration
 	modTimeWindow            time.Duration // The time window to consider file modification times equal.
-	ioBufferPool             sync.Pool
+	ioBufferPool             *sync.Pool    // pointer to avoid copying the noCopy field if the struct is ever passed by value
 
 	// syncedTaskResults is a concurrent-safe map populated by workers and read by the finalization/mirror phases.
 	syncedTaskResults sync.Map // map[string]syncTaskResult
@@ -579,10 +579,15 @@ func (r *nativeSyncRun) syncWorker() {
 			}
 
 			// Store the result directly in the concurrent map.
-			r.syncedTaskResults.Store(task.SrcRelPath, syncTaskResult{
-				SrcInfo:  task.SrcInfo,
-				Modified: modified,
-			})
+			// OPTIMIZATION: If we are not mirroring, we don't need to track individual files
+			// in memory after they are processed. We only need to track directories
+			// so we can finalize their metadata later.
+			if r.mirror || task.IsDir {
+				r.syncedTaskResults.Store(task.SrcRelPath, syncTaskResult{
+					SrcInfo:  task.SrcInfo,
+					Modified: modified,
+				})
+			}
 		}
 	}
 }
@@ -814,7 +819,7 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror b
 		retryCount:               s.engine.NativeEngineRetryCount,
 		retryWait:                time.Duration(s.engine.NativeEngineRetryWaitSeconds) * time.Second,
 		modTimeWindow:            time.Duration(s.engine.NativeEngineModTimeWindowSeconds) * time.Second,
-		ioBufferPool: sync.Pool{
+		ioBufferPool: &sync.Pool{
 			New: func() interface{} {
 				// Buffer size is configured in KB, so multiply by 1024.
 				b := make([]byte, s.engine.NativeEngineCopyBufferSizeKB*1024)
