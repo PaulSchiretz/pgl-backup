@@ -104,6 +104,7 @@ type nativeSyncRun struct {
 	retryCount               int
 	retryWait                time.Duration
 	modTimeWindow            time.Duration
+	ioBufferPool             sync.Pool
 
 	// syncedSourceTasks is populated by the Collector and read by the Deletion phase.
 	syncedSourceTasks map[string]syncTask
@@ -184,9 +185,13 @@ func (r *nativeSyncRun) copyFileHelper(task syncTask, retryCount int, retryWait 
 				}
 			}()
 
+			// Get a buffer from the pool for the copy operation.
+			bufPtr := r.ioBufferPool.Get().(*[]byte)
+			defer r.ioBufferPool.Put(bufPtr)
+
 			// 3. Copy content
-			if _, err = io.Copy(out, in); err != nil {
-				out.Close() // Close before returning on error
+			if _, err = io.CopyBuffer(out, in, *bufPtr); err != nil {
+				out.Close() // Close before returning on error, buffer is released by defer
 				return fmt.Errorf("failed to copy content from %s to %s: %w", src, tempPath, err)
 			}
 
@@ -819,8 +824,15 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror b
 		retryCount:               s.engine.NativeEngineRetryCount,
 		retryWait:                time.Duration(s.engine.NativeEngineRetryWaitSeconds) * time.Second,
 		modTimeWindow:            time.Duration(s.engine.NativeEngineModTimeWindowSeconds) * time.Second,
-		syncedSourceTasks:        make(map[string]syncTask), // Initialize the map for the collector.
-		syncedDirCache:           sync.Map{},
+		ioBufferPool: sync.Pool{
+			New: func() interface{} {
+				// Buffer size is configured in KB, so multiply by 1024.
+				b := make([]byte, s.engine.NativeEngineCopyBufferSizeKB*1024)
+				return &b
+			},
+		},
+		syncedSourceTasks: make(map[string]syncTask), // Initialize the map for the collector.
+		syncedDirCache:    sync.Map{},
 		// Buffer 'syncTasks' to handle bursts of rapid file discovery by the walker.
 		syncTasks: make(chan syncTask, s.engine.NativeEngineWorkers*2),
 		// Buffer 'syncResults' to ensure syncWorkers don't block waiting for the collector.

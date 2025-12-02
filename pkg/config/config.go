@@ -162,6 +162,7 @@ type BackupEngineConfig struct {
 	NativeEngineRetryCount           int        `json:"nativeEngineRetryCount"`
 	NativeEngineRetryWaitSeconds     int        `json:"nativeEngineRetryWaitSeconds"`
 	NativeEngineModTimeWindowSeconds int        `json:"nativeEngineModTimeWindowSeconds" comment:"Time window in seconds to consider file modification times equal. Handles filesystem timestamp precision differences. Default is 1s. 0 means exact match."`
+	NativeEngineCopyBufferSizeKB     int        `json:"nativeEngineCopyBufferSizeKB" comment:"Size of the I/O buffer in kilobytes for file copies. Default is 1024 (1MB)."`
 }
 
 type Config struct {
@@ -192,6 +193,7 @@ func NewDefault() Config {
 			NativeEngineRetryCount:           3,                // Default retries on failure.
 			NativeEngineRetryWaitSeconds:     5,                // Default wait time between retries.
 			NativeEngineModTimeWindowSeconds: 1,                // Set the default to 1 second
+			NativeEngineCopyBufferSizeKB:     1024,             // Default to 1MB buffer.
 		},
 		Naming: BackupNamingConfig{
 			Prefix:                "PGL_Backup_",
@@ -323,6 +325,9 @@ func (c *Config) Validate() error {
 	if c.Engine.NativeEngineRetryCount < 0 {
 		return fmt.Errorf("nativeEngineRetryCount cannot be negative")
 	}
+	if c.Engine.NativeEngineCopyBufferSizeKB <= 0 {
+		return fmt.Errorf("nativeEngineCopyBufferSizeKB must be greater than 0")
+	}
 	if c.Mode == IncrementalMode && c.RolloverInterval <= 0 {
 		return fmt.Errorf("rolloverInterval must be a positive duration (e.g., '24h', '90m')")
 	}
@@ -348,6 +353,7 @@ func (c *Config) LogSummary() {
 		"target", c.Paths.TargetBase,
 		"sync_engine", c.Engine.Type,
 		"dry_run", c.DryRun,
+		"copy_buffer_kb", c.Engine.NativeEngineCopyBufferSizeKB,
 	}
 	if c.Mode == IncrementalMode {
 		logArgs = append(logArgs, "rollover_interval", c.RolloverInterval)
@@ -442,6 +448,8 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 			merged.Engine.NativeEngineRetryCount = value.(int)
 		case "native-retry-wait":
 			merged.Engine.NativeEngineRetryWaitSeconds = value.(int)
+		case "native-copy-buffer-kb":
+			merged.Engine.NativeEngineCopyBufferSizeKB = value.(int)
 		case "exclude-files":
 			merged.Paths.ExcludeFiles = value.([]string)
 		case "exclude-dirs":
