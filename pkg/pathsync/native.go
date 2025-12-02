@@ -74,11 +74,10 @@ type syncTask struct {
 // syncTaskResult is a lightweight struct stored by workers in the results map.
 // It contains the outcome of the sync operation and the necessary metadata for
 // the finalization and mirror phases.
+// SrcRelPath and TrgAbsPath are omitted as they can be derived from the map key and base paths.
 type syncTaskResult struct {
-	SrcRelPath string
-	SrcInfo    os.FileInfo
-	TrgAbsPath string
-	Modified   bool
+	SrcInfo  os.FileInfo
+	Modified bool
 }
 
 type exclusionType int
@@ -115,7 +114,7 @@ type nativeSyncRun struct {
 	syncedTaskResults sync.Map // map[string]syncTaskResult
 
 	// syncedDirCache memoizes directory creation to avoid redundant os.MkdirAll calls.
-	syncedDirCache sync.Map // map[string]bool
+	syncedDirCache sync.Map // map[string]bool (key is relPath)
 
 	// syncWg waits for syncWorkers to finish processing tasks.
 	syncWg sync.WaitGroup
@@ -134,17 +133,17 @@ type nativeSyncRun struct {
 
 // ensureDirExists checks a cache to see if a directory has already been created
 // during this sync run, avoiding redundant calls to os.MkdirAll.
-func (r *nativeSyncRun) ensureDirExists(dirPath string, perm os.FileMode) error {
-	if _, loaded := r.syncedDirCache.Load(dirPath); loaded {
+func (r *nativeSyncRun) ensureDirExists(relPath, absPath string, perm os.FileMode) error {
+	if _, loaded := r.syncedDirCache.Load(relPath); loaded {
 		return nil // Already created in this run.
 	}
 
-	if err := os.MkdirAll(dirPath, perm); err != nil {
+	if err := os.MkdirAll(absPath, perm); err != nil {
 		// If it fails, remove from cache so we can retry if the function is called again.
-		r.syncedDirCache.Delete(dirPath)
-		return fmt.Errorf("failed to ensure destination directory %s exists: %w", dirPath, err)
+		r.syncedDirCache.Delete(relPath)
+		return fmt.Errorf("failed to ensure destination directory %s exists: %w", absPath, err)
 	}
-	r.syncedDirCache.Store(dirPath, true)
+	r.syncedDirCache.Store(relPath, true)
 	return nil
 }
 
@@ -170,7 +169,7 @@ func (r *nativeSyncRun) copyFileHelper(task syncTask, retryCount int, retryWait 
 
 			// 1. Ensure the destination directory exists. The final permissions for this directory
 			// will be set when its own sync task is processed or in the final handleDirMetadataSync.
-			if err := r.ensureDirExists(trgDir, withBackupWritePermission(0755)); err != nil {
+			if err := r.ensureDirExists(filepath.Dir(task.TrgRelPath), trgDir, withBackupWritePermission(0755)); err != nil {
 				return err
 			}
 
@@ -420,7 +419,7 @@ func (r *nativeSyncRun) processDirectorySync(task *syncTask) (bool, error) {
 	}
 
 	// 1. Ensure the directory exists. os.MkdirAll is idempotent.
-	if err := r.ensureDirExists(task.TrgAbsPath, withBackupWritePermission(task.SrcInfo.Mode().Perm())); err != nil {
+	if err := r.ensureDirExists(task.TrgRelPath, task.TrgAbsPath, withBackupWritePermission(task.SrcInfo.Mode().Perm())); err != nil {
 		return false, err
 	}
 
@@ -581,10 +580,8 @@ func (r *nativeSyncRun) syncWorker() {
 
 			// Store the result directly in the concurrent map.
 			r.syncedTaskResults.Store(task.SrcRelPath, syncTaskResult{
-				SrcRelPath: task.SrcRelPath,
-				SrcInfo:    task.SrcInfo,
-				TrgAbsPath: task.TrgAbsPath,
-				Modified:   modified,
+				SrcInfo:  task.SrcInfo,
+				Modified: modified,
 			})
 		}
 	}
@@ -593,19 +590,30 @@ func (r *nativeSyncRun) syncWorker() {
 func (r *nativeSyncRun) handleDirMetadataSync() error {
 	plog.Info("Syncing directory metadata")
 
+	// dirMetadataSyncTask is a helper struct used only in this function
+	// to associate the relative path (map key) with its syncTaskResult value.
+	type dirMetadataSyncTask struct {
+		RelPath string
+		Result  syncTaskResult
+	}
+
 	// 1. Collect all directory tasks.
-	// We iterate over the syncedDirCache (a smaller map of just directories) and
-	// then look up the result in the main results map to see if it was modified.
-	// This is much faster than iterating over all synced tasks.
-	var dirTasks []syncTaskResult
+	// We iterate over the syncedDirCache (keyed by relPath) to get a list of all
+	// directories that were touched. Then we look up their full result in syncedTaskResults.
+	var dirTasks []dirMetadataSyncTask
 	r.syncedDirCache.Range(func(key, value interface{}) bool {
-		dirAbsPath := key.(string)
-		relPath, err := r.normalizedRelPath(r.trg, dirAbsPath)
-		if err == nil {
-			// Check if this directory has a corresponding source task and was marked as modified.
-			if result, ok := r.syncedTaskResults.Load(relPath); ok && result.(syncTaskResult).Modified {
-				dirTasks = append(dirTasks, result.(syncTaskResult))
+		relPath := key.(string) // syncedDirCache is now keyed by relPath
+		// Look up the full syncTaskResult in the main results map.
+		if resultVal, ok := r.syncedTaskResults.Load(relPath); ok {
+			result := resultVal.(syncTaskResult)
+			// Only add if it's a directory and was modified.
+			// The IsDir check is crucial as syncedDirCache only tracks paths, not types.
+			if result.SrcInfo.IsDir() && result.Modified {
+				dirTasks = append(dirTasks, dirMetadataSyncTask{RelPath: relPath, Result: result})
 			}
+		} else {
+			// This case should ideally not happen if syncedDirCache is populated correctly.
+			plog.Warn("Directory in syncedDirCache not found in syncedTaskResults", "relPath", relPath)
 		}
 		return true // continue iteration
 	})
@@ -616,7 +624,7 @@ func (r *nativeSyncRun) handleDirMetadataSync() error {
 	sort.Slice(dirTasks, func(i, j int) bool {
 		// Sorting by path depth (by counting separators) is the most reliable way to sort from deepest to shallowest.
 		// A previous suggestion to sort by string length was incorrect.
-		return strings.Count(dirTasks[i].SrcRelPath, string(os.PathSeparator)) > strings.Count(dirTasks[j].SrcRelPath, string(os.PathSeparator))
+		return strings.Count(dirTasks[i].RelPath, string(os.PathSeparator)) > strings.Count(dirTasks[j].RelPath, string(os.PathSeparator))
 	})
 
 	// 3. Apply metadata in sorted order.
@@ -628,15 +636,19 @@ func (r *nativeSyncRun) handleDirMetadataSync() error {
 		}
 
 		if !r.quiet {
-			plog.Info("SETMETA", "path", task.SrcRelPath)
+			plog.Info("SETMETA", "path", task.RelPath)
 		}
 
-		finalPerms := withBackupWritePermission(task.SrcInfo.Mode().Perm())
-		if err := os.Chmod(task.TrgAbsPath, finalPerms); err != nil {
-			return fmt.Errorf("failed to chmod directory %s: %w", task.TrgAbsPath, err)
+		// Reconstruct TrgAbsPath from the stored SrcRelPath and the target base.
+		trgAbsPath := filepath.Join(r.trg, task.RelPath)
+
+		// We must compare the target's permissions against the source's permissions *with our modification*.
+		expectedPerms := withBackupWritePermission(task.Result.SrcInfo.Mode().Perm())
+		if err := os.Chmod(trgAbsPath, expectedPerms); err != nil {
+			return fmt.Errorf("failed to chmod directory %s: %w", trgAbsPath, err)
 		}
-		if err := os.Chtimes(task.TrgAbsPath, task.SrcInfo.ModTime(), task.SrcInfo.ModTime()); err != nil {
-			return fmt.Errorf("failed to chtimes directory %s: %w", task.TrgAbsPath, err)
+		if err := os.Chtimes(trgAbsPath, task.Result.SrcInfo.ModTime(), task.Result.SrcInfo.ModTime()); err != nil {
+			return fmt.Errorf("failed to chtimes directory %s: %w", trgAbsPath, err)
 		}
 	}
 	return nil
