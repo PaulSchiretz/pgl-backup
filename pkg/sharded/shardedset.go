@@ -1,7 +1,6 @@
 package sharded
 
 import (
-	"hash/fnv"
 	"sync"
 )
 
@@ -9,7 +8,7 @@ import (
 const numSetShards = 64 // Power of 2 for fast bitwise mod
 
 type setShard struct {
-	mu    sync.Mutex
+	mu    sync.RWMutex
 	items map[string]struct{}
 }
 
@@ -23,20 +22,8 @@ func NewShardedSet() *ShardedSet {
 	return &s
 }
 
-// FNV-1a hash function (fast, low collision)
 func (s *ShardedSet) getShard(key string) *setShard {
-	// 1. Create a 32-bit FNV-1a hash.
-	h := fnv.New32a()
-	// 2. Write the key bytes to the hash.
-	// NOTE: Write() for FNV-1a never returns an error, so we ignore the second return value.
-	h.Write([]byte(key))
-	// 3. Get the 32-bit hash sum.
-	hashValue := h.Sum32()
-
-	// Optimization: Use bitwise AND for power-of-2 modulus.
-	// This efficiently maps the hash to a shard index [0, 63].
-	shardIndex := hashValue & (numSetShards - 1)
-
+	shardIndex := getShardIndex(key, numSetShards)
 	return (*s)[shardIndex]
 }
 
@@ -51,9 +38,9 @@ func (s *ShardedSet) Store(key string) {
 // Has checks only for the presence of a key.
 func (s *ShardedSet) Has(key string) bool {
 	shard := s.getShard(key)
-	shard.mu.Lock()
+	shard.mu.RLock()
 	_, exists := shard.items[key]
-	shard.mu.Unlock()
+	shard.mu.RUnlock()
 	return exists
 }
 
@@ -62,4 +49,81 @@ func (s *ShardedSet) Delete(key string) {
 	shard.mu.Lock()
 	delete(shard.items, key)
 	shard.mu.Unlock()
+}
+
+// Count returns the total number of elements in the set.
+func (s *ShardedSet) Count() int {
+	count := 0
+	for i := 0; i < numSetShards; i++ {
+		shard := (*s)[i]
+		shard.mu.RLock()
+		count += len(shard.items)
+		shard.mu.RUnlock()
+	}
+	return count
+}
+
+// Keys returns a slice of all keys in the set.
+// The order of keys is not guaranteed.
+func (s *ShardedSet) Keys() []string {
+	// Pre-allocate the slice with the total number of elements to avoid re-allocations.
+	keys := make([]string, 0, s.Count())
+	for i := 0; i < numSetShards; i++ {
+		shard := (*s)[i]
+		shard.mu.RLock()
+		for k := range shard.items {
+			keys = append(keys, k)
+		}
+		shard.mu.RUnlock()
+	}
+	return keys
+}
+
+// Range calls f sequentially for each key present in the set.
+// If f returns false, range stops the iteration.
+//
+// The iteration is performed by locking one shard at a time, so it does not
+// block the entire set. However, the set should not be modified by the
+// callback function f.
+func (s *ShardedSet) Range(f func(key string) bool) {
+	for i := 0; i < numSetShards; i++ {
+		shard := (*s)[i]
+		shard.mu.RLock()
+		for k := range shard.items {
+			if !f(k) {
+				shard.mu.RUnlock()
+				return
+			}
+		}
+		shard.mu.RUnlock()
+	}
+}
+
+// Clear removes all keys from the set.
+func (s *ShardedSet) Clear() {
+	for i := 0; i < numSetShards; i++ {
+		shard := (*s)[i]
+		shard.mu.Lock()
+		shard.items = make(map[string]struct{})
+		shard.mu.Unlock()
+	}
+}
+
+// ShardCount returns the number of elements in a specific shard.
+// It returns -1 if the shardIndex is out of bounds.
+func (s *ShardedSet) ShardCount(shardIndex int) int {
+	if shardIndex < 0 || shardIndex >= numSetShards {
+		return -1
+	}
+	shard := (*s)[shardIndex]
+	shard.mu.RLock()
+	count := len(shard.items)
+	shard.mu.RUnlock()
+	return count
+}
+
+// GetShardIndex returns the shard index for a given key.
+// This is useful for diagnostics or understanding key distribution.
+func (s *ShardedSet) GetShardIndex(key string) int {
+	return getShardIndex(key, numSetShards)
 }
