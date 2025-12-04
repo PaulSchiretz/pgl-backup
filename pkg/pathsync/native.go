@@ -78,6 +78,12 @@ const (
 	globMatch
 )
 
+// exclusionSet holds the categorized exclusion patterns for efficient matching.
+type exclusionSet struct {
+	literals    map[string]struct{}
+	nonLiterals []preProcessedExclusion
+}
+
 // preProcessedExclusion stores the pre-analyzed pattern details.
 type preProcessedExclusion struct {
 	pattern      string
@@ -85,19 +91,17 @@ type preProcessedExclusion struct {
 	matchType    exclusionType
 }
 
-// nativeSyncRun encapsulates the state and logic for a single native sync operation.
-// It coordinates the Producer (Walker), Consumers (Workers), and Collector.
 type nativeSyncRun struct {
-	src, trg                 string
-	mirror, dryRun, quiet    bool
-	numSyncWorkers           int
-	caseInsensitive          bool
-	preProcessedFileExcludes []preProcessedExclusion
-	preProcessedDirExcludes  []preProcessedExclusion
-	retryCount               int
-	retryWait                time.Duration
-	modTimeWindow            time.Duration // The time window to consider file modification times equal.
-	ioBufferPool             *sync.Pool    // pointer to avoid copying the noCopy field if the struct is ever passed by value
+	src, trg              string
+	mirror, dryRun, quiet bool
+	numSyncWorkers        int
+	caseInsensitive       bool
+	fileExcludes          exclusionSet
+	dirExcludes           exclusionSet
+	retryCount            int
+	retryWait             time.Duration
+	modTimeWindow         time.Duration // The time window to consider file modification times equal.
+	ioBufferPool          *sync.Pool    // pointer to avoid copying the noCopy field if the struct is ever passed by value
 
 	// discoveredSrcPaths is a concurrent set populated by the syncWalker. It holds every
 	// non-excluded path found in the source directory. During the mirror phase, it is
@@ -204,8 +208,12 @@ func (r *nativeSyncRun) copyFileHelper(absSrcPath, absTrgPath string, task *sync
 }
 
 // preProcessExclusions analyzes and categorizes patterns to enable optimized matching later.
-func preProcessExclusions(patterns []string, isDirPatterns bool, caseInsensitive bool) []preProcessedExclusion {
-	preProcessed := make([]preProcessedExclusion, 0, len(patterns))
+func preProcessExclusions(patterns []string, isDirPatterns bool, caseInsensitive bool) exclusionSet {
+	set := exclusionSet{
+		literals:    make(map[string]struct{}),
+		nonLiterals: make([]preProcessedExclusion, 0, len(patterns)),
+	}
+
 	for _, p := range patterns {
 		// Normalize to use forward slashes for consistent matching logic.
 		p = filepath.ToSlash(p)
@@ -218,39 +226,39 @@ func preProcessExclusions(patterns []string, isDirPatterns bool, caseInsensitive
 		if strings.ContainsAny(p, "*?[]") {
 			// If it's a prefix pattern like `node_modules/*`, we can optimize it.
 			if strings.HasSuffix(p, "/*") {
-				preProcessed = append(preProcessed, preProcessedExclusion{
+				set.nonLiterals = append(set.nonLiterals, preProcessedExclusion{
 					pattern:      p,
 					cleanPattern: strings.TrimSuffix(p, "/*"),
 					matchType:    prefixMatch,
 				})
 			} else if strings.HasPrefix(p, "*") && !strings.ContainsAny(p[1:], "*?[]") {
 				// If it's a suffix pattern like `*.log`, we can also optimize it.
-				preProcessed = append(preProcessed, preProcessedExclusion{
+				set.nonLiterals = append(set.nonLiterals, preProcessedExclusion{
 					pattern:      p,
 					cleanPattern: p[1:], // The part after the *, e.g., ".log"
 					matchType:    suffixMatch,
 				})
 			} else {
 				// Otherwise, it's a general glob pattern.
-				preProcessed = append(preProcessed, preProcessedExclusion{pattern: p, matchType: globMatch})
+				set.nonLiterals = append(set.nonLiterals, preProcessedExclusion{pattern: p, matchType: globMatch})
 			}
 		} else {
 			// No wildcards. Check if it's a directory prefix or a literal match.
 			// Refinement: If this is the directory exclusion list OR the pattern ends in a slash,
 			// we treat it as a prefix match to exclude contents inside.
 			if isDirPatterns || strings.HasSuffix(p, "/") {
-				preProcessed = append(preProcessed, preProcessedExclusion{
+				set.nonLiterals = append(set.nonLiterals, preProcessedExclusion{
 					pattern:      p,
 					cleanPattern: strings.TrimSuffix(p, "/"),
 					matchType:    prefixMatch,
 				})
 			} else {
 				// Pure literal file match (e.g., "README.md")
-				preProcessed = append(preProcessed, preProcessedExclusion{pattern: p, matchType: literalMatch})
+				set.literals[p] = struct{}{}
 			}
 		}
 	}
-	return preProcessed
+	return set
 }
 
 // truncateModTime adjusts a time based on the configured modification time window.
@@ -297,19 +305,22 @@ func withBackupWritePermission(basePerm os.FileMode) os.FileMode {
 // using a tiered optimization strategy to avoid expensive glob matching when possible.
 // It assumes `relPathKey` has already been normalized.
 func (r *nativeSyncRun) isExcluded(relPathKey string, isDir bool) bool {
-	var patterns []preProcessedExclusion
+	var patterns exclusionSet
+
 	if isDir {
-		patterns = r.preProcessedDirExcludes
+		patterns = r.dirExcludes
 	} else {
-		patterns = r.preProcessedFileExcludes
+		patterns = r.fileExcludes
 	}
 
-	for _, p := range patterns {
+	// 1. Check for O(1) literal matches first.
+	if _, ok := patterns.literals[relPathKey]; ok {
+		return true
+	}
+
+	// 2. If no literal match, check other pattern types.
+	for _, p := range patterns.nonLiterals {
 		switch p.matchType {
-		case literalMatch:
-			if relPathKey == p.pattern {
-				return true
-			}
 		case prefixMatch:
 			// Check 1: Exact match for the excluded directory/folder name (e.g., relPathKey == "build")
 			if relPathKey == p.cleanPattern {
@@ -689,18 +700,18 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror b
 	isCaseInsensitive := isCaseInsensitiveFS()
 
 	run := &nativeSyncRun{
-		src:                      src,
-		trg:                      trg,
-		mirror:                   mirror,
-		dryRun:                   s.dryRun,
-		quiet:                    s.quiet,
-		caseInsensitive:          isCaseInsensitive,
-		numSyncWorkers:           s.engine.NativeEngineWorkers,
-		preProcessedFileExcludes: preProcessExclusions(excludeFiles, false, isCaseInsensitive),
-		preProcessedDirExcludes:  preProcessExclusions(excludeDirs, true, isCaseInsensitive),
-		retryCount:               s.engine.NativeEngineRetryCount,
-		retryWait:                time.Duration(s.engine.NativeEngineRetryWaitSeconds) * time.Second,
-		modTimeWindow:            time.Duration(s.engine.NativeEngineModTimeWindowSeconds) * time.Second,
+		src:             src,
+		trg:             trg,
+		mirror:          mirror,
+		dryRun:          s.dryRun,
+		quiet:           s.quiet,
+		caseInsensitive: isCaseInsensitive,
+		fileExcludes:    preProcessExclusions(excludeFiles, false, isCaseInsensitive),
+		dirExcludes:     preProcessExclusions(excludeDirs, true, isCaseInsensitive),
+		numSyncWorkers:  s.engine.NativeEngineWorkers,
+		retryCount:      s.engine.NativeEngineRetryCount,
+		retryWait:       time.Duration(s.engine.NativeEngineRetryWaitSeconds) * time.Second,
+		modTimeWindow:   time.Duration(s.engine.NativeEngineModTimeWindowSeconds) * time.Second,
 		ioBufferPool: &sync.Pool{
 			New: func() interface{} {
 				// Buffer size is configured in KB, so multiply by 1024.
@@ -714,6 +725,5 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror b
 		syncErrs:  make(chan error, 1),
 		ctx:       ctx,
 	}
-
 	return run.execute()
 }
