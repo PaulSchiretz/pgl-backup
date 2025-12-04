@@ -129,7 +129,7 @@ func TestParseFlagConfig(t *testing.T) {
 		})
 	})
 
-	t.Run("Override PreserveSourceDirectoryName", func(t *testing.T) {
+	t.Run("Override PreserveRoot", func(t *testing.T) {
 		args := []string{"-preserve-source-name=false"}
 		runTestWithFlags(t, args, func() {
 			_, setFlags, err := parseFlagConfig()
@@ -141,7 +141,7 @@ func TestParseFlagConfig(t *testing.T) {
 				t.Fatal("expected 'preserve-source-name' flag to be in setFlags map")
 			}
 			if boolVal, typeOK := val.(bool); !typeOK || boolVal != false {
-				t.Errorf("expected PreserveSourceDirectoryName to be false, but got %v (type %T)", val, val)
+				t.Errorf("expected PreserveRoot to be false, but got %v (type %T)", val, val)
 			}
 		})
 	})

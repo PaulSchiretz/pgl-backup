@@ -67,6 +67,7 @@ type compactFileInfo struct {
 type syncTask struct {
 	RelPathKey string          // Normalized, forward-slash, lowercase (if applicable) key. NOT for direct FS access.
 	FileInfo   compactFileInfo // Cached info from the Walker
+	IsDir      bool
 }
 
 type exclusionType int
@@ -93,6 +94,7 @@ type preProcessedExclusion struct {
 
 type nativeSyncRun struct {
 	src, trg              string
+	preserveSourceDirName bool
 	mirror, dryRun, quiet bool
 	numSyncWorkers        int
 	caseInsensitive       bool
@@ -107,10 +109,11 @@ type nativeSyncRun struct {
 	// non-excluded path found in the source directory. During the mirror phase, it is
 	// read to determine which paths in the destination are no longer present in the source
 	// and should be deleted.
-	// A ShardedSet is used to minimize lock contention, as the syncWalker will be
-	// writing to it, while the handleMirror goroutine might be reading from it
-	// (though in the current design, reads happen after all writes are complete).
 	discoveredSrcPaths *sharded.ShardedSet
+
+	// syncedDirCache tracks directories that have ALREADY been created in the destination
+	// by any syncWorker. This prevents duplicate MkdirAll calls across the concurrent pool.
+	syncedDirCache *sharded.ShardedSet
 
 	// syncWg waits for syncWorkers to finish processing tasks.
 	syncWg sync.WaitGroup
@@ -402,6 +405,86 @@ func (r *nativeSyncRun) processFileSync(task *syncTask) error {
 	return nil // File was actually copied/updated
 }
 
+// processDirectorySync handles the creation and permission setting for a directory in the destination.
+// It returns filepath.SkipDir if the directory cannot be created, signaling the walker to not descend.
+func (r *nativeSyncRun) processDirectorySync(task *syncTask) error {
+
+	if r.dryRun {
+		plog.Info("[DRY RUN] DIR", "path", task.RelPathKey)
+		return nil
+	}
+
+	// 1. FAST PATH: Check the cache first.
+	if r.syncedDirCache.Has(task.RelPathKey) {
+		return nil // Already created.
+	}
+
+	// Convert the path to the OS-native format for file access
+	absTrgPath := r.denormalizedAbsPath(r.trg, task.RelPathKey)
+	expectedPerms := withBackupWritePermission(task.FileInfo.Mode.Perm())
+
+	// 2. Perform the concurrent I/O.
+	// Optimistic creation: Try Chmod first (cheapest syscall).
+	// If it works, dir exists. If not, MkdirAll.
+	// This avoids the internal Stat() loop of MkdirAll for existing directories.
+	if err := os.Chmod(absTrgPath, expectedPerms); err != nil {
+		if os.IsNotExist(err) {
+			if err := os.MkdirAll(absTrgPath, expectedPerms); err != nil {
+				plog.Warn("Failed to create destination directory, skipping", "path", absTrgPath, "error", err)
+				// Path is already recorded, but we can't descend.
+				return filepath.SkipDir
+			}
+		} else {
+			plog.Warn("Failed to set permissions on destination directory, skipping", "path", absTrgPath, "error", err)
+			// A Chmod failure on an existing dir should not typically cause a SkipDir.
+			// We log the warning and continue descent.
+			return nil
+		}
+	}
+
+	// 3. Update the cache for all other workers.
+	r.syncedDirCache.Store(task.RelPathKey)
+
+	if !r.quiet {
+		plog.Info("DIR", "path", task.RelPathKey)
+	}
+	return nil // Directory exists and permissions are set.
+}
+
+// ensureParentDirectoryExists is called by file-processing workers to guarantee that the
+// parent directory for a file exists before the file copy is attempted.
+func (r *nativeSyncRun) ensureParentDirectoryExists(relPathKey string) error {
+	// 1. FAST PATH: Check the cache first.
+	if r.syncedDirCache.Has(relPathKey) {
+		return nil // Already created.
+	}
+
+	// If not in cache, we need to create it NOW.
+
+	// We need source info to construct a task to get correct permissions.
+	absSrcPath := r.denormalizedAbsPath(r.src, relPathKey)
+	info, err := os.Lstat(absSrcPath)
+	if err != nil {
+		// Cannot stat source directory to determine permissions.
+		return fmt.Errorf("cannot stat source directory %s to determine permissions: %w", absSrcPath, err)
+	}
+
+	// 2. Create a synthetic directory task for the parent.
+	parentTask := syncTask{
+		RelPathKey: relPathKey,
+		IsDir:      true,
+		FileInfo: compactFileInfo{
+			ModTime: info.ModTime().UnixNano(),
+			Size:    info.Size(),
+			Mode:    info.Mode(),
+		},
+	}
+
+	// 3. Perform the I/O using the main directory handler.
+	// If this fails, the file copy cannot proceed.
+	return r.processDirectorySync(&parentTask)
+}
+
 // syncWalker is a dedicated goroutine that walks the source directory tree,
 // sending each syncTask to the syncTasks channel for processing by workers.
 func (r *nativeSyncRun) syncWalker() {
@@ -423,11 +506,14 @@ func (r *nativeSyncRun) syncWalker() {
 			return fmt.Errorf("could not get relative path for %s: %w", absSrcPath, err)
 		}
 
-		// Skip the root directory immediately
-		// The root directory is always '.' (after normalization) and should not be processed
-		// for exclusions, mirroring, or creation/chmod, as its existence is assumed.
+		// If preserveSourceDirName is true, the root directory itself needs to be processed
+		// to ensure its permissions are set in the destination.
+		// If preserveSourceDirName is false, we are syncing *contents* into an already
+		// existing destination, so we skip processing the root of the walk.
 		if relPathKey == "." {
-			return nil
+			if !r.preserveSourceDirName {
+				return nil
+			}
 		}
 
 		// Check for exclusions.
@@ -458,62 +544,29 @@ func (r *nativeSyncRun) syncWalker() {
 		}
 		// ----------------------------------------------------------------
 
-		// The walker is the single producer and discovers directories sequentially.
-		// By making it responsible for creating directories, we remove this task
-		// and the associated synchronization overhead (syncedDirCache) from the
-		// concurrent workers, simplifying their logic and improving performance.
-		if d.IsDir() {
-			// Directory
-			expectedPerms := withBackupWritePermission(info.Mode().Perm())
+		task := syncTask{
+			RelPathKey: relPathKey,
+			FileInfo: compactFileInfo{
+				ModTime: info.ModTime().UnixNano(),
+				Size:    info.Size(),
+				Mode:    info.Mode(),
+			},
+			IsDir: info.Mode().IsDir(),
+		}
 
-			// Convert the path to the OS-native format for file access
-			absTrgPath := r.denormalizedAbsPath(r.trg, relPathKey)
-
-			// Optimistic creation: Try Chmod first (cheapest syscall).
-			// If it works, dir exists. If not, MkdirAll.
-			// This avoids the internal Stat() loop of MkdirAll for existing directories.
-			if err := os.Chmod(absTrgPath, expectedPerms); err != nil {
-				if os.IsNotExist(err) {
-					if err := os.MkdirAll(absTrgPath, expectedPerms); err != nil {
-						plog.Warn("Failed to create destination directory, skipping", "path", absTrgPath, "error", err)
-						// Path is already recorded, but we can't descend.
-						return filepath.SkipDir
-					}
-				} else {
-					plog.Warn("Failed to set permissions on destination directory, skipping", "path", absTrgPath, "error", err)
-					// Error setting permissions, but the directory *exists* and is recorded.
-					// We should NOT skip the directory here, as its contents might still sync fine.
-					// ONLY skip if MkdirAll fails or if a non-MkdirAll error is critical (which is rare).
-					// A Chmod failure on an existing dir should not typically cause a SkipDir.
-					// The existing code uses SkipDir which is too aggressive.
-					// We should only return an error to stop the walk if it's unrecoverable,
-					// otherwise, return nil to continue walking the contents.
-					return nil // We log the warning and continue descent.
-				}
-			}
-			return nil // We've handled the directory
-		} else if info.Mode().IsRegular() {
-			// Regular File
-			task := syncTask{
-				RelPathKey: relPathKey,
-				FileInfo: compactFileInfo{
-					ModTime: info.ModTime().UnixNano(),
-					Size:    info.Size(),
-					Mode:    info.Mode(),
-				},
-			}
-
-			select {
-			case <-r.ctx.Done():
-				return r.ctx.Err()
-			case r.syncTasks <- task:
-				return nil
-			}
-		} else {
+		if !task.IsDir && !info.Mode().IsRegular() {
 			// Symlinks, Named Pipes, etc.
 			if !r.quiet {
-				plog.Info("SKIP", "type", info.Mode().String(), "path", absSrcPath)
+				plog.Info("SKIP", "type", info.Mode().String(), "path", relPathKey)
 			}
+			return nil
+		}
+
+		// Send all regular files and directories to the workers.
+		select {
+		case <-r.ctx.Done():
+			return r.ctx.Err()
+		case r.syncTasks <- task:
 			return nil
 		}
 	})
@@ -542,19 +595,42 @@ func (r *nativeSyncRun) syncWorker() {
 				return
 			}
 
-			// Process the file sync
-			err := r.processFileSync(&task)
-			if err != nil {
-				// If I/O fails, report the error non-blockingly.
-				select {
-				case r.syncErrs <- err:
-				default:
+			if task.IsDir {
+				if err := r.processDirectorySync(&task); err != nil {
+					plog.Warn("Failed to sync directory", "path", task.RelPathKey, "error", err)
 				}
-				plog.Warn("Sync failed for path; it will be preserved in the destination to prevent deletion",
-					"path", task.RelPathKey,
-					"error", err,
-					"note", "This file may be inconsistent or outdated in the destination")
-				// We rely on the syncWalker having already added this path to discoveredSrcPaths, preventing it from being deleted in the mirror phase.
+			} else {
+				// This is a file task.
+				// 1. Ensure Parent Directory Exists(still required for files whose parent directory
+				// task hasn't been processed yet, ensuring order)
+				parentRelPathKey := filepath.Dir(task.RelPathKey)
+				// --- CRITICAL FIX: Re-normalize the parent key ---
+				parentRelPathKey = filepath.ToSlash(parentRelPathKey)
+				if r.caseInsensitive {
+					parentRelPathKey = strings.ToLower(parentRelPathKey)
+				}
+				// --------------------------------------------------
+
+				if parentRelPathKey != "." || r.preserveSourceDirName {
+					if err := r.ensureParentDirectoryExists(parentRelPathKey); err != nil {
+						plog.Warn("Failed to create parent directory, skipping file", "parent_path", parentRelPathKey, "file", task.RelPathKey, "error", err)
+						continue
+					}
+				}
+				// 2. Process the file sync
+				err := r.processFileSync(&task)
+				if err != nil {
+					// If I/O fails, report the error non-blockingly.
+					select {
+					case r.syncErrs <- err:
+					default:
+					}
+					plog.Warn("Sync failed for path; it will be preserved in the destination to prevent deletion",
+						"path", task.RelPathKey,
+						"error", err,
+						"note", "This file may be inconsistent or outdated in the destination")
+					// We rely on the syncWalker having already added this path to discoveredSrcPaths, preventing it from being deleted in the mirror phase.
+				}
 			}
 		}
 	}
@@ -615,6 +691,8 @@ func (r *nativeSyncRun) handleMirror() error {
 			return err // The helper function already wraps the error.
 		}
 
+		// The root of the destination corresponds to the source directory itself.
+		// We never delete it, as the sync is for its contents.
 		if relPathKey == "." {
 			return nil
 		}
@@ -694,24 +772,25 @@ func (r *nativeSyncRun) execute() error {
 }
 
 // handleNative initializes the sync run structure and kicks off the execution.
-func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror bool, excludeFiles, excludeDirs []string) error {
+func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, preserveSourceDirName, mirror bool, excludeFiles, excludeDirs []string) error {
 	plog.Info("Starting native sync", "from", src, "to", trg)
 
 	isCaseInsensitive := isCaseInsensitiveFS()
 
 	run := &nativeSyncRun{
-		src:             src,
-		trg:             trg,
-		mirror:          mirror,
-		dryRun:          s.dryRun,
-		quiet:           s.quiet,
-		caseInsensitive: isCaseInsensitive,
-		fileExcludes:    preProcessExclusions(excludeFiles, false, isCaseInsensitive),
-		dirExcludes:     preProcessExclusions(excludeDirs, true, isCaseInsensitive),
-		numSyncWorkers:  s.engine.NativeEngineWorkers,
-		retryCount:      s.engine.NativeEngineRetryCount,
-		retryWait:       time.Duration(s.engine.NativeEngineRetryWaitSeconds) * time.Second,
-		modTimeWindow:   time.Duration(s.engine.NativeEngineModTimeWindowSeconds) * time.Second,
+		src:                   src,
+		trg:                   trg,
+		preserveSourceDirName: preserveSourceDirName,
+		mirror:                mirror,
+		dryRun:                s.dryRun,
+		quiet:                 s.quiet,
+		caseInsensitive:       isCaseInsensitive,
+		fileExcludes:          preProcessExclusions(excludeFiles, false, isCaseInsensitive),
+		dirExcludes:           preProcessExclusions(excludeDirs, true, isCaseInsensitive),
+		numSyncWorkers:        s.engine.NativeEngineWorkers,
+		retryCount:            s.engine.NativeEngineRetryCount,
+		retryWait:             time.Duration(s.engine.NativeEngineRetryWaitSeconds) * time.Second,
+		modTimeWindow:         time.Duration(s.engine.NativeEngineModTimeWindowSeconds) * time.Second,
 		ioBufferPool: &sync.Pool{
 			New: func() interface{} {
 				// Buffer size is configured in KB, so multiply by 1024.
@@ -720,6 +799,7 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror b
 			},
 		},
 		discoveredSrcPaths: sharded.NewShardedSet(),
+		syncedDirCache:     sharded.NewShardedSet(),
 		// Buffer 'syncTasks' increase buffer size to absorb bursts of small files discovery by the walker.
 		syncTasks: make(chan syncTask, s.engine.NativeEngineWorkers*100),
 		syncErrs:  make(chan error, 1),

@@ -288,10 +288,11 @@ func (e *Engine) prepareDestination(ctx context.Context, currentRun *runState) e
 func (e *Engine) performSync(ctx context.Context, currentRun *runState) error {
 	source := e.config.Paths.Source
 	destination := currentRun.target
+	preserveSourceDirName := e.config.Paths.PreserveSourceDirectoryName
 	mirror := e.config.Mode == config.IncrementalMode
 
 	// If configured, append the source's base directory name to the destination path.
-	if e.config.Paths.PreserveSourceDirectoryName {
+	if preserveSourceDirName {
 		var nameToAppend string
 
 		// Check if the path is a root path (e.g., "/" or "C:\")
@@ -319,7 +320,7 @@ func (e *Engine) performSync(ctx context.Context, currentRun *runState) error {
 	excludeDirs := e.config.Paths.ExcludeDirs
 
 	// Sync and check for errors after attempting the sync.
-	if syncErr := e.syncer.Sync(ctx, source, destination, mirror, excludeFiles, excludeDirs); syncErr != nil {
+	if syncErr := e.syncer.Sync(ctx, source, destination, preserveSourceDirName, mirror, excludeFiles, excludeDirs); syncErr != nil {
 		return fmt.Errorf("sync failed: %w", syncErr)
 	}
 

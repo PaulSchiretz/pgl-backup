@@ -167,7 +167,7 @@ All command-line flags can be set in the `pgl-backup.conf` file.
 | `exclude-dirs` / `excludeDirs`  | `[]string`    | `[]`                                  | List of directory patterns to exclude.                                                                  |
 | `pre-backup-hooks` / `preBackup`| `[]string`    | `[]`                                  | List of shell commands to run before the backup.                                                        |
 | `post-backup-hooks` / `postBackup`| `[]string`    | `[]`                                  | List of shell commands to run after the backup.                                                         |
-| `preserve-source-name` / `preserveSourceDirectoryName` | `bool` | `true` | If true, appends the source directory's name to the destination path. |
+| `preserve-source-name` / `paths.preserveSourceDirectoryName` | `bool` | `true` | If true, appends the source directory's name to the destination path. |
 | `native-engine-workers` / `nativeEngineWorkers` | `int` | `runtime.NumCPU()` | Number of concurrent workers for the native sync engine. |
 | `native-retry-count` / `nativeEngineRetryCount` | `int` | `3` | Number of retries for failed file copies in the native engine. |
 | `native-retry-wait` / `nativeEngineRetryWaitSeconds` | `int` | `5` | Seconds to wait between retries in the native engine. |

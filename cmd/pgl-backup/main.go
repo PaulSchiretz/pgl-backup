@@ -55,7 +55,7 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	nativeRetryWaitFlag := flag.Int("native-retry-wait", 0, "Seconds to wait between retries in native engine.")
 	excludeFilesFlag := flag.String("exclude-files", "", "Comma-separated list of file names to exclude (supports glob patterns).")
 	excludeDirsFlag := flag.String("exclude-dirs", "", "Comma-separated list of directory names to exclude (supports glob patterns).")
-	preserveSourceNameFlag := flag.Bool("preserve-source-name", false, "Preserve the source directory's name in the destination path.")
+	preserveSourceNameFlag := flag.Bool("preserve-source-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
 	preBackupHooksFlag := flag.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
 	postBackupHooksFlag := flag.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
 
@@ -101,6 +101,9 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 		case "dry-run":
 			flagMap[name] = *dryRunFlag
 		case "preserve-source-name":
+			// The flag's value is only used if it was explicitly set.
+			// The default is handled by the base config.
+			// We can just assign the value directly.
 			flagMap[name] = *preserveSourceNameFlag
 		case "native-engine-workers":
 			flagMap[name] = *nativeEngineWorkersFlag
