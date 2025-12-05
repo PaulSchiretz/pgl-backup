@@ -157,12 +157,18 @@ func (se *SyncEngine) UnmarshalJSON(data []byte) error {
 }
 
 type BackupEngineConfig struct {
-	Type                             SyncEngine `json:"type"`
-	NativeEngineWorkers              int        `json:"nativeEngineWorkers"`
-	NativeEngineRetryCount           int        `json:"nativeEngineRetryCount"`
-	NativeEngineRetryWaitSeconds     int        `json:"nativeEngineRetryWaitSeconds"`
-	NativeEngineModTimeWindowSeconds int        `json:"nativeEngineModTimeWindowSeconds" comment:"Time window in seconds to consider file modification times equal. Handles filesystem timestamp precision differences. Default is 1s. 0 means exact match."`
-	NativeEngineCopyBufferSizeKB     int        `json:"nativeEngineCopyBufferSizeKB" comment:"Size of the I/O buffer in kilobytes for file copies. Default is 1024 (1MB)."`
+	Type                             SyncEngine                    `json:"type"`
+	NativeEngineWorkers              int                           `json:"nativeEngineWorkers"`
+	NativeEngineRetryCount           int                           `json:"nativeEngineRetryCount"`
+	NativeEngineRetryWaitSeconds     int                           `json:"nativeEngineRetryWaitSeconds"`
+	NativeEngineModTimeWindowSeconds int                           `json:"nativeEngineModTimeWindowSeconds" comment:"Time window in seconds to consider file modification times equal. Handles filesystem timestamp precision differences. Default is 1s. 0 means exact match."`
+	NativeEngineCopyBufferSizeKB     int                           `json:"nativeEngineCopyBufferSizeKB" comment:"Size of the I/O buffer in kilobytes for file copies. Default is 1024 (1MB)."`
+	Performance                      BackupEnginePerformanceConfig `json:"performance,omitempty"`
+}
+
+type BackupEnginePerformanceConfig struct {
+	SyncWorkers   int `json:"syncWorkers"`
+	DeleteWorkers int `json:"deleteWorkers"`
 }
 
 type Config struct {
@@ -189,12 +195,14 @@ func NewDefault() Config {
 		DryRun:           false,
 		Engine: BackupEngineConfig{
 			Type:                             NativeEngine,
-			NativeEngineWorkers:              runtime.NumCPU(), // Default to the number of CPU cores.
-			NativeEngineRetryCount:           3,                // Default retries on failure.
-			NativeEngineRetryWaitSeconds:     5,                // Default wait time between retries.
-			NativeEngineModTimeWindowSeconds: 1,                // Set the default to 1 second
-			NativeEngineCopyBufferSizeKB:     4096,             // Default to 4MB buffer. Keep it between 1-8MB
-		},
+			NativeEngineRetryCount:           3,    // Default retries on failure.
+			NativeEngineRetryWaitSeconds:     5,    // Default wait time between retries.
+			NativeEngineModTimeWindowSeconds: 1,    // Set the default to 1 second
+			NativeEngineCopyBufferSizeKB:     4096, // Default to 4MB buffer. Keep it between 1-8MB
+			Performance: BackupEnginePerformanceConfig{ // Initialize performance settings here
+				SyncWorkers:   runtime.NumCPU(), // Default to the number of CPU cores.
+				DeleteWorkers: 4,                // A sensible default for network shares.
+			}},
 		Naming: BackupNamingConfig{
 			Prefix:                "PGL_Backup_",
 			IncrementalModeSuffix: "Current",
@@ -319,8 +327,11 @@ func (c *Config) Validate() error {
 	}
 
 	// --- Validate Engine and Mode Settings ---
-	if c.Engine.NativeEngineWorkers < 1 {
-		return fmt.Errorf("nativeEngineWorkers must be at least 1")
+	if c.Engine.Performance.SyncWorkers < 1 {
+		return fmt.Errorf("engine.performance.syncWorkers must be at least 1")
+	}
+	if c.Engine.Performance.DeleteWorkers < 1 {
+		return fmt.Errorf("engine.performance.deleteWorkers must be at least 1")
 	}
 	if c.Engine.NativeEngineRetryCount < 0 {
 		return fmt.Errorf("nativeEngineRetryCount cannot be negative")
@@ -353,6 +364,8 @@ func (c *Config) LogSummary() {
 		"target", c.Paths.TargetBase,
 		"sync_engine", c.Engine.Type,
 		"dry_run", c.DryRun,
+		"sync_workers", c.Engine.Performance.SyncWorkers,
+		"delete_workers", c.Engine.Performance.DeleteWorkers,
 		"copy_buffer_kb", c.Engine.NativeEngineCopyBufferSizeKB,
 	}
 	if c.Mode == IncrementalMode {
@@ -444,6 +457,10 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 			merged.Engine.Type = value.(SyncEngine)
 		case "native-engine-workers":
 			merged.Engine.NativeEngineWorkers = value.(int)
+		case "sync-workers":
+			merged.Engine.Performance.SyncWorkers = value.(int)
+		case "delete-workers":
+			merged.Engine.Performance.DeleteWorkers = value.(int)
 		case "native-retry-count":
 			merged.Engine.NativeEngineRetryCount = value.(int)
 		case "native-retry-wait":

@@ -118,8 +118,8 @@ type nativeSyncRun struct {
 	// syncWg waits for syncWorkers to finish processing tasks.
 	syncWg sync.WaitGroup
 
-	// syncTasks is the channel where the Walker sends pre-processed tasks.
-	syncTasks chan syncTask
+	// syncTasksChan is the channel where the Walker sends pre-processed tasks.
+	syncTasksChan chan syncTask
 
 	// syncErrs captures the first critical error from any worker to be reported at the end of the run.
 	syncErrs chan error
@@ -488,7 +488,7 @@ func (r *nativeSyncRun) ensureParentDirectoryExists(relPathKey string) error {
 // syncWalker is a dedicated goroutine that walks the source directory tree,
 // sending each syncTask to the syncTasks channel for processing by workers.
 func (r *nativeSyncRun) syncWalker() {
-	defer close(r.syncTasks) // Close syncTasks to signal syncWorkers to stop when walk is complete
+	defer close(r.syncTasksChan) // Close syncTasksChan to signal syncWorkers to stop when walk is complete
 
 	err := filepath.WalkDir(r.src, func(absSrcPath string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -566,7 +566,7 @@ func (r *nativeSyncRun) syncWalker() {
 		select {
 		case <-r.ctx.Done():
 			return r.ctx.Err()
-		case r.syncTasks <- task:
+		case r.syncTasksChan <- task:
 			return nil
 		}
 	})
@@ -589,7 +589,7 @@ func (r *nativeSyncRun) syncWorker() {
 		select {
 		case <-r.ctx.Done():
 			return
-		case task, ok := <-r.syncTasks:
+		case task, ok := <-r.syncTasksChan:
 			if !ok {
 				// Channel closed by Walker, work is done.
 				return
@@ -800,10 +800,10 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, preserve
 		},
 		discoveredSrcPaths: sharded.NewShardedSet(),
 		syncedDirCache:     sharded.NewShardedSet(),
-		// Buffer 'syncTasks' increase buffer size to absorb bursts of small files discovery by the walker.
-		syncTasks: make(chan syncTask, s.engine.NativeEngineWorkers*100),
-		syncErrs:  make(chan error, 1),
-		ctx:       ctx,
+		// Buffer 'syncTasksChan' to absorb bursts of small files discovered by the walker.
+		syncTasksChan: make(chan syncTask, s.engine.NativeEngineWorkers*100),
+		syncErrs:      make(chan error, 1),
+		ctx:           ctx,
 	}
 	return run.execute()
 }

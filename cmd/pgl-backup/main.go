@@ -50,7 +50,8 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	initFlag := flag.Bool("init", false, "Generate a default pgl-backup.conf file and exit.")
 	versionFlag := flag.Bool("version", false, "Print the application version and exit.")
 	syncEngineFlag := flag.String("sync-engine", "", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
-	nativeEngineWorkersFlag := flag.Int("native-engine-workers", 0, "Number of worker goroutines for native sync.")
+	syncWorkersFlag := flag.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
+	deleteWorkersFlag := flag.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
 	nativeRetryCountFlag := flag.Int("native-retry-count", 0, "Number of retries for failed file copies in native engine.")
 	nativeRetryWaitFlag := flag.Int("native-retry-wait", 0, "Seconds to wait between retries in native engine.")
 	excludeFilesFlag := flag.String("exclude-files", "", "Comma-separated list of file names to exclude (supports glob patterns).")
@@ -105,8 +106,10 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 			// The default is handled by the base config.
 			// We can just assign the value directly.
 			flagMap[name] = *preserveSourceNameFlag
-		case "native-engine-workers":
-			flagMap[name] = *nativeEngineWorkersFlag
+		case "sync-workers":
+			flagMap[name] = *syncWorkersFlag
+		case "delete-workers":
+			flagMap[name] = *deleteWorkersFlag
 		case "native-retry-count":
 			flagMap[name] = *nativeRetryCountFlag
 		case "native-retry-wait":

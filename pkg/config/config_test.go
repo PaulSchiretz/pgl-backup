@@ -51,11 +51,19 @@ func TestConfig_Validate(t *testing.T) {
 		}
 	})
 
-	t.Run("Invalid NativeEngineWorkers", func(t *testing.T) {
+	t.Run("Invalid SyncWorkers", func(t *testing.T) {
 		cfg := newValidConfig(t)
-		cfg.Engine.NativeEngineWorkers = 0
+		cfg.Engine.Performance.SyncWorkers = 0
 		if err := cfg.Validate(); err == nil {
-			t.Error("expected error for zero native engine workers, but got nil")
+			t.Error("expected error for zero sync workers, but got nil")
+		}
+	})
+
+	t.Run("Invalid DeleteWorkers", func(t *testing.T) {
+		cfg := newValidConfig(t)
+		cfg.Engine.Performance.DeleteWorkers = 0
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected error for zero delete workers, but got nil")
 		}
 	})
 

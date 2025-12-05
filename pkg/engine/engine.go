@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
@@ -217,7 +218,7 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 
 	plog.Info("Backup operation completed.")
 
-	// --- 3. Clean up old backups ---
+	// --- 3. Clean up outdated backups ---
 	if err := e.applyRetentionPolicy(ctx); err != nil {
 		// We log this as a non-fatal error because the main backup was successful.
 		plog.Warn("Error applying retention policy", "error", err)
@@ -392,6 +393,7 @@ func (e *Engine) performRollover(ctx context.Context, currentRun *runState) erro
 // for midnight-to-midnight boundary crossings (epoch day counting).
 func (e *Engine) shouldRollover(lastBackupTime time.Time, currentRun *runState) bool {
 	// Handle the default (0 = 24h) for comparison logic
+	// A value of 0 would panic, this is already accounted for in config validation
 	effectiveInterval := e.config.RolloverInterval
 
 	// NOTE: For multi-day intervals, the full implementation requires normalizing to local midnight
@@ -492,7 +494,7 @@ func (e *Engine) applyRetentionPolicy(ctx context.Context) error {
 		plog.Info("Retention policy is disabled. Skipping cleanup.")
 		return nil
 	}
-	plog.Info("--- Cleaning Up Old Backups ---")
+	plog.Info("--- Cleaning Up Outdated Backups ---")
 	plog.Info("Applying retention policy", "directory", baseDir)
 	// --- 1. Get a sorted list of all valid, historical backups ---
 	allBackups, err := e.fetchSortedBackups(ctx, baseDir, currentDirName)
@@ -503,28 +505,68 @@ func (e *Engine) applyRetentionPolicy(ctx context.Context) error {
 	// --- 2. Apply retention rules to find which backups to keep ---
 	backupsToKeep := e.determineBackupsToKeep(allBackups, retentionPolicy)
 
-	// --- 3. Delete all backups that are not in our final `backupsToKeep` set ---
+	// --- 3. Collect all backups that are not in our final `backupsToKeep` set ---
+	var dirsToDelete []string
 	for _, backup := range allBackups {
-		// Check for cancellation before each deletion.
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
 		dirName := backup.Name
 		if _, shouldKeep := backupsToKeep[dirName]; !shouldKeep {
-			dirToDelete := filepath.Join(baseDir, dirName)
-			plog.Info("Deleting redundant or old backup", "path", dirToDelete)
-			if e.config.DryRun {
-				plog.Info("[DRY RUN] Would delete directory", "path", dirToDelete)
-				continue
-			}
-			if err := os.RemoveAll(dirToDelete); err != nil {
-				plog.Warn("Failed to delete old backup directory", "path", dirToDelete, "error", err)
-			}
+			dirsToDelete = append(dirsToDelete, filepath.Join(baseDir, dirName))
 		}
 	}
+
+	if len(dirsToDelete) == 0 {
+		plog.Info("No outdated backups to delete.")
+		return nil
+	}
+
+	plog.Info("Preparing to delete outdated backups", "count", len(dirsToDelete))
+
+	// --- 4. Delete backups in parallel using a worker pool ---
+	// This is especially effective for network drives where latency is a factor.
+	numWorkers := e.config.Engine.Performance.DeleteWorkers // Use the configured number of workers.
+	var wg sync.WaitGroup
+	deleteDirTasksChan := make(chan string, len(dirsToDelete))
+
+	// Start workers
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for dirToDelete := range deleteDirTasksChan {
+				// Check for cancellation before each deletion.
+				select {
+				case <-ctx.Done():
+					// Don't process any more jobs if context is cancelled.
+					return
+				default:
+				}
+
+				plog.Info("Deleting redundant or old backup", "path", dirToDelete, "worker", workerID)
+				if e.config.DryRun {
+					plog.Info("[DRY RUN] Would delete directory", "path", dirToDelete)
+					continue
+				}
+				if err := os.RemoveAll(dirToDelete); err != nil {
+					plog.Warn("Failed to delete outdated backup directory", "path", dirToDelete, "error", err)
+				}
+			}
+		}(i + 1)
+	}
+
+	// Feed the jobs channel with all the directories to be deleted.
+	for _, dir := range dirsToDelete {
+		select {
+		case <-ctx.Done():
+			// If context is cancelled while feeding jobs, stop sending more.
+			plog.Info("Cancellation received, stopping deletion process.")
+			close(deleteDirTasksChan) // Close channel to unblock any waiting workers.
+			return ctx.Err()
+		case deleteDirTasksChan <- dir:
+		}
+	}
+	close(deleteDirTasksChan) // All jobs have been sent.
+
+	wg.Wait()
 
 	return nil
 }
