@@ -53,10 +53,10 @@ func isCaseInsensitiveFS() bool {
 	return runtime.GOOS == "windows" || runtime.GOOS == "darwin"
 }
 
-// compactFileInfo holds the essential, primitive data from an os.FileInfo.
+// compactPathInfo holds the essential, primitive data from an os.FileInfo.
 // Storing this directly instead of the os.FileInfo interface avoids a pointer
 // lookup and reduces GC pressure, as the data is inlined in the parent struct.
-type compactFileInfo struct {
+type compactPathInfo struct {
 	ModTime int64 // Unix Nano. Stored as int64 to avoid GC overhead of time.Time's internal pointer.
 	Size    int64
 	Mode    os.FileMode
@@ -66,7 +66,7 @@ type compactFileInfo struct {
 // without re-calculating paths or re-fetching filesystem stats.
 type syncTask struct {
 	RelPathKey string          // Normalized, forward-slash, lowercase (if applicable) key. NOT for direct FS access.
-	FileInfo   compactFileInfo // Cached info from the Walker
+	PathInfo   compactPathInfo // Cached info from the Walker
 	IsDir      bool
 }
 
@@ -106,11 +106,16 @@ type nativeSyncRun struct {
 	modTimeWindow         time.Duration // The time window to consider file modification times equal.
 	ioBufferPool          *sync.Pool    // pointer to avoid copying the noCopy field if the struct is ever passed by value
 
-	// discoveredSrcPaths is a concurrent set populated by the syncWalker. It holds every
+	// discoveredPaths is a concurrent set populated by the syncWalker. It holds every
 	// non-excluded path found in the source directory. During the mirror phase, it is
 	// read to determine which paths in the destination are no longer present in the source
 	// and should be deleted.
-	discoveredSrcPaths *sharded.ShardedSet
+	discoveredPaths *sharded.ShardedSet
+
+	// discoveredDirInfo is a concurrent map populated by the syncWalker. It stores the
+	// PathInfo for every directory found in the source. This serves as a cache to avoid
+	// redundant Lstat calls by workers needing to create parent directories.
+	discoveredDirInfo *sharded.ShardedMap
 
 	// syncedDirCache tracks directories that have ALREADY been created in the destination
 	// by any syncWorker. This prevents duplicate MkdirAll calls across the concurrent pool.
@@ -178,8 +183,8 @@ func (r *nativeSyncRun) copyFileHelper(absSrcPath, absTrgPath string, task *sync
 				return fmt.Errorf("failed to copy content from %s to %s: %w", absSrcPath, absTempPath, err)
 			}
 
-			// 4. Copy file permissions
-			if err := out.Chmod(task.FileInfo.Mode); err != nil {
+			// 4. Copy file permissions from the source PathInfo
+			if err := out.Chmod(task.PathInfo.Mode); err != nil {
 				out.Close() // Close before returning on error
 				return fmt.Errorf("failed to set permissions on temporary file %s: %w", absTempPath, err)
 			}
@@ -193,7 +198,7 @@ func (r *nativeSyncRun) copyFileHelper(absSrcPath, absTrgPath string, task *sync
 
 			// 6. Copy file timestamps
 			// We do this via os.Chtimes (using the path) after the file is closed.
-			if err := os.Chtimes(absTempPath, time.Unix(0, task.FileInfo.ModTime), time.Unix(0, task.FileInfo.ModTime)); err != nil {
+			if err := os.Chtimes(absTempPath, time.Unix(0, task.PathInfo.ModTime), time.Unix(0, task.PathInfo.ModTime)); err != nil {
 				return fmt.Errorf("failed to set timestamps on %s: %w", absTempPath, err)
 			}
 
@@ -382,7 +387,7 @@ func (r *nativeSyncRun) processFileSync(task *syncTask) error {
 			// It's a regular file. Use the info from os.Lstat directly for comparison.
 			// We skip the copy only if the modification times (within the configured window) and sizes are identical.
 			// We truncate the times to handle filesystems with different timestamp resolutions.
-			if r.truncateModTime(time.Unix(0, task.FileInfo.ModTime)).Equal(r.truncateModTime(trgInfo.ModTime())) && task.FileInfo.Size == trgInfo.Size() {
+			if r.truncateModTime(time.Unix(0, task.PathInfo.ModTime)).Equal(r.truncateModTime(trgInfo.ModTime())) && task.PathInfo.Size == trgInfo.Size() {
 				return nil // Not changed
 			}
 		} else {
@@ -425,7 +430,7 @@ func (r *nativeSyncRun) processDirectorySync(task *syncTask) error {
 
 	// Convert the path to the OS-native format for file access
 	absTrgPath := r.denormalizedAbsPath(r.trg, task.RelPathKey)
-	expectedPerms := withBackupWritePermission(task.FileInfo.Mode.Perm())
+	expectedPerms := withBackupWritePermission(task.PathInfo.Mode.Perm())
 
 	// 2. Perform the concurrent I/O.
 	// Optimistic creation: Try Chmod first (cheapest syscall).
@@ -463,25 +468,22 @@ func (r *nativeSyncRun) ensureParentDirectoryExists(relPathKey string) error {
 		return nil // Already created.
 	}
 
-	// If not in cache, we need to create it NOW.
-
-	// We need source info to construct a task to get correct permissions.
-	absSrcPath := r.denormalizedAbsPath(r.src, relPathKey)
-	info, err := os.Lstat(absSrcPath)
-	if err != nil {
-		// Cannot stat source directory to determine permissions.
-		return fmt.Errorf("cannot stat source directory %s to determine permissions: %w", absSrcPath, err)
+	// 2. If not in cache, we need to create it now.
+	// Instead of re-statting the source directory, we look up its info from the cache
+	// populated by the syncWalker.
+	val, ok := r.discoveredDirInfo.Load(relPathKey)
+	if !ok {
+		// This should be logically impossible if the walker has processed the parent
+		// directory before its child file. We return an error to be safe.
+		return fmt.Errorf("internal logic error: PathInfo for parent directory %s not found in cache", relPathKey)
 	}
+	dirInfo := val.(compactPathInfo)
 
 	// 2. Create a synthetic directory task for the parent.
 	parentTask := syncTask{
-		RelPathKey: relPathKey,
-		IsDir:      true,
-		FileInfo: compactFileInfo{
-			ModTime: info.ModTime().UnixNano(),
-			Size:    info.Size(),
-			Mode:    info.Mode(),
-		},
+		RelPathKey: relPathKey, // The relative path key of the parent directory
+		IsDir:      true,       // It's a directory
+		PathInfo:   dirInfo,    // The cached PathInfo for the parent directory
 	}
 
 	// 3. Perform the I/O using the main directory handler.
@@ -542,20 +544,25 @@ func (r *nativeSyncRun) syncWalker() {
 
 		// --- CRITICAL: Record the path unconditionally here ---
 		// If we mirror and the item exists in the source, it MUST be recorded in the set
-		// to prevent it from being deleted during the mirror phase (Phase 2).
+		// to prevent it from being deleted during the mirror phase.
 		if r.mirror {
-			r.discoveredSrcPaths.Store(relPathKey)
+			r.discoveredPaths.Store(relPathKey)
 		}
 		// ----------------------------------------------------------------
 
 		task := syncTask{
-			RelPathKey: relPathKey,
-			FileInfo: compactFileInfo{
+			RelPathKey: relPathKey, // The normalized relative path key
+			PathInfo: compactPathInfo{ // The cached FileInfo for this path
 				ModTime: info.ModTime().UnixNano(),
 				Size:    info.Size(),
 				Mode:    info.Mode(),
 			},
-			IsDir: info.Mode().IsDir(),
+			IsDir: info.Mode().IsDir(), // Whether this path is a directory
+		}
+
+		// If it's a directory, cache its PathInfo for workers to use later.
+		if task.IsDir {
+			r.discoveredDirInfo.Store(task.RelPathKey, task.PathInfo)
 		}
 
 		if !task.IsDir && !info.Mode().IsRegular() {
@@ -605,7 +612,7 @@ func (r *nativeSyncRun) syncWorker() {
 				}
 			} else {
 				// This is a file task.
-				// 1. Ensure Parent Directory Exists(still required for files whose parent directory
+				// 1. Ensure Parent Directory Exists (still required for files whose parent directory's
 				// task hasn't been processed yet, ensuring order)
 				parentRelPathKey := filepath.Dir(task.RelPathKey)
 				// --- CRITICAL FIX: Re-normalize the parent key ---
@@ -633,7 +640,7 @@ func (r *nativeSyncRun) syncWorker() {
 						"path", task.RelPathKey,
 						"error", err,
 						"note", "This file may be inconsistent or outdated in the destination")
-					// We rely on the syncWalker having already added this path to discoveredSrcPaths, preventing it from being deleted in the mirror phase.
+					// We rely on the syncWalker having already added this path to discoveredPaths, preventing it from being deleted in the mirror phase.
 				}
 			}
 		}
@@ -697,7 +704,7 @@ func (r *nativeSyncRun) mirrorWalker() ([]string, error) {
 			return nil
 		}
 
-		if r.discoveredSrcPaths.Has(relPathKey) {
+		if r.discoveredPaths.Has(relPathKey) {
 			return nil // Path exists in source, keep it.
 		}
 
@@ -863,8 +870,9 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, preserve
 				return &b
 			},
 		},
-		discoveredSrcPaths: sharded.NewShardedSet(),
-		syncedDirCache:     sharded.NewShardedSet(),
+		discoveredPaths:   sharded.NewShardedSet(),
+		discoveredDirInfo: sharded.NewShardedMap(),
+		syncedDirCache:    sharded.NewShardedSet(),
 		// Buffer 'syncTasksChan' to absorb bursts of small files discovered by the walker.
 		syncTasksChan:   make(chan syncTask, s.engine.Performance.SyncWorkers*100),
 		mirrorTasksChan: make(chan string, s.engine.Performance.SyncWorkers*100),
