@@ -57,9 +57,10 @@ func isCaseInsensitiveFS() bool {
 // Storing this directly instead of the os.FileInfo interface avoids a pointer
 // lookup and reduces GC pressure, as the data is inlined in the parent struct.
 type compactPathInfo struct {
-	ModTime int64 // Unix Nano. Stored as int64 to avoid GC overhead of time.Time's internal pointer.
-	Size    int64
-	Mode    os.FileMode
+	ModTime int64       // Unix Nano. Stored as int64 to avoid GC overhead of time.Time's internal pointer.
+	Size    int64       // Size in bytes.
+	Mode    os.FileMode // File mode bits.
+	IsDir   bool        // True if the path is a directory.
 }
 
 // syncTask holds all the necessary metadata for a worker to process a file
@@ -67,7 +68,6 @@ type compactPathInfo struct {
 type syncTask struct {
 	RelPathKey string          // Normalized, forward-slash, lowercase (if applicable) key. NOT for direct FS access.
 	PathInfo   compactPathInfo // Cached info from the Walker
-	IsDir      bool
 }
 
 type exclusionType int
@@ -482,7 +482,6 @@ func (r *nativeSyncRun) ensureParentDirectoryExists(relPathKey string) error {
 	// 2. Create a synthetic directory task for the parent.
 	parentTask := syncTask{
 		RelPathKey: relPathKey, // The relative path key of the parent directory
-		IsDir:      true,       // It's a directory
 		PathInfo:   dirInfo,    // The cached PathInfo for the parent directory
 	}
 
@@ -550,22 +549,23 @@ func (r *nativeSyncRun) syncWalker() {
 		}
 		// ----------------------------------------------------------------
 
+		isDir := info.Mode().IsDir()
 		task := syncTask{
 			RelPathKey: relPathKey, // The normalized relative path key
 			PathInfo: compactPathInfo{ // The cached FileInfo for this path
 				ModTime: info.ModTime().UnixNano(),
 				Size:    info.Size(),
 				Mode:    info.Mode(),
+				IsDir:   isDir,
 			},
-			IsDir: info.Mode().IsDir(), // Whether this path is a directory
 		}
 
 		// If it's a directory, cache its PathInfo for workers to use later.
-		if task.IsDir {
+		if task.PathInfo.IsDir {
 			r.discoveredDirInfo.Store(task.RelPathKey, task.PathInfo)
 		}
 
-		if !task.IsDir && !info.Mode().IsRegular() {
+		if !task.PathInfo.IsDir && !info.Mode().IsRegular() {
 			// Symlinks, Named Pipes, etc.
 			if !r.quiet {
 				plog.Info("SKIP", "type", info.Mode().String(), "path", relPathKey)
@@ -606,7 +606,7 @@ func (r *nativeSyncRun) syncWorker() {
 				return
 			}
 
-			if task.IsDir {
+			if task.PathInfo.IsDir {
 				if err := r.processDirectorySync(&task); err != nil {
 					plog.Warn("Failed to sync directory", "path", task.RelPathKey, "error", err)
 				}
