@@ -51,6 +51,7 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	versionFlag := flag.Bool("version", false, "Print the application version and exit.")
 	syncEngineFlag := flag.String("sync-engine", "", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
 	syncWorkersFlag := flag.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
+	mirrorWorkersFlag := flag.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
 	deleteWorkersFlag := flag.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
 	nativeRetryCountFlag := flag.Int("native-retry-count", 0, "Number of retries for failed file copies in native engine.")
 	nativeRetryWaitFlag := flag.Int("native-retry-wait", 0, "Seconds to wait between retries in native engine.")
@@ -108,6 +109,8 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 			flagMap[name] = *preserveSourceNameFlag
 		case "sync-workers":
 			flagMap[name] = *syncWorkersFlag
+		case "mirror-workers":
+			flagMap[name] = *mirrorWorkersFlag
 		case "delete-workers":
 			flagMap[name] = *deleteWorkersFlag
 		case "native-retry-count":

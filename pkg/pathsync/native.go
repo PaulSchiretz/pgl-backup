@@ -97,6 +97,7 @@ type nativeSyncRun struct {
 	preserveSourceDirName bool
 	mirror, dryRun, quiet bool
 	numSyncWorkers        int
+	numMirrorWorkers      int
 	caseInsensitive       bool
 	fileExcludes          exclusionSet
 	dirExcludes           exclusionSet
@@ -767,7 +768,7 @@ func (r *nativeSyncRun) handleMirror() error {
 
 	// --- Phase 2A: Concurrent Deletion of Files ---
 	// Start mirror workers.
-	for i := 0; i < r.numSyncWorkers; i++ {
+	for i := 0; i < r.numMirrorWorkers; i++ {
 		r.syncWg.Add(1)
 		go r.mirrorWorker()
 	}
@@ -851,6 +852,7 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, preserve
 		fileExcludes:          preProcessExclusions(excludeFiles, false, isCaseInsensitive),
 		dirExcludes:           preProcessExclusions(excludeDirs, true, isCaseInsensitive),
 		numSyncWorkers:        s.engine.Performance.SyncWorkers,
+		numMirrorWorkers:      s.engine.Performance.MirrorWorkers,
 		retryCount:            s.engine.NativeEngineRetryCount,
 		retryWait:             time.Duration(s.engine.NativeEngineRetryWaitSeconds) * time.Second,
 		modTimeWindow:         time.Duration(s.engine.NativeEngineModTimeWindowSeconds) * time.Second,

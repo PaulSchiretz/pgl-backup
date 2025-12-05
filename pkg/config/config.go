@@ -168,6 +168,7 @@ type BackupEngineConfig struct {
 
 type BackupEnginePerformanceConfig struct {
 	SyncWorkers   int `json:"syncWorkers"`
+	MirrorWorkers int `json:"mirrorWorkers" comment:"Number of concurrent workers for file deletions in mirror mode."`
 	DeleteWorkers int `json:"deleteWorkers"`
 }
 
@@ -200,8 +201,9 @@ func NewDefault() Config {
 			NativeEngineModTimeWindowSeconds: 1,    // Set the default to 1 second
 			NativeEngineCopyBufferSizeKB:     4096, // Default to 4MB buffer. Keep it between 1-8MB
 			Performance: BackupEnginePerformanceConfig{ // Initialize performance settings here
-				SyncWorkers:   runtime.NumCPU(), // Default to the number of CPU cores.
-				DeleteWorkers: 4,                // A sensible default for network shares.
+				SyncWorkers:   runtime.NumCPU(), // Default to the number of CPU cores for file copies.
+				MirrorWorkers: runtime.NumCPU(), // Default to the number of CPU cores for file deletions.
+				DeleteWorkers: 4,                // A sensible default for deleting entire backup sets.
 			}},
 		Naming: BackupNamingConfig{
 			Prefix:                "PGL_Backup_",
@@ -330,6 +332,9 @@ func (c *Config) Validate() error {
 	if c.Engine.Performance.SyncWorkers < 1 {
 		return fmt.Errorf("engine.performance.syncWorkers must be at least 1")
 	}
+	if c.Engine.Performance.MirrorWorkers < 1 {
+		return fmt.Errorf("engine.performance.mirrorWorkers must be at least 1")
+	}
 	if c.Engine.Performance.DeleteWorkers < 1 {
 		return fmt.Errorf("engine.performance.deleteWorkers must be at least 1")
 	}
@@ -365,6 +370,7 @@ func (c *Config) LogSummary() {
 		"sync_engine", c.Engine.Type,
 		"dry_run", c.DryRun,
 		"sync_workers", c.Engine.Performance.SyncWorkers,
+		"mirror_workers", c.Engine.Performance.MirrorWorkers,
 		"delete_workers", c.Engine.Performance.DeleteWorkers,
 		"copy_buffer_kb", c.Engine.NativeEngineCopyBufferSizeKB,
 	}
@@ -459,6 +465,8 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 			merged.Engine.NativeEngineWorkers = value.(int)
 		case "sync-workers":
 			merged.Engine.Performance.SyncWorkers = value.(int)
+		case "mirror-workers":
+			merged.Engine.Performance.MirrorWorkers = value.(int)
 		case "delete-workers":
 			merged.Engine.Performance.DeleteWorkers = value.(int)
 		case "native-retry-count":

@@ -59,6 +59,14 @@ func TestConfig_Validate(t *testing.T) {
 		}
 	})
 
+	t.Run("Invalid MirrorWorkers", func(t *testing.T) {
+		cfg := newValidConfig(t)
+		cfg.Engine.Performance.MirrorWorkers = 0
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected error for zero mirror workers, but got nil")
+		}
+	})
+
 	t.Run("Invalid DeleteWorkers", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Engine.Performance.DeleteWorkers = 0
