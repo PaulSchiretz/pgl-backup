@@ -509,7 +509,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			cfg := config.NewDefault()
 			cfg.DryRun = tc.dryRun
 			cfg.Engine.Performance.SyncWorkers = 2 // Use a small number of workers for tests.
-			cfg.Engine.NativeEngineRetryCount = 0
+			cfg.Engine.RetryCount = 0
 			syncer := NewPathSyncer(cfg)
 			// Use test-case specific mod time window if provided, otherwise default to 1s.
 			syncer.engine.NativeEngineModTimeWindowSeconds = 1

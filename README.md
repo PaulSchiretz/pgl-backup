@@ -65,10 +65,11 @@ Open the newly created `pgl-backup.conf` file. It will look something like this,
   "rolloverInterval": "24h0m0s",
   "engine": {
     "type": "native",
-    "nativeEngineRetryCount": 3,
-    "nativeEngineRetryWaitSeconds": 5,
+    "retryCount": 3,
+    "retryWaitSeconds": 5,
     "performance": {
       "mirrorWorkers": 8,
+      "copyBufferSizeKB": 4096,
       "syncWorkers": 8,
       "deleteWorkers": 4
     }
@@ -175,5 +176,6 @@ All command-line flags can be set in the `pgl-backup.conf` file.
 | `sync-workers` / `engine.performance.syncWorkers` | `int` | `runtime.NumCPU()` | Number of concurrent workers for file synchronization. |
 | `mirror-workers` / `engine.performance.mirrorWorkers` | `int` | `runtime.NumCPU()` | Number of concurrent workers for file deletions in mirror mode. |
 | `delete-workers` / `engine.performance.deleteWorkers` | `int` | `4` | Number of concurrent workers for deleting outdated backups. |
-| `native-retry-count` / `engine.nativeEngineRetryCount` | `int` | `3` | Number of retries for failed file copies in the native engine. |
-| `native-retry-wait` / `engine.nativeEngineRetryWaitSeconds` | `int` | `5` | Seconds to wait between retries in the native engine. |
+| `retry-count` / `engine.retryCount` | `int` | `3` | Number of retries for failed file copies. |
+| `retry-wait` / `engine.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries. |
+| `copy-buffer-kb` / `engine.performance.copyBufferSizeKB` | `int` | `4096` | Size of the I/O buffer in kilobytes for file copies. |

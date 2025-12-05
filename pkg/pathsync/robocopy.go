@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"strconv"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
@@ -31,12 +32,15 @@ func (s *PathSyncer) handleRobocopy(ctx context.Context, src, dst string, preser
 	// /E :: copy subdirectories, including Empty ones.
 	// /V :: Verbose output, showing skipped files.
 	// /TEE :: output to console window as well as the log file.
-	// /R:3 :: Retry 3 times on failed copies.
-	// /W:5 :: Wait 5 seconds between retries.
+	// /R:n :: Retry n times on failed copies.
+	// /W:n :: Wait n seconds between retries.
 	// /NP :: No Progress - don't display % copied.
 	// /NJH :: No Job Header.
 	// /NJS :: No Job Summary. (We keep the summary for a good overview)
-	args := []string{src, dst, "/V", "/TEE", "/R:3", "/W:5", "/NP", "/NJH"}
+	args := []string{src, dst, "/V", "/TEE", "/NP", "/NJH"}
+	args = append(args, "/R:"+strconv.Itoa(s.engine.RetryCount))
+	args = append(args, "/W:"+strconv.Itoa(s.engine.RetryWaitSeconds))
+
 	if mirror {
 		args = append(args, "/MIR")
 	} else {

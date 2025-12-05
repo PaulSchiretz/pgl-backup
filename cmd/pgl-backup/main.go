@@ -53,8 +53,9 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	syncWorkersFlag := flag.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
 	mirrorWorkersFlag := flag.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
 	deleteWorkersFlag := flag.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
-	nativeRetryCountFlag := flag.Int("native-retry-count", 0, "Number of retries for failed file copies in native engine.")
-	nativeRetryWaitFlag := flag.Int("native-retry-wait", 0, "Seconds to wait between retries in native engine.")
+	retryCountFlag := flag.Int("retry-count", 0, "Number of retries for failed file copies.")
+	retryWaitFlag := flag.Int("retry-wait", 0, "Seconds to wait between retries.")
+	copyBufferKBFlag := flag.Int("copy-buffer-kb", 0, "Size of the I/O buffer in kilobytes for file copies.")
 	excludeFilesFlag := flag.String("exclude-files", "", "Comma-separated list of file names to exclude (supports glob patterns).")
 	excludeDirsFlag := flag.String("exclude-dirs", "", "Comma-separated list of directory names to exclude (supports glob patterns).")
 	preserveSourceNameFlag := flag.Bool("preserve-source-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
@@ -113,10 +114,12 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 			flagMap[name] = *mirrorWorkersFlag
 		case "delete-workers":
 			flagMap[name] = *deleteWorkersFlag
-		case "native-retry-count":
-			flagMap[name] = *nativeRetryCountFlag
-		case "native-retry-wait":
-			flagMap[name] = *nativeRetryWaitFlag
+		case "retry-count":
+			flagMap[name] = *retryCountFlag
+		case "retry-wait":
+			flagMap[name] = *retryWaitFlag
+		case "copy-buffer-kb":
+			flagMap[name] = *copyBufferKBFlag
 		}
 	}
 

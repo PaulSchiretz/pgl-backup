@@ -75,6 +75,22 @@ func TestConfig_Validate(t *testing.T) {
 		}
 	})
 
+	t.Run("Invalid RetryCount", func(t *testing.T) {
+		cfg := newValidConfig(t)
+		cfg.Engine.RetryCount = -1
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected error for negative retry count, but got nil")
+		}
+	})
+
+	t.Run("Invalid RetryWaitSeconds", func(t *testing.T) {
+		cfg := newValidConfig(t)
+		cfg.Engine.RetryWaitSeconds = -1
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected error for negative retry wait, but got nil")
+		}
+	})
+
 	t.Run("Invalid RolloverInterval", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Mode = IncrementalMode

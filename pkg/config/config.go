@@ -158,18 +158,17 @@ func (se *SyncEngine) UnmarshalJSON(data []byte) error {
 
 type BackupEngineConfig struct {
 	Type                             SyncEngine                    `json:"type"`
-	NativeEngineWorkers              int                           `json:"nativeEngineWorkers"`
-	NativeEngineRetryCount           int                           `json:"nativeEngineRetryCount"`
-	NativeEngineRetryWaitSeconds     int                           `json:"nativeEngineRetryWaitSeconds"`
+	RetryCount                       int                           `json:"retryCount"`
+	RetryWaitSeconds                 int                           `json:"retryWaitSeconds"`
 	NativeEngineModTimeWindowSeconds int                           `json:"nativeEngineModTimeWindowSeconds" comment:"Time window in seconds to consider file modification times equal. Handles filesystem timestamp precision differences. Default is 1s. 0 means exact match."`
-	NativeEngineCopyBufferSizeKB     int                           `json:"nativeEngineCopyBufferSizeKB" comment:"Size of the I/O buffer in kilobytes for file copies. Default is 1024 (1MB)."`
 	Performance                      BackupEnginePerformanceConfig `json:"performance,omitempty"`
 }
 
 type BackupEnginePerformanceConfig struct {
-	SyncWorkers   int `json:"syncWorkers"`
-	MirrorWorkers int `json:"mirrorWorkers" comment:"Number of concurrent workers for file deletions in mirror mode."`
-	DeleteWorkers int `json:"deleteWorkers"`
+	SyncWorkers      int `json:"syncWorkers"`
+	MirrorWorkers    int `json:"mirrorWorkers" comment:"Number of concurrent workers for file deletions in mirror mode."`
+	DeleteWorkers    int `json:"deleteWorkers"`
+	CopyBufferSizeKB int `json:"copyBufferSizeKB" comment:"Size of the I/O buffer in kilobytes for file copies. Default is 4096 (4MB)."`
 }
 
 type Config struct {
@@ -196,14 +195,14 @@ func NewDefault() Config {
 		DryRun:           false,
 		Engine: BackupEngineConfig{
 			Type:                             NativeEngine,
-			NativeEngineRetryCount:           3,    // Default retries on failure.
-			NativeEngineRetryWaitSeconds:     5,    // Default wait time between retries.
-			NativeEngineModTimeWindowSeconds: 1,    // Set the default to 1 second
-			NativeEngineCopyBufferSizeKB:     4096, // Default to 4MB buffer. Keep it between 1-8MB
+			RetryCount:                       3, // Default retries on failure.
+			RetryWaitSeconds:                 5, // Default wait time between retries.
+			NativeEngineModTimeWindowSeconds: 1, // Set the default to 1 second
 			Performance: BackupEnginePerformanceConfig{ // Initialize performance settings here
-				SyncWorkers:   runtime.NumCPU(), // Default to the number of CPU cores for file copies.
-				MirrorWorkers: runtime.NumCPU(), // Default to the number of CPU cores for file deletions.
-				DeleteWorkers: 4,                // A sensible default for deleting entire backup sets.
+				SyncWorkers:      runtime.NumCPU(), // Default to the number of CPU cores for file copies.
+				MirrorWorkers:    runtime.NumCPU(), // Default to the number of CPU cores for file deletions.
+				DeleteWorkers:    4,                // A sensible default for deleting entire backup sets.
+				CopyBufferSizeKB: 4096,             // Default to 4MB buffer. Keep it between 1-8MB
 			}},
 		Naming: BackupNamingConfig{
 			Prefix:                "PGL_Backup_",
@@ -330,19 +329,22 @@ func (c *Config) Validate() error {
 
 	// --- Validate Engine and Mode Settings ---
 	if c.Engine.Performance.SyncWorkers < 1 {
-		return fmt.Errorf("engine.performance.syncWorkers must be at least 1")
+		return fmt.Errorf("syncWorkers must be at least 1")
 	}
 	if c.Engine.Performance.MirrorWorkers < 1 {
-		return fmt.Errorf("engine.performance.mirrorWorkers must be at least 1")
+		return fmt.Errorf("mirrorWorkers must be at least 1")
 	}
 	if c.Engine.Performance.DeleteWorkers < 1 {
-		return fmt.Errorf("engine.performance.deleteWorkers must be at least 1")
+		return fmt.Errorf("deleteWorkers must be at least 1")
 	}
-	if c.Engine.NativeEngineRetryCount < 0 {
-		return fmt.Errorf("nativeEngineRetryCount cannot be negative")
+	if c.Engine.RetryCount < 0 {
+		return fmt.Errorf("retryCount cannot be negative")
 	}
-	if c.Engine.NativeEngineCopyBufferSizeKB <= 0 {
-		return fmt.Errorf("nativeEngineCopyBufferSizeKB must be greater than 0")
+	if c.Engine.RetryWaitSeconds < 0 {
+		return fmt.Errorf("retryWaitSeconds cannot be negative")
+	}
+	if c.Engine.Performance.CopyBufferSizeKB <= 0 {
+		return fmt.Errorf("copyBufferSizeKB must be greater than 0")
 	}
 	if c.Mode == IncrementalMode && c.RolloverInterval <= 0 {
 		return fmt.Errorf("rolloverInterval must be a positive duration (e.g., '24h', '90m')")
@@ -372,7 +374,7 @@ func (c *Config) LogSummary() {
 		"sync_workers", c.Engine.Performance.SyncWorkers,
 		"mirror_workers", c.Engine.Performance.MirrorWorkers,
 		"delete_workers", c.Engine.Performance.DeleteWorkers,
-		"copy_buffer_kb", c.Engine.NativeEngineCopyBufferSizeKB,
+		"copy_buffer_kb", c.Engine.Performance.CopyBufferSizeKB,
 	}
 	if c.Mode == IncrementalMode {
 		logArgs = append(logArgs, "rollover_interval", c.RolloverInterval)
@@ -461,20 +463,18 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 			merged.DryRun = value.(bool)
 		case "sync-engine":
 			merged.Engine.Type = value.(SyncEngine)
-		case "native-engine-workers":
-			merged.Engine.NativeEngineWorkers = value.(int)
 		case "sync-workers":
 			merged.Engine.Performance.SyncWorkers = value.(int)
 		case "mirror-workers":
 			merged.Engine.Performance.MirrorWorkers = value.(int)
 		case "delete-workers":
 			merged.Engine.Performance.DeleteWorkers = value.(int)
-		case "native-retry-count":
-			merged.Engine.NativeEngineRetryCount = value.(int)
-		case "native-retry-wait":
-			merged.Engine.NativeEngineRetryWaitSeconds = value.(int)
-		case "native-copy-buffer-kb":
-			merged.Engine.NativeEngineCopyBufferSizeKB = value.(int)
+		case "retry-count":
+			merged.Engine.RetryCount = value.(int)
+		case "retry-wait":
+			merged.Engine.RetryWaitSeconds = value.(int)
+		case "copy-buffer-kb":
+			merged.Engine.Performance.CopyBufferSizeKB = value.(int)
 		case "exclude-files":
 			merged.Paths.ExcludeFiles = value.([]string)
 		case "exclude-dirs":

@@ -853,13 +853,13 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, preserve
 		dirExcludes:           preProcessExclusions(excludeDirs, true, isCaseInsensitive),
 		numSyncWorkers:        s.engine.Performance.SyncWorkers,
 		numMirrorWorkers:      s.engine.Performance.MirrorWorkers,
-		retryCount:            s.engine.NativeEngineRetryCount,
-		retryWait:             time.Duration(s.engine.NativeEngineRetryWaitSeconds) * time.Second,
+		retryCount:            s.engine.RetryCount,
+		retryWait:             time.Duration(s.engine.RetryWaitSeconds) * time.Second,
 		modTimeWindow:         time.Duration(s.engine.NativeEngineModTimeWindowSeconds) * time.Second,
 		ioBufferPool: &sync.Pool{
 			New: func() interface{} {
 				// Buffer size is configured in KB, so multiply by 1024.
-				b := make([]byte, s.engine.NativeEngineCopyBufferSizeKB*1024)
+				b := make([]byte, s.engine.Performance.CopyBufferSizeKB*1024)
 				return &b
 			},
 		},
