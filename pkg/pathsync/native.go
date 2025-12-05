@@ -625,7 +625,9 @@ func (r *nativeSyncRun) syncWorker() {
 				// 1. Ensure Parent Directory Exists (still required for files whose parent directory's
 				// task hasn't been processed yet, ensuring order)
 				parentRelPathKey := filepath.Dir(task.RelPathKey)
-				// --- CRITICAL FIX: Re-normalize the parent key ---
+				// CRITICAL: Re-normalize the parent key. `filepath.Dir` can return a path with
+				// OS-specific separators (e.g., '\' on Windows), but our cache keys are
+				// standardized to use forward slashes.
 				parentRelPathKey = filepath.ToSlash(parentRelPathKey)
 				if r.caseInsensitive {
 					parentRelPathKey = strings.ToLower(parentRelPathKey)
