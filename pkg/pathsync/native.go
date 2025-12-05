@@ -797,7 +797,10 @@ func (r *nativeSyncRun) handleMirror() error {
 		if !r.quiet {
 			plog.Info("DELETE", "path", dir)
 		}
+		// Use os.Remove, as we expect the directory to be empty of files.
 		if err := os.Remove(dir); err != nil {
+			// Log a warning if it fails, but don't stop the entire process.
+			// This might happen if a file inside couldn't be deleted earlier due to permissions.
 			plog.Warn("Failed to delete directory, it might not be empty", "path", dir, "error", err)
 		}
 	}
