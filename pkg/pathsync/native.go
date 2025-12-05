@@ -593,6 +593,12 @@ func (r *nativeSyncRun) syncWalker() {
 
 // syncWorker acts as a Consumer. It reads tasks from the 'syncTasks' channel,
 // processes them (I/O).
+//
+// DESIGN NOTE on Race Conditions:
+// A potential race exists where a worker confirms a parent directory exists, but a mirror
+// worker could theoretically delete it before this worker copies a file into it.
+// This is prevented because the entire sync phase (all syncWorkers) completes before
+// the mirror phase (deletions) begins. This function relies on that sequential execution.
 func (r *nativeSyncRun) syncWorker() {
 	defer r.syncWg.Done()
 
