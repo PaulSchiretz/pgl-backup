@@ -94,18 +94,18 @@ type preProcessedExclusion struct {
 }
 
 type nativeSyncRun struct {
-	src, trg              string
-	preserveSourceDirName bool
-	mirror, dryRun, quiet bool
-	numSyncWorkers        int
-	numMirrorWorkers      int
-	caseInsensitive       bool
-	fileExcludes          exclusionSet
-	dirExcludes           exclusionSet
-	retryCount            int
-	retryWait             time.Duration
-	modTimeWindow         time.Duration // The time window to consider file modification times equal.
-	ioBufferPool          *sync.Pool    // pointer to avoid copying the noCopy field if the struct is ever passed by value
+	src, trg                        string
+	preserveSourceDirName           bool
+	mirror, dryRun, quiet, failFast bool
+	numSyncWorkers                  int
+	numMirrorWorkers                int
+	caseInsensitive                 bool
+	fileExcludes                    exclusionSet
+	dirExcludes                     exclusionSet
+	retryCount                      int
+	retryWait                       time.Duration
+	modTimeWindow                   time.Duration // The time window to consider file modification times equal.
+	ioBufferPool                    *sync.Pool    // pointer to avoid copying the noCopy field if the struct is ever passed by value
 
 	// discoveredPaths is a concurrent set populated by the syncWalker. It holds every
 	// non-excluded path found in the source directory. During the mirror phase, it is
@@ -139,7 +139,8 @@ type nativeSyncRun struct {
 	syncErrs *sharded.ShardedMap
 
 	// ctx is the cancellable context for the entire run.
-	ctx context.Context
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // --- Helpers ---
@@ -633,24 +634,39 @@ func (r *nativeSyncRun) syncWorker() {
 				if r.caseInsensitive {
 					parentRelPathKey = strings.ToLower(parentRelPathKey)
 				}
-				// --------------------------------------------------
 
 				if parentRelPathKey != "." || r.preserveSourceDirName {
 					if err := r.ensureParentDirectoryExists(parentRelPathKey); err != nil {
-						// If the parent directory cannot be created or made writable, the file
-						// operation will fail. We must record this as a non-fatal error for
-						// this specific file and skip attempting the copy.
 						fileErr := fmt.Errorf("failed to ensure parent directory %s exists and is writable: %w", parentRelPathKey, err)
-						r.syncErrs.Store(task.RelPathKey, fileErr)
-						plog.Warn("Sync failed for path; it will be preserved in the destination to prevent deletion",
-							"path", task.RelPathKey,
-							"error", fileErr)
+						if r.failFast {
+							// Fail-fast mode: treat this as a critical error.
+							// Use a non-blocking send in case another worker has already sent a critical error.
+							select {
+							case r.criticalErrsChan <- fileErr:
+							default:
+							}
+						} else {
+							// Default mode: record as a non-fatal error and continue.
+							r.syncErrs.Store(task.RelPathKey, fileErr)
+							plog.Warn("Sync failed for path; it will be preserved in the destination to prevent deletion",
+								"path", task.RelPathKey,
+								"error", fileErr)
+						}
 						continue
 					}
 				}
 				// 2. Process the file sync
 				err := r.processFileSync(&task)
 				if err != nil {
+					if r.failFast {
+						// Fail-fast mode: treat this as a critical error.
+						// Use a non-blocking send in case another worker has already sent a critical error.
+						select {
+						case r.criticalErrsChan <- err:
+						default:
+						}
+						continue // Stop processing this file, the main loop will catch the error.
+					}
 					// Individual file I/O errors (e.g., file locked, permissions issue) are
 					// considered non-fatal for the overall backup process. Instead of
 					// immediately stopping, the error is recorded, and the worker continues
@@ -867,11 +883,11 @@ func (r *nativeSyncRun) handleMirror() error {
 
 // execute coordinates the concurrent synchronization pipeline.
 func (r *nativeSyncRun) execute() error {
-	// Create a cancellable context for this run.
-	// If any component fails, 'cancel()' will stop all other components.
-	ctx, cancel := context.WithCancel(r.ctx)
-	defer cancel()
-	r.ctx = ctx // This updates the struct, so all methods see the new context
+	// The context passed in is now decorated with a cancel function that this
+	// run can use to signal a stop to all its goroutines.
+	// We defer the cancel to ensure resources are cleaned up on exit.
+	r.ctx, r.cancel = context.WithCancel(r.ctx)
+	defer r.cancel()
 
 	// 1. Run the main synchronization of files and directories.
 	if err := r.handleSync(); err != nil {
@@ -904,6 +920,7 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, preserve
 		mirror:                mirror,
 		dryRun:                s.dryRun,
 		quiet:                 s.quiet,
+		failFast:              s.failFast,
 		caseInsensitive:       isCaseInsensitive,
 		fileExcludes:          preProcessExclusions(excludeFiles, false, isCaseInsensitive),
 		dirExcludes:           preProcessExclusions(excludeDirs, true, isCaseInsensitive),

@@ -14,17 +14,19 @@ type Syncer interface {
 
 // PathSyncer orchestrates the file synchronization process.
 type PathSyncer struct {
-	engine config.BackupEngineConfig
-	dryRun bool
-	quiet  bool
+	engine   config.BackupEngineConfig
+	dryRun   bool
+	quiet    bool
+	failFast bool
 }
 
 // NewPathSyncer creates a new PathSyncer with the given configuration.
 func NewPathSyncer(cfg config.Config) *PathSyncer {
 	return &PathSyncer{
-		engine: cfg.Engine,
-		dryRun: cfg.DryRun,
-		quiet:  cfg.Quiet,
+		engine:   cfg.Engine,
+		dryRun:   cfg.DryRun,
+		quiet:    cfg.Quiet,
+		failFast: cfg.FailFast,
 	}
 }
 

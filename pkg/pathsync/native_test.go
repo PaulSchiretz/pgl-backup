@@ -128,6 +128,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 		mirror                  bool
 		preserveSourceDirName   bool
 		dryRun                  bool
+		failFast                bool
 		excludeFiles            []string
 		excludeDirs             []string
 		srcFiles                []testFile                          // Files to create in the source directory.
@@ -482,6 +483,30 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 			expectedErrorContains: "2 non-fatal errors occurred during sync",
 		},
+		{
+			name:     "Fail-Fast on First Error",
+			failFast: true,
+			srcFiles: []testFile{
+				// This file will cause the error.
+				{path: filepath.Join("unwritable_dir", "file1.txt"), content: "content1", modTime: baseTime},
+				// This file should NOT be processed because the creation of its parent dir will fail.
+				{path: filepath.Join("unwritable_dir", "file2.txt"), content: "content2", modTime: baseTime},
+			},
+			dstFiles: []testFile{
+				// Pre-create a FILE in the destination where a directory is expected.
+				// This will cause ensureParentDirectoryExists to fail.
+				{path: "unwritable_dir", content: "i am a file, not a directory", modTime: baseTime},
+			},
+			expectedDstFiles: map[string]testFile{
+				// The pre-existing file should still be there.
+				"unwritable_dir": {path: "unwritable_dir", content: "i am a file, not a directory", modTime: baseTime},
+			},
+			expectedMissingDstFiles: []string{
+				filepath.Join("unwritable_dir", "file1.txt"), // This file should not have been synced.
+				filepath.Join("unwritable_dir", "file2.txt"), // This file should not have been synced.
+			},
+			expectedErrorContains: "critical sync error", // The error should be wrapped as critical.
+		},
 	}
 
 	for _, tc := range testCases {
@@ -531,6 +556,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			// Create the syncer
 			cfg := config.NewDefault()
 			cfg.DryRun = tc.dryRun
+			cfg.FailFast = tc.failFast
 			cfg.Engine.Performance.SyncWorkers = 2 // Use a small number of workers for tests.
 			cfg.Engine.RetryCount = 0
 			syncer := NewPathSyncer(cfg)

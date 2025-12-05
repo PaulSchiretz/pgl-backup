@@ -46,6 +46,7 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	targetFlag := flag.String("target", "", "Base destination directory for backups")
 	modeFlag := flag.String("mode", "", "Backup mode: 'incremental' or 'snapshot'.")
 	quietFlag := flag.Bool("quiet", false, "Suppress individual file operation logs.")
+	failFastFlag := flag.Bool("fail-fast", false, "Stop the backup immediately on the first file sync error.")
 	dryRunFlag := flag.Bool("dry-run", false, "Show what would be done without making any changes.")
 	initFlag := flag.Bool("init", false, "Generate a default pgl-backup.conf file and exit.")
 	versionFlag := flag.Bool("version", false, "Print the application version and exit.")
@@ -101,6 +102,8 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 			flagMap[name] = *targetFlag
 		case "quiet":
 			flagMap[name] = *quietFlag
+		case "fail-fast":
+			flagMap[name] = *failFastFlag
 		case "dry-run":
 			flagMap[name] = *dryRunFlag
 		case "preserve-source-name":

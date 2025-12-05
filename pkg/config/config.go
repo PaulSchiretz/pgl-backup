@@ -177,6 +177,7 @@ type Config struct {
 	Engine           BackupEngineConfig          `json:"engine"`
 	Quiet            bool                        `json:"quiet"`
 	DryRun           bool                        `json:"dryRun"`
+	FailFast         bool                        `json:"failFast"`
 	Naming           BackupNamingConfig          `json:"naming"`
 	Paths            BackupPathConfig            `json:"paths"`
 	RetentionPolicy  BackupRetentionPolicyConfig `json:"retentionPolicy"`
@@ -193,6 +194,7 @@ func NewDefault() Config {
 		RolloverInterval: 24 * time.Hour,  // Default rollover interval is daily.
 		Quiet:            false,
 		DryRun:           false,
+		FailFast:         false,
 		Engine: BackupEngineConfig{
 			Type:                             NativeEngine,
 			RetryCount:                       3, // Default retries on failure.
@@ -459,6 +461,8 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 			merged.Mode = value.(BackupMode)
 		case "quiet":
 			merged.Quiet = value.(bool)
+		case "fail-fast":
+			merged.FailFast = value.(bool)
 		case "dry-run":
 			merged.DryRun = value.(bool)
 		case "sync-engine":
