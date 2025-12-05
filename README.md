@@ -65,9 +65,12 @@ Open the newly created `pgl-backup.conf` file. It will look something like this,
   "rolloverInterval": "24h0m0s",
   "engine": {
     "type": "native",
-    "nativeEngineWorkers": 8,
     "nativeEngineRetryCount": 3,
-    "nativeEngineRetryWaitSeconds": 5
+    "nativeEngineRetryWaitSeconds": 5,
+    "performance": {
+      "syncWorkers": 8,
+      "deleteWorkers": 4
+    }
   },
   "quiet": false,
   "dryRun": false,
@@ -168,6 +171,7 @@ All command-line flags can be set in the `pgl-backup.conf` file.
 | `pre-backup-hooks` / `preBackup`| `[]string`    | `[]`                                  | List of shell commands to run before the backup.                                                        |
 | `post-backup-hooks` / `postBackup`| `[]string`    | `[]`                                  | List of shell commands to run after the backup.                                                         |
 | `preserve-source-name` / `paths.preserveSourceDirectoryName` | `bool` | `true` | If true, appends the source directory's name to the destination path. |
-| `native-engine-workers` / `nativeEngineWorkers` | `int` | `runtime.NumCPU()` | Number of concurrent workers for the native sync engine. |
-| `native-retry-count` / `nativeEngineRetryCount` | `int` | `3` | Number of retries for failed file copies in the native engine. |
-| `native-retry-wait` / `nativeEngineRetryWaitSeconds` | `int` | `5` | Seconds to wait between retries in the native engine. |
+| `sync-workers` / `engine.performance.syncWorkers` | `int` | `runtime.NumCPU()` | Number of concurrent workers for file synchronization. |
+| `delete-workers` / `engine.performance.deleteWorkers` | `int` | `4` | Number of concurrent workers for deleting outdated backups. |
+| `native-retry-count` / `engine.nativeEngineRetryCount` | `int` | `3` | Number of retries for failed file copies in the native engine. |
+| `native-retry-wait` / `engine.nativeEngineRetryWaitSeconds` | `int` | `5` | Seconds to wait between retries in the native engine. |
