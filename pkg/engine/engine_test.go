@@ -228,14 +228,14 @@ func TestDetermineBackupsToKeep(t *testing.T) {
 	// Arrange: Create a series of backups over time
 	now := time.Now()
 	allBackups := []backupInfo{
-		{Time: now.Add(-1 * time.Hour), Name: "backup_hourly_1"},        // Kept as hourly
-		{Time: now.Add(-2 * time.Hour), Name: "backup_hourly_2"},        // Kept as hourly
-		{Time: now.Add(-25 * time.Hour), Name: "backup_daily_1"},        // Kept as daily
-		{Time: now.Add(-49 * time.Hour), Name: "backup_daily_2"},        // Kept as daily
-		{Time: now.Add(-8 * 24 * time.Hour), Name: "backup_weekly_1"},   // Kept as weekly
-		{Time: now.Add(-15 * 24 * time.Hour), Name: "backup_weekly_2"},  // Kept as weekly
-		{Time: now.Add(-35 * 24 * time.Hour), Name: "backup_monthly_1"}, // Kept as monthly
-		{Time: now.Add(-65 * 24 * time.Hour), Name: "backup_monthly_2"}, // Kept as monthly
+		{Time: now.Add(-1 * time.Hour), Name: "backup_hourly_1"},        // Kept as hourly (Hour 1)
+		{Time: now.Add(-2 * time.Hour), Name: "backup_hourly_2"},        // Kept as hourly (Hour 2)
+		{Time: now.Add(-25 * time.Hour), Name: "backup_daily_1"},        // Kept as daily (Day 1)
+		{Time: now.Add(-50 * time.Hour), Name: "backup_daily_2"},        // Kept as daily (Day 2)
+		{Time: now.Add(-8 * 24 * time.Hour), Name: "backup_weekly_1"},   // Kept as weekly (Week 1)
+		{Time: now.Add(-16 * 24 * time.Hour), Name: "backup_weekly_2"},  // Kept as weekly (Week 2)
+		{Time: now.Add(-35 * 24 * time.Hour), Name: "backup_monthly_1"}, // Kept as monthly (Month 1)
+		{Time: now.Add(-70 * 24 * time.Hour), Name: "backup_monthly_2"}, // Kept as monthly (Month 2)
 		{Time: now.Add(-100 * 24 * time.Hour), Name: "backup_old_1"},    // To be deleted
 		{Time: now.Add(-200 * 24 * time.Hour), Name: "backup_old_2"},    // To be deleted
 	}

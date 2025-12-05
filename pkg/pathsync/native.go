@@ -787,7 +787,7 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, preserve
 		caseInsensitive:       isCaseInsensitive,
 		fileExcludes:          preProcessExclusions(excludeFiles, false, isCaseInsensitive),
 		dirExcludes:           preProcessExclusions(excludeDirs, true, isCaseInsensitive),
-		numSyncWorkers:        s.engine.NativeEngineWorkers,
+		numSyncWorkers:        s.engine.Performance.SyncWorkers,
 		retryCount:            s.engine.NativeEngineRetryCount,
 		retryWait:             time.Duration(s.engine.NativeEngineRetryWaitSeconds) * time.Second,
 		modTimeWindow:         time.Duration(s.engine.NativeEngineModTimeWindowSeconds) * time.Second,
@@ -801,7 +801,7 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, preserve
 		discoveredSrcPaths: sharded.NewShardedSet(),
 		syncedDirCache:     sharded.NewShardedSet(),
 		// Buffer 'syncTasksChan' to absorb bursts of small files discovered by the walker.
-		syncTasksChan: make(chan syncTask, s.engine.NativeEngineWorkers*100),
+		syncTasksChan: make(chan syncTask, s.engine.Performance.SyncWorkers*100),
 		syncErrs:      make(chan error, 1),
 		ctx:           ctx,
 	}
