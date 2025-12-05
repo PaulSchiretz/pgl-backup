@@ -451,8 +451,9 @@ func (r *nativeSyncRun) processDirectorySync(task *syncTask) error {
 		} else {
 			plog.Warn("Failed to set permissions on destination directory", "path", task.RelPathKey, "error", err)
 			// A Chmod failure on an existing dir should not typically cause a SkipDir.
-			// We log the warning and continue descent.
-			return nil
+			// If we cannot set permissions, it's an error for the file copy that relies on this directory.
+			// This error will be propagated to the syncWorker, which will record it as a non-fatal error.
+			return fmt.Errorf("failed to set permissions on destination directory %s: %w", task.RelPathKey, err)
 		}
 	}
 
@@ -636,7 +637,14 @@ func (r *nativeSyncRun) syncWorker() {
 
 				if parentRelPathKey != "." || r.preserveSourceDirName {
 					if err := r.ensureParentDirectoryExists(parentRelPathKey); err != nil {
-						plog.Warn("Failed to create parent directory, skipping file", "parent_path", parentRelPathKey, "file", task.RelPathKey, "error", err)
+						// If the parent directory cannot be created or made writable, the file
+						// operation will fail. We must record this as a non-fatal error for
+						// this specific file and skip attempting the copy.
+						fileErr := fmt.Errorf("failed to ensure parent directory %s exists and is writable: %w", parentRelPathKey, err)
+						r.syncErrs.Store(task.RelPathKey, fileErr)
+						plog.Warn("Sync failed for path; it will be preserved in the destination to prevent deletion",
+							"path", task.RelPathKey,
+							"error", fileErr)
 						continue
 					}
 				}

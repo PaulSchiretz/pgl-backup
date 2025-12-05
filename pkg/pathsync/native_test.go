@@ -138,6 +138,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 		expectedMissingDstFiles []string                            // Paths that must NOT exist in the destination after sync.
 		modTimeWindow           *int                                // Optional override for mod time window. If nil, uses default.
 		verify                  func(t *testing.T, src, dst string) // Optional custom verification.
+		expectedErrorContains   string                              // If non-empty, asserts that the sync error contains this string.
 	}{
 		{
 			name:   "Simple Copy",
@@ -459,6 +460,28 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "Error Aggregation for Multiple Failures",
+			srcFiles: []testFile{
+				{path: "unwritable_dir/file1.txt", content: "content1", modTime: baseTime},
+				{path: "unwritable_dir/file2.txt", content: "content2", modTime: baseTime},
+				{path: "writable_dir/file3.txt", content: "content3", modTime: baseTime},
+			},
+			dstFiles: []testFile{
+				// Pre-create a FILE in the destination where a directory is expected.
+				// This will cause an OS-agnostic "is not a directory" error when the sync tries to create the parent dir.
+				{path: "unwritable_dir", content: "i am a file, not a directory", modTime: baseTime},
+			},
+			expectedDstFiles: map[string]testFile{
+				// The sync for file3.txt should succeed.
+				"writable_dir/file3.txt": {path: "writable_dir/file3.txt", content: "content3", modTime: baseTime},
+			},
+			expectedMissingDstFiles: []string{
+				"unwritable_dir/file1.txt",
+				"unwritable_dir/file2.txt",
+			},
+			expectedErrorContains: "2 non-fatal errors occurred during sync",
+		},
 	}
 
 	for _, tc := range testCases {
@@ -519,8 +542,17 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 
 			// Act
 			err := syncer.handleNative(context.Background(), srcDir, dstDir, tc.preserveSourceDirName, tc.mirror, tc.excludeFiles, tc.excludeDirs)
-			if err != nil {
-				t.Fatalf("handleNative failed: %v", err)
+
+			// Assert on error
+			if tc.expectedErrorContains != "" {
+				if err == nil {
+					t.Fatalf("expected an error containing %q, but got nil", tc.expectedErrorContains)
+				}
+				if !strings.Contains(err.Error(), tc.expectedErrorContains) {
+					t.Fatalf("expected error to contain %q, but got: %v", tc.expectedErrorContains, err)
+				}
+			} else if err != nil {
+				t.Fatalf("handleNative failed unexpectedly: %v", err)
 			}
 
 			// Assert
