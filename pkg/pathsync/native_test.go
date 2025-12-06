@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
+	"pixelgardenlabs.io/pgl-backup/pkg/sharded"
 )
 
 // helper to create a file with specific content and mod time.
@@ -117,6 +119,109 @@ type testDir struct {
 	path    string
 	perm    os.FileMode
 	modTime time.Time
+}
+
+type nativeSyncTestRunner struct {
+	t *testing.T
+	// Inputs
+	mirror       bool
+	dryRun       bool
+	failFast     bool
+	excludeFiles []string
+	excludeDirs  []string
+	srcFiles     []testFile
+	srcDirs      []testDir
+	dstFiles     []testFile
+	dstDirs      []testDir
+	modTimeWin   *int
+	// Internal state
+	srcDir      string
+	dstDir      string
+	runInstance *nativeSyncRun
+}
+
+func (r *nativeSyncTestRunner) setup() {
+	r.srcDir = r.t.TempDir()
+	r.dstDir = r.t.TempDir()
+
+	if err := os.RemoveAll(r.dstDir); err != nil {
+		r.t.Fatalf("failed to clean up dst dir before test: %v", err)
+	}
+
+	for _, f := range r.srcFiles {
+		createFile(r.t, filepath.Join(r.srcDir, f.path), f.content, f.modTime)
+	}
+	for _, d := range r.srcDirs {
+		createDir(r.t, filepath.Join(r.srcDir, d.path), d.perm, d.modTime)
+	}
+	for _, d := range r.dstDirs {
+		createDir(r.t, filepath.Join(r.dstDir, d.path), d.perm, d.modTime)
+	}
+	for _, f := range r.dstFiles {
+		if f.symlinkTarget != "" {
+			createSymlink(r.t, f.symlinkTarget, filepath.Join(r.dstDir, f.path))
+		} else {
+			createFile(r.t, filepath.Join(r.dstDir, f.path), f.content, f.modTime)
+		}
+	}
+
+	if !r.dryRun {
+		os.MkdirAll(r.dstDir, 0755)
+	}
+}
+
+func (r *nativeSyncTestRunner) run() error {
+	cfg := config.NewDefault()
+	cfg.DryRun = r.dryRun
+	cfg.FailFast = r.failFast
+	cfg.Engine.Performance.SyncWorkers = 2
+	cfg.Engine.Performance.CopyBufferSizeKB = 4
+	cfg.Engine.RetryCount = 0
+	syncer := NewPathSyncer(cfg)
+	modTimeWindowSeconds := 1
+	if r.modTimeWin != nil {
+		modTimeWindowSeconds = *r.modTimeWin
+	}
+	syncer.engine.NativeEngineModTimeWindowSeconds = modTimeWindowSeconds
+
+	r.runInstance = &nativeSyncRun{
+		src:              r.srcDir,
+		trg:              r.dstDir,
+		mirror:           r.mirror,
+		dryRun:           r.dryRun,
+		failFast:         r.failFast,
+		caseInsensitive:  isCaseInsensitiveFS(),
+		fileExcludes:     preProcessExclusions(r.excludeFiles, false, isCaseInsensitiveFS()),
+		dirExcludes:      preProcessExclusions(r.excludeDirs, true, isCaseInsensitiveFS()),
+		numSyncWorkers:   syncer.engine.Performance.SyncWorkers,
+		numMirrorWorkers: syncer.engine.Performance.MirrorWorkers,
+		retryCount:       syncer.engine.RetryCount,
+		retryWait:        time.Duration(syncer.engine.RetryWaitSeconds) * time.Second,
+		modTimeWindow:    time.Duration(modTimeWindowSeconds) * time.Second,
+		ioBufferPool: &sync.Pool{
+			New: func() interface{} {
+				b := make([]byte, syncer.engine.Performance.CopyBufferSizeKB*1024)
+				return &b
+			},
+		},
+		syncTaskPool: &sync.Pool{
+			New: func() interface{} { return new(syncTask) },
+		},
+		mirrorTaskPool: &sync.Pool{
+			New: func() interface{} { return new(mirrorTask) },
+		},
+		discoveredPaths:        sharded.NewShardedSet(),
+		discoveredDirInfo:      sharded.NewShardedMap(),
+		syncedDirCache:         sharded.NewShardedSet(),
+		syncTasksChan:          make(chan *syncTask, syncer.engine.Performance.SyncWorkers*100),
+		mirrorTasksChan:        make(chan *mirrorTask, syncer.engine.Performance.MirrorWorkers*100),
+		criticalSyncErrsChan:   make(chan error, 1),
+		syncErrs:               sharded.NewShardedMap(),
+		criticalMirrorErrsChan: make(chan error, 1),
+		mirrorErrs:             sharded.NewShardedMap(),
+		ctx:                    context.Background(),
+	}
+	return r.runInstance.execute()
 }
 
 func TestNativeSync_EndToEnd(t *testing.T) {
@@ -519,56 +624,21 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				}
 			}
 
-			// Arrange
-			srcDir := t.TempDir()
-			dstDir := t.TempDir()
-
-			// The destination directory might be created by the sync process,
-			// so we remove it first to ensure a clean state for tests that need it.
-			if err := os.RemoveAll(dstDir); err != nil {
-				t.Fatalf("failed to clean up dst dir before test: %v", err)
+			runner := &nativeSyncTestRunner{
+				t:            t,
+				mirror:       tc.mirror,
+				dryRun:       tc.dryRun,
+				failFast:     tc.failFast,
+				excludeFiles: tc.excludeFiles,
+				excludeDirs:  tc.excludeDirs,
+				srcFiles:     tc.srcFiles,
+				srcDirs:      tc.srcDirs,
+				dstFiles:     tc.dstFiles,
+				dstDirs:      tc.dstDirs,
+				modTimeWin:   tc.modTimeWindow,
 			}
-
-			// Setup initial state from file matrices
-			for _, f := range tc.srcFiles {
-				createFile(t, filepath.Join(srcDir, f.path), f.content, f.modTime)
-			}
-			for _, d := range tc.srcDirs {
-				createDir(t, filepath.Join(srcDir, d.path), d.perm, d.modTime)
-			}
-			for _, d := range tc.dstDirs {
-				createDir(t, filepath.Join(dstDir, d.path), d.perm, d.modTime)
-			}
-			for _, f := range tc.dstFiles {
-				if f.symlinkTarget != "" {
-					createSymlink(t, f.symlinkTarget, filepath.Join(dstDir, f.path))
-				} else {
-					createFile(t, filepath.Join(dstDir, f.path), f.content, f.modTime)
-				}
-			}
-
-			// In the real app, `validateSyncPaths` creates the destination directory
-			// before `handleNative` is called. We must simulate that here to prevent
-			// a race condition in the test environment.
-			if !tc.dryRun {
-				os.MkdirAll(dstDir, 0755)
-			}
-
-			// Create the syncer
-			cfg := config.NewDefault()
-			cfg.DryRun = tc.dryRun
-			cfg.FailFast = tc.failFast
-			cfg.Engine.Performance.SyncWorkers = 2 // Use a small number of workers for tests.
-			cfg.Engine.RetryCount = 0
-			syncer := NewPathSyncer(cfg)
-			// Use test-case specific mod time window if provided, otherwise default to 1s.
-			syncer.engine.NativeEngineModTimeWindowSeconds = 1
-			if tc.modTimeWindow != nil {
-				syncer.engine.NativeEngineModTimeWindowSeconds = *tc.modTimeWindow
-			}
-
-			// Act
-			err := syncer.handleNative(context.Background(), srcDir, dstDir, tc.mirror, tc.excludeFiles, tc.excludeDirs)
+			runner.setup()
+			err := runner.run()
 
 			// Assert on error
 			if tc.expectedErrorContains != "" {
@@ -584,7 +654,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 
 			// Assert
 			for relPathKey, expectedFile := range tc.expectedDstFiles {
-				fullPath := filepath.Join(dstDir, expectedFile.path)
+				fullPath := filepath.Join(runner.dstDir, expectedFile.path)
 				if !pathExists(t, fullPath) {
 					t.Errorf("expected file to exist in destination: %s", expectedFile.path)
 					continue
@@ -593,7 +663,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 					t.Errorf("expected content for %s to be %q, but got %q", relPathKey, expectedFile.content, content)
 				}
 				// For mod time comparison, use the same window as the syncer.
-				window := time.Duration(syncer.engine.NativeEngineModTimeWindowSeconds) * time.Second
+				window := runner.runInstance.modTimeWindow
 				modTime := getFileModTime(t, fullPath)
 				expectedModTime := expectedFile.modTime
 
@@ -602,13 +672,13 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				}
 			}
 			for _, p := range tc.expectedMissingDstFiles {
-				if pathExists(t, filepath.Join(dstDir, p)) {
+				if pathExists(t, filepath.Join(runner.dstDir, p)) {
 					t.Errorf("expected path to be missing from destination: %s", p)
 				}
 			}
 			// Allow for additional custom verification
 			if tc.verify != nil {
-				tc.verify(t, srcDir, dstDir)
+				tc.verify(t, runner.srcDir, runner.dstDir)
 			}
 		})
 	}
