@@ -71,6 +71,12 @@ type syncTask struct {
 	PathInfo   compactPathInfo // Cached info from the Walker
 }
 
+// mirrorTask holds the necessary metadata for a worker to process a deletion.
+type mirrorTask struct {
+	// Normalized, forward-slash, lowercase (if applicable) key. NOT for direct FS access.
+	RelPathKey string
+}
+
 type exclusionType int
 
 const (
@@ -122,18 +128,21 @@ type nativeSyncRun struct {
 	// by any syncWorker. This prevents duplicate MkdirAll calls across the concurrent pool.
 	syncedDirCache *sharded.ShardedSet
 
-	// syncWg waits for syncWorkers to finish processing tasks.
+	// syncWg waits for the syncWalker and syncWorkers to finish processing all sync tasks.
 	syncWg sync.WaitGroup
 
+	// mirrorWg waits for the mirrorWalker and mirrorWorkers to finish processing all deletion tasks.
+	mirrorWg sync.WaitGroup
+
 	// syncTasksChan is the channel where the Walker sends pre-processed tasks.
-	syncTasksChan chan syncTask
+	syncTasksChan chan *syncTask
 
 	// mirrorTasksChan is the channel where the mirrorWalker sends paths to be deleted.
-	mirrorTasksChan chan string
+	mirrorTasksChan chan *mirrorTask
 
-	// criticalErrsChan captures the first critical, unrecoverable error (e.g., walker failure)
+	// criticalSyncErrsChan captures the first critical, unrecoverable error (e.g., walker failure)
 	// to enable a "fail-fast" exit from the sync phase.
-	criticalErrsChan chan error
+	criticalSyncErrsChan chan error
 	// syncErrs is a concurrent map that captures non-fatal I/O errors from any worker,
 	// keyed by the relative path of the file that failed.
 	syncErrs *sharded.ShardedMap
@@ -583,8 +592,8 @@ func (r *nativeSyncRun) syncWalker() {
 		// Send all regular files and directories to the workers.
 		select {
 		case <-r.ctx.Done():
-			return r.ctx.Err()
-		case r.syncTasksChan <- task:
+			return r.ctx.Err() // Propagate cancellation error.
+		case r.syncTasksChan <- &task:
 			return nil
 		}
 	})
@@ -593,7 +602,7 @@ func (r *nativeSyncRun) syncWalker() {
 		// If the walker fails, send the error and cancel everything.
 		// This is a blocking send because a walker failure is critical and must be reported.
 		// The handleSync function will pick this up and terminate the process.
-		r.criticalErrsChan <- fmt.Errorf("walker failed: %w", err)
+		r.criticalSyncErrsChan <- fmt.Errorf("walker failed: %w", err)
 	}
 }
 
@@ -619,7 +628,7 @@ func (r *nativeSyncRun) syncWorker() {
 			}
 
 			if task.PathInfo.IsDir {
-				if err := r.processDirectorySync(&task); err != nil {
+				if err := r.processDirectorySync(task); err != nil {
 					plog.Warn("Failed to sync directory", "path", task.RelPathKey, "error", err)
 				}
 			} else {
@@ -642,7 +651,7 @@ func (r *nativeSyncRun) syncWorker() {
 							// Fail-fast mode: treat this as a critical error.
 							// Use a non-blocking send in case another worker has already sent a critical error.
 							select {
-							case r.criticalErrsChan <- fileErr:
+							case r.criticalSyncErrsChan <- fileErr:
 							default:
 							}
 						} else {
@@ -656,13 +665,13 @@ func (r *nativeSyncRun) syncWorker() {
 					}
 				}
 				// 2. Process the file sync
-				err := r.processFileSync(&task)
+				err := r.processFileSync(task)
 				if err != nil {
 					if r.failFast {
 						// Fail-fast mode: treat this as a critical error.
 						// Use a non-blocking send in case another worker has already sent a critical error.
 						select {
-						case r.criticalErrsChan <- err:
+						case r.criticalSyncErrsChan <- err:
 						default:
 						}
 						continue // Stop processing this file, the main loop will catch the error.
@@ -708,7 +717,7 @@ func (r *nativeSyncRun) handleSync() error {
 
 	// 4. Check for any critical errors captured by workers during the sync phase.
 	select {
-	case err := <-r.criticalErrsChan:
+	case err := <-r.criticalSyncErrsChan:
 		// A critical error occurred (e.g., walker failed), fail fast.
 		return fmt.Errorf("critical sync error: %w", err)
 	default:
@@ -739,9 +748,9 @@ func (r *nativeSyncRun) handleSync() error {
 
 // mirrorWalker is the producer for the deletion phase. It walks the destination
 // directory and sends paths that need to be deleted to the mirrorTasksChan.
-// It returns a slice of directories to be deleted after all files are gone.
-func (r *nativeSyncRun) mirrorWalker() ([]string, error) {
-	var relPathKeyDirsToDelete []string
+// It returns a slice of directory deletion tasks to be processed after all files are gone.
+func (r *nativeSyncRun) mirrorWalker() ([]*mirrorTask, error) {
+	var dirMirrorTasks []*mirrorTask
 
 	err := filepath.WalkDir(r.trg, func(absTrgPath string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -777,15 +786,18 @@ func (r *nativeSyncRun) mirrorWalker() ([]string, error) {
 			return nil // Excluded file, leave it.
 		}
 
+		// Create the mirrorTask
+		task := &mirrorTask{RelPathKey: relPathKey}
+
 		// This path needs to be deleted.
 		if d.IsDir() {
 			// For directories, we add them to a list to be deleted later.
 			// This ensures we delete contents before the directory itself (post-order).
-			relPathKeyDirsToDelete = append(relPathKeyDirsToDelete, relPathKey)
+			dirMirrorTasks = append(dirMirrorTasks, task)
 		} else {
 			// For files, we can send them to be deleted immediately.
 			select {
-			case r.mirrorTasksChan <- relPathKey:
+			case r.mirrorTasksChan <- task:
 			case <-r.ctx.Done():
 				return r.ctx.Err()
 			}
@@ -796,37 +808,36 @@ func (r *nativeSyncRun) mirrorWalker() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return relPathKeyDirsToDelete, nil
+	return dirMirrorTasks, nil
 }
 
 // mirrorWorker is the consumer for the deletion phase. It reads paths from
 // mirrorTasksChan and deletes them.
 func (r *nativeSyncRun) mirrorWorker() {
-	defer r.syncWg.Done()
+	defer r.mirrorWg.Done()
 
 	for {
 		select {
 		case <-r.ctx.Done():
 			return
-		case relPathKey, ok := <-r.mirrorTasksChan:
+		case task, ok := <-r.mirrorTasksChan:
 			if !ok {
 				return // Channel closed.
 			}
 
-			absPathToDelete := r.denormalizedAbsPath(r.trg, relPathKey)
+			absPathToDelete := r.denormalizedAbsPath(r.trg, task.RelPathKey)
 
 			if r.dryRun {
-				plog.Info("[DRY RUN] DELETE", "path", relPathKey)
+				plog.Info("[DRY RUN] DELETE", "path", task.RelPathKey)
 				continue
 			}
 
 			if !r.quiet {
-				plog.Info("DELETE", "path", relPathKey)
+				plog.Info("DELETE", "path", task.RelPathKey)
 			}
 
 			if err := os.RemoveAll(absPathToDelete); err != nil {
-				// Report error but don't stop other deletions.
-				plog.Warn("Failed to delete path", "path", relPathKey, "error", err)
+				plog.Warn("Failed to delete path", "path", task.RelPathKey, "error", err)
 			}
 		}
 	}
@@ -840,13 +851,13 @@ func (r *nativeSyncRun) handleMirror() error {
 	// --- Phase 2A: Concurrent Deletion of Files ---
 	// Start mirror workers.
 	for i := 0; i < r.numMirrorWorkers; i++ {
-		r.syncWg.Add(1)
+		r.mirrorWg.Add(1)
 		go r.mirrorWorker()
 	}
 
 	// Walk the destination and send files to be deleted to the workers.
 	// This returns a list of directories that also need to be deleted.
-	relPathKeyDirsToDelete, err := r.mirrorWalker()
+	dirMirrorTasks, err := r.mirrorWalker()
 	if err != nil {
 		return fmt.Errorf("mirror walker failed: %w", err)
 	}
@@ -855,26 +866,26 @@ func (r *nativeSyncRun) handleMirror() error {
 	close(r.mirrorTasksChan)
 
 	// Wait for all file deletions to complete.
-	r.syncWg.Wait()
+	r.mirrorWg.Wait()
 
 	// --- Phase 2B: Sequential Deletion of Directories ---
 	// Now that all files are gone, delete the obsolete directories.
 	// We do this sequentially and in reverse order to ensure children are removed before parents.
-	for i := len(relPathKeyDirsToDelete) - 1; i >= 0; i-- {
-		relPathKey := relPathKeyDirsToDelete[i]
-		absPathToDelete := r.denormalizedAbsPath(r.trg, relPathKey)
+	for i := len(dirMirrorTasks) - 1; i >= 0; i-- {
+		task := dirMirrorTasks[i]
+		absPathToDelete := r.denormalizedAbsPath(r.trg, task.RelPathKey)
 		if r.dryRun {
-			plog.Info("[DRY RUN] DELETE", "path", relPathKey)
+			plog.Info("[DRY RUN] DELETE", "path", task.RelPathKey)
 			continue
 		}
 		if !r.quiet {
-			plog.Info("DELETE", "path", relPathKey)
+			plog.Info("DELETE", "path", task.RelPathKey)
 		}
 		// Use os.Remove, as we expect the directory to be empty of files.
 		if err := os.Remove(absPathToDelete); err != nil {
 			// Log a warning if it fails, but don't stop the entire process.
 			// This might happen if a file inside couldn't be deleted earlier due to permissions.
-			plog.Warn("Failed to delete directory, it might not be empty", "path", relPathKey, "error", err)
+			plog.Warn("Failed to delete directory, it might not be empty", "path", task.RelPathKey, "error", err)
 		}
 	}
 
@@ -940,11 +951,11 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, preserve
 		discoveredDirInfo: sharded.NewShardedMap(),
 		syncedDirCache:    sharded.NewShardedSet(),
 		// Buffer 'syncTasksChan' to absorb bursts of small files discovered by the walker.
-		syncTasksChan:    make(chan syncTask, s.engine.Performance.SyncWorkers*100),
-		mirrorTasksChan:  make(chan string, s.engine.Performance.MirrorWorkers*100),
-		criticalErrsChan: make(chan error, 1),
-		syncErrs:         sharded.NewShardedMap(),
-		ctx:              ctx,
+		syncTasksChan:        make(chan *syncTask, s.engine.Performance.SyncWorkers*100),
+		mirrorTasksChan:      make(chan *mirrorTask, s.engine.Performance.MirrorWorkers*100),
+		criticalSyncErrsChan: make(chan error, 1),
+		syncErrs:             sharded.NewShardedMap(),
+		ctx:                  ctx,
 	}
 	return run.execute()
 }
