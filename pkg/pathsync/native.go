@@ -582,6 +582,13 @@ func (r *nativeSyncRun) syncWalker() {
 		// ----------------------------------------------------------------
 
 		isDir := info.Mode().IsDir()
+		if !isDir && !info.Mode().IsRegular() {
+			// Symlinks, Named Pipes, etc. are discovered for mirror mode but not synced.
+			if !r.quiet {
+				plog.Info("SKIP", "type", info.Mode().String(), "path", relPathKey)
+			}
+			return nil
+		}
 
 		// Get a task from the pool to reduce allocations.
 		task := r.syncTaskPool.Get().(*syncTask)
@@ -594,14 +601,6 @@ func (r *nativeSyncRun) syncWalker() {
 		// If it's a directory, cache its PathInfo for workers to use later.
 		if task.PathInfo.IsDir {
 			r.discoveredDirInfo.Store(task.RelPathKey, task.PathInfo)
-		}
-
-		if !task.PathInfo.IsDir && !info.Mode().IsRegular() {
-			// Symlinks, Named Pipes, etc.
-			if !r.quiet {
-				plog.Info("SKIP", "type", info.Mode().String(), "path", relPathKey)
-			}
-			return nil
 		}
 
 		// Send all regular files and directories to the workers.
@@ -642,14 +641,18 @@ func (r *nativeSyncRun) syncWorker() {
 				return
 			}
 
-			if task.PathInfo.IsDir {
-				if err := r.processDirectorySync(task); err != nil {
-					plog.Warn("Failed to sync directory", "path", task.RelPathKey, "error", err)
-				}
+			// Anonymous Function (IIFE) for reliable defer
+			func() {
 				// Return the task to the pool after processing.
-				r.syncTaskPool.Put(task)
+				defer r.syncTaskPool.Put(task)
 
-			} else {
+				if task.PathInfo.IsDir {
+					// This is a dir task.
+					if err := r.processDirectorySync(task); err != nil {
+						plog.Warn("Failed to sync directory", "path", task.RelPathKey, "error", err)
+					}
+					return // dir created
+				}
 				// This is a file task.
 				// 1. Ensure Parent Directory Exists (still required for files whose parent directory's
 				// task hasn't been processed yet, ensuring order)
@@ -672,12 +675,11 @@ func (r *nativeSyncRun) syncWorker() {
 								"path", task.RelPathKey,
 								"error", fileErr)
 						}
-						continue
+						return // no dir no filecopy
 					}
 				}
 				// 2. Process the file sync
-				err := r.processFileSync(task)
-				if err != nil {
+				if err := r.processFileSync(task); err != nil {
 					if r.failFast {
 						// Fail-fast mode: treat this as a critical error.
 						// Use a non-blocking send in case another worker has already sent a critical error.
@@ -685,7 +687,7 @@ func (r *nativeSyncRun) syncWorker() {
 						case r.criticalSyncErrsChan <- err:
 						default:
 						}
-						continue // Stop processing this file, the main loop will catch the error.
+						return // Stop processing this file, the main loop will catch the error.
 					}
 					// Individual file I/O errors (e.g., file locked, permissions issue) are
 					// considered non-fatal for the overall backup process. Instead of
@@ -702,11 +704,9 @@ func (r *nativeSyncRun) syncWorker() {
 						"path", task.RelPathKey,
 						"error", err,
 						"note", "This file may be inconsistent or outdated in the destination")
-					// We rely on the syncWalker having already added this path to discoveredPaths, preventing it from being deleted in the mirror phase.
-					// Return the task to the pool after processing.
-					r.syncTaskPool.Put(task)
+					return
 				}
-			}
+			}()
 		}
 	}
 }
@@ -761,7 +761,9 @@ func (r *nativeSyncRun) handleSync() error {
 
 // mirrorWalker is the producer for the deletion phase. It walks the destination
 // directory and sends paths that need to be deleted to the mirrorTasksChan.
-// It populates a slice of directory deletion tasks to be processed after all files are gone.
+// It populates the provided slice with directory deletion tasks to be processed after all files are gone.
+// NOTE: The caller is responsible for returning these directory tasks to the `mirrorTaskPool`
+// after they have been processed.
 func (r *nativeSyncRun) mirrorWalker(dirMirrorTasks *[]*mirrorTask) {
 	defer close(r.mirrorTasksChan)
 	err := filepath.WalkDir(r.trg, func(absTrgPath string, d os.DirEntry, err error) error {
@@ -837,34 +839,37 @@ func (r *nativeSyncRun) mirrorWorker() {
 			if !ok {
 				return // Channel closed.
 			}
+			// Use an anonymous function to create a new scope for defer.
+			// This ensures the task is returned to the pool at the end of each loop iteration.
+			func() {
+				// Return the task to the pool when this iteration is done.
+				defer r.mirrorTaskPool.Put(task)
 
-			// Return the task to the pool when this iteration is done.
-			defer r.mirrorTaskPool.Put(task)
+				absPathToDelete := r.denormalizedAbsPath(r.trg, task.RelPathKey)
 
-			absPathToDelete := r.denormalizedAbsPath(r.trg, task.RelPathKey)
-
-			if r.dryRun {
-				plog.Info("[DRY RUN] DELETE", "path", task.RelPathKey)
-				continue
-			}
-
-			if !r.quiet {
-				plog.Info("DELETE", "path", task.RelPathKey)
-			}
-
-			if err := os.RemoveAll(absPathToDelete); err != nil {
-				if r.failFast {
-					// In fail-fast mode, any deletion error is critical.
-					// Use a non-blocking send in case another worker has already sent a critical error.
-					select {
-					case r.criticalMirrorErrsChan <- err:
-					default:
-					}
-					continue // Stop processing, the main loop will catch the critical error.
+				if r.dryRun {
+					plog.Info("[DRY RUN] DELETE", "path", task.RelPathKey)
+					return
 				}
-				// In normal mode, record the error and continue.
-				r.mirrorErrs.Store(task.RelPathKey, err)
-			}
+
+				if !r.quiet {
+					plog.Info("DELETE", "path", task.RelPathKey)
+				}
+
+				if err := os.RemoveAll(absPathToDelete); err != nil {
+					if r.failFast {
+						// In fail-fast mode, any deletion error is critical.
+						// Use a non-blocking send in case another worker has already sent a critical error.
+						select {
+						case r.criticalMirrorErrsChan <- err:
+						default:
+						}
+						return // The defer will run.
+					}
+					// In normal mode, record the error and continue.
+					r.mirrorErrs.Store(task.RelPathKey, err)
+				}
+			}()
 		}
 	}
 }
@@ -911,12 +916,11 @@ func (r *nativeSyncRun) handleMirror() error {
 	// We do this sequentially and in reverse order to ensure children are removed before parents.
 	for i := len(dirMirrorTasks) - 1; i >= 0; i-- {
 		task := dirMirrorTasks[i]
-		// Return the task to the pool when this iteration is done.
-		defer r.mirrorTaskPool.Put(task)
-
 		absPathToDelete := r.denormalizedAbsPath(r.trg, task.RelPathKey)
 		if r.dryRun {
 			plog.Info("[DRY RUN] DELETE", "path", task.RelPathKey)
+			// Now that processing for this task is complete, return it to the pool.
+			r.mirrorTaskPool.Put(task)
 			continue
 		}
 		if !r.quiet {
@@ -933,6 +937,9 @@ func (r *nativeSyncRun) handleMirror() error {
 				plog.Warn("Forceful directory removal also failed", "path", task.RelPathKey, "error", err)
 			}
 		}
+
+		// Now that processing for this task is complete, return it to the pool.
+		r.mirrorTaskPool.Put(task)
 	}
 
 	return nil
