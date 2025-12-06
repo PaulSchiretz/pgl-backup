@@ -131,21 +131,28 @@ type nativeSyncRun struct {
 	// syncWg waits for the syncWalker and syncWorkers to finish processing all sync tasks.
 	syncWg sync.WaitGroup
 
-	// mirrorWg waits for the mirrorWalker and mirrorWorkers to finish processing all deletion tasks.
-	mirrorWg sync.WaitGroup
-
 	// syncTasksChan is the channel where the Walker sends pre-processed tasks.
 	syncTasksChan chan *syncTask
-
-	// mirrorTasksChan is the channel where the mirrorWalker sends paths to be deleted.
-	mirrorTasksChan chan *mirrorTask
 
 	// criticalSyncErrsChan captures the first critical, unrecoverable error (e.g., walker failure)
 	// to enable a "fail-fast" exit from the sync phase.
 	criticalSyncErrsChan chan error
+
 	// syncErrs is a concurrent map that captures non-fatal I/O errors from any worker,
 	// keyed by the relative path of the file that failed.
 	syncErrs *sharded.ShardedMap
+
+	// mirrorWg waits for the mirrorWalker and mirrorWorkers to finish processing all deletion tasks.
+	mirrorWg sync.WaitGroup
+
+	// mirrorTasksChan is the channel where the mirrorWalker sends paths to be deleted.
+	mirrorTasksChan chan *mirrorTask
+
+	// criticalMirrorErrsChan captures the first critical error from the mirror phase.
+	criticalMirrorErrsChan chan error
+
+	// mirrorErrs captures non-fatal I/O errors from mirror workers.
+	mirrorErrs *sharded.ShardedMap
 
 	// ctx is the cancellable context for the entire run.
 	ctx    context.Context
@@ -748,10 +755,9 @@ func (r *nativeSyncRun) handleSync() error {
 
 // mirrorWalker is the producer for the deletion phase. It walks the destination
 // directory and sends paths that need to be deleted to the mirrorTasksChan.
-// It returns a slice of directory deletion tasks to be processed after all files are gone.
-func (r *nativeSyncRun) mirrorWalker() ([]*mirrorTask, error) {
-	var dirMirrorTasks []*mirrorTask
-
+// It populates a slice of directory deletion tasks to be processed after all files are gone.
+func (r *nativeSyncRun) mirrorWalker(dirMirrorTasks *[]*mirrorTask) {
+	defer close(r.mirrorTasksChan)
 	err := filepath.WalkDir(r.trg, func(absTrgPath string, d os.DirEntry, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -793,7 +799,7 @@ func (r *nativeSyncRun) mirrorWalker() ([]*mirrorTask, error) {
 		if d.IsDir() {
 			// For directories, we add them to a list to be deleted later.
 			// This ensures we delete contents before the directory itself (post-order).
-			dirMirrorTasks = append(dirMirrorTasks, task)
+			*dirMirrorTasks = append(*dirMirrorTasks, task)
 		} else {
 			// For files, we can send them to be deleted immediately.
 			select {
@@ -806,9 +812,9 @@ func (r *nativeSyncRun) mirrorWalker() ([]*mirrorTask, error) {
 	})
 
 	if err != nil {
-		return nil, err
+		// A walker failure is a critical error for the mirror phase.
+		r.criticalMirrorErrsChan <- fmt.Errorf("mirror walker failed: %w", err)
 	}
-	return dirMirrorTasks, nil
 }
 
 // mirrorWorker is the consumer for the deletion phase. It reads paths from
@@ -837,7 +843,17 @@ func (r *nativeSyncRun) mirrorWorker() {
 			}
 
 			if err := os.RemoveAll(absPathToDelete); err != nil {
-				plog.Warn("Failed to delete path", "path", task.RelPathKey, "error", err)
+				if r.failFast {
+					// In fail-fast mode, any deletion error is critical.
+					// Use a non-blocking send in case another worker has already sent a critical error.
+					select {
+					case r.criticalMirrorErrsChan <- err:
+					default:
+					}
+					continue // Stop processing, the main loop will catch the critical error.
+				}
+				// In normal mode, record the error and continue.
+				r.mirrorErrs.Store(task.RelPathKey, err)
 			}
 		}
 	}
@@ -847,6 +863,7 @@ func (r *nativeSyncRun) mirrorWorker() {
 // and directories that do not exist in the source. This is only active in mirror mode.
 func (r *nativeSyncRun) handleMirror() error {
 	plog.Info("Starting mirror phase (deletions)")
+	var dirMirrorTasks []*mirrorTask
 
 	// --- Phase 2A: Concurrent Deletion of Files ---
 	// Start mirror workers.
@@ -857,16 +874,27 @@ func (r *nativeSyncRun) handleMirror() error {
 
 	// Walk the destination and send files to be deleted to the workers.
 	// This returns a list of directories that also need to be deleted.
-	dirMirrorTasks, err := r.mirrorWalker()
-	if err != nil {
-		return fmt.Errorf("mirror walker failed: %w", err)
-	}
-
-	// All files have been sent; close the channel to signal workers.
-	close(r.mirrorTasksChan)
+	r.mirrorWalker(&dirMirrorTasks)
 
 	// Wait for all file deletions to complete.
 	r.mirrorWg.Wait()
+
+	// Check for critical errors first.
+	select {
+	case err := <-r.criticalMirrorErrsChan:
+		return fmt.Errorf("critical mirror error: %w", err)
+	default:
+	}
+
+	// Report non-fatal deletion errors.
+	if r.mirrorErrs.Count() > 0 {
+		plog.Warn(fmt.Sprintf("%d paths failed to be deleted during mirror phase.", r.mirrorErrs.Count()))
+		// Log each error individually for visibility.
+		// We don't return an error here, as the main sync was successful.
+		for path, err := range r.mirrorErrs.Items() {
+			plog.Warn("Failed to delete path", "path", path, "error", err)
+		}
+	}
 
 	// --- Phase 2B: Sequential Deletion of Directories ---
 	// Now that all files are gone, delete the obsolete directories.
@@ -951,11 +979,13 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, preserve
 		discoveredDirInfo: sharded.NewShardedMap(),
 		syncedDirCache:    sharded.NewShardedSet(),
 		// Buffer 'syncTasksChan' to absorb bursts of small files discovered by the walker.
-		syncTasksChan:        make(chan *syncTask, s.engine.Performance.SyncWorkers*100),
-		mirrorTasksChan:      make(chan *mirrorTask, s.engine.Performance.MirrorWorkers*100),
-		criticalSyncErrsChan: make(chan error, 1),
-		syncErrs:             sharded.NewShardedMap(),
-		ctx:                  ctx,
+		syncTasksChan:          make(chan *syncTask, s.engine.Performance.SyncWorkers*100),
+		mirrorTasksChan:        make(chan *mirrorTask, s.engine.Performance.MirrorWorkers*100),
+		criticalSyncErrsChan:   make(chan error, 1),
+		syncErrs:               sharded.NewShardedMap(),
+		criticalMirrorErrsChan: make(chan error, 1),
+		mirrorErrs:             sharded.NewShardedMap(),
+		ctx:                    ctx,
 	}
 	return run.execute()
 }
