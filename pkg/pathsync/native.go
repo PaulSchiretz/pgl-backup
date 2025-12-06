@@ -941,7 +941,7 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, preserve
 		syncedDirCache:    sharded.NewShardedSet(),
 		// Buffer 'syncTasksChan' to absorb bursts of small files discovered by the walker.
 		syncTasksChan:    make(chan syncTask, s.engine.Performance.SyncWorkers*100),
-		mirrorTasksChan:  make(chan string, s.engine.Performance.SyncWorkers*100),
+		mirrorTasksChan:  make(chan string, s.engine.Performance.MirrorWorkers*100),
 		criticalErrsChan: make(chan error, 1),
 		syncErrs:         sharded.NewShardedMap(),
 		ctx:              ctx,
