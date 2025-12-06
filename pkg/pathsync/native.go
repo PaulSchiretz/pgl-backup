@@ -111,6 +111,8 @@ type nativeSyncRun struct {
 	retryWait                       time.Duration
 	modTimeWindow                   time.Duration // The time window to consider file modification times equal.
 	ioBufferPool                    *sync.Pool    // pointer to avoid copying the noCopy field if the struct is ever passed by value
+	syncTaskPool                    *sync.Pool
+	mirrorTaskPool                  *sync.Pool
 
 	// discoveredPaths is a concurrent set populated by the syncWalker. It holds every
 	// non-excluded path found in the source directory. During the mirror phase, it is
@@ -580,15 +582,14 @@ func (r *nativeSyncRun) syncWalker() {
 		// ----------------------------------------------------------------
 
 		isDir := info.Mode().IsDir()
-		task := syncTask{
-			RelPathKey: relPathKey, // The normalized relative path key
-			PathInfo: compactPathInfo{ // The cached FileInfo for this path
-				ModTime: info.ModTime().UnixNano(),
-				Size:    info.Size(),
-				Mode:    info.Mode(),
-				IsDir:   isDir,
-			},
-		}
+
+		// Get a task from the pool to reduce allocations.
+		task := r.syncTaskPool.Get().(*syncTask)
+		task.RelPathKey = relPathKey
+		task.PathInfo.ModTime = info.ModTime().UnixNano()
+		task.PathInfo.Size = info.Size()
+		task.PathInfo.Mode = info.Mode()
+		task.PathInfo.IsDir = isDir
 
 		// If it's a directory, cache its PathInfo for workers to use later.
 		if task.PathInfo.IsDir {
@@ -607,7 +608,7 @@ func (r *nativeSyncRun) syncWalker() {
 		select {
 		case <-r.ctx.Done():
 			return r.ctx.Err() // Propagate cancellation error.
-		case r.syncTasksChan <- &task:
+		case r.syncTasksChan <- task:
 			return nil
 		}
 	})
@@ -645,6 +646,9 @@ func (r *nativeSyncRun) syncWorker() {
 				if err := r.processDirectorySync(task); err != nil {
 					plog.Warn("Failed to sync directory", "path", task.RelPathKey, "error", err)
 				}
+				// Return the task to the pool after processing.
+				r.syncTaskPool.Put(task)
+
 			} else {
 				// This is a file task.
 				// 1. Ensure Parent Directory Exists (still required for files whose parent directory's
@@ -699,6 +703,8 @@ func (r *nativeSyncRun) syncWorker() {
 						"error", err,
 						"note", "This file may be inconsistent or outdated in the destination")
 					// We rely on the syncWalker having already added this path to discoveredPaths, preventing it from being deleted in the mirror phase.
+					// Return the task to the pool after processing.
+					r.syncTaskPool.Put(task)
 				}
 			}
 		}
@@ -793,7 +799,8 @@ func (r *nativeSyncRun) mirrorWalker(dirMirrorTasks *[]*mirrorTask) {
 		}
 
 		// Create the mirrorTask
-		task := &mirrorTask{RelPathKey: relPathKey}
+		task := r.mirrorTaskPool.Get().(*mirrorTask)
+		task.RelPathKey = relPathKey
 
 		// This path needs to be deleted.
 		if d.IsDir() {
@@ -830,6 +837,9 @@ func (r *nativeSyncRun) mirrorWorker() {
 			if !ok {
 				return // Channel closed.
 			}
+
+			// Return the task to the pool when this iteration is done.
+			defer r.mirrorTaskPool.Put(task)
 
 			absPathToDelete := r.denormalizedAbsPath(r.trg, task.RelPathKey)
 
@@ -901,6 +911,9 @@ func (r *nativeSyncRun) handleMirror() error {
 	// We do this sequentially and in reverse order to ensure children are removed before parents.
 	for i := len(dirMirrorTasks) - 1; i >= 0; i-- {
 		task := dirMirrorTasks[i]
+		// Return the task to the pool when this iteration is done.
+		defer r.mirrorTaskPool.Put(task)
+
 		absPathToDelete := r.denormalizedAbsPath(r.trg, task.RelPathKey)
 		if r.dryRun {
 			plog.Info("[DRY RUN] DELETE", "path", task.RelPathKey)
@@ -977,6 +990,16 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror b
 				// Buffer size is configured in KB, so multiply by 1024.
 				b := make([]byte, s.engine.Performance.CopyBufferSizeKB*1024)
 				return &b
+			},
+		},
+		syncTaskPool: &sync.Pool{
+			New: func() interface{} {
+				return new(syncTask)
+			},
+		},
+		mirrorTaskPool: &sync.Pool{
+			New: func() interface{} {
+				return new(mirrorTask)
 			},
 		},
 		discoveredPaths:   sharded.NewShardedSet(),
