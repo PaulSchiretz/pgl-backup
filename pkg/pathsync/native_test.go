@@ -480,7 +480,9 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				"unwritable_dir/file1.txt",
 				"unwritable_dir/file2.txt",
 			},
-			expectedErrorContains: "2 non-fatal errors occurred during sync",
+			// This test now expects a nil error, as non-critical errors are logged
+			// but do not cause the sync to fail.
+			expectedErrorContains: "",
 		},
 		{
 			name:     "Fail-Fast on First Error",
