@@ -347,13 +347,6 @@ func (r *nativeSyncRun) denormalizedAbsPath(base, relPathKey string) string {
 	return filepath.Join(base, r.denormalizePathKey(relPathKey))
 }
 
-// withBackupWritePermission ensures that any directory/file permission has the owner-write
-// bit (0200) set. This prevents the backup user from being locked out on subsequent runs.
-func withBackupWritePermission(basePerm os.FileMode) os.FileMode {
-	// Ensure the backup user always retains write permission.
-	return basePerm | 0200
-}
-
 // isExcluded checks if a given relative path key matches any of the exclusion patterns,
 // using a tiered optimization strategy to avoid expensive glob matching when possible.
 // It assumes `relPathKey` has already been normalized.
