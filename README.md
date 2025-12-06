@@ -239,3 +239,7 @@ If you have an idea for a new feature or an improvement to an existing one, feel
 6.  Commit your changes (`git commit -am 'Add some feature'`).
 7.  Push to the branch (`git push origin feature/my-new-feature`).
 8.  Create a new Pull Request.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
