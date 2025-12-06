@@ -126,7 +126,6 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 	testCases := []struct {
 		name                    string
 		mirror                  bool
-		preserveSourceDirName   bool
 		dryRun                  bool
 		failFast                bool
 		excludeFiles            []string
@@ -567,7 +566,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			}
 
 			// Act
-			err := syncer.handleNative(context.Background(), srcDir, dstDir, tc.preserveSourceDirName, tc.mirror, tc.excludeFiles, tc.excludeDirs)
+			err := syncer.handleNative(context.Background(), srcDir, dstDir, tc.mirror, tc.excludeFiles, tc.excludeDirs)
 
 			// Assert on error
 			if tc.expectedErrorContains != "" {

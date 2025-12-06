@@ -9,7 +9,7 @@ import (
 
 // Syncer defines the interface for a file synchronization implementation.
 type Syncer interface {
-	Sync(ctx context.Context, src, dst string, preserveSourceDirName, mirror bool, excludeFiles, excludeDirs []string) error
+	Sync(ctx context.Context, src, dst string, mirror bool, excludeFiles, excludeDirs []string) error
 }
 
 // PathSyncer orchestrates the file synchronization process.
@@ -31,7 +31,7 @@ func NewPathSyncer(cfg config.Config) *PathSyncer {
 }
 
 // Sync is the main entry point for synchronization. It dispatches to the configured sync engine.
-func (s *PathSyncer) Sync(ctx context.Context, src, dst string, preserveSourceDirName, mirror bool, excludeFiles, excludeDirs []string) error {
+func (s *PathSyncer) Sync(ctx context.Context, src, dst string, mirror bool, excludeFiles, excludeDirs []string) error {
 	// Check for cancellation after validation but before starting the heavy work.
 	select {
 	case <-ctx.Done():
@@ -41,9 +41,9 @@ func (s *PathSyncer) Sync(ctx context.Context, src, dst string, preserveSourceDi
 
 	switch s.engine.Type {
 	case config.RobocopyEngine:
-		return s.handleRobocopy(ctx, src, dst, preserveSourceDirName, mirror, excludeFiles, excludeDirs)
+		return s.handleRobocopy(ctx, src, dst, mirror, excludeFiles, excludeDirs)
 	case config.NativeEngine:
-		return s.handleNative(ctx, src, dst, preserveSourceDirName, mirror, excludeFiles, excludeDirs)
+		return s.handleNative(ctx, src, dst, mirror, excludeFiles, excludeDirs)
 	default:
 		return fmt.Errorf("unknown sync engine configured: %v", s.engine.Type)
 	}

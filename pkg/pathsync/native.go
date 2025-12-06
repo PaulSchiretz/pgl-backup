@@ -101,7 +101,6 @@ type preProcessedExclusion struct {
 
 type nativeSyncRun struct {
 	src, trg                        string
-	preserveSourceDirName           bool
 	mirror, dryRun, quiet, failFast bool
 	numSyncWorkers                  int
 	numMirrorWorkers                int
@@ -554,14 +553,9 @@ func (r *nativeSyncRun) syncWalker() {
 			return fmt.Errorf("could not get relative path for %s: %w", absSrcPath, err)
 		}
 
-		// If preserveSourceDirName is true, the root directory itself needs to be processed
-		// to ensure its permissions are set in the destination.
-		// If preserveSourceDirName is false, we are syncing *contents* into an already
-		// existing destination, so we skip processing the root of the walk.
+		// We skip processing the root dir itself of the walk.
 		if relPathKey == "." {
-			if !r.preserveSourceDirName {
-				return nil
-			}
+			return nil
 		}
 
 		// Check for exclusions.
@@ -664,7 +658,7 @@ func (r *nativeSyncRun) syncWorker() {
 				// task hasn't been processed yet, ensuring order)
 				parentRelPathKey := r.normalizedParentRelPathKey(task.RelPathKey)
 
-				if parentRelPathKey != "." || r.preserveSourceDirName {
+				if parentRelPathKey != "." {
 					if err := r.ensureParentDirectoryExists(parentRelPathKey); err != nil {
 						fileErr := fmt.Errorf("failed to ensure parent directory %s exists and is writable: %w", parentRelPathKey, err)
 						if r.failFast {
@@ -965,27 +959,26 @@ func (r *nativeSyncRun) execute() error {
 }
 
 // handleNative initializes the sync run structure and kicks off the execution.
-func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, preserveSourceDirName, mirror bool, excludeFiles, excludeDirs []string) error {
+func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror bool, excludeFiles, excludeDirs []string) error {
 	plog.Info("Starting native sync", "from", src, "to", trg)
 
 	isCaseInsensitive := isCaseInsensitiveFS()
 
 	run := &nativeSyncRun{
-		src:                   src,
-		trg:                   trg,
-		preserveSourceDirName: preserveSourceDirName,
-		mirror:                mirror,
-		dryRun:                s.dryRun,
-		quiet:                 s.quiet,
-		failFast:              s.failFast,
-		caseInsensitive:       isCaseInsensitive,
-		fileExcludes:          preProcessExclusions(excludeFiles, false, isCaseInsensitive),
-		dirExcludes:           preProcessExclusions(excludeDirs, true, isCaseInsensitive),
-		numSyncWorkers:        s.engine.Performance.SyncWorkers,
-		numMirrorWorkers:      s.engine.Performance.MirrorWorkers,
-		retryCount:            s.engine.RetryCount,
-		retryWait:             time.Duration(s.engine.RetryWaitSeconds) * time.Second,
-		modTimeWindow:         time.Duration(s.engine.NativeEngineModTimeWindowSeconds) * time.Second,
+		src:              src,
+		trg:              trg,
+		mirror:           mirror,
+		dryRun:           s.dryRun,
+		quiet:            s.quiet,
+		failFast:         s.failFast,
+		caseInsensitive:  isCaseInsensitive,
+		fileExcludes:     preProcessExclusions(excludeFiles, false, isCaseInsensitive),
+		dirExcludes:      preProcessExclusions(excludeDirs, true, isCaseInsensitive),
+		numSyncWorkers:   s.engine.Performance.SyncWorkers,
+		numMirrorWorkers: s.engine.Performance.MirrorWorkers,
+		retryCount:       s.engine.RetryCount,
+		retryWait:        time.Duration(s.engine.RetryWaitSeconds) * time.Second,
+		modTimeWindow:    time.Duration(s.engine.NativeEngineModTimeWindowSeconds) * time.Second,
 		ioBufferPool: &sync.Pool{
 			New: func() interface{} {
 				// Buffer size is configured in KB, so multiply by 1024.

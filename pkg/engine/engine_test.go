@@ -26,7 +26,7 @@ type mockSyncer struct {
 }
 
 // Sync records the src and dst paths it was called with and returns nil.
-func (m *mockSyncer) Sync(ctx context.Context, src, dst string, preserveSourceDirName, mirror bool, excludeFiles, excludeDirs []string) error {
+func (m *mockSyncer) Sync(ctx context.Context, src, dst string, mirror bool, excludeFiles, excludeDirs []string) error {
 	m.calledWith.src = src
 	m.calledWith.dst = dst
 	// To make the test more realistic, we need to simulate the real syncer's
