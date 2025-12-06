@@ -303,6 +303,35 @@ func (r *nativeSyncRun) truncateModTime(t time.Time) time.Time {
 	return t
 }
 
+// normalizePathKey normalizes the pathKey to a standardized key format
+// (forward slashes, lowercase if applicable). This key is for internal logic, not direct filesystem access.
+func (r *nativeSyncRun) normalizePathKey(pathKey string) string {
+	// 1. Ensures the map key is consistent across all OS types.
+	pathKey = filepath.ToSlash(pathKey)
+
+	// 2. Apply case-insensitivity if required (for Windows/macOS key comparison)
+	if r.caseInsensitive {
+		pathKey = strings.ToLower(pathKey)
+	}
+	return pathKey
+}
+
+// denormalizePathKey converts the standardized (forward-slash) relative path key
+// back into native OS path.
+func (r *nativeSyncRun) denormalizePathKey(pathKey string) string {
+	return filepath.FromSlash(pathKey)
+}
+
+// normalizedRelPathParentKey calculates the relative path of the parent and normalizes it to a standardized key format
+// (forward slashes, lowercase if applicable). This key is for internal logic, not direct filesystem access.
+func (r *nativeSyncRun) normalizedParentRelPathKey(relPathKey string) string {
+	parentRelPathKey := filepath.Dir(relPathKey)
+	// CRITICAL: Re-normalize the parent key. `filepath.Dir` can return a path with
+	// OS-specific separators (e.g., '\' on Windows), but our cache keys are
+	// standardized to use forward slashes.
+	return r.normalizePathKey(parentRelPathKey)
+}
+
 // normalizedRelPathKey calculates the relative path and normalizes it to a standardized key format
 // (forward slashes, lowercase if applicable). This key is for internal logic, not direct filesystem access.
 func (r *nativeSyncRun) normalizedRelPathKey(base, absPath string) (string, error) {
@@ -310,22 +339,13 @@ func (r *nativeSyncRun) normalizedRelPathKey(base, absPath string) (string, erro
 	if err != nil {
 		return "", fmt.Errorf("failed to get relative path for %s: %w", absPath, err)
 	}
-
-	// 1. Ensures the map key is consistent across all OS types.
-	relPathKey = filepath.ToSlash(relPathKey)
-
-	// 2. Apply case-insensitivity if required (for Windows/macOS key comparison)
-	if r.caseInsensitive {
-		relPathKey = strings.ToLower(relPathKey)
-	}
-	return relPathKey, nil
+	return r.normalizePathKey(relPathKey), nil
 }
 
 // denormalizedAbsPath converts the standardized (forward-slash) relative path key
 // back into the final, absolute, native OS path for filesystem access.
 func (r *nativeSyncRun) denormalizedAbsPath(base, relPathKey string) string {
-	relPath := filepath.FromSlash(relPathKey)
-	return filepath.Join(base, relPath)
+	return filepath.Join(base, r.denormalizePathKey(relPathKey))
 }
 
 // withBackupWritePermission ensures that any directory/file permission has the owner-write
@@ -642,14 +662,7 @@ func (r *nativeSyncRun) syncWorker() {
 				// This is a file task.
 				// 1. Ensure Parent Directory Exists (still required for files whose parent directory's
 				// task hasn't been processed yet, ensuring order)
-				parentRelPathKey := filepath.Dir(task.RelPathKey)
-				// CRITICAL: Re-normalize the parent key. `filepath.Dir` can return a path with
-				// OS-specific separators (e.g., '\' on Windows), but our cache keys are
-				// standardized to use forward slashes.
-				parentRelPathKey = filepath.ToSlash(parentRelPathKey)
-				if r.caseInsensitive {
-					parentRelPathKey = strings.ToLower(parentRelPathKey)
-				}
+				parentRelPathKey := r.normalizedParentRelPathKey(task.RelPathKey)
 
 				if parentRelPathKey != "." || r.preserveSourceDirName {
 					if err := r.ensureParentDirectoryExists(parentRelPathKey); err != nil {
@@ -909,11 +922,16 @@ func (r *nativeSyncRun) handleMirror() error {
 		if !r.quiet {
 			plog.Info("DELETE", "path", task.RelPathKey)
 		}
-		// Use os.Remove, as we expect the directory to be empty of files.
+		// Use os.Remove first, as we expect the directory to be empty of files, which is faster.
 		if err := os.Remove(absPathToDelete); err != nil {
-			// Log a warning if it fails, but don't stop the entire process.
-			// This might happen if a file inside couldn't be deleted earlier due to permissions.
-			plog.Warn("Failed to delete directory, it might not be empty", "path", task.RelPathKey, "error", err)
+			// This might happen if a file inside couldn't be deleted earlier due to permissions,
+			// leaving the directory non-empty. As a fallback, try a recursive removal.
+			plog.Warn("Initial directory removal failed, attempting forceful removal", "path", task.RelPathKey, "error", err)
+			if err := os.RemoveAll(absPathToDelete); err != nil {
+				// If even RemoveAll fails, log a final warning. This indicates a more
+				// serious issue like permissions on the directory itself.
+				plog.Warn("Forceful directory removal also failed", "path", task.RelPathKey, "error", err)
+			}
 		}
 	}
 
