@@ -761,11 +761,10 @@ func (r *nativeSyncRun) handleSync() error {
 
 // mirrorWalker is the producer for the deletion phase. It walks the destination
 // directory and sends paths that need to be deleted to the mirrorTasksChan.
-// It populates the provided slice with directory deletion tasks to be processed after all files are gone.
-// NOTE: The caller is responsible for returning these directory tasks to the `mirrorTaskPool`
-// after they have been processed.
-func (r *nativeSyncRun) mirrorWalker(dirMirrorTasks *[]*mirrorTask) {
+// It returns a slice of directory paths to be deleted after all files are gone.
+func (r *nativeSyncRun) mirrorWalker() []string {
 	defer close(r.mirrorTasksChan)
+	var relPathKeyDirsToDelete []string
 	err := filepath.WalkDir(r.trg, func(absTrgPath string, d os.DirEntry, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -800,17 +799,15 @@ func (r *nativeSyncRun) mirrorWalker(dirMirrorTasks *[]*mirrorTask) {
 			return nil // Excluded file, leave it.
 		}
 
-		// Create the mirrorTask
-		task := r.mirrorTaskPool.Get().(*mirrorTask)
-		task.RelPathKey = relPathKey
-
 		// This path needs to be deleted.
 		if d.IsDir() {
 			// For directories, we add them to a list to be deleted later.
 			// This ensures we delete contents before the directory itself (post-order).
-			*dirMirrorTasks = append(*dirMirrorTasks, task)
+			relPathKeyDirsToDelete = append(relPathKeyDirsToDelete, relPathKey)
 		} else {
 			// For files, we can send them to be deleted immediately.
+			task := r.mirrorTaskPool.Get().(*mirrorTask)
+			task.RelPathKey = relPathKey
 			select {
 			case r.mirrorTasksChan <- task:
 			case <-r.ctx.Done():
@@ -824,6 +821,7 @@ func (r *nativeSyncRun) mirrorWalker(dirMirrorTasks *[]*mirrorTask) {
 		// A walker failure is a critical error for the mirror phase.
 		r.criticalMirrorErrsChan <- fmt.Errorf("mirror walker failed: %w", err)
 	}
+	return relPathKeyDirsToDelete
 }
 
 // mirrorWorker is the consumer for the deletion phase. It reads paths from
@@ -878,7 +876,6 @@ func (r *nativeSyncRun) mirrorWorker() {
 // and directories that do not exist in the source. This is only active in mirror mode.
 func (r *nativeSyncRun) handleMirror() error {
 	plog.Info("Starting mirror phase (deletions)")
-	var dirMirrorTasks []*mirrorTask
 
 	// --- Phase 2A: Concurrent Deletion of Files ---
 	// Start mirror workers.
@@ -889,7 +886,7 @@ func (r *nativeSyncRun) handleMirror() error {
 
 	// Walk the destination and send files to be deleted to the workers.
 	// This returns a list of directories that also need to be deleted.
-	r.mirrorWalker(&dirMirrorTasks)
+	relPathKeyDirsToDelete := r.mirrorWalker()
 
 	// Wait for all file deletions to complete.
 	r.mirrorWg.Wait()
@@ -914,32 +911,27 @@ func (r *nativeSyncRun) handleMirror() error {
 	// --- Phase 2B: Sequential Deletion of Directories ---
 	// Now that all files are gone, delete the obsolete directories.
 	// We do this sequentially and in reverse order to ensure children are removed before parents.
-	for i := len(dirMirrorTasks) - 1; i >= 0; i-- {
-		task := dirMirrorTasks[i]
-		absPathToDelete := r.denormalizedAbsPath(r.trg, task.RelPathKey)
+	for i := len(relPathKeyDirsToDelete) - 1; i >= 0; i-- {
+		relPathKey := relPathKeyDirsToDelete[i]
+		absPathToDelete := r.denormalizedAbsPath(r.trg, relPathKey)
 		if r.dryRun {
-			plog.Info("[DRY RUN] DELETE", "path", task.RelPathKey)
-			// Now that processing for this task is complete, return it to the pool.
-			r.mirrorTaskPool.Put(task)
+			plog.Info("[DRY RUN] DELETE", "path", relPathKey)
 			continue
 		}
 		if !r.quiet {
-			plog.Info("DELETE", "path", task.RelPathKey)
+			plog.Info("DELETE", "path", relPathKey)
 		}
 		// Use os.Remove first, as we expect the directory to be empty of files, which is faster.
 		if err := os.Remove(absPathToDelete); err != nil {
 			// This might happen if a file inside couldn't be deleted earlier due to permissions,
 			// leaving the directory non-empty. As a fallback, try a recursive removal.
-			plog.Warn("Initial directory removal failed, attempting forceful removal", "path", task.RelPathKey, "error", err)
+			plog.Warn("Initial directory removal failed, attempting forceful removal", "path", relPathKey, "error", err)
 			if err := os.RemoveAll(absPathToDelete); err != nil {
 				// If even RemoveAll fails, log a final warning. This indicates a more
 				// serious issue like permissions on the directory itself.
-				plog.Warn("Forceful directory removal also failed", "path", task.RelPathKey, "error", err)
+				plog.Warn("Forceful directory removal also failed", "path", relPathKey, "error", err)
 			}
 		}
-
-		// Now that processing for this task is complete, return it to the pool.
-		r.mirrorTaskPool.Put(task)
 	}
 
 	return nil
