@@ -100,19 +100,19 @@ type preProcessedExclusion struct {
 }
 
 type nativeSyncRun struct {
-	src, trg                        string
-	mirror, dryRun, quiet, failFast bool
-	numSyncWorkers                  int
-	numMirrorWorkers                int
-	caseInsensitive                 bool
-	fileExcludes                    exclusionSet
-	dirExcludes                     exclusionSet
-	retryCount                      int
-	retryWait                       time.Duration
-	modTimeWindow                   time.Duration // The time window to consider file modification times equal.
-	ioBufferPool                    *sync.Pool    // pointer to avoid copying the noCopy field if the struct is ever passed by value
-	syncTaskPool                    *sync.Pool
-	mirrorTaskPool                  *sync.Pool
+	src, trg                 string
+	mirror, dryRun, failFast bool
+	numSyncWorkers           int
+	numMirrorWorkers         int
+	caseInsensitive          bool
+	fileExcludes             exclusionSet
+	dirExcludes              exclusionSet
+	retryCount               int
+	retryWait                time.Duration
+	modTimeWindow            time.Duration // The time window to consider file modification times equal.
+	ioBufferPool             *sync.Pool    // pointer to avoid copying the noCopy field if the struct is ever passed by value
+	syncTaskPool             *sync.Pool
+	mirrorTaskPool           *sync.Pool
 
 	// discoveredPaths is a concurrent set populated by the syncWalker. It holds every
 	// non-excluded path found in the source directory. During the mirror phase, it is
@@ -444,9 +444,7 @@ func (r *nativeSyncRun) processFileSync(task *syncTask) error {
 		return fmt.Errorf("failed to copy file to %s: %w", absTrgPath, err)
 	}
 
-	if !r.quiet {
-		plog.Info("COPY", "path", task.RelPathKey)
-	}
+	plog.Info("COPY", "path", task.RelPathKey)
 	return nil // File was actually copied/updated
 }
 
@@ -491,9 +489,7 @@ func (r *nativeSyncRun) processDirectorySync(task *syncTask) error {
 	// 3. Update the cache for all other workers.
 	r.syncedDirCache.Store(task.RelPathKey)
 
-	if !r.quiet {
-		plog.Info("DIR", "path", task.RelPathKey)
-	}
+	plog.Info("DIR", "path", task.RelPathKey)
 	return nil // Directory exists and permissions are set.
 }
 
@@ -555,9 +551,7 @@ func (r *nativeSyncRun) syncWalker() {
 
 		// Check for exclusions.
 		if r.isExcluded(relPathKey, d.IsDir()) {
-			if !r.quiet {
-				plog.Info("SKIP", "reason", "excluded by pattern", "path", relPathKey)
-			}
+			plog.Info("SKIP", "reason", "excluded by pattern", "path", relPathKey)
 			if d.IsDir() {
 				return filepath.SkipDir // Don't descend into this directory.
 			}
@@ -584,9 +578,7 @@ func (r *nativeSyncRun) syncWalker() {
 		isDir := info.Mode().IsDir()
 		if !isDir && !info.Mode().IsRegular() {
 			// Symlinks, Named Pipes, etc. are discovered for mirror mode but not synced.
-			if !r.quiet {
-				plog.Info("SKIP", "type", info.Mode().String(), "path", relPathKey)
-			}
+			plog.Info("SKIP", "type", info.Mode().String(), "path", relPathKey)
 			return nil
 		}
 
@@ -850,9 +842,7 @@ func (r *nativeSyncRun) mirrorWorker() {
 					return
 				}
 
-				if !r.quiet {
-					plog.Info("DELETE", "path", task.RelPathKey)
-				}
+				plog.Info("DELETE", "path", task.RelPathKey)
 
 				if err := os.RemoveAll(absPathToDelete); err != nil {
 					if r.failFast {
@@ -918,9 +908,7 @@ func (r *nativeSyncRun) handleMirror() error {
 			plog.Info("[DRY RUN] DELETE", "path", relPathKey)
 			continue
 		}
-		if !r.quiet {
-			plog.Info("DELETE", "path", relPathKey)
-		}
+		plog.Info("DELETE", "path", relPathKey)
 		// Use os.Remove first, as we expect the directory to be empty of files, which is faster.
 		if err := os.Remove(absPathToDelete); err != nil {
 			// This might happen if a file inside couldn't be deleted earlier due to permissions,
@@ -974,7 +962,6 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror b
 		trg:              trg,
 		mirror:           mirror,
 		dryRun:           s.dryRun,
-		quiet:            s.quiet,
 		failFast:         s.failFast,
 		caseInsensitive:  isCaseInsensitive,
 		fileExcludes:     preProcessExclusions(excludeFiles, false, isCaseInsensitive),

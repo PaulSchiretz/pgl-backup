@@ -364,9 +364,6 @@ func (c *Config) Validate() error {
 // LogSummary prints a user-friendly summary of the configuration to the
 // provided logger. It respects the 'Quiet' setting.
 func (c *Config) LogSummary() {
-	if c.Quiet {
-		return
-	}
 	logArgs := []interface{}{
 		"mode", c.Mode,
 		"source", c.Paths.Source,

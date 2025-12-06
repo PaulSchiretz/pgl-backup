@@ -189,12 +189,18 @@ func run(ctx context.Context) error {
 		// Merge the flag values over the loaded config to get the final run config.
 		runConfig := config.MergeConfigWithFlags(loadedConfig, flagMap)
 
+		// Set the global logger's quiet mode based on the final configuration.
+		plog.SetQuiet(runConfig.Quiet)
+
 		runConfig.LogSummary()
 
 		startTime := time.Now()
 		backupEngine := engine.New(runConfig, version)
 		err = backupEngine.ExecuteBackup(ctx)
 		duration := time.Since(startTime).Round(time.Millisecond)
+
+		// Reset the global logger's quiet mode
+		plog.SetQuiet(false)
 
 		if err != nil {
 			plog.Info("Backup process finished with an error.", "duration", duration)

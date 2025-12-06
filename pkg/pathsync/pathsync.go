@@ -17,7 +17,6 @@ type Syncer interface {
 type PathSyncer struct {
 	engine   config.BackupEngineConfig
 	dryRun   bool
-	quiet    bool
 	failFast bool
 }
 
@@ -26,7 +25,6 @@ func NewPathSyncer(cfg config.Config) *PathSyncer {
 	return &PathSyncer{
 		engine:   cfg.Engine,
 		dryRun:   cfg.DryRun,
-		quiet:    cfg.Quiet,
 		failFast: cfg.FailFast,
 	}
 }

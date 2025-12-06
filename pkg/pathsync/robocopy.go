@@ -47,7 +47,7 @@ func (s *PathSyncer) handleRobocopy(ctx context.Context, src, dst string, mirror
 		args = append(args, "/E")
 	}
 
-	if s.quiet {
+	if plog.IsQuiet() {
 		args = append(args, "/NFL") // No File List - don't log individual files.
 		args = append(args, "/NDL") // No Directory List - don't log individual directories.
 	}
