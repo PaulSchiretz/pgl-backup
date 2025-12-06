@@ -4,30 +4,22 @@
 
 ## Our Pledge
 
-We as members, contributors, and leaders pledge to make participation in our
-community a harassment-free experience for everyone, regardless of age, body
-size, visible or invisible disability, ethnicity, sex characteristics, gender
-identity and expression, level of experience, education, socio-economic status,
-nationality, personal appearance, race, religion, or sexual identity
-and orientation.
+As members, contributors, and leaders, we pledge to make participation in our community a harassment-free experience for everyone. We want this to be a safe and welcoming space, regardless of age, body size, disability, ethnicity, gender identity, experience level, education, nationality, personal appearance, race, religion, or sexual orientation.
 
-We pledge to act and interact in ways that contribute to an open, welcoming,
-diverse, inclusive, and healthy community.
+We promise to act and interact in ways that contribute to an open, welcoming, diverse, and healthy community.
 
 ## Our Standards
 
-Examples of behavior that contributes to a positive environment for our
-community include:
+Here are some examples of behavior that help create a positive environment:
 
 *   Demonstrating empathy and kindness toward other people
 *   Being respectful of differing opinions, viewpoints, and experiences
 *   Giving and gracefully accepting constructive feedback
 *   Accepting responsibility and apologizing to those affected by our mistakes,
     and learning from the experience
-*   Focusing on what is best not just for the individual, but for the
-    overall community
+*   Focusing on what is best for the community as a whole
 
-Examples of unacceptable behavior include:
+And here are some examples of behavior that we won't tolerate:
 
 *   The use of sexualized language or imagery, and sexual attention or
     advances of any kind
