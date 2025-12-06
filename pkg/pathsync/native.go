@@ -35,7 +35,6 @@ package pathsync
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -734,21 +733,16 @@ func (r *nativeSyncRun) handleSync() error {
 		return nil // No worker errors, success.
 	}
 
-	if len(allErrors) == 1 {
-		// For a single error, extract it and return a simple error message.
-		for _, err := range allErrors {
-			return fmt.Errorf("sync failed for path: %w", err.(error))
-		}
-	}
-
-	// Aggregate multiple non-fatal errors into a single, more detailed error message.
+	// Log a summary of all non-fatal errors, but return nil so the mirror phase can run.
+	// Returning an error here would prevent deletions, which is not the desired behavior
+	// for non-critical, individual file errors.
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("%d non-fatal errors occurred during sync:\n", len(allErrors)))
 	for path, err := range allErrors {
 		sb.WriteString(fmt.Sprintf("  - path: %s, error: %v\n", path, err))
 	}
-
-	return errors.New(sb.String())
+	plog.Warn(sb.String())
+	return nil
 }
 
 // mirrorWalker is the producer for the deletion phase. It walks the destination
@@ -888,16 +882,6 @@ func (r *nativeSyncRun) handleMirror() error {
 	default:
 	}
 
-	// Report non-fatal deletion errors.
-	if r.mirrorErrs.Count() > 0 {
-		plog.Warn(fmt.Sprintf("%d paths failed to be deleted during mirror phase.", r.mirrorErrs.Count()))
-		// Log each error individually for visibility.
-		// We don't return an error here, as the main sync was successful.
-		for path, err := range r.mirrorErrs.Items() {
-			plog.Warn("Failed to delete path", "path", path, "error", err)
-		}
-	}
-
 	// --- Phase 2B: Sequential Deletion of Directories ---
 	// Now that all files are gone, delete the obsolete directories.
 	// We do this sequentially and in reverse order to ensure children are removed before parents.
@@ -922,6 +906,20 @@ func (r *nativeSyncRun) handleMirror() error {
 		}
 	}
 
+	// If there were any non-fatal errors during deletion, log them as a summary.
+	// We return nil because failing to delete an obsolete file is not a critical
+	// failure for the overall backup run.
+	allErrors := r.mirrorErrs.Items()
+	if len(allErrors) == 0 {
+		return nil // No worker errors, success.
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%d non-fatal errors occurred during mirror phase:\n", len(allErrors)))
+	for path, err := range allErrors {
+		sb.WriteString(fmt.Sprintf("  - path: %s, error: %v\n", path, err))
+	}
+	plog.Warn(sb.String())
 	return nil
 }
 
