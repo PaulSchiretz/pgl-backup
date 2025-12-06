@@ -215,8 +215,8 @@ All command-line flags can be set in the `pgl-backup.conf` file.
 
 ## Contributing
 
-Please see our Contributing Guidelines for details on how to contribute to the project.
+Please see our [Contributing Guidelines](./CONTRIBUTING.md) for details on how to contribute to the project.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License - see the [LICENSE file](./LICENSE) for details.
