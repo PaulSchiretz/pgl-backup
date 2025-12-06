@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"time"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
 	"pixelgardenlabs.io/pgl-backup/pkg/engine"
@@ -190,8 +191,17 @@ func run(ctx context.Context) error {
 
 		runConfig.LogSummary()
 
+		startTime := time.Now()
 		backupEngine := engine.New(runConfig, version)
-		return backupEngine.ExecuteBackup(ctx)
+		err = backupEngine.ExecuteBackup(ctx)
+		duration := time.Since(startTime).Round(time.Millisecond)
+
+		if err != nil {
+			plog.Info("Backup process finished with an error.", "duration", duration)
+			return err // The error will be logged by main()
+		}
+		plog.Info("Backup process finished successfully.", "duration", duration)
+		return nil
 	default:
 		return fmt.Errorf("internal error: unknown action %d", action)
 	}
