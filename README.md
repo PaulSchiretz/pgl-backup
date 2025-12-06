@@ -1,16 +1,16 @@
 # pgl-backup
 
-`pgl-backup` is a simple, powerful, and robust file backup utility written in Go. It is designed for creating versioned backups of local directories to another local or network-attached drive. It supports both periodic snapshots and an efficient incremental mode with a sophisticated retention policy.
+`pgl-backup` is a simple, powerful, and robust file backup utility written in Go. It is designed for creating versioned backups of local directories to another local or network-attached drive. It supports both periodic snapshots and an efficient incremental mode with a flexible retention policy.
 
 ## Key Features
 
 *   **Backup Modes**:
     *   **Incremental (default)**: Maintains a single "current" backup directory that is efficiently updated. At a configurable interval (e.g., daily), the "current" backup is rolled over into a timestamped archive. This is ideal for frequent, low-overhead backups.
     *   **Snapshot**: Each backup run creates a new, unique, timestamped directory. This is useful for creating distinct, point-in-time copies.
-*   **Sophisticated Retention Policy**: Automatically cleans up old backups by keeping a configurable number of hourly, daily, weekly, and monthly archives. This gives you a fine-grained history without filling up your disk.
+*   **Flexible Retention Policy**: Automatically cleans up outdated backups by keeping a configurable number of hourly, daily, weekly, and monthly archives. This gives you a fine-grained history without filling up your disk.
 *   **Concurrency Safe**: A robust file-locking mechanism prevents multiple backup instances from running against the same target directory simultaneously, protecting data integrity.
 *   **Pre- and Post-Backup Hooks**: Execute custom shell commands before the sync begins or after it completes, perfect for tasks like dumping a database or sending a notification.
-*   **Flexible Configuration**: Configure backups using a simple `pgl-backup.conf` JSON file, and override any setting with command-line flags for one-off tasks.
+*   **Adjustable Configuration**: Configure backups using a simple `pgl-backup.conf` JSON file, and override any setting with command-line flags for one-off tasks.
 *   **Multiple Sync Engines**:
     *   **`native`**: A high-performance, concurrent, cross-platform engine written in pure Go.
     *   **`robocopy`** (Windows only): Uses the battle-tested `robocopy.exe` utility for maximum performance on Windows.
@@ -179,3 +179,63 @@ All command-line flags can be set in the `pgl-backup.conf` file.
 | `retry-count` / `engine.retryCount` | `int` | `3` | Number of retries for failed file copies. |
 | `retry-wait` / `engine.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries. |
 | `copy-buffer-kb` / `engine.performance.copyBufferSizeKB` | `int` | `4096` | Size of the I/O buffer in kilobytes for file copies. |
+
+## Troubleshooting
+
+### Error: `permission denied` when reading source or writing to target
+
+*   **Cause**: The user running `pgl-backup` does not have the necessary read permissions for the source directory or write permissions for the target directory.
+*   **Solution**:
+    *   Ensure you are running the command as a user with appropriate permissions.
+    *   On Unix-like systems, use `ls -l` to check ownership and permissions. You may need to use `sudo` or adjust file permissions with `chmod` and `chown`.
+    *   For network shares (SMB/NFS), verify that the share is mounted correctly and that the user has write access.
+
+### Error: `lock is active, held by PID ...`
+
+*   **Cause**: Another `pgl-backup` process is currently running against the same target directory, or a previous run crashed without cleanly releasing the lock. The application has stale-lock detection, but it may not cover all edge cases (e.g., system clock changes).
+*   **Solution**:
+    1.  First, verify that no other `pgl-backup` process is running. Use `ps aux | grep pgl-backup` (Linux/macOS) or check Task Manager (Windows).
+    2.  If you are certain no other process is active, the lock file is stale. You can safely delete the `.pgl-backup.lock` file from the root of your target backup directory and re-run the command.
+
+### Pre/Post-Backup Hooks are failing
+
+*   **Cause**: The command or script specified in the hook may not be executable, not in the system's `PATH`, or has incorrect quoting.
+*   **Solution**:
+    *   Ensure that any script you are calling is marked as executable (e.g., `chmod +x /path/to/your/script.sh`).
+    *   Use absolute paths for your scripts (e.g., `/usr/local/bin/my_script.sh`) to avoid `PATH` issues, especially in automated environments like `cron`.
+    *   If your command contains spaces or special characters, ensure it is correctly quoted within the JSON configuration or on the command line (e.g., `"'echo Backup starting...'"`, `"/path/to/script with spaces.sh"`).
+
+### Backup performance is slow
+
+*   **Cause**: The default number of concurrent workers may not be optimal for your specific hardware (e.g., slow spinning disks vs. fast SSDs, network latency).
+*   **Solution**:
+    *   Adjust the `sync-workers` and `copy-buffer-kb` settings in your `pgl-backup.conf` file.
+    *   For systems with slow I/O (like a single spinning disk or a high-latency network share), *decreasing* the number of `sync-workers` (e.g., to `2` or `4`) can sometimes improve performance by reducing disk head thrashing.
+    *   For systems with very fast I/O (like a local NVMe SSD), increasing `sync-workers` might yield better results.
+
+## Contributing
+
+Contributions are welcome! Whether it's reporting a bug, suggesting a feature, or submitting a pull request, all contributions help make `pgl-backup` better.
+
+### Reporting Bugs
+
+If you find a bug, please open an issue on the project's GitHub page. Be sure to include:
+*   The version of `pgl-backup` you are using (`pgl-backup -version`).
+*   Your operating system.
+*   The steps to reproduce the bug.
+*   Any relevant log output or error messages.
+
+### Suggesting Enhancements
+
+If you have an idea for a new feature or an improvement to an existing one, feel free to open an issue to start a discussion.
+
+### Submitting Pull Requests
+
+1.  Fork the repository.
+2.  Create a new branch for your feature or bug fix (`git checkout -b feature/my-new-feature`).
+3.  Make your changes.
+4.  Ensure your code is well-formatted by running `go fmt ./...`.
+5.  Run the test suite to ensure everything still passes: `go test ./...`.
+6.  Commit your changes (`git commit -am 'Add some feature'`).
+7.  Push to the branch (`git push origin feature/my-new-feature`).
+8.  Create a new Pull Request.
