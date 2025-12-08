@@ -122,7 +122,7 @@ func (e *Engine) InitializeBackupTarget(ctx context.Context) error {
 	default:
 	}
 
-	plog.Info("--- Initializing New Backup Target ---")
+	plog.Info("Initializing new backup target")
 
 	// Perform preflight checks before attempting to lock or write.
 	// The config is passed by pointer because Validate() can modify it (e.g., cleaning paths).
@@ -171,6 +171,7 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 	defer releaseLock()
 
 	// --- Pre-Backup Hooks ---
+	plog.Info("Running pre-backup hooks")
 	if err := e.runHooks(ctx, e.config.Hooks.PreBackup, "pre-backup"); err != nil {
 		return fmt.Errorf("pre-backup hook failed: %w", err) // This is a fatal error.
 	}
@@ -178,7 +179,7 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 	// --- Post-Backup Hooks (deferred) ---
 	// These will run at the end of the function, even if the backup fails.
 	defer func() {
-		plog.Info("--- Running Post-Backup Hooks ---")
+		plog.Info("Running post-backup hooks")
 		if err := e.runHooks(ctx, e.config.Hooks.PostBackup, "post-backup"); err != nil {
 			if errors.Is(err, context.Canceled) {
 				plog.Info("Post-backup hooks skipped due to cancellation.")
@@ -188,28 +189,27 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 		}
 	}()
 
-	if e.config.DryRun {
-		plog.Info("--- Starting Backup (DRY RUN) ---")
-	} else {
-		plog.Info("--- Starting Backup ---")
-	}
-
 	e.checkRetentionGranularity()
 
 	// Capture a consistent UTC timestamp for the entire run to ensure unambiguous folder names
 	// and avoid daylight saving time conflicts.
 	currentRun := &runState{timestampUTC: time.Now().UTC()}
 
-	plog.Info("Backup source", "path", e.config.Paths.Source)
-	plog.Info("Backup mode", "mode", e.config.Mode)
-
 	// --- 1. Pre-backup tasks (rollover) and destination calculation ---
 	if err := e.prepareDestination(ctx, currentRun); err != nil {
 		return err
 	}
 
-	plog.Info("Backup destination", "path", currentRun.target)
-	plog.Info("------------------------------")
+	// Log a single, comprehensive message about the upcoming backup process.
+	logMsg := "Starting backup process"
+	if e.config.DryRun {
+		logMsg = "Starting backup process (DRY RUN)"
+	}
+	plog.Info(logMsg,
+		"source", e.config.Paths.Source,
+		"destination", currentRun.target,
+		"mode", e.config.Mode,
+	)
 
 	// --- 2. Perform the backup ---
 	if err := e.performSync(ctx, currentRun); err != nil {
@@ -493,7 +493,7 @@ func (e *Engine) applyRetentionPolicy(ctx context.Context) error {
 		plog.Info("Retention policy is disabled. Skipping cleanup.")
 		return nil
 	}
-	plog.Info("--- Cleaning Up Outdated Backups ---")
+	plog.Info("Cleaning up outdated backups")
 	plog.Debug("Applying retention policy", "directory", baseDir)
 	// --- 1. Get a sorted list of all valid, historical backups ---
 	allBackups, err := e.fetchSortedBackups(ctx, baseDir, currentDirName)
