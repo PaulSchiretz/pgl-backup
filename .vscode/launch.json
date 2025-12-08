@@ -11,7 +11,7 @@
             "request": "launch",
             "mode": "auto",
             "program": "${workspaceFolder}/cmd/pgl-backup",
-            //"args": ["-source", "C:\\Users\\Paul\\Documents\\Development", "-target", "D:\\Paul\\PixelGardenLabs\\pgl_test\\target"]
+            "args": ["-source", "C:\\Users\\Paul\\Documents\\Development", "-target", "D:\\Paul\\PixelGardenLabs\\pgl_test\\target"]
         }
     ]
 }
