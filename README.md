@@ -76,8 +76,9 @@ Open the newly created `pgl-backup.conf` file. It will look something like this,
       "deleteWorkers": 4
     }
   },
-  "quiet": false,
+  "logLevel": "info",
   "dryRun": false,
+  "metrics": true,
   "naming": {
     "prefix": "PGL_Backup_",
     "incrementalModeSuffix": "Current"
@@ -163,7 +164,8 @@ All command-line flags can be set in the `pgl-backup.conf` file.
 | `mode` / `mode`                 | `string`      | `"incremental"`                       | Backup mode: `"incremental"` or `"snapshot"`.                                                           |
 | `init`                          | `bool`        | `false`                               | If true, generates a config file and exits.                                                             |
 | `dry-run` / `dryRun`            | `bool`        | `false`                               | If true, simulates the backup without making changes.                                                   |
-| `quiet` / `quiet`               | `bool`        | `false`                               | If true, suppresses logs for individual file operations.                                                |
+| `log-level` / `logLevel`        | `string`      | `"info"`                              | Set the logging level: `"debug"`, `"info"`, `"warn"`, or `"error"`.                                     |
+| `metrics` / `metrics`           | `bool`        | `true`                                | If true, enables detailed performance and file-counting metrics.                                        |
 | `sync-engine` / `engine.type`   | `string`      | `"native"`                            | The sync engine to use: `"native"` or `"robocopy"` (Windows only).                                      |
 | `rolloverInterval`              | `duration`    | `"24h0m0s"`                           | In incremental mode, the interval after which a new archive is created (e.g., "24h", "168h").          |
 | `retentionPolicy.hours`         | `int`         | `24`                                  | Number of recent hourly backups to keep.                                                                |
