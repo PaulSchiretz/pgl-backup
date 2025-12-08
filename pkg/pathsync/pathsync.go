@@ -10,7 +10,7 @@ import (
 
 // Syncer defines the interface for a file synchronization implementation.
 type Syncer interface {
-	Sync(ctx context.Context, src, dst string, mirror bool, excludeFiles, excludeDirs []string) error
+	Sync(ctx context.Context, src, dst string, mirror bool, excludeFiles, excludeDirs []string, enableMetrics bool) error
 }
 
 // PathSyncer orchestrates the file synchronization process.
@@ -18,7 +18,13 @@ type PathSyncer struct {
 	engine   config.BackupEngineConfig
 	dryRun   bool
 	failFast bool
+
+	// lastRun is for testing purposes only, to inspect the state of the last native sync.
+	lastRun *syncRun
 }
+
+// Statically assert that *PathSyncer implements the Syncer interface.
+var _ Syncer = (*PathSyncer)(nil)
 
 // NewPathSyncer creates a new PathSyncer with the given configuration.
 func NewPathSyncer(cfg config.Config) *PathSyncer {
@@ -30,7 +36,7 @@ func NewPathSyncer(cfg config.Config) *PathSyncer {
 }
 
 // Sync is the main entry point for synchronization. It dispatches to the configured sync engine.
-func (s *PathSyncer) Sync(ctx context.Context, src, dst string, mirror bool, excludeFiles, excludeDirs []string) error {
+func (s *PathSyncer) Sync(ctx context.Context, src, dst string, mirror bool, excludeFiles, excludeDirs []string, enableMetrics bool) error {
 	// Check for cancellation after validation but before starting the heavy work.
 	select {
 	case <-ctx.Done():
@@ -57,9 +63,9 @@ func (s *PathSyncer) Sync(ctx context.Context, src, dst string, mirror bool, exc
 
 	switch s.engine.Type {
 	case config.RobocopyEngine:
-		return s.handleRobocopy(ctx, src, dst, mirror, excludeFiles, excludeDirs)
+		return s.handleRobocopy(ctx, src, dst, mirror, excludeFiles, excludeDirs, enableMetrics)
 	case config.NativeEngine:
-		return s.handleNative(ctx, src, dst, mirror, excludeFiles, excludeDirs)
+		return s.handleNative(ctx, src, dst, mirror, excludeFiles, excludeDirs, enableMetrics)
 	default:
 		return fmt.Errorf("unknown sync engine configured: %v", s.engine.Type)
 	}

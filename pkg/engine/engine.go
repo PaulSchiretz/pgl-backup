@@ -320,7 +320,7 @@ func (e *Engine) performSync(ctx context.Context, currentRun *runState) error {
 	excludeDirs := e.config.Paths.ExcludeDirs
 
 	// Sync and check for errors after attempting the sync.
-	if syncErr := e.syncer.Sync(ctx, source, destination, mirror, excludeFiles, excludeDirs); syncErr != nil {
+	if syncErr := e.syncer.Sync(ctx, source, destination, mirror, excludeFiles, excludeDirs, e.config.EnableMetrics); syncErr != nil {
 		return fmt.Errorf("sync failed: %w", syncErr)
 	}
 

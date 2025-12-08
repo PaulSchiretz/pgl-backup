@@ -1,0 +1,105 @@
+package metrics
+
+import (
+	"os"
+	"strings"
+	"testing"
+
+	"bytes"
+
+	"pixelgardenlabs.io/pgl-backup/pkg/plog"
+)
+
+func TestSyncMetrics_Adders(t *testing.T) {
+	t.Run("correctly increments all counters", func(t *testing.T) {
+		m := &SyncMetrics{}
+
+		m.AddFilesCopied(5)
+		m.AddFilesDeleted(3)
+		m.AddFilesExcluded(2)
+		m.AddFilesUpToDate(10)
+		m.AddDirsCreated(4)
+		m.AddDirsDeleted(1)
+		m.AddDirsExcluded(6)
+
+		if got := m.FilesCopied.Load(); got != 5 {
+			t.Errorf("expected FilesCopied to be 5, got %d", got)
+		}
+		if got := m.FilesDeleted.Load(); got != 3 {
+			t.Errorf("expected FilesDeleted to be 3, got %d", got)
+		}
+		if got := m.FilesExcluded.Load(); got != 2 {
+			t.Errorf("expected FilesExcluded to be 2, got %d", got)
+		}
+		if got := m.FilesUpToDate.Load(); got != 10 {
+			t.Errorf("expected FilesUpToDate to be 10, got %d", got)
+		}
+		if got := m.DirsCreated.Load(); got != 4 {
+			t.Errorf("expected DirsCreated to be 4, got %d", got)
+		}
+		if got := m.DirsDeleted.Load(); got != 1 {
+			t.Errorf("expected DirsDeleted to be 1, got %d", got)
+		}
+		if got := m.DirsExcluded.Load(); got != 6 {
+			t.Errorf("expected DirsExcluded to be 6, got %d", got)
+		}
+	})
+}
+
+func TestSyncMetrics_Log(t *testing.T) {
+	t.Run("logs the correct summary values", func(t *testing.T) {
+		// --- Setup: Redirect plog output to capture log output ---
+		var logBuf bytes.Buffer
+		plog.SetOutput(&logBuf)
+		t.Cleanup(func() { plog.SetOutput(os.Stderr) }) // Restore original output after test.
+
+		// --- Act ---
+		m := &SyncMetrics{}
+		m.AddFilesCopied(10)
+		m.AddFilesUpToDate(20)
+		m.Log()
+
+		// --- Assert ---
+		output := logBuf.String()
+
+		// --- Assert ---
+		if !strings.Contains(output, "SUM") {
+			t.Errorf("expected log output to contain 'SUM', but it didn't. Got: %s", output)
+		}
+		if !strings.Contains(output, "filesCopied=10") {
+			t.Errorf("expected log output to contain 'filesCopied=10', but it didn't. Got: %s", output)
+		}
+		if !strings.Contains(output, "filesUpToDate=20") {
+			t.Errorf("expected log output to contain 'filesUpToDate=20', but it didn't. Got: %s", output)
+		}
+		// Check a zero value to ensure it's also logged correctly
+		if !strings.Contains(output, "filesDeleted=0") {
+			t.Errorf("expected log output to contain 'filesDeleted=0', but it didn't. Got: %s", output)
+		}
+	})
+}
+
+func TestNoopMetrics(t *testing.T) {
+	t.Run("all methods execute without panicking", func(t *testing.T) {
+		// The purpose of this test is to simply call all methods on NoopMetrics
+		// to ensure they are present and do not cause a runtime panic.
+		// There are no values to assert, as the implementation is empty.
+		m := &NoopMetrics{}
+
+		// Use a defer function with recover to explicitly check for panics.
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("NoopMetrics method panicked: %v", r)
+			}
+		}()
+
+		m.AddFilesCopied(1)
+		m.AddFilesDeleted(1)
+		m.AddFilesExcluded(1)
+		m.AddFilesUpToDate(1)
+		m.AddDirsCreated(1)
+		m.AddDirsDeleted(1)
+		m.AddDirsExcluded(1)
+		m.Log()
+	})
+}

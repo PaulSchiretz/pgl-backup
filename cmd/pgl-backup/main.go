@@ -49,6 +49,7 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	quietFlag := flag.Bool("quiet", false, "Suppress individual file operation logs.")
 	failFastFlag := flag.Bool("fail-fast", false, "Stop the backup immediately on the first file sync error.")
 	dryRunFlag := flag.Bool("dry-run", false, "Show what would be done without making any changes.")
+	metricsFlag := flag.Bool("metrics", false, "Enable detailed performance and file-counting metrics.")
 	initFlag := flag.Bool("init", false, "Generate a default pgl-backup.conf file and exit.")
 	versionFlag := flag.Bool("version", false, "Print the application version and exit.")
 	syncEngineFlag := flag.String("sync-engine", "", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
@@ -107,6 +108,8 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 			flagMap[name] = *failFastFlag
 		case "dry-run":
 			flagMap[name] = *dryRunFlag
+		case "metrics":
+			flagMap[name] = *metricsFlag
 		case "preserve-source-name":
 			// The flag's value is only used if it was explicitly set.
 			// The default is handled by the base config.

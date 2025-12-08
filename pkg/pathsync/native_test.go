@@ -6,12 +6,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
-	"pixelgardenlabs.io/pgl-backup/pkg/sharded"
+	"pixelgardenlabs.io/pgl-backup/pkg/metrics"
 )
 
 // helper to create a file with specific content and mod time.
@@ -124,16 +123,17 @@ type testDir struct {
 type nativeSyncTestRunner struct {
 	t *testing.T
 	// Inputs
-	mirror       bool
-	dryRun       bool
-	failFast     bool
-	excludeFiles []string
-	excludeDirs  []string
-	srcFiles     []testFile
-	srcDirs      []testDir
-	dstFiles     []testFile
-	dstDirs      []testDir
-	modTimeWin   *int
+	mirror        bool
+	dryRun        bool
+	failFast      bool
+	enableMetrics bool
+	excludeFiles  []string
+	excludeDirs   []string
+	srcFiles      []testFile
+	srcDirs       []testDir
+	dstFiles      []testFile
+	dstDirs       []testDir
+	modTimeWin    *int
 	// Internal state
 	srcDir      string
 	dstDir      string
@@ -176,7 +176,7 @@ func (r *nativeSyncTestRunner) run() error {
 	cfg.FailFast = r.failFast
 	cfg.Engine.Performance.SyncWorkers = 2
 	cfg.Engine.Performance.CopyBufferSizeKB = 4
-	cfg.Engine.RetryCount = 0
+	cfg.Engine.RetryCount = 0 // Disable retries for tests to get immediate failures.
 	syncer := NewPathSyncer(cfg)
 	modTimeWindowSeconds := 1
 	if r.modTimeWin != nil {
@@ -184,44 +184,11 @@ func (r *nativeSyncTestRunner) run() error {
 	}
 	syncer.engine.NativeEngineModTimeWindowSeconds = modTimeWindowSeconds
 
-	r.runInstance = &syncRun{
-		src:              r.srcDir,
-		trg:              r.dstDir,
-		mirror:           r.mirror,
-		dryRun:           r.dryRun,
-		failFast:         r.failFast,
-		caseInsensitive:  isCaseInsensitiveFS(),
-		fileExcludes:     preProcessExclusions(r.excludeFiles, false, isCaseInsensitiveFS()),
-		dirExcludes:      preProcessExclusions(r.excludeDirs, true, isCaseInsensitiveFS()),
-		numSyncWorkers:   syncer.engine.Performance.SyncWorkers,
-		numMirrorWorkers: syncer.engine.Performance.MirrorWorkers,
-		retryCount:       syncer.engine.RetryCount,
-		retryWait:        time.Duration(syncer.engine.RetryWaitSeconds) * time.Second,
-		modTimeWindow:    time.Duration(modTimeWindowSeconds) * time.Second,
-		ioBufferPool: &sync.Pool{
-			New: func() interface{} {
-				b := make([]byte, syncer.engine.Performance.CopyBufferSizeKB*1024)
-				return &b
-			},
-		},
-		syncTaskPool: &sync.Pool{
-			New: func() interface{} { return new(syncTask) },
-		},
-		mirrorTaskPool: &sync.Pool{
-			New: func() interface{} { return new(mirrorTask) },
-		},
-		discoveredPaths:        sharded.NewShardedSet(),
-		discoveredDirInfo:      sharded.NewShardedMap(),
-		syncedDirCache:         sharded.NewShardedSet(),
-		syncTasksChan:          make(chan *syncTask, syncer.engine.Performance.SyncWorkers*100),
-		mirrorTasksChan:        make(chan *mirrorTask, syncer.engine.Performance.MirrorWorkers*100),
-		criticalSyncErrsChan:   make(chan error, 1),
-		syncErrs:               sharded.NewShardedMap(),
-		criticalMirrorErrsChan: make(chan error, 1),
-		mirrorErrs:             sharded.NewShardedMap(),
-		ctx:                    context.Background(),
-	}
-	return r.runInstance.execute()
+	// We call the public Sync method to ensure the full logic path is tested,
+	// including the creation of the syncRun instance.
+	err := syncer.Sync(context.Background(), r.srcDir, r.dstDir, r.mirror, r.excludeFiles, r.excludeDirs, r.enableMetrics)
+
+	return err
 }
 
 type expectedMetrics struct {
@@ -243,6 +210,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 		mirror                  bool
 		dryRun                  bool
 		failFast                bool
+		enableMetrics           bool
 		excludeFiles            []string
 		excludeDirs             []string
 		srcFiles                []testFile                          // Files to create in the source directory.
@@ -296,6 +264,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 		},
 		{
 			name:          "Exact ModTime Match - Window 0",
+			enableMetrics: true,
 			modTimeWindow: new(int), // Set to 0
 			srcFiles: []testFile{
 				// Source file with a high-precision timestamp.
@@ -625,10 +594,11 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			expectedErrorContains: "critical sync error", // The error should be wrapped as critical.
 		},
 		{
-			name:         "Metrics Counting",
-			mirror:       true,
-			excludeFiles: []string{"*.log", "config.json"},
-			excludeDirs:  []string{"ignored_dir"},
+			name:          "Metrics Counting",
+			enableMetrics: true,
+			mirror:        true,
+			excludeFiles:  []string{"*.log", "config.json"},
+			excludeDirs:   []string{"ignored_dir"},
 			srcFiles: []testFile{
 				// 1. To be copied (new file)
 				{path: filepath.Join("dir1", "new_file.txt"), content: "new", modTime: baseTime},
@@ -671,6 +641,32 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				dirsExcluded: 1, // ignored_dir
 			},
 		},
+		{
+			name:          "Noop Metrics When Disabled",
+			enableMetrics: false, // Explicitly disable metrics
+			mirror:        true,
+			srcFiles: []testFile{
+				{path: "file1.txt", content: "hello", modTime: baseTime},
+			},
+			dstFiles: []testFile{
+				{path: "obsolete.txt", content: "delete me", modTime: baseTime},
+			},
+			expectedDstFiles: map[string]testFile{
+				"file1.txt": {path: "file1.txt", content: "hello", modTime: baseTime},
+			},
+			expectedMissingDstFiles: []string{"obsolete.txt"},
+			verify: func(t *testing.T, src, dst string) {
+				// This is the key assertion for this test.
+				// We need to get the runner instance to inspect its state.
+				// This is a bit of a test smell, but necessary for this kind of check.
+				// The runner is populated by the test case loop below.
+			},
+			// Expect all metrics to be zero because NoopMetrics was used.
+			expectedMetrics: &expectedMetrics{
+				copied: 0, deleted: 0, excluded: 0, upToDate: 0,
+				dirsCreated: 0, dirsDeleted: 0, dirsExcluded: 0,
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -683,20 +679,31 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			}
 
 			runner := &nativeSyncTestRunner{
-				t:            t,
-				mirror:       tc.mirror,
-				dryRun:       tc.dryRun,
-				failFast:     tc.failFast,
-				excludeFiles: tc.excludeFiles,
-				excludeDirs:  tc.excludeDirs,
-				srcFiles:     tc.srcFiles,
-				srcDirs:      tc.srcDirs,
-				dstFiles:     tc.dstFiles,
-				dstDirs:      tc.dstDirs,
-				modTimeWin:   tc.modTimeWindow,
+				t:             t,
+				mirror:        tc.mirror,
+				dryRun:        tc.dryRun,
+				failFast:      tc.failFast,
+				enableMetrics: tc.enableMetrics,
+				excludeFiles:  tc.excludeFiles,
+				excludeDirs:   tc.excludeDirs,
+				srcFiles:      tc.srcFiles,
+				srcDirs:       tc.srcDirs,
+				dstFiles:      tc.dstFiles,
+				dstDirs:       tc.dstDirs,
+				modTimeWin:    tc.modTimeWindow,
 			}
 			runner.setup()
-			err := runner.run()
+
+			// The public Sync method now handles metrics enablement.
+			cfg := config.NewDefault()
+			cfg.DryRun = tc.dryRun
+			cfg.FailFast = tc.failFast
+			cfg.Engine.Type = config.NativeEngine
+			if tc.modTimeWindow != nil {
+				cfg.Engine.NativeEngineModTimeWindowSeconds = *tc.modTimeWindow
+			}
+			syncer := NewPathSyncer(cfg)
+			err := syncer.Sync(context.Background(), runner.srcDir, runner.dstDir, tc.mirror, tc.excludeFiles, tc.excludeDirs, tc.enableMetrics)
 
 			// Assert on error
 			if tc.expectedErrorContains != "" {
@@ -710,6 +717,13 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				t.Fatalf("handleNative failed unexpectedly: %v", err)
 			}
 
+			// HACK: To inspect the metrics instance, we need to get the last run from the syncer.
+			// This is a test-only pattern.
+			lastRunMetrics := syncer.lastRun.metrics
+			if syncer.lastRun == nil {
+				t.Fatal("syncer.lastRun was nil, cannot inspect test state")
+			}
+
 			// Assert
 			for relPathKey, expectedFile := range tc.expectedDstFiles {
 				fullPath := filepath.Join(runner.dstDir, expectedFile.path)
@@ -721,7 +735,11 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 					t.Errorf("expected content for %s to be %q, but got %q", relPathKey, expectedFile.content, content)
 				}
 				// For mod time comparison, use the same window as the syncer.
-				window := runner.runInstance.modTimeWindow
+				window := syncer.lastRun.modTimeWindow
+				if tc.modTimeWindow != nil {
+					window = time.Duration(*tc.modTimeWindow) * time.Second
+				}
+
 				modTime := getFileModTime(t, fullPath)
 				expectedModTime := expectedFile.modTime
 
@@ -741,26 +759,56 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 
 			// Verify metrics if provided
 			if tc.expectedMetrics != nil {
-				metrics := &runner.runInstance.metrics
-				if got := metrics.filesCopied.Load(); got != tc.expectedMetrics.copied {
+				if lastRunMetrics == nil {
+					t.Fatal("lastRunMetrics was nil, cannot verify metrics")
+				}
+
+				// If metrics were disabled, assert we got the NoopMetrics type.
+				if !tc.enableMetrics {
+					if _, ok := lastRunMetrics.(*metrics.NoopMetrics); !ok {
+						t.Fatalf("expected metrics to be *metrics.NoopMetrics when disabled, but got %T", lastRunMetrics)
+					}
+				}
+
+				// To check the values, we must have a *SyncMetrics instance.
+				// This will be nil if metrics were disabled, and the checks will correctly fail.
+				m, _ := lastRunMetrics.(*metrics.SyncMetrics)
+				if m == nil && tc.enableMetrics {
+					t.Fatalf("metrics were not of expected type *metrics.SyncMetrics, but %T", lastRunMetrics)
+				}
+
+				// If m is nil (because metrics were disabled), all .Load() calls will panic.
+				// We need to handle this case.
+				var copied, deleted, excluded, upToDate, dirsCreated, dirsDeleted, dirsExcluded int64
+				if m != nil {
+					copied = m.FilesCopied.Load()
+					deleted = m.FilesDeleted.Load()
+					excluded = m.FilesExcluded.Load()
+					upToDate = m.FilesUpToDate.Load()
+					dirsCreated = m.DirsCreated.Load()
+					dirsDeleted = m.DirsDeleted.Load()
+					dirsExcluded = m.DirsExcluded.Load()
+				}
+
+				if got := copied; got != tc.expectedMetrics.copied {
 					t.Errorf("metric 'copied': expected %d, got %d", tc.expectedMetrics.copied, got)
 				}
-				if got := metrics.filesDeleted.Load(); got != tc.expectedMetrics.deleted {
+				if got := deleted; got != tc.expectedMetrics.deleted {
 					t.Errorf("metric 'deleted': expected %d, got %d", tc.expectedMetrics.deleted, got)
 				}
-				if got := metrics.filesExcluded.Load(); got != tc.expectedMetrics.excluded {
+				if got := excluded; got != tc.expectedMetrics.excluded {
 					t.Errorf("metric 'excluded': expected %d, got %d", tc.expectedMetrics.excluded, got)
 				}
-				if got := metrics.filesUpToDate.Load(); got != tc.expectedMetrics.upToDate {
+				if got := upToDate; got != tc.expectedMetrics.upToDate {
 					t.Errorf("metric 'upToDate': expected %d, got %d", tc.expectedMetrics.upToDate, got)
 				}
-				if got := metrics.dirsCreated.Load(); got != tc.expectedMetrics.dirsCreated {
+				if got := dirsCreated; got != tc.expectedMetrics.dirsCreated {
 					t.Errorf("metric 'dirsCreated': expected %d, got %d", tc.expectedMetrics.dirsCreated, got)
 				}
-				if got := metrics.dirsDeleted.Load(); got != tc.expectedMetrics.dirsDeleted {
+				if got := dirsDeleted; got != tc.expectedMetrics.dirsDeleted {
 					t.Errorf("metric 'dirsDeleted': expected %d, got %d", tc.expectedMetrics.dirsDeleted, got)
 				}
-				if got := metrics.dirsExcluded.Load(); got != tc.expectedMetrics.dirsExcluded {
+				if got := dirsExcluded; got != tc.expectedMetrics.dirsExcluded {
 					t.Errorf("metric 'dirsExcluded': expected %d, got %d", tc.expectedMetrics.dirsExcluded, got)
 				}
 			}

@@ -19,7 +19,7 @@ func TestSync_Dispatch(t *testing.T) {
 		cfg.Engine.Type = config.SyncEngine(99)
 
 		syncer := NewPathSyncer(cfg)
-		err := syncer.Sync(context.Background(), srcDir, dstDir, false, nil, nil)
+		err := syncer.Sync(context.Background(), srcDir, dstDir, false, nil, nil, true)
 
 		if err == nil {
 			t.Fatal("expected an error for unknown sync engine, but got nil")
@@ -38,7 +38,7 @@ func TestSync_Dispatch(t *testing.T) {
 		cfg.Engine.Type = config.RobocopyEngine
 
 		syncer := NewPathSyncer(cfg)
-		err := syncer.Sync(context.Background(), srcDir, dstDir, false, nil, nil)
+		err := syncer.Sync(context.Background(), srcDir, dstDir, false, nil, nil, true)
 
 		if err == nil {
 			t.Fatal("expected an error when using robocopy on a non-windows OS, but got nil")

@@ -104,7 +104,7 @@ func TestHandleRobocopy_Integration(t *testing.T) {
 		syncer := NewPathSyncer(cfg)
 
 		// Act
-		err := syncer.handleRobocopy(context.Background(), srcDir, dstDir, false, nil, nil)
+		err := syncer.handleRobocopy(context.Background(), srcDir, dstDir, false, nil, nil, true)
 		if err != nil {
 			t.Fatalf("handleRobocopy failed: %v", err)
 		}

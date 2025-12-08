@@ -146,6 +146,23 @@ func TestParseFlagConfig(t *testing.T) {
 		})
 	})
 
+	t.Run("Set Metrics Flag", func(t *testing.T) {
+		args := []string{"-metrics"}
+		runTestWithFlags(t, args, func() {
+			_, setFlags, err := parseFlagConfig()
+			if err != nil {
+				t.Fatalf("expected no error, but got: %v", err)
+			}
+			val, ok := setFlags["metrics"]
+			if !ok {
+				t.Fatal("expected 'metrics' flag to be in setFlags map")
+			}
+			if boolVal, typeOK := val.(bool); !typeOK || !boolVal {
+				t.Errorf("expected metrics to be true, but got %v (type %T)", val, val)
+			}
+		})
+	})
+
 	t.Run("Invalid Mode Flag", func(t *testing.T) {
 		args := []string{"-mode=invalid-mode"}
 		runTestWithFlags(t, args, func() {

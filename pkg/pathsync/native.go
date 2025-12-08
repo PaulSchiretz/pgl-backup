@@ -42,9 +42,9 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
+	"pixelgardenlabs.io/pgl-backup/pkg/metrics"
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 	"pixelgardenlabs.io/pgl-backup/pkg/sharded"
 )
@@ -97,19 +97,6 @@ type preProcessedExclusion struct {
 	pattern      string
 	cleanPattern string // The pattern without the wildcard for prefix/suffix matching
 	matchType    exclusionType
-}
-
-// syncMetrics holds the atomic counters for tracking the sync operation's progress.
-type syncMetrics struct {
-	filesCopied  atomic.Int64
-	filesDeleted atomic.Int64
-	// Files explicitly skipped due to matching an exclusion pattern.
-	filesExcluded atomic.Int64
-	filesUpToDate atomic.Int64 // Files that were checked but already up-to-date.
-
-	dirsCreated  atomic.Int64 // Confirmed or created in destination
-	dirsDeleted  atomic.Int64 // Obsolete structures removed
-	dirsExcluded atomic.Int64 // Skipped by WalkDir
 }
 
 type syncRun struct {
@@ -173,7 +160,7 @@ type syncRun struct {
 	cancel context.CancelFunc
 
 	// metrics holds the counters for the sync operation.
-	metrics syncMetrics
+	metrics metrics.Metrics
 }
 
 // --- Helpers ---
@@ -440,7 +427,7 @@ func (r *syncRun) processFileSync(task *syncTask) error {
 			// We skip the copy only if the modification times (within the configured window) and sizes are identical.
 			// We truncate the times to handle filesystems with different timestamp resolutions.
 			if r.truncateModTime(time.Unix(0, task.PathInfo.ModTime)).Equal(r.truncateModTime(trgInfo.ModTime())) && task.PathInfo.Size == trgInfo.Size() {
-				r.metrics.filesUpToDate.Add(1)
+				r.metrics.AddFilesUpToDate(1)
 				return nil // Not changed
 			}
 		} else {
@@ -462,7 +449,7 @@ func (r *syncRun) processFileSync(task *syncTask) error {
 	}
 
 	plog.Info("COPY", "path", task.RelPathKey)
-	r.metrics.filesCopied.Add(1)
+	r.metrics.AddFilesCopied(1)
 	return nil // File was actually copied/updated
 }
 
@@ -511,7 +498,7 @@ func (r *syncRun) processDirectorySync(task *syncTask) error {
 	}
 
 	plog.Info("DIR", "path", task.RelPathKey)
-	r.metrics.dirsCreated.Add(1)
+	r.metrics.AddDirsCreated(1)
 	return nil
 }
 
@@ -575,11 +562,11 @@ func (r *syncRun) syncWalker() {
 		if r.isExcluded(relPathKey, d.IsDir()) {
 			plog.Info("EXCL", "reason", "excluded by pattern", "path", relPathKey)
 			if d.IsDir() {
-				r.metrics.dirsExcluded.Add(1) // Track excluded directory
-				return filepath.SkipDir       // Don't descend into this directory.
+				r.metrics.AddDirsExcluded(1) // Track excluded directory
+				return filepath.SkipDir      // Don't descend into this directory.
 			}
-			r.metrics.filesExcluded.Add(1) // Track excluded file
-			return nil                     // It's an excluded file, do not process further.
+			r.metrics.AddFilesExcluded(1) // Track excluded file
+			return nil                    // It's an excluded file, do not process further.
 		}
 
 		// 3. Get Info for worker
@@ -880,7 +867,7 @@ func (r *syncRun) mirrorWorker() {
 					// In normal mode, record the error and continue.
 					r.mirrorErrs.Store(task.RelPathKey, err)
 				} else {
-					r.metrics.filesDeleted.Add(1)
+					r.metrics.AddFilesDeleted(1)
 				}
 			}()
 		}
@@ -926,13 +913,13 @@ func (r *syncRun) handleMirror() error {
 
 		// Use os.Remove first, as we expect the directory to be empty of files, which is faster.
 		if err := os.Remove(absPathToDelete); err == nil {
-			r.metrics.dirsDeleted.Add(1)
+			r.metrics.AddDirsDeleted(1)
 		} else {
 			// Attempt os.RemoveAll fallback
 			// This might happen if a file inside couldn't be deleted earlier due to permissions,
 			// leaving the directory non-empty. As a fallback, try a recursive removal.
 			if err := os.RemoveAll(absPathToDelete); err == nil {
-				r.metrics.dirsDeleted.Add(1)
+				r.metrics.AddDirsDeleted(1)
 			} else {
 				// If even RemoveAll fails, log a warning. This indicates a more
 				// serious issue like permissions on the directory itself.
@@ -958,19 +945,6 @@ func (r *syncRun) handleMirror() error {
 	return nil
 }
 
-// logMetrics prints a summary of the sync operation.
-func (r *syncRun) logMetrics() {
-	plog.Info("SUM",
-		"filesCopied", r.metrics.filesCopied.Load(),
-		"filesUpToDate", r.metrics.filesUpToDate.Load(),
-		"filesDeleted", r.metrics.filesDeleted.Load(),
-		"filesExcluded", r.metrics.filesExcluded.Load(),
-		"dirsCreated", r.metrics.dirsCreated.Load(),
-		"dirsDeleted", r.metrics.dirsDeleted.Load(),
-		"dirsExcluded", r.metrics.dirsExcluded.Load(),
-	)
-}
-
 // execute coordinates the concurrent synchronization pipeline.
 func (r *syncRun) execute() error {
 	// The context passed in is now decorated with a cancel function that this
@@ -978,7 +952,7 @@ func (r *syncRun) execute() error {
 	// We defer the cancel to ensure resources are cleaned up on exit.
 	r.ctx, r.cancel = context.WithCancel(r.ctx)
 	defer func() {
-		r.logMetrics()
+		r.metrics.Log()
 		r.cancel()
 	}()
 
@@ -1001,8 +975,16 @@ func (r *syncRun) execute() error {
 }
 
 // handleNative initializes the sync run structure and kicks off the execution.
-func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror bool, excludeFiles, excludeDirs []string) error {
+func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror bool, excludeFiles, excludeDirs []string, enableMetrics bool) error {
 	isCaseInsensitive := isCaseInsensitiveFS()
+
+	var m metrics.Metrics
+	if enableMetrics {
+		m = &metrics.SyncMetrics{}
+	} else {
+		// Use the No-op implementation if metrics are disabled.
+		m = &metrics.NoopMetrics{}
+	}
 
 	run := &syncRun{
 		src:              src,
@@ -1046,6 +1028,8 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror b
 		criticalMirrorErrsChan: make(chan error, 1),
 		mirrorErrs:             sharded.NewShardedMap(),
 		ctx:                    ctx,
+		metrics:                m, // Use the selected metrics implementation.
 	}
+	s.lastRun = run // Store the run instance for testing.
 	return run.execute()
 }

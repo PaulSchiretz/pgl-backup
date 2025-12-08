@@ -26,7 +26,7 @@ func isRobocopySuccessHelper(err error) bool {
 // handleSyncRobocopy uses the Windows `robocopy` utility to perform a highly
 // efficient and robust directory mirror. It is much faster for incremental
 // backups than a manual walk. It returns a list of copied files.
-func (s *PathSyncer) handleRobocopy(ctx context.Context, src, dst string, mirror bool, excludeFiles, excludeDirs []string) error {
+func (s *PathSyncer) handleRobocopy(ctx context.Context, src, dst string, mirror bool, excludeFiles, excludeDirs []string, enableMetrics bool) error {
 	// Robocopy command arguments:
 	// /MIR :: MIRror a directory tree (equivalent to /E plus /PURGE).
 	// /E :: copy subdirectories, including Empty ones.
@@ -36,7 +36,7 @@ func (s *PathSyncer) handleRobocopy(ctx context.Context, src, dst string, mirror
 	// /W:n :: Wait n seconds between retries.
 	// /NP :: No Progress - don't display % copied.
 	// /NJH :: No Job Header.
-	// /NJS :: No Job Summary. (We keep the summary for a good overview)
+	// /NJS :: No Job Summary.
 	args := []string{src, dst, "/V", "/TEE", "/NP", "/NJH"}
 	args = append(args, "/R:"+strconv.Itoa(s.engine.RetryCount))
 	args = append(args, "/W:"+strconv.Itoa(s.engine.RetryWaitSeconds))
@@ -45,6 +45,11 @@ func (s *PathSyncer) handleRobocopy(ctx context.Context, src, dst string, mirror
 		args = append(args, "/MIR")
 	} else {
 		args = append(args, "/E")
+	}
+
+	// If metrics are disabled, suppress Robocopy's job summary.
+	if !enableMetrics {
+		args = append(args, "/NJS")
 	}
 
 	if plog.IsQuiet() {
