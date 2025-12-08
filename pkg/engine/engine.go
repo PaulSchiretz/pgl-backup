@@ -97,17 +97,17 @@ func (e *Engine) acquireTargetLock(ctx context.Context) (func(), error) {
 	lockFilePath := filepath.Join(e.config.Paths.TargetBase, config.LockFileName)
 	appID := fmt.Sprintf("pgl-backup:%s", e.config.Paths.Source)
 
-	plog.Info("Attempting to acquire lock", "path", lockFilePath)
+	plog.Debug("Attempting to acquire lock", "path", lockFilePath)
 	lock, err := filelock.Acquire(ctx, lockFilePath, appID)
 	if err != nil {
 		var lockErr *filelock.ErrLockActive
 		if errors.As(err, &lockErr) {
-			plog.Warn("Operation is already running for this target.", "details", lockErr.Error())
+			plog.Warn("Operation is already running for this target, skipping run.", "details", lockErr.Error())
 			return nil, nil // Return nil error to indicate a graceful exit.
 		}
 		return nil, fmt.Errorf("failed to acquire lock: %w", err)
 	}
-	plog.Info("Lock acquired successfully.")
+	plog.Debug("Lock acquired successfully.")
 
 	return lock.Release, nil
 }
@@ -494,7 +494,7 @@ func (e *Engine) applyRetentionPolicy(ctx context.Context) error {
 		return nil
 	}
 	plog.Info("--- Cleaning Up Outdated Backups ---")
-	plog.Info("Applying retention policy", "directory", baseDir)
+	plog.Debug("Applying retention policy", "directory", baseDir)
 	// --- 1. Get a sorted list of all valid, historical backups ---
 	allBackups, err := e.fetchSortedBackups(ctx, baseDir, currentDirName)
 	if err != nil {
@@ -513,7 +513,7 @@ func (e *Engine) applyRetentionPolicy(ctx context.Context) error {
 		}
 	}
 
-	if len(dirsToDelete) == 0 {
+	if len(dirsToDelete) == 0 && !e.config.DryRun {
 		plog.Info("No outdated backups to delete.")
 		return nil
 	}
@@ -654,8 +654,8 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 		}
 		planParts = append(planParts, msg)
 	}
-	plog.Info("Retention plan", "details", strings.Join(planParts, ", "))
-	plog.Info("Total unique backups to be kept", "count", len(backupsToKeep))
+	plog.Debug("Retention plan", "details", strings.Join(planParts, ", "))
+	plog.Debug("Total unique backups to be kept", "count", len(backupsToKeep))
 
 	return backupsToKeep
 }
