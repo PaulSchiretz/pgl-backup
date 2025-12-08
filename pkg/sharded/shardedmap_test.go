@@ -350,3 +350,41 @@ func TestShardedMap_GetShardIndex(t *testing.T) {
 		t.Errorf("Shard count for index %d did not increase after storing key. Got %d, want %d", index, finalShardCount, initialShardCount+1)
 	}
 }
+
+// TestShardedMap_LoadOrStore tests the LoadOrStore method.
+func TestShardedMap_LoadOrStore(t *testing.T) {
+	m := NewShardedMap()
+	key := "test_key"
+	initialValue := "initial_value"
+
+	// 1. First time storing the key
+	actual, loaded := m.LoadOrStore(key, initialValue)
+	if loaded {
+		t.Errorf("LoadOrStore on new key returned loaded=true; want false")
+	}
+	if actual != initialValue {
+		t.Errorf("LoadOrStore on new key returned actual value %v; want %v", actual, initialValue)
+	}
+
+	// Verify the key is now in the map with the correct value
+	val, ok := m.Load(key)
+	if !ok || val != initialValue {
+		t.Errorf("Load(%q) after LoadOrStore returned %v, %v; want %v, true", key, val, ok, initialValue)
+	}
+
+	// 2. Second time calling with the same key and a different value
+	newValue := "new_value"
+	actual, loaded = m.LoadOrStore(key, newValue)
+	if !loaded {
+		t.Errorf("LoadOrStore on existing key returned loaded=false; want true")
+	}
+	if actual != initialValue {
+		t.Errorf("LoadOrStore on existing key returned actual value %v; want %v", actual, initialValue)
+	}
+
+	// Verify the value was not overwritten
+	val, _ = m.Load(key)
+	if val != initialValue {
+		t.Errorf("Map value was overwritten after second LoadOrStore; got %v, want %v", val, initialValue)
+	}
+}

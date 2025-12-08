@@ -56,6 +56,21 @@ func (s *ShardedMap) Has(key string) bool {
 	return exists
 }
 
+// LoadOrStore returns the existing value for the key if present.
+// Otherwise, it stores and returns the given value.
+// The loaded result is true if the value was loaded, false if stored.
+func (s *ShardedMap) LoadOrStore(key string, value interface{}) (actual interface{}, loaded bool) {
+	shard := s.getShard(key)
+	shard.mu.Lock()
+	actual, loaded = shard.items[key]
+	if !loaded {
+		actual = value
+		shard.items[key] = value
+	}
+	shard.mu.Unlock()
+	return actual, loaded
+}
+
 func (s *ShardedMap) Delete(key string) {
 	shard := s.getShard(key)
 	shard.mu.Lock()

@@ -300,3 +300,31 @@ func TestShardedSet_GetShardIndex(t *testing.T) {
 		t.Errorf("Shard count for index %d did not increase after storing key. Got %d, want %d", index, finalShardCount, initialShardCount+1)
 	}
 }
+
+// TestShardedSet_LoadOrStore tests the LoadOrStore method.
+func TestShardedSet_LoadOrStore(t *testing.T) {
+	s := NewShardedSet()
+	key := "test_key"
+
+	// 1. First time storing the key
+	loaded := s.LoadOrStore(key)
+	if loaded {
+		t.Errorf("LoadOrStore on new key returned true; want false")
+	}
+
+	// Verify the key is now in the set
+	if !s.Has(key) {
+		t.Errorf("Has(%q) returned false after LoadOrStore; want true", key)
+	}
+
+	// 2. Second time calling with the same key
+	loaded = s.LoadOrStore(key)
+	if !loaded {
+		t.Errorf("LoadOrStore on existing key returned false; want true")
+	}
+
+	// Verify count is still 1
+	if count := s.Count(); count != 1 {
+		t.Errorf("Count() after second LoadOrStore is %d; want 1", count)
+	}
+}

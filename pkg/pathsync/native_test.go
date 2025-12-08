@@ -137,7 +137,7 @@ type nativeSyncTestRunner struct {
 	// Internal state
 	srcDir      string
 	dstDir      string
-	runInstance *nativeSyncRun
+	runInstance *syncRun
 }
 
 func (r *nativeSyncTestRunner) setup() {
@@ -184,7 +184,7 @@ func (r *nativeSyncTestRunner) run() error {
 	}
 	syncer.engine.NativeEngineModTimeWindowSeconds = modTimeWindowSeconds
 
-	r.runInstance = &nativeSyncRun{
+	r.runInstance = &syncRun{
 		src:              r.srcDir,
 		trg:              r.dstDir,
 		mirror:           r.mirror,
@@ -224,6 +224,16 @@ func (r *nativeSyncTestRunner) run() error {
 	return r.runInstance.execute()
 }
 
+type expectedMetrics struct {
+	copied       int64
+	deleted      int64 // filesDeleted
+	excluded     int64 // filesExcluded
+	upToDate     int64
+	dirsCreated  int64
+	dirsDeleted  int64
+	dirsExcluded int64
+}
+
 func TestNativeSync_EndToEnd(t *testing.T) {
 	baseTime := time.Now().Add(-24 * time.Hour).Truncate(time.Second)
 
@@ -243,6 +253,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 		expectedMissingDstFiles []string                            // Paths that must NOT exist in the destination after sync.
 		modTimeWindow           *int                                // Optional override for mod time window. If nil, uses default.
 		verify                  func(t *testing.T, src, dst string) // Optional custom verification.
+		expectedMetrics         *expectedMetrics                    // Optional metrics verification.
 		expectedErrorContains   string                              // If non-empty, asserts that the sync error contains this string.
 	}{
 		{
@@ -613,6 +624,53 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 			expectedErrorContains: "critical sync error", // The error should be wrapped as critical.
 		},
+		{
+			name:         "Metrics Counting",
+			mirror:       true,
+			excludeFiles: []string{"*.log", "config.json"},
+			excludeDirs:  []string{"ignored_dir"},
+			srcFiles: []testFile{
+				// 1. To be copied (new file)
+				{path: filepath.Join("dir1", "new_file.txt"), content: "new", modTime: baseTime},
+				// 2. To be updated (different content) -> counts as copied
+				{path: "updated.txt", content: "new content", modTime: baseTime.Add(time.Hour)},
+				// 3. To be up-to-date
+				{path: "uptodate.txt", content: "same", modTime: baseTime},
+				// 4. To be excluded (file by pattern)
+				{path: "app.log", content: "logging", modTime: baseTime},
+				// 5. To be excluded (file by name)
+				{path: "config.json", content: "secret", modTime: baseTime},
+				// 6. Not counted (inside excluded dir)
+				{path: filepath.Join("ignored_dir", "some_file.txt"), content: "should not be seen", modTime: baseTime},
+			},
+			dstFiles: []testFile{
+				// File to be updated
+				{path: "updated.txt", content: "old content", modTime: baseTime},
+				// File that is already up-to-date
+				{path: "uptodate.txt", content: "same", modTime: baseTime},
+				// File to be deleted
+				{path: "obsolete.txt", content: "delete me", modTime: baseTime},
+			},
+			dstDirs: []testDir{
+				// Directory to be deleted
+				{path: "obsolete_dir", perm: 0755, modTime: baseTime},
+			},
+			expectedDstFiles: map[string]testFile{
+				filepath.Join("dir1", "new_file.txt"): {path: filepath.Join("dir1", "new_file.txt"), content: "new", modTime: baseTime},
+				"updated.txt":                         {path: "updated.txt", content: "new content", modTime: baseTime.Add(time.Hour)},
+				"uptodate.txt":                        {path: "uptodate.txt", content: "same", modTime: baseTime},
+			},
+			expectedMissingDstFiles: []string{"obsolete.txt", "obsolete_dir", "app.log", "config.json", "ignored_dir"},
+			expectedMetrics: &expectedMetrics{
+				copied:       2, // dir1/new_file.txt, updated.txt
+				deleted:      1, // obsolete.txt
+				excluded:     2, // app.log, config.json
+				upToDate:     1, // uptodate.txt
+				dirsCreated:  1, // dir1
+				dirsDeleted:  1, // obsolete_dir
+				dirsExcluded: 1, // ignored_dir
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -679,6 +737,32 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			// Allow for additional custom verification
 			if tc.verify != nil {
 				tc.verify(t, runner.srcDir, runner.dstDir)
+			}
+
+			// Verify metrics if provided
+			if tc.expectedMetrics != nil {
+				metrics := &runner.runInstance.metrics
+				if got := metrics.filesCopied.Load(); got != tc.expectedMetrics.copied {
+					t.Errorf("metric 'copied': expected %d, got %d", tc.expectedMetrics.copied, got)
+				}
+				if got := metrics.filesDeleted.Load(); got != tc.expectedMetrics.deleted {
+					t.Errorf("metric 'deleted': expected %d, got %d", tc.expectedMetrics.deleted, got)
+				}
+				if got := metrics.filesExcluded.Load(); got != tc.expectedMetrics.excluded {
+					t.Errorf("metric 'excluded': expected %d, got %d", tc.expectedMetrics.excluded, got)
+				}
+				if got := metrics.filesUpToDate.Load(); got != tc.expectedMetrics.upToDate {
+					t.Errorf("metric 'upToDate': expected %d, got %d", tc.expectedMetrics.upToDate, got)
+				}
+				if got := metrics.dirsCreated.Load(); got != tc.expectedMetrics.dirsCreated {
+					t.Errorf("metric 'dirsCreated': expected %d, got %d", tc.expectedMetrics.dirsCreated, got)
+				}
+				if got := metrics.dirsDeleted.Load(); got != tc.expectedMetrics.dirsDeleted {
+					t.Errorf("metric 'dirsDeleted': expected %d, got %d", tc.expectedMetrics.dirsDeleted, got)
+				}
+				if got := metrics.dirsExcluded.Load(); got != tc.expectedMetrics.dirsExcluded {
+					t.Errorf("metric 'dirsExcluded': expected %d, got %d", tc.expectedMetrics.dirsExcluded, got)
+				}
 			}
 		})
 	}

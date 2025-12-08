@@ -44,6 +44,19 @@ func (s *ShardedSet) Has(key string) bool {
 	return exists
 }
 
+// LoadOrStore ensures a key is present in the set, returning true if it was already present.
+// It returns false if the key was newly stored. This is an atomic operation.
+func (s *ShardedSet) LoadOrStore(key string) (loaded bool) {
+	shard := s.getShard(key)
+	shard.mu.Lock()
+	_, loaded = shard.items[key]
+	if !loaded {
+		shard.items[key] = struct{}{}
+	}
+	shard.mu.Unlock()
+	return loaded
+}
+
 func (s *ShardedSet) Delete(key string) {
 	shard := s.getShard(key)
 	shard.mu.Lock()

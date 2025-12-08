@@ -42,6 +42,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
@@ -98,7 +99,20 @@ type preProcessedExclusion struct {
 	matchType    exclusionType
 }
 
-type nativeSyncRun struct {
+// syncMetrics holds the atomic counters for tracking the sync operation's progress.
+type syncMetrics struct {
+	filesCopied  atomic.Int64
+	filesDeleted atomic.Int64
+	// Files explicitly skipped due to matching an exclusion pattern.
+	filesExcluded atomic.Int64
+	filesUpToDate atomic.Int64 // Files that were checked but already up-to-date.
+
+	dirsCreated  atomic.Int64 // Confirmed or created in destination
+	dirsDeleted  atomic.Int64 // Obsolete structures removed
+	dirsExcluded atomic.Int64 // Skipped by WalkDir
+}
+
+type syncRun struct {
 	src, trg                 string
 	mirror, dryRun, failFast bool
 	numSyncWorkers           int
@@ -157,13 +171,16 @@ type nativeSyncRun struct {
 	// ctx is the cancellable context for the entire run.
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	// metrics holds the counters for the sync operation.
+	metrics syncMetrics
 }
 
 // --- Helpers ---
 
 // copyFileHelper handles the low-level details of copying a single file.
 // It ensures atomicity by writing to a temporary file first and then renaming it.
-func (r *nativeSyncRun) copyFileHelper(absSrcPath, absTrgPath string, task *syncTask, retryCount int, retryWait time.Duration) error {
+func (r *syncRun) copyFileHelper(absSrcPath, absTrgPath string, task *syncTask, retryCount int, retryWait time.Duration) error {
 	var lastErr error
 	for i := 0; i <= retryCount; i++ {
 		if i > 0 {
@@ -296,7 +313,7 @@ func preProcessExclusions(patterns []string, isDirPatterns bool, caseInsensitive
 }
 
 // truncateModTime adjusts a time based on the configured modification time window.
-func (r *nativeSyncRun) truncateModTime(t time.Time) time.Time {
+func (r *syncRun) truncateModTime(t time.Time) time.Time {
 	if r.modTimeWindow > 0 {
 		return t.Truncate(r.modTimeWindow)
 	}
@@ -305,7 +322,7 @@ func (r *nativeSyncRun) truncateModTime(t time.Time) time.Time {
 
 // normalizePathKey normalizes the pathKey to a standardized key format
 // (forward slashes, lowercase if applicable). This key is for internal logic, not direct filesystem access.
-func (r *nativeSyncRun) normalizePathKey(pathKey string) string {
+func (r *syncRun) normalizePathKey(pathKey string) string {
 	// 1. Ensures the map key is consistent across all OS types.
 	pathKey = filepath.ToSlash(pathKey)
 
@@ -318,13 +335,13 @@ func (r *nativeSyncRun) normalizePathKey(pathKey string) string {
 
 // denormalizePathKey converts the standardized (forward-slash) relative path key
 // back into native OS path.
-func (r *nativeSyncRun) denormalizePathKey(pathKey string) string {
+func (r *syncRun) denormalizePathKey(pathKey string) string {
 	return filepath.FromSlash(pathKey)
 }
 
 // normalizedRelPathParentKey calculates the relative path of the parent and normalizes it to a standardized key format
 // (forward slashes, lowercase if applicable). This key is for internal logic, not direct filesystem access.
-func (r *nativeSyncRun) normalizedParentRelPathKey(relPathKey string) string {
+func (r *syncRun) normalizedParentRelPathKey(relPathKey string) string {
 	parentRelPathKey := filepath.Dir(relPathKey)
 	// CRITICAL: Re-normalize the parent key. `filepath.Dir` can return a path with
 	// OS-specific separators (e.g., '\' on Windows), but our cache keys are
@@ -334,7 +351,7 @@ func (r *nativeSyncRun) normalizedParentRelPathKey(relPathKey string) string {
 
 // normalizedRelPathKey calculates the relative path and normalizes it to a standardized key format
 // (forward slashes, lowercase if applicable). This key is for internal logic, not direct filesystem access.
-func (r *nativeSyncRun) normalizedRelPathKey(base, absPath string) (string, error) {
+func (r *syncRun) normalizedRelPathKey(base, absPath string) (string, error) {
 	relPathKey, err := filepath.Rel(base, absPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to get relative path for %s: %w", absPath, err)
@@ -344,14 +361,14 @@ func (r *nativeSyncRun) normalizedRelPathKey(base, absPath string) (string, erro
 
 // denormalizedAbsPath converts the standardized (forward-slash) relative path key
 // back into the final, absolute, native OS path for filesystem access.
-func (r *nativeSyncRun) denormalizedAbsPath(base, relPathKey string) string {
+func (r *syncRun) denormalizedAbsPath(base, relPathKey string) string {
 	return filepath.Join(base, r.denormalizePathKey(relPathKey))
 }
 
 // isExcluded checks if a given relative path key matches any of the exclusion patterns,
 // using a tiered optimization strategy to avoid expensive glob matching when possible.
 // It assumes `relPathKey` has already been normalized.
-func (r *nativeSyncRun) isExcluded(relPathKey string, isDir bool) bool {
+func (r *syncRun) isExcluded(relPathKey string, isDir bool) bool {
 	var patterns exclusionSet
 
 	if isDir {
@@ -403,7 +420,7 @@ func (r *nativeSyncRun) isExcluded(relPathKey string, isDir bool) bool {
 
 // processFileSync checks if a file needs to be copied (based on size/time)
 // and triggers the copy operation if needed.
-func (r *nativeSyncRun) processFileSync(task *syncTask) error {
+func (r *syncRun) processFileSync(task *syncTask) error {
 	if r.dryRun {
 		plog.Info("[DRY RUN] COPY", "path", task.RelPathKey)
 		return nil
@@ -423,6 +440,7 @@ func (r *nativeSyncRun) processFileSync(task *syncTask) error {
 			// We skip the copy only if the modification times (within the configured window) and sizes are identical.
 			// We truncate the times to handle filesystems with different timestamp resolutions.
 			if r.truncateModTime(time.Unix(0, task.PathInfo.ModTime)).Equal(r.truncateModTime(trgInfo.ModTime())) && task.PathInfo.Size == trgInfo.Size() {
+				r.metrics.filesUpToDate.Add(1)
 				return nil // Not changed
 			}
 		} else {
@@ -444,12 +462,13 @@ func (r *nativeSyncRun) processFileSync(task *syncTask) error {
 	}
 
 	plog.Info("COPY", "path", task.RelPathKey)
+	r.metrics.filesCopied.Add(1)
 	return nil // File was actually copied/updated
 }
 
 // processDirectorySync handles the creation and permission setting for a directory in the destination.
 // It returns filepath.SkipDir if the directory cannot be created, signaling the walker to not descend.
-func (r *nativeSyncRun) processDirectorySync(task *syncTask) error {
+func (r *syncRun) processDirectorySync(task *syncTask) error {
 
 	if r.dryRun {
 		plog.Info("[DRY RUN] DIR", "path", task.RelPathKey)
@@ -485,16 +504,20 @@ func (r *nativeSyncRun) processDirectorySync(task *syncTask) error {
 		}
 	}
 
-	// 3. Update the cache for all other workers.
-	r.syncedDirCache.Store(task.RelPathKey)
+	// 3. Atomically update the cache and check if we were the first to do so.
+	// If LoadOrStore returns true, it means the key already existed, and we should not increment the metric.
+	if alreadyExisted := r.syncedDirCache.LoadOrStore(task.RelPathKey); alreadyExisted {
+		return nil
+	}
 
 	plog.Info("DIR", "path", task.RelPathKey)
-	return nil // Directory exists and permissions are set.
+	r.metrics.dirsCreated.Add(1)
+	return nil
 }
 
 // ensureParentDirectoryExists is called by file-processing workers to guarantee that the
 // parent directory for a file exists before the file copy is attempted.
-func (r *nativeSyncRun) ensureParentDirectoryExists(relPathKey string) error {
+func (r *syncRun) ensureParentDirectoryExists(relPathKey string) error {
 	// 1. FAST PATH: Check the cache first.
 	if r.syncedDirCache.Has(relPathKey) {
 		return nil // Already created.
@@ -524,13 +547,13 @@ func (r *nativeSyncRun) ensureParentDirectoryExists(relPathKey string) error {
 
 // syncWalker is a dedicated goroutine that walks the source directory tree,
 // sending each syncTask to the syncTasks channel for processing by workers.
-func (r *nativeSyncRun) syncWalker() {
+func (r *syncRun) syncWalker() {
 	defer close(r.syncTasksChan) // Close syncTasksChan to signal syncWorkers to stop when walk is complete
 
 	err := filepath.WalkDir(r.src, func(absSrcPath string, d os.DirEntry, err error) error {
 		if err != nil {
 			// If we can't access a path, log the error but keep walking
-			plog.Warn("Error accessing path, skipping", "path", absSrcPath, "error", err)
+			plog.Warn("SKIP", "reason", "error accessing path", "path", absSrcPath, "error", err)
 			if d != nil && d.IsDir() {
 				return filepath.SkipDir
 			}
@@ -550,11 +573,13 @@ func (r *nativeSyncRun) syncWalker() {
 
 		// Check for exclusions.
 		if r.isExcluded(relPathKey, d.IsDir()) {
-			plog.Info("SKIP", "reason", "excluded by pattern", "path", relPathKey)
+			plog.Info("EXCL", "reason", "excluded by pattern", "path", relPathKey)
 			if d.IsDir() {
-				return filepath.SkipDir // Don't descend into this directory.
+				r.metrics.dirsExcluded.Add(1) // Track excluded directory
+				return filepath.SkipDir       // Don't descend into this directory.
 			}
-			return nil // It's an excluded file, leave it alone.
+			r.metrics.filesExcluded.Add(1) // Track excluded file
+			return nil                     // It's an excluded file, do not process further.
 		}
 
 		// 3. Get Info for worker
@@ -562,8 +587,11 @@ func (r *nativeSyncRun) syncWalker() {
 		// Doing it here saves the worker from doing an Lstat.
 		info, err := d.Info()
 		if err != nil {
-			plog.Warn("Failed to get file info, skipping", "path", absSrcPath, "error", err)
-			return nil
+			plog.Warn("SKIP", "reason", "failed to get file info", "path", absSrcPath, "error", err)
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil // It was a file we couldn't get info for, just skip it.
 		}
 
 		// --- CRITICAL: Record the path unconditionally here ---
@@ -619,7 +647,7 @@ func (r *nativeSyncRun) syncWalker() {
 // worker could theoretically delete it before this worker copies a file into it.
 // This is prevented because the entire sync phase (all syncWorkers) completes before
 // the mirror phase (deletions) begins. This function relies on that sequential execution.
-func (r *nativeSyncRun) syncWorker() {
+func (r *syncRun) syncWorker() {
 	defer r.syncWg.Done()
 
 	for {
@@ -704,7 +732,8 @@ func (r *nativeSyncRun) syncWorker() {
 
 // handleSync coordinates the concurrent synchronization pipeline.
 // It uses a Producer-Consumer pattern.
-func (r *nativeSyncRun) handleSync() error {
+func (r *syncRun) handleSync() error {
+	plog.Info("SYN", "from", r.src, "to", r.trg)
 	// 1. Start syncWorkers (Consumers).
 	// They read from 'syncTasks' and store results in a concurrent map.
 	for i := 0; i < r.numSyncWorkers; i++ {
@@ -748,7 +777,7 @@ func (r *nativeSyncRun) handleSync() error {
 // mirrorWalker is the producer for the deletion phase. It walks the destination
 // directory and sends paths that need to be deleted to the mirrorTasksChan.
 // It returns a slice of directory paths to be deleted after all files are gone.
-func (r *nativeSyncRun) mirrorWalker() []string {
+func (r *syncRun) mirrorWalker() []string {
 	defer close(r.mirrorTasksChan)
 	var relPathKeyDirsToDelete []string
 	err := filepath.WalkDir(r.trg, func(absTrgPath string, d os.DirEntry, err error) error {
@@ -812,7 +841,7 @@ func (r *nativeSyncRun) mirrorWalker() []string {
 
 // mirrorWorker is the consumer for the deletion phase. It reads paths from
 // mirrorTasksChan and deletes them.
-func (r *nativeSyncRun) mirrorWorker() {
+func (r *syncRun) mirrorWorker() {
 	defer r.mirrorWg.Done()
 
 	for {
@@ -850,6 +879,8 @@ func (r *nativeSyncRun) mirrorWorker() {
 					}
 					// In normal mode, record the error and continue.
 					r.mirrorErrs.Store(task.RelPathKey, err)
+				} else {
+					r.metrics.filesDeleted.Add(1)
 				}
 			}()
 		}
@@ -858,9 +889,8 @@ func (r *nativeSyncRun) mirrorWorker() {
 
 // handleMirror performs a sequential walk on the destination to remove files
 // and directories that do not exist in the source. This is only active in mirror mode.
-func (r *nativeSyncRun) handleMirror() error {
-	plog.Info("Starting mirror phase (deletions)")
-
+func (r *syncRun) handleMirror() error {
+	plog.Info("MIR", "from", r.src, "to", r.trg)
 	// --- Phase 2A: Concurrent Deletion of Files ---
 	// Start mirror workers.
 	for i := 0; i < r.numMirrorWorkers; i++ {
@@ -893,15 +923,20 @@ func (r *nativeSyncRun) handleMirror() error {
 			continue
 		}
 		plog.Info("DELETE", "path", relPathKey)
+
 		// Use os.Remove first, as we expect the directory to be empty of files, which is faster.
-		if err := os.Remove(absPathToDelete); err != nil {
+		if err := os.Remove(absPathToDelete); err == nil {
+			r.metrics.dirsDeleted.Add(1)
+		} else {
+			// Attempt os.RemoveAll fallback
 			// This might happen if a file inside couldn't be deleted earlier due to permissions,
 			// leaving the directory non-empty. As a fallback, try a recursive removal.
-			plog.Warn("Initial directory removal failed, attempting forceful removal", "path", relPathKey, "error", err)
-			if err := os.RemoveAll(absPathToDelete); err != nil {
-				// If even RemoveAll fails, log a final warning. This indicates a more
+			if err := os.RemoveAll(absPathToDelete); err == nil {
+				r.metrics.dirsDeleted.Add(1)
+			} else {
+				// If even RemoveAll fails, log a warning. This indicates a more
 				// serious issue like permissions on the directory itself.
-				plog.Warn("Forceful directory removal also failed", "path", relPathKey, "error", err)
+				plog.Warn("Directory removal failed", "path", relPathKey, "error", err)
 			}
 		}
 	}
@@ -923,13 +958,29 @@ func (r *nativeSyncRun) handleMirror() error {
 	return nil
 }
 
+// logMetrics prints a summary of the sync operation.
+func (r *syncRun) logMetrics() {
+	plog.Info("SUM",
+		"filesCopied", r.metrics.filesCopied.Load(),
+		"filesUpToDate", r.metrics.filesUpToDate.Load(),
+		"filesDeleted", r.metrics.filesDeleted.Load(),
+		"filesExcluded", r.metrics.filesExcluded.Load(),
+		"dirsCreated", r.metrics.dirsCreated.Load(),
+		"dirsDeleted", r.metrics.dirsDeleted.Load(),
+		"dirsExcluded", r.metrics.dirsExcluded.Load(),
+	)
+}
+
 // execute coordinates the concurrent synchronization pipeline.
-func (r *nativeSyncRun) execute() error {
+func (r *syncRun) execute() error {
 	// The context passed in is now decorated with a cancel function that this
 	// run can use to signal a stop to all its goroutines.
 	// We defer the cancel to ensure resources are cleaned up on exit.
 	r.ctx, r.cancel = context.WithCancel(r.ctx)
-	defer r.cancel()
+	defer func() {
+		r.logMetrics()
+		r.cancel()
+	}()
 
 	// 1. Run the main synchronization of files and directories.
 	if err := r.handleSync(); err != nil {
@@ -951,11 +1002,9 @@ func (r *nativeSyncRun) execute() error {
 
 // handleNative initializes the sync run structure and kicks off the execution.
 func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror bool, excludeFiles, excludeDirs []string) error {
-	plog.Info("Starting native sync", "from", src, "to", trg)
-
 	isCaseInsensitive := isCaseInsensitiveFS()
 
-	run := &nativeSyncRun{
+	run := &syncRun{
 		src:              src,
 		trg:              trg,
 		mirror:           mirror,
