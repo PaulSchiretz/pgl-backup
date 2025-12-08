@@ -493,6 +493,7 @@ func (e *Engine) applyRetentionPolicy(ctx context.Context) error {
 		plog.Info("Retention policy is disabled. Skipping cleanup.")
 		return nil
 	}
+
 	plog.Info("Cleaning outdated backups")
 	plog.Debug("Applying retention policy", "directory", baseDir)
 	// --- 1. Get a sorted list of all valid, historical backups ---
