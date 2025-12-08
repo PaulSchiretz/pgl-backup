@@ -47,20 +47,31 @@ func (h *LevelDispatchHandler) WithGroup(name string) slog.Handler {
 var defaultLogger *slog.Logger
 var level = new(slog.LevelVar) // Use LevelVar for atomic, dynamic level changes.
 
+// Level is an alias for slog.Level to avoid exposing slog directly to consumers of this package.
+type Level slog.Level
+
+// Log level constants, mirroring slog's levels.
+const (
+	LevelDebug Level = Level(slog.LevelDebug)
+	LevelInfo  Level = Level(slog.LevelInfo)
+	LevelWarn  Level = Level(slog.LevelWarn)
+	LevelError Level = Level(slog.LevelError)
+)
+
 // LevelFromString parses a string and returns the corresponding slog.Level.
 // It defaults to slog.LevelInfo if the string is invalid.
-func LevelFromString(levelStr string) slog.Level {
+func LevelFromString(levelStr string) Level {
 	switch levelStr {
 	case "debug":
-		return slog.LevelDebug
+		return LevelDebug
 	case "info":
-		return slog.LevelInfo
+		return LevelInfo
 	case "warn":
-		return slog.LevelWarn
+		return LevelWarn
 	case "error":
-		return slog.LevelError
+		return LevelError
 	default:
-		return slog.LevelInfo
+		return LevelInfo
 	}
 }
 
@@ -79,8 +90,8 @@ func SetOutput(w io.Writer) {
 }
 
 // SetLevel sets the global log level for the application.
-func SetLevel(l slog.Level) {
-	level.Set(l)
+func SetLevel(l Level) {
+	level.Set(slog.Level(l))
 }
 
 // Default returns the default logger instance.

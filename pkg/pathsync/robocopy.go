@@ -54,7 +54,7 @@ func (s *PathSyncer) handleRobocopy(ctx context.Context, src, dst string, mirror
 	}
 
 	// If the log level is WARN or higher, suppress Robocopy's file/dir list.
-	if !plog.Default().Enabled(context.Background(), slog.LevelInfo) {
+	if !plog.Default().Enabled(context.Background(), slog.Level(plog.LevelInfo)) {
 		args = append(args, "/NFL") // No File List - don't log individual files.
 		args = append(args, "/NDL") // No Directory List - don't log individual directories.
 	}

@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -102,7 +101,7 @@ func TestHandleRobocopy_Integration(t *testing.T) {
 
 		// Create the syncer
 		cfg := config.NewDefault()
-		plog.SetLevel(slog.LevelWarn) // Keep test logs clean
+		plog.SetLevel(plog.LevelWarn) // Keep test logs clean
 		syncer := NewPathSyncer(cfg)
 
 		// Act
