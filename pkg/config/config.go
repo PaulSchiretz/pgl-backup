@@ -178,7 +178,7 @@ type Config struct {
 	Quiet            bool                        `json:"quiet"`
 	DryRun           bool                        `json:"dryRun"`
 	FailFast         bool                        `json:"failFast"`
-	EnableMetrics    bool                        `json:"enableMetrics"`
+	Metrics          bool                        `json:"metrics,omitempty"`
 	Naming           BackupNamingConfig          `json:"naming"`
 	Paths            BackupPathConfig            `json:"paths"`
 	RetentionPolicy  BackupRetentionPolicyConfig `json:"retentionPolicy"`
@@ -196,7 +196,7 @@ func NewDefault() Config {
 		Quiet:            false,
 		DryRun:           false,
 		FailFast:         false,
-		EnableMetrics:    false, // Default to disabled for cleaner logs.
+		Metrics:          true, // Default to enabled for detailed performance and file-counting metrics.
 		Engine: BackupEngineConfig{
 			Type:                             NativeEngine,
 			RetryCount:                       3, // Default retries on failure.
@@ -374,7 +374,7 @@ func (c *Config) LogSummary() {
 		"dry_run", c.DryRun,
 		"sync_workers", c.Engine.Performance.SyncWorkers,
 		"mirror_workers", c.Engine.Performance.MirrorWorkers,
-		"metrics_enabled", c.EnableMetrics,
+		"metrics", c.Metrics,
 		"delete_workers", c.Engine.Performance.DeleteWorkers,
 		"copy_buffer_kb", c.Engine.Performance.CopyBufferSizeKB,
 	}
@@ -464,7 +464,7 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 		case "fail-fast":
 			merged.FailFast = value.(bool)
 		case "metrics":
-			merged.EnableMetrics = value.(bool)
+			merged.Metrics = value.(bool)
 		case "dry-run":
 			merged.DryRun = value.(bool)
 		case "sync-engine":
