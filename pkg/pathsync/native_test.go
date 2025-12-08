@@ -169,27 +169,6 @@ func (r *nativeSyncTestRunner) setup() {
 	}
 }
 
-func (r *nativeSyncTestRunner) run() error {
-	cfg := config.NewDefault()
-	cfg.DryRun = r.dryRun
-	cfg.FailFast = r.failFast
-	cfg.Engine.Performance.SyncWorkers = 2
-	cfg.Engine.Performance.CopyBufferSizeKB = 4
-	cfg.Engine.RetryCount = 0 // Disable retries for tests to get immediate failures.
-	syncer := NewPathSyncer(cfg)
-	modTimeWindowSeconds := 1
-	if r.modTimeWin != nil {
-		modTimeWindowSeconds = *r.modTimeWin
-	}
-	syncer.engine.NativeEngineModTimeWindowSeconds = modTimeWindowSeconds
-
-	// We call the public Sync method to ensure the full logic path is tested,
-	// including the creation of the syncRun instance.
-	err := syncer.Sync(context.Background(), r.srcDir, r.dstDir, r.mirror, r.excludeFiles, r.excludeDirs, r.enableMetrics)
-
-	return err
-}
-
 type expectedMetrics struct {
 	copied       int64
 	deleted      int64 // filesDeleted
