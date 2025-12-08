@@ -51,9 +51,16 @@ var quietMode atomic.Bool // Use an atomic bool for safe concurrent reads.
 // SetOutput allows redirecting the logger's output, primarily for testing.
 func SetOutput(w io.Writer) {
 	// When redirecting output for tests, ensure quiet mode is off
-	// so that all levels are written to the provided writer.
+	// so that all levels can be written to the provided writer.
 	quietMode.Store(false)
-	defaultLogger = slog.New(slog.NewTextHandler(w, nil))
+
+	// Recreate the dual-handler setup, but point both to the test writer.
+	// This ensures the test captures all output (stdout/stderr) and respects all log levels.
+	testHandler := slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelDebug})
+	defaultLogger = slog.New(&LevelDispatchHandler{
+		stdoutHandler: testHandler,
+		stderrHandler: testHandler,
+	})
 }
 
 // SetQuiet enables or disables quiet mode for the global logger.
@@ -70,7 +77,7 @@ func IsQuiet() bool {
 func init() {
 	// Handler for info-level logs (and below) to stdout
 	stdoutHandler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level: slog.LevelDebug,
 	})
 
 	// Handler for warning/error-level logs to stderr
@@ -90,6 +97,14 @@ func Info(msg string, args ...any) {
 		return
 	}
 	defaultLogger.Info(msg, args...)
+}
+
+// Debug logs a debug message. It is suppressed when quiet mode is active.
+func Debug(msg string, args ...any) {
+	if quietMode.Load() {
+		return
+	}
+	defaultLogger.Debug(msg, args...)
 }
 
 // Warn logs a warning message.
