@@ -132,11 +132,11 @@ foreach ($platform in $platforms) {
     Push-Location $ReleaseDir
     $archiveName = "${BinaryName}_${Version}_${GOOS}_${GOARCH}"
     if ($GOOS -eq "windows") {
-        Compress-Archive -Path $outputName -DestinationPath "$archiveName.zip" -Force
+        Compress-Archive -Path $outputName, "..\LICENSE" -DestinationPath "$archiveName.zip" -Force
     }
     else {
         # Modern Windows includes tar.exe
-        tar -czf "$archiveName.tar.gz" $outputName
+        tar -czf "$archiveName.tar.gz" $outputName "../LICENSE"
     }
     Remove-Item $outputName # Clean up the raw binary after archiving
     Pop-Location

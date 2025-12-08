@@ -98,9 +98,9 @@ for platform in "${PLATFORMS[@]}"; do
   # Create an archive for the binary
   pushd "$RELEASE_DIR" > /dev/null
   if [ "$GOOS" = "windows" ]; then
-    zip "${BINARY_NAME}_${VERSION}_${GOOS}_${GOARCH}.zip" "$OUTPUT_NAME"
+    zip "${BINARY_NAME}_${VERSION}_${GOOS}_${GOARCH}.zip" "$OUTPUT_NAME" "../LICENSE"
   else
-    tar -czf "${BINARY_NAME}_${VERSION}_${GOOS}_${GOARCH}.tar.gz" "$OUTPUT_NAME"
+    tar -czf "${BINARY_NAME}_${VERSION}_${GOOS}_${GOARCH}.tar.gz" "$OUTPUT_NAME" "../LICENSE"
   fi
   rm "$OUTPUT_NAME" # Clean up the raw binary after archiving
   popd > /dev/null
