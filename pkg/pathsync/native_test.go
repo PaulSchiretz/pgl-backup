@@ -135,9 +135,8 @@ type nativeSyncTestRunner struct {
 	dstDirs       []testDir
 	modTimeWin    *int
 	// Internal state
-	srcDir      string
-	dstDir      string
-	runInstance *syncRun
+	srcDir string
+	dstDir string
 }
 
 func (r *nativeSyncTestRunner) setup() {
