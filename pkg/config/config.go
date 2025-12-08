@@ -174,8 +174,8 @@ type BackupEnginePerformanceConfig struct {
 type Config struct {
 	Mode             BackupMode                  `json:"mode"`
 	RolloverInterval time.Duration               `json:"rolloverInterval"`
-	Engine           BackupEngineConfig          `json:"engine"`
-	Quiet            bool                        `json:"quiet"`
+	Engine           BackupEngineConfig          `json:"engine"` // Keep this for engine-specific settings
+	LogLevel         string                      `json:"logLevel"`
 	DryRun           bool                        `json:"dryRun"`
 	FailFast         bool                        `json:"failFast"`
 	Metrics          bool                        `json:"metrics,omitempty"`
@@ -193,7 +193,7 @@ func NewDefault() Config {
 	return Config{
 		Mode:             IncrementalMode, // Default mode
 		RolloverInterval: 24 * time.Hour,  // Default rollover interval is daily.
-		Quiet:            false,
+		LogLevel:         "info",          // Default log level.
 		DryRun:           false,
 		FailFast:         false,
 		Metrics:          true, // Default to enabled for detailed performance and file-counting metrics.
@@ -368,6 +368,7 @@ func (c *Config) Validate() error {
 func (c *Config) LogSummary() {
 	logArgs := []interface{}{
 		"mode", c.Mode,
+		"log_level", c.LogLevel,
 		"source", c.Paths.Source,
 		"target", c.Paths.TargetBase,
 		"sync_engine", c.Engine.Type,
@@ -459,8 +460,8 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 			merged.Paths.TargetBase = value.(string)
 		case "mode":
 			merged.Mode = value.(BackupMode)
-		case "quiet":
-			merged.Quiet = value.(bool)
+		case "log-level":
+			merged.LogLevel = value.(string)
 		case "fail-fast":
 			merged.FailFast = value.(bool)
 		case "metrics":

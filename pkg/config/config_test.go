@@ -111,23 +111,23 @@ func TestConfig_Validate(t *testing.T) {
 
 func TestMergeConfigWithFlags(t *testing.T) {
 	t.Run("Flag overrides base config", func(t *testing.T) {
-		base := NewDefault() // base.Quiet is false
-		setFlags := map[string]interface{}{"quiet": true}
+		base := NewDefault() // base.LogLevel is "info"
+		setFlags := map[string]interface{}{"log-level": "debug"}
 
 		merged := MergeConfigWithFlags(base, setFlags)
-		if !merged.Quiet {
-			t.Error("expected flag 'quiet=true' to override base 'false'")
+		if merged.LogLevel != "debug" {
+			t.Error("expected flag 'log-level=debug' to override base 'info'")
 		}
 	})
 
 	t.Run("Base config is used when flag is not set", func(t *testing.T) {
 		base := NewDefault()
-		base.Quiet = true // Set a non-default base value
+		base.LogLevel = "warn" // Set a non-default base value
 		setFlags := map[string]interface{}{}
 
 		merged := MergeConfigWithFlags(base, setFlags)
-		if !merged.Quiet {
-			t.Error("expected base 'quiet=true' to be used when flag is not set")
+		if merged.LogLevel != "warn" {
+			t.Error("expected base 'log-level=warn' to be used when flag is not set")
 		}
 	})
 
@@ -198,8 +198,8 @@ func TestGenerate(t *testing.T) {
 	t.Run("Generates file with custom values", func(t *testing.T) {
 		targetDir := t.TempDir()
 		customCfg := NewDefault()
-		customCfg.Paths.Source = "/my/custom/source"
-		customCfg.Quiet = true
+		customCfg.Paths.Source = "/my/custom/source" // A non-default value
+		customCfg.LogLevel = "debug"                 // A non-default value
 		// Set the targetBase in the config to match the directory it's being generated in.
 		// This is required for the Load function's validation to pass.
 		customCfg.Paths.TargetBase = targetDir
@@ -215,8 +215,8 @@ func TestGenerate(t *testing.T) {
 			t.Fatalf("Failed to load generated config for verification: %v", err)
 		}
 
-		if loadedCfg.Paths.Source != "/my/custom/source" || !loadedCfg.Quiet {
-			t.Errorf("Generated config did not contain the custom values. Got source=%s, quiet=%v", loadedCfg.Paths.Source, loadedCfg.Quiet)
+		if loadedCfg.Paths.Source != "/my/custom/source" || loadedCfg.LogLevel != "debug" {
+			t.Errorf("Generated config did not contain the custom values. Got source=%s, logLevel=%s", loadedCfg.Paths.Source, loadedCfg.LogLevel)
 		}
 	})
 }

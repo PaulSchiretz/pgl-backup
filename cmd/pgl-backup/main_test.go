@@ -146,6 +146,23 @@ func TestParseFlagConfig(t *testing.T) {
 		})
 	})
 
+	t.Run("Set Log Level Flag", func(t *testing.T) {
+		args := []string{"-log-level=debug"}
+		runTestWithFlags(t, args, func() {
+			_, setFlags, err := parseFlagConfig()
+			if err != nil {
+				t.Fatalf("expected no error, but got: %v", err)
+			}
+			val, ok := setFlags["log-level"]
+			if !ok {
+				t.Fatal("expected 'log-level' flag to be in setFlags map")
+			}
+			if strVal, typeOK := val.(string); !typeOK || strVal != "debug" {
+				t.Errorf("expected log-level to be 'debug', but got %v (type %T)", val, val)
+			}
+		})
+	})
+
 	t.Run("Set Metrics Flag", func(t *testing.T) {
 		args := []string{"-metrics"}
 		runTestWithFlags(t, args, func() {

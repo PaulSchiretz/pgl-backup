@@ -6,12 +6,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
+	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
 
 // createExitError is a helper to generate an exec.ExitError with a specific exit code.
@@ -100,7 +102,7 @@ func TestHandleRobocopy_Integration(t *testing.T) {
 
 		// Create the syncer
 		cfg := config.NewDefault()
-		cfg.Quiet = true // Keep test logs clean
+		plog.SetLevel(slog.LevelWarn) // Keep test logs clean
 		syncer := NewPathSyncer(cfg)
 
 		// Act

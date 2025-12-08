@@ -5,7 +5,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"sync/atomic"
 )
 
 // LevelDispatchHandler is a slog.Handler that writes log records to different
@@ -46,38 +45,54 @@ func (h *LevelDispatchHandler) WithGroup(name string) slog.Handler {
 }
 
 var defaultLogger *slog.Logger
-var quietMode atomic.Bool // Use an atomic bool for safe concurrent reads.
+var level = new(slog.LevelVar) // Use LevelVar for atomic, dynamic level changes.
+
+// LevelFromString parses a string and returns the corresponding slog.Level.
+// It defaults to slog.LevelInfo if the string is invalid.
+func LevelFromString(levelStr string) slog.Level {
+	switch levelStr {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
 
 // SetOutput allows redirecting the logger's output, primarily for testing.
 func SetOutput(w io.Writer) {
-	// When redirecting output for tests, ensure quiet mode is off
-	// so that all levels can be written to the provided writer.
-	quietMode.Store(false)
-
 	// Recreate the dual-handler setup, but point both to the test writer.
 	// This ensures the test captures all output (stdout/stderr) and respects all log levels.
-	testHandler := slog.NewTextHandler(w, &slog.HandlerOptions{Level: slog.LevelDebug})
+	// Crucially, we use the global 'level' variable here so that tests can change it.
+	testHandler := slog.NewTextHandler(w, &slog.HandlerOptions{Level: level})
+	// Default to Debug level for tests to capture all potential output unless overridden.
+	level.Set(slog.LevelDebug)
 	defaultLogger = slog.New(&LevelDispatchHandler{
 		stdoutHandler: testHandler,
 		stderrHandler: testHandler,
 	})
 }
 
-// SetQuiet enables or disables quiet mode for the global logger.
-// In quiet mode, INFO level logs are suppressed.
-func SetQuiet(quiet bool) {
-	quietMode.Store(quiet)
+// SetLevel sets the global log level for the application.
+func SetLevel(l slog.Level) {
+	level.Set(l)
 }
 
-// IsQuiet returns true if the global logger is in quiet mode.
-func IsQuiet() bool {
-	return quietMode.Load()
+// Default returns the default logger instance.
+func Default() *slog.Logger {
+	return defaultLogger
 }
 
 func init() {
+	level.Set(slog.LevelInfo) // Default log level.
 	// Handler for info-level logs (and below) to stdout
 	stdoutHandler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		Level: level,
 	})
 
 	// Handler for warning/error-level logs to stderr
@@ -93,17 +108,11 @@ func init() {
 
 // Info logs an informational message.
 func Info(msg string, args ...any) {
-	if quietMode.Load() {
-		return
-	}
 	defaultLogger.Info(msg, args...)
 }
 
 // Debug logs a debug message. It is suppressed when quiet mode is active.
 func Debug(msg string, args ...any) {
-	if quietMode.Load() {
-		return
-	}
 	defaultLogger.Debug(msg, args...)
 }
 

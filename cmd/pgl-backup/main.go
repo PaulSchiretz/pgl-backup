@@ -46,7 +46,7 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	srcFlag := flag.String("source", "", "Source directory to copy from")
 	targetFlag := flag.String("target", "", "Base destination directory for backups")
 	modeFlag := flag.String("mode", "", "Backup mode: 'incremental' or 'snapshot'.")
-	quietFlag := flag.Bool("quiet", false, "Suppress individual file operation logs.")
+	logLevelFlag := flag.String("log-level", "info", "Set the logging level: 'debug', 'info', 'warn', 'error'.")
 	failFastFlag := flag.Bool("fail-fast", false, "Stop the backup immediately on the first file sync error.")
 	dryRunFlag := flag.Bool("dry-run", false, "Show what would be done without making any changes.")
 	metricsFlag := flag.Bool("metrics", false, "Enable detailed performance and file-counting metrics.")
@@ -102,8 +102,8 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 			flagMap[name] = *srcFlag
 		case "target":
 			flagMap[name] = *targetFlag
-		case "quiet":
-			flagMap[name] = *quietFlag
+		case "log-level":
+			flagMap[name] = *logLevelFlag
 		case "fail-fast":
 			flagMap[name] = *failFastFlag
 		case "dry-run":
@@ -192,8 +192,8 @@ func run(ctx context.Context) error {
 		// Merge the flag values over the loaded config to get the final run config.
 		runConfig := config.MergeConfigWithFlags(loadedConfig, flagMap)
 
-		// Set the global logger's quiet mode based on the final configuration.
-		plog.SetQuiet(runConfig.Quiet)
+		// Set the global log level based on the final configuration.
+		plog.SetLevel(plog.LevelFromString(runConfig.LogLevel))
 
 		runConfig.LogSummary()
 
@@ -201,9 +201,6 @@ func run(ctx context.Context) error {
 		backupEngine := engine.New(runConfig, version)
 		err = backupEngine.ExecuteBackup(ctx)
 		duration := time.Since(startTime).Round(time.Millisecond)
-
-		// Reset the global logger's quiet mode
-		plog.SetQuiet(false)
 
 		if err != nil {
 			plog.Info("Backup process finished with an error.", "duration", duration)

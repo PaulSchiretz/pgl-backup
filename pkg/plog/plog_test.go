@@ -2,6 +2,7 @@ package plog
 
 import (
 	"bytes"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -15,7 +16,7 @@ func TestPlogLevels(t *testing.T) {
 
 	t.Run("Logs Debug and Info when not quiet", func(t *testing.T) {
 		logBuf.Reset()
-		SetQuiet(false)
+		SetLevel(slog.LevelDebug)
 
 		Debug("debug message", "key", "val1")
 		Info("info message", "key", "val2")
@@ -36,15 +37,15 @@ func TestPlogLevels(t *testing.T) {
 
 	t.Run("Suppresses Debug and Info when quiet", func(t *testing.T) {
 		logBuf.Reset()
-		SetQuiet(true)
+		SetLevel(slog.LevelWarn) // Set level to Warn, which should suppress Debug and Info
 
 		Debug("debug message")
 		Info("info message")
 
 		output := logBuf.String()
 
-		if output != "" {
-			t.Errorf("expected no output in quiet mode, but got: %s", output)
+		if strings.Contains(output, "level=DEBUG") || strings.Contains(output, "level=INFO") {
+			t.Errorf("expected no debug or info output at warn level, but got: %s", output)
 		}
 	})
 }

@@ -4,6 +4,7 @@ package pathsync
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strconv"
@@ -52,7 +53,8 @@ func (s *PathSyncer) handleRobocopy(ctx context.Context, src, dst string, mirror
 		args = append(args, "/NJS")
 	}
 
-	if plog.IsQuiet() {
+	// If the log level is WARN or higher, suppress Robocopy's file/dir list.
+	if !plog.Default().Enabled(context.Background(), slog.LevelInfo) {
 		args = append(args, "/NFL") // No File List - don't log individual files.
 		args = append(args, "/NDL") // No Directory List - don't log individual directories.
 	}
