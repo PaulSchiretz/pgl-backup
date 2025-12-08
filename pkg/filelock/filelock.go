@@ -121,7 +121,7 @@ func Acquire(ctx context.Context, lockFilePath string, appID string) (*Lock, err
 		lock, takeoverErr := attemptStaleLockTakeover(lockFilePath, appID)
 		if takeoverErr != nil {
 			if errors.Is(takeoverErr, ErrLostRace) {
-				plog.Info("Lock takeover race lost, retrying acquisition")
+				plog.Debug("Lock takeover race lost, retrying acquisition")
 			} else {
 				plog.Warn("Failed to attempt lock takeover, retrying", "error", takeoverErr)
 			}
@@ -242,7 +242,7 @@ func attemptStaleLockTakeover(lockFilePath, appID string) (*Lock, error) {
 	}
 
 	if readbackContent.PID == myPID && readbackContent.Nonce == nonce {
-		plog.Info("Successfully took over stale lock")
+		plog.Debug("Successfully took over stale lock")
 		l := newLock(lockFilePath, takeoverContent)
 		return l, nil
 	}
@@ -256,7 +256,7 @@ func (l *Lock) cleanup() {
 			plog.Warn("Failed to remove lock file", "path", l.path, "error", err)
 		}
 	} else {
-		plog.Info("Lock released", "path", l.path)
+		plog.Debug("Lock released", "path", l.path)
 	}
 }
 
@@ -354,7 +354,7 @@ func cleanupTempLockFiles(lockFilePath string) {
 		}
 
 		if info.ModTime().Before(threshold) {
-			plog.Info("Removing old temporary lock file", "path", match, "age", time.Since(info.ModTime()))
+			plog.Debug("Removing old temporary lock file", "path", match, "age", time.Since(info.ModTime()))
 			if err := os.Remove(match); err != nil && !os.IsNotExist(err) {
 				plog.Warn("Failed to remove leftover temporary lock file", "path", match, "error", err)
 			}

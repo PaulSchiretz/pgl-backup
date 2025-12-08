@@ -395,7 +395,7 @@ func (c *Config) LogSummary() {
 		logArgs = append(logArgs, "post_backup_hooks", strings.Join(c.Hooks.PostBackup, "; "))
 	}
 
-	plog.Info("Backup run configuration loaded", logArgs...)
+	plog.Info("Backup configuration loaded", logArgs...)
 }
 
 // expandPath expands the tilde (~) prefix in a path to the user's home directory.

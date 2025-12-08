@@ -493,7 +493,7 @@ func (e *Engine) applyRetentionPolicy(ctx context.Context) error {
 		plog.Info("Retention policy is disabled. Skipping cleanup.")
 		return nil
 	}
-	plog.Info("Cleaning up outdated backups")
+	plog.Info("Cleaning outdated backups")
 	plog.Debug("Applying retention policy", "directory", baseDir)
 	// --- 1. Get a sorted list of all valid, historical backups ---
 	allBackups, err := e.fetchSortedBackups(ctx, baseDir, currentDirName)
@@ -514,7 +514,7 @@ func (e *Engine) applyRetentionPolicy(ctx context.Context) error {
 	}
 
 	if len(dirsToDelete) == 0 && !e.config.DryRun {
-		plog.Info("No outdated backups to delete.")
+		plog.Debug("No outdated backups to delete.")
 		return nil
 	}
 
@@ -540,7 +540,7 @@ func (e *Engine) applyRetentionPolicy(ctx context.Context) error {
 				default:
 				}
 
-				plog.Info("Deleting redundant or old backup", "path", dirToDelete, "worker", workerID)
+				plog.Debug("Deleting outdated backup", "path", dirToDelete, "worker", workerID)
 				if e.config.DryRun {
 					plog.Info("[DRY RUN] Would delete directory", "path", dirToDelete)
 					continue
