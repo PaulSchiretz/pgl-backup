@@ -1,0 +1,135 @@
+#!/bin/bash
+
+# exit immediately if a command exits with a non-zero status.
+set -e
+
+# --- Configuration ---
+# The path to your main package
+MAIN_PACKAGE_PATH="pixelgardenlabs.io/pgl-backup/cmd/pgl-backup"
+# The name of your application binary
+BINARY_NAME="pgl-backup"
+# The directory to output release artifacts
+RELEASE_DIR="release"
+
+# --- Helper Functions ---
+function print_usage() {
+  echo "Usage: ./release.sh <version>"
+  echo "Example: ./release.sh v1.0.0"
+  exit 1
+}
+
+function print_header() {
+  echo "---"
+  echo "🚀 $1"
+  echo "---"
+}
+
+# --- Script Start ---
+
+# 1. Validate arguments
+VERSION=$1
+if [ -z "$VERSION" ]; then
+  echo "Error: Version argument is required."
+  print_usage
+fi
+
+# Regex to validate semantic versioning with a 'v' prefix (e.g., v1.2.3)
+if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Error: Invalid version format. Expected format: vX.Y.Z"
+  print_usage
+fi
+
+print_header "Starting release process for pgl-backup version $VERSION"
+
+# 2. Pre-flight checks
+print_header "Running pre-flight checks"
+
+# Check for uncommitted changes
+if ! git diff-index --quiet HEAD --; then
+  echo "Error: You have uncommitted changes. Please commit or stash them before releasing."
+  exit 1
+fi
+
+# Check if on main/master branch
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [[ "$CURRENT_BRANCH" != "main" && "$CURRENT_BRANCH" != "master" ]]; then
+  echo "Warning: You are not on the 'main' or 'master' branch. Current branch is '$CURRENT_BRANCH'."
+  read -p "Continue anyway? (y/N): " -n 1 -r
+  echo
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "Release cancelled."
+    exit 1
+  fi
+fi
+
+echo "✅ Pre-flight checks passed."
+
+# 3. Clean and prepare release directory
+print_header "Preparing release directory"
+rm -rf "$RELEASE_DIR"
+mkdir -p "$RELEASE_DIR"
+echo "✅ Cleaned and created '$RELEASE_DIR' directory."
+
+# 4. Cross-compile for target platforms
+print_header "Cross-compiling binaries"
+
+# Define target platforms: GOOS/GOARCH
+PLATFORMS=("windows/amd64" "linux/amd64" "linux/arm64" "darwin/amd64" "darwin/arm64")
+
+# The ldflags variable for injecting the version
+LDFLAGS="-s -w -X main.version=$VERSION"
+
+for platform in "${PLATFORMS[@]}"; do
+  # Split the platform string into OS and architecture
+  GOOS=${platform%/*}
+  GOARCH=${platform#*/}
+  
+  # Set the output binary name, adding .exe for Windows
+  OUTPUT_NAME="$BINARY_NAME"
+  if [ "$GOOS" = "windows" ]; then
+    OUTPUT_NAME+=".exe"
+  fi
+
+  echo "Building for $GOOS/$GOARCH..."
+  
+  # Execute the build command
+  env GOOS=$GOOS GOARCH=$GOARCH go build -ldflags="$LDFLAGS" -o "$RELEASE_DIR/$OUTPUT_NAME" "$MAIN_PACKAGE_PATH"
+
+  # Create an archive for the binary
+  pushd "$RELEASE_DIR" > /dev/null
+  if [ "$GOOS" = "windows" ]; then
+    zip "${BINARY_NAME}_${VERSION}_${GOOS}_${GOARCH}.zip" "$OUTPUT_NAME"
+  else
+    tar -czf "${BINARY_NAME}_${VERSION}_${GOOS}_${GOARCH}.tar.gz" "$OUTPUT_NAME"
+  fi
+  rm "$OUTPUT_NAME" # Clean up the raw binary after archiving
+  popd > /dev/null
+done
+
+echo "✅ All platforms built and archived successfully."
+
+# 5. Generate Checksums
+print_header "Generating checksums"
+pushd "$RELEASE_DIR" > /dev/null
+
+# Use the appropriate command for the OS (sha256sum on Linux, shasum on macOS)
+if command -v sha256sum &> /dev/null; then
+    # The output format `checksum  filename` is standard and verifiable.
+    sha256sum *.zip *.tar.gz > "checksums.txt"
+elif command -v shasum &> /dev/null; then
+    shasum -a 256 *.zip *.tar.gz > "checksums.txt"
+else
+    echo "⚠️ Warning: Could not find sha256sum or shasum. Checksum file will not be generated."
+fi
+
+echo "✅ Checksums generated in '$RELEASE_DIR/checksums.txt'."
+popd > /dev/null
+
+# 6. Create and push git tag
+print_header "Tagging release in git"
+echo "Creating git tag '$VERSION'..."
+git tag "$VERSION"
+echo "Pushing tag to remote..."
+git push origin "$VERSION"
+echo "✅ Git tag '$VERSION' created and pushed."
+print_header "Release $VERSION is complete! Artifacts are in the '$RELEASE_DIR' directory."
