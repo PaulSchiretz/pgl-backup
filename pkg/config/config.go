@@ -206,7 +206,7 @@ func NewDefault() Config {
 				SyncWorkers:      runtime.NumCPU(), // Default to the number of CPU cores for file copies.
 				MirrorWorkers:    runtime.NumCPU(), // Default to the number of CPU cores for file deletions.
 				DeleteWorkers:    4,                // A sensible default for deleting entire backup sets.
-				CopyBufferSizeKB: 4096,             // Default to 4MB buffer. Keep it between 1-8MB
+				CopyBufferSizeKB: 256,              // Default to 256KB buffer. Keep it between 64KB-4MB
 			}},
 		Naming: BackupNamingConfig{
 			Prefix:                "PGL_Backup_",
