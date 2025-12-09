@@ -14,8 +14,8 @@
 *   **Pre- and Post-Backup Hooks**: Execute custom shell commands before the sync begins or after it completes, perfect for tasks like dumping a database or sending a notification.
 *   **Adjustable Configuration**: Configure backups using a simple `pgl-backup.conf` JSON file, and override any setting with command-line flags for one-off tasks.
 *   **Multiple Sync Engines**:
-    *   **`native`**: A high-performance, concurrent, cross-platform engine written in pure Go.
-    *   **`robocopy`** (Windows only): Uses the battle-tested `robocopy.exe` utility for maximum performance on Windows.
+    *   **`native`**: The default engine. It is a high-performance, concurrent, cross-platform engine written in pure Go that generally offers the best performance with no external dependencies.
+    *   **`robocopy`** (Windows only): An alternative engine that uses the battle-tested `robocopy.exe` utility. While reliable, the `native` engine is often faster due to its modern design.
 *   **Safety First**:
     *   **Pre-flight Checks**: Validates source and target paths, permissions, and configuration *before* starting any file operations to fail fast and provide clear errors.
     *   **Dry Run Mode**: The `-dry-run` flag lets you see exactly what files would be copied, updated, or deleted without making any actual changes.
@@ -71,7 +71,7 @@ Open the newly created `pgl-backup.conf` file. It will look something like this,
     "retryWaitSeconds": 5,
     "performance": {
       "mirrorWorkers": 8,
-      "copyBufferSizeKB": 4096,
+      "copyBufferSizeKB": 256,
       "syncWorkers": 8,
       "deleteWorkers": 4
     }
@@ -182,7 +182,7 @@ All command-line flags can be set in the `pgl-backup.conf` file.
 | `delete-workers` / `engine.performance.deleteWorkers` | `int` | `4` | Number of concurrent workers for deleting outdated backups. |
 | `retry-count` / `engine.retryCount` | `int` | `3` | Number of retries for failed file copies. |
 | `retry-wait` / `engine.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries. |
-| `copy-buffer-kb` / `engine.performance.copyBufferSizeKB` | `int` | `4096` | Size of the I/O buffer in kilobytes for file copies. |
+| `copy-buffer-kb` / `engine.performance.copyBufferSizeKB` | `int` | `256` | Size of the I/O buffer in kilobytes for file copies. |
 
 ## Troubleshooting
 

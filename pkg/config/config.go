@@ -188,8 +188,9 @@ type Config struct {
 // NewDefault creates and returns a Config struct with sensible default
 // values. It dynamically sets the sync engine based on the operating system.
 func NewDefault() Config {
-	// Default to the native engine on all platforms for consistency and no external dependencies.
-	// Power users on Windows can still opt-in to 'robocopy' for potential performance gains.
+	// Default to the native engine on all platforms. It's highly concurrent and generally offers
+	// the best performance and consistency with no external dependencies.
+	// Power users on Windows can still opt-in to 'robocopy' as a battle-tested alternative.
 	return Config{
 		Mode:             IncrementalMode, // Default mode
 		RolloverInterval: 24 * time.Hour,  // Default rollover interval is daily.
