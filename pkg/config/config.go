@@ -410,12 +410,15 @@ func (c *Config) Validate() error {
 	if c.Engine.RetryWaitSeconds < 0 {
 		return fmt.Errorf("retryWaitSeconds cannot be negative")
 	}
+	if c.Engine.ModTimeWindowSeconds < 0 {
+		return fmt.Errorf("modTimeWindowSeconds cannot be negative")
+	}
 	if c.Engine.Performance.CopyBufferSizeKB <= 0 {
 		return fmt.Errorf("copyBufferSizeKB must be greater than 0")
 	}
 	if c.Mode == IncrementalMode {
 		if c.RolloverPolicy.Mode == ManualInterval && c.RolloverPolicy.Interval < 0 {
-			return fmt.Errorf("rolloverPolicy.interval cannot be negative when mode is 'manual'. Use '0' to disable rollover.")
+			return fmt.Errorf("rolloverPolicy.interval cannot be negative when mode is 'manual'. Use '0' to disable rollover")
 		}
 	}
 
