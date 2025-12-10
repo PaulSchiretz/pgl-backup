@@ -678,7 +678,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			cfg.FailFast = tc.failFast
 			cfg.Engine.Type = config.NativeEngine
 			if tc.modTimeWindow != nil {
-				cfg.Engine.NativeEngineModTimeWindowSeconds = *tc.modTimeWindow
+				cfg.Engine.ModTimeWindowSeconds = *tc.modTimeWindow
 			}
 			syncer := NewPathSyncer(cfg)
 			err := syncer.Sync(context.Background(), runner.srcDir, runner.dstDir, tc.mirror, tc.excludeFiles, tc.excludeDirs, tc.enableMetrics)

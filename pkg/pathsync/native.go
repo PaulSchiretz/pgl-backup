@@ -999,7 +999,7 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror b
 		numMirrorWorkers: s.engine.Performance.MirrorWorkers,
 		retryCount:       s.engine.RetryCount,
 		retryWait:        time.Duration(s.engine.RetryWaitSeconds) * time.Second,
-		modTimeWindow:    time.Duration(s.engine.NativeEngineModTimeWindowSeconds) * time.Second,
+		modTimeWindow:    time.Duration(s.engine.ModTimeWindowSeconds) * time.Second,
 		ioBufferPool: &sync.Pool{
 			New: func() interface{} {
 				// Buffer size is configured in KB, so multiply by 1024.

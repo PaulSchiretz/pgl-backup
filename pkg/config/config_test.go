@@ -94,9 +94,25 @@ func TestConfig_Validate(t *testing.T) {
 	t.Run("Invalid RolloverInterval", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Mode = IncrementalMode
-		cfg.RolloverInterval = 0
+
+		// Test negative interval in manual mode (should error)
+		cfg.RolloverPolicy.Mode = ManualInterval
+		cfg.RolloverPolicy.Interval = -1 * time.Hour
 		if err := cfg.Validate(); err == nil {
-			t.Error("expected error for zero rollover interval in incremental mode, but got nil")
+			t.Error("expected error for negative rollover interval in manual mode, but got nil")
+		}
+
+		// Test zero interval in manual mode (should NOT error, as it disables rollover)
+		cfg.RolloverPolicy.Interval = 0
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("expected no error for zero rollover interval in manual mode (disables rollover), but got: %v", err)
+		}
+
+		// In auto mode, the interval is calculated, so a user-set 0 should not error.
+		cfg.RolloverPolicy.Mode = AutoInterval
+		cfg.RolloverPolicy.Interval = 0
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("expected no error for zero rollover interval in auto mode (value is ignored), but got: %v", err)
 		}
 	})
 
@@ -150,6 +166,30 @@ func TestMergeConfigWithFlags(t *testing.T) {
 		merged := MergeConfigWithFlags(base, setFlags)
 		if len(merged.Paths.ExcludeFiles) != 1 || merged.Paths.ExcludeFiles[0] != "from_flag.txt" {
 			t.Errorf("expected exclude files from flag to override base, but got %v", merged.Paths.ExcludeFiles)
+		}
+	})
+
+	t.Run("Rollover interval flag overrides base", func(t *testing.T) {
+		base := NewDefault()
+		base.RolloverPolicy.Interval = 10 * time.Hour // Set a non-default base value
+		setFlags := map[string]interface{}{"rollover-interval": 48 * time.Hour}
+
+		merged := MergeConfigWithFlags(base, setFlags)
+		expectedInterval := 48 * time.Hour
+		if merged.RolloverPolicy.Interval != expectedInterval {
+			t.Errorf("expected flag 'rollover-interval=%v' to override base '%v', but got '%v'", expectedInterval, 10*time.Hour, merged.RolloverPolicy.Interval)
+		}
+	})
+
+	t.Run("Mod time window flag overrides base", func(t *testing.T) {
+		base := NewDefault()
+		base.Engine.ModTimeWindowSeconds = 1 // Default base value
+		setFlags := map[string]interface{}{"mod-time-window": 0}
+
+		merged := MergeConfigWithFlags(base, setFlags)
+		expectedWindow := 0
+		if merged.Engine.ModTimeWindowSeconds != expectedWindow {
+			t.Errorf("expected flag 'mod-time-window=%d' to override base '%d', but got '%d'", expectedWindow, 1, merged.Engine.ModTimeWindowSeconds)
 		}
 	})
 }
@@ -281,8 +321,8 @@ func TestLoad(t *testing.T) {
 			t.Errorf("expected prefix to be 'custom_prefix_', but got %s", cfg.Naming.Prefix)
 		}
 		// Check that a default value not in the file is still present
-		if cfg.RolloverInterval != 24*time.Hour {
-			t.Errorf("expected default rollover interval, but got %v", cfg.RolloverInterval)
+		if cfg.RolloverPolicy.Mode != AutoInterval {
+			t.Errorf("expected default rollover mode to be auto, but got %v", cfg.RolloverPolicy.Mode)
 		}
 	})
 

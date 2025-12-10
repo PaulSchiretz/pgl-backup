@@ -10,6 +10,7 @@
     *   **Incremental (default)**: Maintains a single "current" backup directory that is efficiently updated. At a configurable interval (e.g., daily), the "current" backup is rolled over into a timestamped archive. This is ideal for frequent, low-overhead backups.
     *   **Snapshot**: Each backup run creates a new, unique, timestamped directory. This is useful for creating distinct, point-in-time copies.
 *   **Flexible Retention Policy**: Automatically cleans up outdated backups by keeping a configurable number of hourly, daily, weekly, and monthly archives. This gives you a fine-grained history without filling up your disk.
+*   **Intelligent Rollover (Incremental Mode)**: The backup interval can be set to `auto` (the default) to automatically align with your retention policy. If you keep hourly backups, it will roll over hourly. This prevents configuration mismatches and ensures your retention slots are filled efficiently.
 *   **Concurrency Safe**: A robust file-locking mechanism prevents multiple backup instances from running against the same target directory simultaneously, protecting data integrity.
 *   **Pre- and Post-Backup Hooks**: Execute custom shell commands before the sync begins or after it completes, perfect for tasks like dumping a database or sending a notification.
 *   **Adjustable Configuration**: Configure backups using a simple `pgl-backup.conf` JSON file, and override any setting with command-line flags for one-off tasks.
@@ -64,7 +65,10 @@ Open the newly created `pgl-backup.conf` file. It will look something like this,
 ```json
 {
   "mode": "incremental",
-  "rolloverInterval": "24h0m0s",
+  "rolloverPolicy": {
+    "mode": "auto",
+    "interval": "24h0m0s"
+  },
   "engine": {
     "type": "native",
     "retryCount": 3,
@@ -167,7 +171,8 @@ All command-line flags can be set in the `pgl-backup.conf` file.
 | `log-level` / `logLevel`        | `string`      | `"info"`                              | Set the logging level: `"debug"`, `"info"`, `"warn"`, or `"error"`.                                     |
 | `metrics` / `metrics`           | `bool`        | `true`                                | If true, enables detailed performance and file-counting metrics.                                        |
 | `sync-engine` / `engine.type`   | `string`      | `"native"`                            | The sync engine to use: `"native"` or `"robocopy"` (Windows only).                                      |
-| `rolloverInterval`              | `duration`    | `"24h0m0s"`                           | In incremental mode, the interval after which a new archive is created (e.g., "24h", "168h").          |
+| `rollover-mode` / `rolloverPolicy.mode` | `string` | `"auto"` | Rollover policy mode: `"auto"` (derives interval from retention policy) or `"manual"`. |
+| `rollover-interval` / `rolloverPolicy.interval` | `duration` | `"24h"` | In `manual` mode, the interval after which a new archive is created (e.g., "24h", "168h"). Use "0" to disable rollover. |
 | `retentionPolicy.hours`         | `int`         | `24`                                  | Number of recent hourly backups to keep.                                                                |
 | `retentionPolicy.days`          | `int`         | `7`                                   | Number of recent daily backups to keep.                                                                 |
 | `retentionPolicy.weeks`         | `int`         | `4`                                   | Number of recent weekly backups to keep.                                                                |
@@ -182,6 +187,7 @@ All command-line flags can be set in the `pgl-backup.conf` file.
 | `delete-workers` / `engine.performance.deleteWorkers` | `int` | `4` | Number of concurrent workers for deleting outdated backups. |
 | `retry-count` / `engine.retryCount` | `int` | `3` | Number of retries for failed file copies. |
 | `retry-wait` / `engine.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries. |
+| `mod-time-window` / `engine.modTimeWindowSeconds` | `int` | `1` | Time window in seconds to consider file modification times equal (default 1s). |
 | `copy-buffer-kb` / `engine.performance.copyBufferSizeKB` | `int` | `256` | Size of the I/O buffer in kilobytes for file copies. |
 
 ## Troubleshooting

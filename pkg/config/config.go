@@ -157,11 +157,11 @@ func (se *SyncEngine) UnmarshalJSON(data []byte) error {
 }
 
 type BackupEngineConfig struct {
-	Type                             SyncEngine                    `json:"type"`
-	RetryCount                       int                           `json:"retryCount"`
-	RetryWaitSeconds                 int                           `json:"retryWaitSeconds"`
-	NativeEngineModTimeWindowSeconds int                           `json:"nativeEngineModTimeWindowSeconds" comment:"Time window in seconds to consider file modification times equal. Handles filesystem timestamp precision differences. Default is 1s. 0 means exact match."`
-	Performance                      BackupEnginePerformanceConfig `json:"performance,omitempty"`
+	Type                 SyncEngine                    `json:"type"`
+	RetryCount           int                           `json:"retryCount"`
+	RetryWaitSeconds     int                           `json:"retryWaitSeconds"`
+	ModTimeWindowSeconds int                           `json:"modTimeWindowSeconds" comment:"Time window in seconds to consider file modification times equal. Handles filesystem timestamp precision differences. Default is 1s. 0 means exact match."`
+	Performance          BackupEnginePerformanceConfig `json:"performance,omitempty"`
 }
 
 type BackupEnginePerformanceConfig struct {
@@ -171,18 +171,74 @@ type BackupEnginePerformanceConfig struct {
 	CopyBufferSizeKB int `json:"copyBufferSizeKB" comment:"Size of the I/O buffer in kilobytes for file copies. Default is 4096 (4MB)."`
 }
 
+// RolloverIntervalMode represents how the rollover interval is determined.
+type RolloverIntervalMode int
+
+const (
+	// ManualInterval uses the user-specified interval value directly.
+	ManualInterval RolloverIntervalMode = iota // 0
+	// AutoInterval calculates the interval based on the finest-grained retention policy.
+	AutoInterval // 1
+)
+
+var rolloverIntervalModeToString = map[RolloverIntervalMode]string{ManualInterval: "manual", AutoInterval: "auto"}
+var stringToRolloverIntervalMode = invertMap(rolloverIntervalModeToString)
+
+// String returns the string representation of a RolloverIntervalMode.
+func (rim RolloverIntervalMode) String() string {
+	if str, ok := rolloverIntervalModeToString[rim]; ok {
+		return str
+	}
+	return fmt.Sprintf("unknown_interval_mode(%d)", rim)
+}
+
+// RolloverIntervalModeFromString parses a string and returns the corresponding RolloverIntervalMode.
+func RolloverIntervalModeFromString(s string) (RolloverIntervalMode, error) {
+	if mode, ok := stringToRolloverIntervalMode[s]; ok {
+		return mode, nil
+	}
+	return 0, fmt.Errorf("invalid RolloverIntervalMode: %q. Must be 'manual' or 'auto'", s)
+}
+
+// MarshalJSON implements the json.Marshaler interface for RolloverIntervalMode.
+func (rim RolloverIntervalMode) MarshalJSON() ([]byte, error) {
+	return json.Marshal(rim.String())
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface for RolloverIntervalMode.
+func (rim *RolloverIntervalMode) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return fmt.Errorf("RolloverIntervalMode should be a string, got %s", data)
+	}
+	mode, err := RolloverIntervalModeFromString(s)
+	if err != nil {
+		return err
+	}
+	*rim = mode
+	return nil
+}
+
+type RolloverPolicyConfig struct {
+	// Mode determines if the interval is set manually or derived automatically from the retention policy.
+	Mode RolloverIntervalMode `json:"mode"`
+	// Interval is the duration after which a new backup archive is created in incremental mode (e.g., "24h", "7d").
+	// This is only used when Mode is 'manual'.
+	Interval time.Duration `json:"interval,omitempty"`
+}
+
 type Config struct {
-	Mode             BackupMode                  `json:"mode"`
-	RolloverInterval time.Duration               `json:"rolloverInterval"`
-	Engine           BackupEngineConfig          `json:"engine"` // Keep this for engine-specific settings
-	LogLevel         string                      `json:"logLevel"`
-	DryRun           bool                        `json:"dryRun"`
-	FailFast         bool                        `json:"failFast"`
-	Metrics          bool                        `json:"metrics,omitempty"`
-	Naming           BackupNamingConfig          `json:"naming"`
-	Paths            BackupPathConfig            `json:"paths"`
-	RetentionPolicy  BackupRetentionPolicyConfig `json:"retentionPolicy"`
-	Hooks            BackupHooksConfig           `json:"hooks,omitempty"`
+	Mode            BackupMode                  `json:"mode"`
+	RolloverPolicy  RolloverPolicyConfig        `json:"rolloverPolicy"`
+	Engine          BackupEngineConfig          `json:"engine"` // Keep this for engine-specific settings
+	LogLevel        string                      `json:"logLevel"`
+	DryRun          bool                        `json:"dryRun"`
+	FailFast        bool                        `json:"failFast"`
+	Metrics         bool                        `json:"metrics,omitempty"`
+	Naming          BackupNamingConfig          `json:"naming"`
+	Paths           BackupPathConfig            `json:"paths"`
+	RetentionPolicy BackupRetentionPolicyConfig `json:"retentionPolicy"`
+	Hooks           BackupHooksConfig           `json:"hooks,omitempty"`
 }
 
 // NewDefault creates and returns a Config struct with sensible default
@@ -192,17 +248,21 @@ func NewDefault() Config {
 	// the best performance and consistency with no external dependencies.
 	// Power users on Windows can still opt-in to 'robocopy' as a battle-tested alternative.
 	return Config{
-		Mode:             IncrementalMode, // Default mode
-		RolloverInterval: 24 * time.Hour,  // Default rollover interval is daily.
-		LogLevel:         "info",          // Default log level.
-		DryRun:           false,
-		FailFast:         false,
-		Metrics:          true, // Default to enabled for detailed performance and file-counting metrics.
+		Mode: IncrementalMode, // Default mode
+		RolloverPolicy: RolloverPolicyConfig{
+			Mode:     AutoInterval,   // Default to auto-adjusting the interval based on the retention policy.
+			Interval: 24 * time.Hour, // Interval will be calculated by the engine in 'auto' mode.
+			// If a user switches to 'manual' mode, they must specify an interval.
+		},
+		LogLevel: "info", // Default log level.
+		DryRun:   false,
+		FailFast: false,
+		Metrics:  true, // Default to enabled for detailed performance and file-counting metrics.
 		Engine: BackupEngineConfig{
-			Type:                             NativeEngine,
-			RetryCount:                       3, // Default retries on failure.
-			RetryWaitSeconds:                 5, // Default wait time between retries.
-			NativeEngineModTimeWindowSeconds: 1, // Set the default to 1 second
+			Type:                 NativeEngine,
+			RetryCount:           3, // Default retries on failure.
+			RetryWaitSeconds:     5, // Default wait time between retries.
+			ModTimeWindowSeconds: 1, // Set the default to 1 second
 			Performance: BackupEnginePerformanceConfig{ // Initialize performance settings here
 				SyncWorkers:      runtime.NumCPU(), // Default to the number of CPU cores for file copies.
 				MirrorWorkers:    runtime.NumCPU(), // Default to the number of CPU cores for file deletions.
@@ -351,8 +411,10 @@ func (c *Config) Validate() error {
 	if c.Engine.Performance.CopyBufferSizeKB <= 0 {
 		return fmt.Errorf("copyBufferSizeKB must be greater than 0")
 	}
-	if c.Mode == IncrementalMode && c.RolloverInterval <= 0 {
-		return fmt.Errorf("rolloverInterval must be a positive duration (e.g., '24h', '90m')")
+	if c.Mode == IncrementalMode {
+		if c.RolloverPolicy.Mode == ManualInterval && c.RolloverPolicy.Interval < 0 {
+			return fmt.Errorf("rolloverPolicy.interval cannot be negative when mode is 'manual'. Use '0' to disable rollover.")
+		}
 	}
 
 	if err := validateGlobPatterns("excludeFiles", c.Paths.ExcludeFiles); err != nil {
@@ -381,7 +443,10 @@ func (c *Config) LogSummary() {
 		"copy_buffer_kb", c.Engine.Performance.CopyBufferSizeKB,
 	}
 	if c.Mode == IncrementalMode {
-		logArgs = append(logArgs, "rollover_interval", c.RolloverInterval)
+		logArgs = append(logArgs, "rollover_mode", c.RolloverPolicy.Mode)
+		if c.RolloverPolicy.Mode == ManualInterval {
+			logArgs = append(logArgs, "rollover_interval", c.RolloverPolicy.Interval)
+		}
 	}
 	if len(c.Paths.ExcludeFiles) > 0 {
 		logArgs = append(logArgs, "exclude_files", strings.Join(c.Paths.ExcludeFiles, ", "))
@@ -483,12 +548,18 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 			merged.Engine.RetryWaitSeconds = value.(int)
 		case "copy-buffer-kb":
 			merged.Engine.Performance.CopyBufferSizeKB = value.(int)
+		case "mod-time-window":
+			merged.Engine.ModTimeWindowSeconds = value.(int)
 		case "exclude-files":
 			merged.Paths.ExcludeFiles = value.([]string)
 		case "exclude-dirs":
 			merged.Paths.ExcludeDirs = value.([]string)
 		case "preserve-source-name":
 			merged.Paths.PreserveSourceDirectoryName = value.(bool)
+		case "rollover-mode":
+			merged.RolloverPolicy.Mode = value.(RolloverIntervalMode)
+		case "rollover-interval":
+			merged.RolloverPolicy.Interval = value.(time.Duration)
 		case "pre-backup-hooks":
 			merged.Hooks.PreBackup = value.([]string)
 		case "post-backup-hooks":

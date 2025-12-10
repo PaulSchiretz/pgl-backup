@@ -45,24 +45,27 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	// Define flags with zero-value defaults. We will merge them later.
 	srcFlag := flag.String("source", "", "Source directory to copy from")
 	targetFlag := flag.String("target", "", "Base destination directory for backups")
-	modeFlag := flag.String("mode", "", "Backup mode: 'incremental' or 'snapshot'.")
+	modeFlag := flag.String("mode", "incremental", "Backup mode: 'incremental' or 'snapshot'.")
 	logLevelFlag := flag.String("log-level", "info", "Set the logging level: 'debug', 'info', 'warn', 'error'.")
 	failFastFlag := flag.Bool("fail-fast", false, "Stop the backup immediately on the first file sync error.")
 	dryRunFlag := flag.Bool("dry-run", false, "Show what would be done without making any changes.")
 	metricsFlag := flag.Bool("metrics", false, "Enable detailed performance and file-counting metrics.")
 	initFlag := flag.Bool("init", false, "Generate a default pgl-backup.conf file and exit.")
 	versionFlag := flag.Bool("version", false, "Print the application version and exit.")
-	syncEngineFlag := flag.String("sync-engine", "", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
+	syncEngineFlag := flag.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
 	syncWorkersFlag := flag.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
 	mirrorWorkersFlag := flag.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
 	deleteWorkersFlag := flag.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
 	retryCountFlag := flag.Int("retry-count", 0, "Number of retries for failed file copies.")
 	retryWaitFlag := flag.Int("retry-wait", 0, "Seconds to wait between retries.")
 	copyBufferKBFlag := flag.Int("copy-buffer-kb", 0, "Size of the I/O buffer in kilobytes for file copies.")
+	modTimeWindowFlag := flag.Int("mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact, -1=use config).")
 	excludeFilesFlag := flag.String("exclude-files", "", "Comma-separated list of file names to exclude (supports glob patterns).")
 	excludeDirsFlag := flag.String("exclude-dirs", "", "Comma-separated list of directory names to exclude (supports glob patterns).")
 	preserveSourceNameFlag := flag.Bool("preserve-source-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
 	preBackupHooksFlag := flag.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
+	rolloverModeFlag := flag.String("rollover-mode", "auto", "Rollover policy mode: 'auto' or 'manual'.")
+	rolloverIntervalFlag := flag.Duration("rollover-interval", 24*time.Hour, "Rollover interval for incremental mode (e.g., '24h', '7d'). Use '0' to disable rollover.")
 	postBackupHooksFlag := flag.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
 
 	flag.Parse()
@@ -98,6 +101,14 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 			flagMap[name] = flagparse.ParseCmdList(*preBackupHooksFlag)
 		case "post-backup-hooks":
 			flagMap[name] = flagparse.ParseCmdList(*postBackupHooksFlag)
+		case "rollover-mode":
+			mode, err := config.RolloverIntervalModeFromString(*rolloverModeFlag)
+			if err != nil {
+				return actionRunBackup, nil, err
+			}
+			flagMap[name] = mode
+		case "rollover-interval":
+			flagMap[name] = *rolloverIntervalFlag
 		case "source":
 			flagMap[name] = *srcFlag
 		case "target":
@@ -127,6 +138,8 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 			flagMap[name] = *retryWaitFlag
 		case "copy-buffer-kb":
 			flagMap[name] = *copyBufferKBFlag
+		case "mod-time-window":
+			flagMap[name] = *modTimeWindowFlag
 		}
 	}
 
