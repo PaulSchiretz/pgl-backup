@@ -238,8 +238,10 @@ func TestDetermineBackupsToKeep(t *testing.T) {
 		{Time: now.Add(-16 * 24 * time.Hour), Name: "backup_weekly_2"},  // Kept as weekly (Week 2)
 		{Time: now.Add(-35 * 24 * time.Hour), Name: "backup_monthly_1"}, // Kept as monthly (Month 1)
 		{Time: now.Add(-70 * 24 * time.Hour), Name: "backup_monthly_2"}, // Kept as monthly (Month 2)
-		{Time: now.Add(-100 * 24 * time.Hour), Name: "backup_old_1"},    // To be deleted
-		{Time: now.Add(-200 * 24 * time.Hour), Name: "backup_old_2"},    // To be deleted
+		{Time: now.Add(-400 * 24 * time.Hour), Name: "backup_yearly_1"}, // Kept as yearly (Year 1)
+		{Time: now.Add(-800 * 24 * time.Hour), Name: "backup_yearly_2"}, // Kept as yearly (Year 2)
+		{Time: now.Add(-1200 * 24 * time.Hour), Name: "backup_old_1"},   // To be deleted
+		{Time: now.Add(-1600 * 24 * time.Hour), Name: "backup_old_2"},   // To be deleted
 	}
 
 	policy := config.BackupRetentionPolicyConfig{
@@ -247,6 +249,7 @@ func TestDetermineBackupsToKeep(t *testing.T) {
 		Days:   2,
 		Weeks:  2,
 		Months: 2,
+		Years:  2,
 	}
 
 	e := newTestEngine(config.NewDefault())
@@ -255,8 +258,8 @@ func TestDetermineBackupsToKeep(t *testing.T) {
 	kept := e.determineBackupsToKeep(allBackups, policy)
 
 	// Assert
-	if len(kept) != 8 {
-		t.Errorf("expected to keep 8 backups, but got %d", len(kept))
+	if len(kept) != 10 {
+		t.Errorf("expected to keep 10 backups, but got %d", len(kept))
 	}
 
 	expectedToKeep := []string{
@@ -264,6 +267,7 @@ func TestDetermineBackupsToKeep(t *testing.T) {
 		"backup_daily_1", "backup_daily_2",
 		"backup_weekly_1", "backup_weekly_2",
 		"backup_monthly_1", "backup_monthly_2",
+		"backup_yearly_1", "backup_yearly_2",
 	}
 	for _, name := range expectedToKeep {
 		if !kept[name] {
@@ -506,11 +510,12 @@ func TestDetermineBackupsToKeep_Promotion(t *testing.T) {
 	// This backup set is designed to fill every available retention slot,
 	// leaving one backup that is truly redundant and should be deleted.
 	allBackups := []backupInfo{
-		{Time: now.Add(-1 * time.Hour), Name: "kept_hourly"},         // Fills the hourly slot
-		{Time: now.Add(-25 * time.Hour), Name: "kept_daily"},         // Fills the daily slot
-		{Time: now.Add(-8 * 24 * time.Hour), Name: "kept_weekly"},    // Fills the weekly slot
-		{Time: now.Add(-35 * 24 * time.Hour), Name: "kept_monthly"},  // Fills the monthly slot
-		{Time: now.Add(-70 * 24 * time.Hour), Name: "to_be_deleted"}, // Older than all slots, should be deleted
+		{Time: now.Add(-1 * time.Hour), Name: "kept_hourly"},          // Fills the hourly slot
+		{Time: now.Add(-25 * time.Hour), Name: "kept_daily"},          // Fills the daily slot
+		{Time: now.Add(-8 * 24 * time.Hour), Name: "kept_weekly"},     // Fills the weekly slot
+		{Time: now.Add(-35 * 24 * time.Hour), Name: "kept_monthly"},   // Fills the monthly slot
+		{Time: now.Add(-400 * 24 * time.Hour), Name: "kept_yearly"},   // Fills the yearly slot
+		{Time: now.Add(-800 * 24 * time.Hour), Name: "to_be_deleted"}, // Older than all slots, should be deleted
 	}
 
 	policy := config.BackupRetentionPolicyConfig{
@@ -518,6 +523,7 @@ func TestDetermineBackupsToKeep_Promotion(t *testing.T) {
 		Days:   1,
 		Weeks:  1,
 		Months: 1,
+		Years:  1,
 	}
 
 	cfg := config.NewDefault()
@@ -529,9 +535,9 @@ func TestDetermineBackupsToKeep_Promotion(t *testing.T) {
 	kept := e.determineBackupsToKeep(allBackups, policy)
 
 	// Assert
-	// The logic should keep 4 backups, each filling one slot, and delete the 5th.
-	if len(kept) != 4 {
-		t.Errorf("expected to keep 4 backups, but got %d", len(kept))
+	// The logic should keep 5 backups, each filling one slot, and delete the 6th.
+	if len(kept) != 5 {
+		t.Errorf("expected to keep 5 backups, but got %d", len(kept))
 	}
 	if !kept["kept_hourly"] {
 		t.Error("expected 'kept_hourly' to be kept, but it was not")
@@ -544,6 +550,9 @@ func TestDetermineBackupsToKeep_Promotion(t *testing.T) {
 	}
 	if !kept["kept_monthly"] {
 		t.Error("expected 'kept_monthly' to be kept, but it was not")
+	}
+	if !kept["kept_yearly"] {
+		t.Error("expected 'kept_yearly' to be kept, but it was not")
 	}
 	if kept["to_be_deleted"] {
 		t.Error("expected 'to_be_deleted' to be deleted, but it was kept")

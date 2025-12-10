@@ -49,6 +49,7 @@ const (
 	dayFormat   = "2006-01-02"    // YYYY-MM-DD
 	weekFormat  = "%d-%d"         // Sprintf format for "YYYY-WW" using year and ISO week number (weeks start on Monday). Go's time package does not have a layout code (like WW). The only way to get the ISO week is to call the time.ISOWeek() method
 	monthFormat = "2006-01"       // YYYY-MM
+	yearFormat  = "2006"          // YYYY
 )
 
 // backupInfo holds the parsed time and name of a backup directory.
@@ -253,6 +254,8 @@ func (e *Engine) autoAdjustRolloverInterval() {
 		suggestedInterval = 7 * 24 * time.Hour
 	case policy.Months > 0:
 		suggestedInterval = 30 * 24 * time.Hour // Approximation for a month
+	case policy.Years > 0:
+		suggestedInterval = 365 * 24 * time.Hour // Approximation for a year
 	default:
 		// Fallback if retention is disabled but mode is auto.
 		suggestedInterval = 24 * time.Hour
@@ -528,6 +531,16 @@ func (e *Engine) checkRolloverInterval() {
 			"rollover_interval", e.config.RolloverPolicy.Interval,
 			"impact", "Backups occur less frequently than once a month; some calendar months will have no backup.")
 	}
+
+	// 5. Check Yearly Mismatch
+	// We use 365 days as the rough approximation for a year.
+	avgYear := 365 * 24 * time.Hour
+	if policy.Years > 0 && e.config.RolloverPolicy.Interval > avgYear {
+		plog.Warn("Configuration Mismatch: Yearly retention is enabled, but rollover is too slow.",
+			"keep_yearly", policy.Years,
+			"rollover_interval", e.config.RolloverPolicy.Interval,
+			"impact", "Backups occur less frequently than once a year; some calendar years will have no backup.")
+	}
 }
 
 // applyRetentionPolicy scans the backup target directory and deletes snapshots
@@ -537,7 +550,7 @@ func (e *Engine) applyRetentionPolicy(ctx context.Context) error {
 	baseDir := e.config.Paths.TargetBase
 	retentionPolicy := e.config.RetentionPolicy
 
-	if retentionPolicy.Hours <= 0 && retentionPolicy.Days <= 0 && retentionPolicy.Weeks <= 0 && retentionPolicy.Months <= 0 {
+	if retentionPolicy.Hours <= 0 && retentionPolicy.Days <= 0 && retentionPolicy.Weeks <= 0 && retentionPolicy.Months <= 0 && retentionPolicy.Years <= 0 {
 		plog.Info("Retention policy is disabled. Skipping cleanup.")
 		return nil
 	}
@@ -628,6 +641,7 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 	savedDaily := make(map[string]bool)
 	savedWeekly := make(map[string]bool)
 	savedMonthly := make(map[string]bool)
+	savedYearly := make(map[string]bool)
 
 	for _, b := range allBackups {
 		// The rules are processed from shortest to longest duration.
@@ -664,6 +678,14 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 		if retentionPolicy.Months > 0 && len(savedMonthly) < retentionPolicy.Months && !savedMonthly[monthKey] {
 			backupsToKeep[b.Name] = true
 			savedMonthly[monthKey] = true
+			continue // Promoted to monthly
+		}
+
+		// Rule: Keep N yearly backups
+		yearKey := b.Time.Format(yearFormat)
+		if retentionPolicy.Years > 0 && len(savedYearly) < retentionPolicy.Years && !savedYearly[yearKey] {
+			backupsToKeep[b.Name] = true
+			savedYearly[yearKey] = true
 		}
 	}
 
@@ -699,6 +721,15 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 		// Use 30 days (720 hours) as the monthly threshold
 		avgMonth := 30 * 24 * time.Hour
 		if e.config.RolloverPolicy.Interval > avgMonth {
+			msg += " (slow-fill)"
+		}
+		planParts = append(planParts, msg)
+	}
+	if retentionPolicy.Years > 0 {
+		msg := fmt.Sprintf("%d yearly", len(savedYearly))
+		// Use 365 days (8760 hours) as the yearly threshold
+		avgYear := 365 * 24 * time.Hour
+		if e.config.RolloverPolicy.Interval > avgYear {
 			msg += " (slow-fill)"
 		}
 		planParts = append(planParts, msg)

@@ -98,7 +98,8 @@ Open the newly created `pgl-backup.conf` file. It will look something like this,
     "hours": 24,
     "days": 7,
     "weeks": 4,
-    "months": 12
+    "months": 12,
+    "years": 10
   },
   "hooks": {}
 }
@@ -177,6 +178,7 @@ All command-line flags can be set in the `pgl-backup.conf` file.
 | `retentionPolicy.days`          | `int`         | `7`                                   | Number of recent daily backups to keep.                                                                 |
 | `retentionPolicy.weeks`         | `int`         | `4`                                   | Number of recent weekly backups to keep.                                                                |
 | `retentionPolicy.months`        | `int`         | `12`                                  | Number of recent monthly backups to keep.                                                               |
+| `retentionPolicy.years`         | `int`         | `10`                                  | Number of recent yearly backups to keep.                                                                |
 | `exclude-files` / `excludeFiles`| `[]string`    | `[]`                                  | List of file patterns to exclude.                                                                       |
 | `exclude-dirs` / `excludeDirs`  | `[]string`    | `[]`                                  | List of directory patterns to exclude.                                                                  |
 | `pre-backup-hooks` / `preBackup`| `[]string`    | `[]`                                  | List of shell commands to run before the backup.                                                        |

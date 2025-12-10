@@ -48,6 +48,7 @@ type BackupRetentionPolicyConfig struct {
 	Days   int `json:"days"`
 	Weeks  int `json:"weeks"`
 	Months int `json:"months"`
+	Years  int `json:"years"`
 }
 
 type BackupHooksConfig struct {
@@ -285,6 +286,7 @@ func NewDefault() Config {
 			Days:   7,  // N > 0: keep one backup for each of the last N days.
 			Weeks:  4,  // N > 0: keep one backup for each of the last N weeks.
 			Months: 12, // N > 0: keep one backup for each of the last N months.
+			Years:  10, // N > 0: keep one backup for each of the last N years.
 		},
 		Hooks: BackupHooksConfig{
 			PreBackup:  []string{},
