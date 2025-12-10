@@ -164,7 +164,7 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 // run encapsulates the main application logic and returns an error if something
 // goes wrong, allowing the main function to handle exit codes.
 func run(ctx context.Context) error {
-	plog.Info("pgl-backup starting", "version", version, "pid", os.Getpid())
+	plog.Info("PGL-Backup", "version", version, "pid", os.Getpid())
 
 	// --- 1. Parse command-line flags ---
 	// This is done only once. It gives us the user's explicit command-line intent.
