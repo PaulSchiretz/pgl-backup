@@ -175,7 +175,7 @@ func run(ctx context.Context) error {
 
 	switch action {
 	case actionShowVersion:
-		fmt.Printf("pgl-backup version %s\n", version)
+		fmt.Printf("PGL-Backup version %s\n", version)
 		return nil
 	case actionInitConfig:
 		// For init, source and target flags are mandatory.
@@ -242,7 +242,7 @@ func main() {
 	}()
 
 	if err := run(ctx); err != nil {
-		plog.Error("Application failed", "error", err)
+		plog.Error("Application exited with error", "error", err)
 		os.Exit(1)
 	}
 }
