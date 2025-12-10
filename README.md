@@ -95,11 +95,11 @@ Open the newly created `pgl-backup.conf` file. It will look something like this,
     "excludeDirs": []
   },
   "retentionPolicy": {
-    "hours": 24,
+    "hours": 0,
     "days": 7,
     "weeks": 4,
-    "months": 12,
-    "years": 10
+    "months": 3,
+    "years": 1
   },
   "hooks": {}
 }
@@ -174,11 +174,11 @@ All command-line flags can be set in the `pgl-backup.conf` file.
 | `sync-engine` / `engine.type`   | `string`      | `"native"`                            | The sync engine to use: `"native"` or `"robocopy"` (Windows only).                                      |
 | `rollover-mode` / `rolloverPolicy.mode` | `string` | `"auto"` | Rollover policy mode: `"auto"` (derives interval from retention policy) or `"manual"`. |
 | `rollover-interval` / `rolloverPolicy.interval` | `duration` | `"24h"` | In `manual` mode, the interval after which a new archive is created (e.g., "24h", "168h"). Use "0" to disable rollover. |
-| `retentionPolicy.hours`         | `int`         | `24`                                  | Number of recent hourly backups to keep.                                                                |
+| `retentionPolicy.hours`         | `int`         | `0`                                   | Number of recent hourly backups to keep.                                                                |
 | `retentionPolicy.days`          | `int`         | `7`                                   | Number of recent daily backups to keep.                                                                 |
 | `retentionPolicy.weeks`         | `int`         | `4`                                   | Number of recent weekly backups to keep.                                                                |
-| `retentionPolicy.months`        | `int`         | `12`                                  | Number of recent monthly backups to keep.                                                               |
-| `retentionPolicy.years`         | `int`         | `10`                                  | Number of recent yearly backups to keep.                                                                |
+| `retentionPolicy.months`        | `int`         | `6`                                   | Number of recent monthly backups to keep.                                                               |
+| `retentionPolicy.years`         | `int`         | `5`                                   | Number of recent yearly backups to keep.                                                                |
 | `exclude-files` / `excludeFiles`| `[]string`    | `[]`                                  | List of file patterns to exclude.                                                                       |
 | `exclude-dirs` / `excludeDirs`  | `[]string`    | `[]`                                  | List of directory patterns to exclude.                                                                  |
 | `pre-backup-hooks` / `preBackup`| `[]string`    | `[]`                                  | List of shell commands to run before the backup.                                                        |
@@ -191,6 +191,115 @@ All command-line flags can be set in the `pgl-backup.conf` file.
 | `retry-wait` / `engine.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries. |
 | `mod-time-window` / `engine.modTimeWindowSeconds` | `int` | `1` | Time window in seconds to consider file modification times equal (default 1s). |
 | `copy-buffer-kb` / `engine.performance.copyBufferSizeKB` | `int` | `256` | Size of the I/O buffer in kilobytes for file copies. |
+
+## Understanding the Retention Policy
+
+The retention policy is designed to give you a detailed short-term history and a space-efficient long-term history. It works using a "promotion" system. When cleaning up old backups, `pgl-backup` scans all your archives from newest to oldest and decides which ones to keep.
+
+Here's how it works for each backup, in order of priority:
+1.  **Hourly**: Is there an open "hourly" slot? If yes, keep this backup and move to the next one.
+2.  **Daily**: If not kept as hourly, is there an open "daily" slot for this backup's calendar day? If yes, keep it and move on.
+3.  **Weekly**: If not kept as daily, is there an open "weekly" slot for this backup's calendar week? If yes, keep it and move on.
+4.  **Monthly**: If not kept as weekly, is there an open "monthly" slot? If yes, keep it and move on.
+5.  **Yearly**: If not kept as monthly, is there an open "yearly" slot? If yes, keep it.
+
+If a backup doesn't fill any available slot, it is deleted. This ensures that a backup is only "promoted" to a longer-term slot (like weekly) if it's no longer needed to fill a shorter-term slot (like daily).
+
+### Retention Policy Examples
+
+Here are a few example policies you can use in your `pgl-backup.conf` file.
+The best policy depends on how much data you are backing up and how much disk space you have available. For many use cases, a simple policy of keeping 2 daily, 1 weekly, and perhaps 1 monthly backup is more than enough.
+
+
+#### The "Simple" (Minimal)
+**Goal**: A minimal policy for users who need a basic safety net without using much disk space. It provides a few recent recovery points.
+**Total Backups Stored**: ~4 (2 daily + 1 weekly + 1 monthly)
+**Auto Rollover Sets To**: 24 Hours
+
+```json
+"retentionPolicy": {
+  "hours": 0,
+  "days": 2,
+  "weeks": 1,
+  "months": 1,
+  "years": 0
+}
+```
+
+
+#### The "Default" (Balanced)
+**Goal**: A balanced, "set-it-and-forget-it" policy that provides a good mix of recent and long-term history without using excessive disk space. This is the default policy when you first initialize `pgl-backup`.
+**Total Backups Stored**: ~15 (7 daily + 4 weekly + 3 monthly + 1 yearly)
+**Auto Rollover Sets To**: 24 Hours
+
+```json
+"retentionPolicy": {
+  "hours": 0,
+  "days": 7,
+  "weeks": 4,
+  "months": 3,
+  "years": 1
+}
+```
+
+#### The "Safety Net" (Developer Machine)
+**Goal**: Protect active work where recent recovery is critical. The priority is being able to undo a mistake made an hour ago. Long-term history is less important.
+**Total Backups Stored**: ~31 (24 hourly + 7 daily)
+**Auto Rollover Sets To**: 1 Hour
+
+```json
+"retentionPolicy": {
+  "hours": 24,
+  "days": 7,
+  "weeks": 0,
+  "months": 0,
+  "years": 0
+}
+```
+#### The "Standard GFS" (Balanced)
+**Goal**: The industry standard for production servers. It balances a reasonable safety net (1 week of daily backups) with a solid historical archive (1 year) without using excessive storage.
+**Total Backups Stored**: ~23 (7 daily + 4 weekly + 12 monthly)
+**Auto Rollover Sets To**: 24 Hours
+
+```json
+"retentionPolicy": {
+  "hours": 0,
+  "days": 7,
+  "weeks": 4,
+  "months": 12,
+  "years": 0
+}
+```
+
+#### The "Legal Compliance" (Long-Term Archive)
+**Goal**: Audit trails and regulatory compliance (e.g., tax or financial data). Recent recovery is less important than proving what data existed 5 years ago.
+**Total Backups Stored**: ~49 (30 daily + 12 monthly + 7 yearly)
+**Auto Rollover Sets To**: 24 Hours
+
+```json
+"retentionPolicy": {
+  "hours": 0,
+  "days": 30,
+  "weeks": 0,
+  "months": 12,
+  "years": 7
+}
+```
+
+#### The "Home Media" (Minimalist)
+**Goal**: Backing up terabytes of movies/photos where data rarely changes and storage costs are high. You just want a few recent versions in case of accidental deletion.
+**Total Backups Stored**: ~7 (2 daily + 2 weekly + 2 monthly + 1 yearly)
+**Auto Rollover Sets To**: 24 Hours
+
+```json
+"retentionPolicy": {
+  "hours": 0,
+  "days": 2,
+  "weeks": 2,
+  "months": 2,
+  "years": 1
+}
+```
 
 ## Troubleshooting
 

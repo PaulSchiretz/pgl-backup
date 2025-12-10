@@ -282,11 +282,11 @@ func NewDefault() Config {
 			ExcludeDirs:                 []string{}, // User-defined list of directories to exclude.
 		},
 		RetentionPolicy: BackupRetentionPolicyConfig{
-			Hours:  24, // N > 0: keep the N most recent hourly backups.
-			Days:   7,  // N > 0: keep one backup for each of the last N days.
-			Weeks:  4,  // N > 0: keep one backup for each of the last N weeks.
-			Months: 12, // N > 0: keep one backup for each of the last N months.
-			Years:  10, // N > 0: keep one backup for each of the last N years.
+			Hours:  0, // Default: No hourly backups.
+			Days:   7, // Default: Keep one backup for each of the last 7 days.
+			Weeks:  4, // Default: Keep one backup for each of the last 4 weeks.
+			Months: 3, // Default: Keep one backup for each of the last 3 months.
+			Years:  1, // Default: Keep one backup for each of the last 1 year.
 		},
 		Hooks: BackupHooksConfig{
 			PreBackup:  []string{},
