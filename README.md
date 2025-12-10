@@ -73,6 +73,7 @@ Open the newly created `pgl-backup.conf` file. It will look something like this,
     "type": "native",
     "retryCount": 3,
     "retryWaitSeconds": 5,
+    "modTimeWindowSeconds": 1,
     "performance": {
       "mirrorWorkers": 8,
       "copyBufferSizeKB": 256,
