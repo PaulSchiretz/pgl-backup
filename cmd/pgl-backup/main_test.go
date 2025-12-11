@@ -72,6 +72,7 @@ func TestParseFlagConfig(t *testing.T) {
 			expectedAction action
 		}{
 			{"Version Flag", "-version", actionShowVersion},
+			{"Init Flag", "-init", actionInitConfig},
 		}
 
 		for _, tc := range testCases {
