@@ -1,5 +1,7 @@
 # pgl-backup
 
+[![Go Report Card](https://goreportcard.com/badge/pixelgardenlabs.io/pgl-backup)](https://goreportcard.com/report/pixelgardenlabs.io/pgl-backup) [![Latest Release](https://img.shields.io/github/v/release/pgl-backup/pgl-backup)](https://github.com/pgl-backup/pgl-backup/releases) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+
 > This project was born from the desire to create a hassle-free backup tool that is fast, reliable, and as simple as possible. It is built in a robust, best-practice way, avoiding fancy features that could compromise solidity. The goal is to provide everything you need for solid, performant, cross-platform backups—no more, no less.
 
 `pgl-backup` is a simple, powerful, and robust file backup utility written in Go. It is designed for creating versioned backups of local directories to another local or network-attached drive. It supports both periodic snapshots and an efficient incremental mode with a flexible retention policy.
@@ -126,11 +128,12 @@ pgl-backup -target="/media/backup-drive/MyDocumentsBackup"
 ```
 
 The first run will copy all files into a `.../PGL_Backup_Current` directory. Subsequent runs will update this directory. After 24 hours, the next run will first rename `PGL_Backup_Current` to a timestamped archive (e.g., `PGL_Backup_2023-10-27-...`) inside a new `PGL_Backup_Archives` sub-directory, and then create a new current backup.
-Your backup target will be organized with dedicated sub-directories for each mode:
-```/
+Your backup target will be organized like this:
+```/path/to/your/backup-target/
+├── pgl-backup.conf (The configuration for this backup set)
 ├── PGL_Backup_Current/ (The active incremental backup)
-├── PGL_Backup_Archives/ (Historical incremental archives)
-└── PGL_Backup_Snapshots/ (Snapshots from snapshot mode)```
+├── PGL_Backup_Archives/ (Timestamped historical incremental archives)
+└── PGL_Backup_Snapshots/ (Timestamped snapshots from snapshot mode)```
 
 ## Usage and Examples
 
@@ -198,19 +201,20 @@ All command-line flags can be set in the `pgl-backup.conf` file.
 | `incrementalRetentionPolicy.hours`         | `int`         | `0`                                   | Number of recent hourly incremental archives to keep.                                                                |
 | `incrementalRetentionPolicy.days`          | `int`         | `7`                                   | Number of recent daily incremental archives to keep.                                                                 |
 | `incrementalRetentionPolicy.weeks`         | `int`         | `4`                                   | Number of recent weekly incremental archives to keep.                                                                |
-| `incrementalRetentionPolicy.months`        | `int`         | `6`                                   | Number of recent monthly incremental archives to keep.                                                               |
-| `incrementalRetentionPolicy.years`         | `int`         | `5`                                   | Number of recent yearly incremental archives to keep.        
+| `incrementalRetentionPolicy.months`        | `int`         | `3`                                   | Number of recent monthly incremental archives to keep.                                                               |
+| `incrementalRetentionPolicy.years`         | `int`         | `1`                                   | Number of recent yearly incremental archives to keep.        
 | `snapshotRetentionPolicy.enabled`         | `bool`         | `false`                               | Set to true to enable the retention policy for snapshot mode backups. Disabled by default.
 | `snapshotRetentionPolicy.hours`         | `int`         | `0`                                      | Number of recent hourly snapshots to keep.                                                                |
-| `snapshotRetentionPolicy.days`          | `int`         | `7`                                      | Number of recent daily snapshots to keep.                                                                 |
-| `snapshotRetentionPolicy.weeks`         | `int`         | `4`                                      | Number of recent weekly snapshots to keep.                                                                |
-| `snapshotRetentionPolicy.months`        | `int`         | `6`                                      | Number of recent monthly snapshots to keep.                                                               |
-| `snapshotRetentionPolicy.years`         | `int`         | `5`                                      | Number of recent yearly snapshots to keep.                                                           |
+| `snapshotRetentionPolicy.days`          | `int`         | `0`                                      | Number of recent daily snapshots to keep.                                                                 |
+| `snapshotRetentionPolicy.weeks`         | `int`         | `0`                                      | Number of recent weekly snapshots to keep.                                                                |
+| `snapshotRetentionPolicy.months`        | `int`         | `0`                                      | Number of recent monthly snapshots to keep.                                                               |
+| `snapshotRetentionPolicy.years`         | `int`         | `0`                                      | Number of recent yearly snapshots to keep.                                                           |
 | `exclude-files` / `excludeFiles`| `[]string`    | `[]`                                  | List of file patterns to exclude.                                                                       |
 | `exclude-dirs` / `excludeDirs`  | `[]string`    | `[]`                                  | List of directory patterns to exclude.                                                                  |
 | `pre-backup-hooks` / `preBackup`| `[]string`    | `[]`                                  | List of shell commands to run before the backup.                                                        |
 | `post-backup-hooks` / `postBackup`| `[]string`    | `[]`                                  | List of shell commands to run after the backup.                                                         |
 | `preserve-source-name` / `paths.preserveSourceDirectoryName` | `bool` | `true` | If true, appends the source directory's name to the destination path. |
+| **Performance Tuning** | | | | 
 | `sync-workers` / `engine.performance.syncWorkers` | `int` | `runtime.NumCPU()` | Number of concurrent workers for file synchronization. |
 | `mirror-workers` / `engine.performance.mirrorWorkers` | `int` | `runtime.NumCPU()` | Number of concurrent workers for file deletions in mirror mode. |
 | `delete-workers` / `engine.performance.deleteWorkers` | `int` | `4` | Number of concurrent workers for deleting outdated backups. |
