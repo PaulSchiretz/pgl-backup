@@ -116,6 +116,63 @@ func TestConfig_Validate(t *testing.T) {
 		}
 	})
 
+	t.Run("Invalid Incremental SubDirs", func(t *testing.T) {
+		cfg := newValidConfig(t)
+		cfg.Mode = IncrementalMode // This validation only applies in incremental mode
+
+		// Test ArchivesSubDir empty
+		cfg.Paths.ArchivesSubDir = ""
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected error for empty archivesSubDir, but got nil")
+		}
+
+		// Test ArchivesSubDir with path separators
+		cfg.Paths.ArchivesSubDir = "invalid/path"
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected error for archivesSubDir with path separators, but got nil")
+		}
+		cfg.Paths.ArchivesSubDir = "valid" // Reset
+
+		// Test empty IncrementalSubDir
+		cfg.Paths.IncrementalSubDir = ""
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected error for empty IncrementalSubDir, but got nil")
+		}
+
+		// Test IncrementalSubDir
+		cfg.Paths.IncrementalSubDir = "invalid/path"
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected error for incrementalSubDir with path separators, but got nil")
+		}
+
+		cfg.Paths.IncrementalSubDir = "valid" // Reset to valid
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("expected no error for valid archivesSubDir and incrementalSubDir, but got: %v", err)
+		}
+	})
+
+	t.Run("Invalid SnapshotsSubDir", func(t *testing.T) {
+		cfg := newValidConfig(t)
+		cfg.Mode = SnapshotMode // This validation only applies in snapshot mode
+
+		// Test empty
+		cfg.Paths.SnapshotsSubDir = ""
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected error for empty snapshotsSubDir, but got nil")
+		}
+
+		// Test with path separators
+		cfg.Paths.SnapshotsSubDir = "invalid/path"
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected error for snapshotsSubDir with path separators, but got nil")
+		}
+
+		cfg.Paths.SnapshotsSubDir = "valid" // Reset to valid
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("expected no error for valid snapshotsSubDir, but got: %v", err)
+		}
+	})
+
 	t.Run("Invalid Glob Pattern", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Paths.ExcludeFiles = []string{"["} // Invalid glob pattern

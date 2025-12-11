@@ -31,13 +31,15 @@ func GetSystemExcludeFilePatterns() []string {
 }
 
 type BackupNamingConfig struct {
-	Prefix                string `json:"prefix"`
-	IncrementalModeSuffix string `json:"incrementalModeSuffix"`
+	Prefix string `json:"prefix"`
 }
 
 type BackupPathConfig struct {
 	Source                      string   `json:"source"`
 	TargetBase                  string   `json:"targetBase"`
+	SnapshotsSubDir             string   `json:"snapshotsSubDir,omitempty"`
+	ArchivesSubDir              string   `json:"archivesSubDir,omitempty"`
+	IncrementalSubDir           string   `json:"incrementalSubDir,omitempty"`
 	PreserveSourceDirectoryName bool     `json:"preserveSourceDirectoryName"`
 	ExcludeFiles                []string `json:"excludeFiles,omitempty"`
 	ExcludeDirs                 []string `json:"excludeDirs,omitempty"`
@@ -271,15 +273,17 @@ func NewDefault() Config {
 				CopyBufferSizeKB: 256,              // Default to 256KB buffer. Keep it between 64KB-4MB
 			}},
 		Naming: BackupNamingConfig{
-			Prefix:                "PGL_Backup_",
-			IncrementalModeSuffix: "Current",
+			Prefix: "PGL_Backup_",
 		},
 		Paths: BackupPathConfig{
-			Source:                      "",         // Intentionally empty to force user configuration.
-			TargetBase:                  "",         // Intentionally empty to force user configuration.
-			PreserveSourceDirectoryName: true,       // Default to preserving the source folder name in the destination.
-			ExcludeFiles:                []string{}, // User-defined list of files to exclude.
-			ExcludeDirs:                 []string{}, // User-defined list of directories to exclude.
+			Source:                      "",                     // Intentionally empty to force user configuration.
+			TargetBase:                  "",                     // Intentionally empty to force user configuration.
+			SnapshotsSubDir:             "PGL_Backup_Snapshots", // Default name for the snapshots sub-directory.
+			ArchivesSubDir:              "PGL_Backup_Archives",  // Default name for the archives sub-directory.
+			IncrementalSubDir:           "PGL_Backup_Current",   // Default name for the active incremental backup directory.
+			PreserveSourceDirectoryName: true,                   // Default to preserving the source folder name in the destination.
+			ExcludeFiles:                []string{},             // User-defined list of files to exclude.
+			ExcludeDirs:                 []string{},             // User-defined list of directories to exclude.
 		},
 		RetentionPolicy: BackupRetentionPolicyConfig{
 			Hours:  0, // Default: No hourly backups.
@@ -394,6 +398,36 @@ func (c *Config) Validate() error {
 		c.Paths.TargetBase = filepath.Clean(c.Paths.TargetBase)
 	}
 
+	// --- Validate SubDirs ---
+	switch c.Mode {
+	case IncrementalMode:
+		if c.Paths.ArchivesSubDir == "" {
+			return fmt.Errorf("archivesSubDir cannot be empty in incremental mode")
+		}
+		if c.Paths.IncrementalSubDir == "" {
+			return fmt.Errorf("incrementalSubDir cannot be empty in incremental mode")
+		}
+		// Disallow path separators to ensure the archives directory is a direct child of the target.
+		// This is critical for guaranteeing that the atomic `os.Rename` operation during rollover
+		// works correctly, as it requires the source and destination to be on the same filesystem.
+		if strings.ContainsAny(c.Paths.ArchivesSubDir, `\/`) {
+			return fmt.Errorf("archivesSubDir cannot contain path separators ('/' or '\\')")
+		}
+		if strings.ContainsAny(c.Paths.IncrementalSubDir, `\/`) {
+			return fmt.Errorf("incrementalSubDir cannot contain path separators ('/' or '\\')")
+		}
+	case SnapshotMode:
+		// Disallow path separators to ensure the snapshots directory is a direct child of the target.
+		// This is critical for guaranteeing that the atomic `os.Rename` operation during
+		// works correctly, as it requires the source and destination to be on the same filesystem.
+		if c.Paths.SnapshotsSubDir == "" {
+			return fmt.Errorf("snapshotsSubDir cannot be empty in snapshot mode")
+		}
+		if strings.ContainsAny(c.Paths.SnapshotsSubDir, `\/`) {
+			return fmt.Errorf("snapshotsSubDir cannot contain path separators ('/' or '\\')")
+		}
+	}
+
 	// --- Validate Engine and Mode Settings ---
 	if c.Engine.Performance.SyncWorkers < 1 {
 		return fmt.Errorf("syncWorkers must be at least 1")
@@ -447,11 +481,16 @@ func (c *Config) LogSummary() {
 		"delete_workers", c.Engine.Performance.DeleteWorkers,
 		"copy_buffer_kb", c.Engine.Performance.CopyBufferSizeKB,
 	}
-	if c.Mode == IncrementalMode {
+	switch c.Mode {
+	case IncrementalMode:
+		logArgs = append(logArgs, "incremental_subdir", c.Paths.IncrementalSubDir)
+		logArgs = append(logArgs, "archives_subdir", c.Paths.ArchivesSubDir)
 		logArgs = append(logArgs, "rollover_mode", c.RolloverPolicy.Mode)
 		if c.RolloverPolicy.Mode == ManualInterval {
 			logArgs = append(logArgs, "rollover_interval", c.RolloverPolicy.Interval)
 		}
+	case SnapshotMode:
+		logArgs = append(logArgs, "snapshots_subdir", c.Paths.SnapshotsSubDir)
 	}
 	if len(c.Paths.ExcludeFiles) > 0 {
 		logArgs = append(logArgs, "exclude_files", strings.Join(c.Paths.ExcludeFiles, ", "))

@@ -313,14 +313,15 @@ func (e *Engine) prepareDestination(ctx context.Context, currentRun *runState) e
 		// but we add the user's local offset to make the timezone clear to the user.
 		timestamp := config.FormatTimestampWithOffset(currentRun.timestampUTC)
 		backupDirName := e.config.Naming.Prefix + timestamp
-		currentRun.target = filepath.Join(e.config.Paths.TargetBase, backupDirName)
+		snapshotsSubDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.SnapshotsSubDir)
+		currentRun.target = filepath.Join(snapshotsSubDir, backupDirName)
 	} else {
 		// INCREMENTAL MODE (DEFAULT)
 		if err := e.performRollover(ctx, currentRun); err != nil {
 			return fmt.Errorf("error during backup rollover: %w", err)
 		}
-		currentIncrementalDirName := e.config.Naming.Prefix + e.config.Naming.IncrementalModeSuffix
-		currentRun.target = filepath.Join(e.config.Paths.TargetBase, currentIncrementalDirName)
+		incrementalDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.IncrementalSubDir)
+		currentRun.target = incrementalDir
 	}
 	return nil
 }
@@ -371,8 +372,8 @@ func (e *Engine) performSync(ctx context.Context, currentRun *runState) error {
 // performRollover checks if the incremental backup directory is from a previous day > RolloverInterval.
 // If so, it renames it to a permanent timestamped archive.
 func (e *Engine) performRollover(ctx context.Context, currentRun *runState) error {
-	currentDirName := e.config.Naming.Prefix + e.config.Naming.IncrementalModeSuffix
-	currentBackupPath := filepath.Join(e.config.Paths.TargetBase, currentDirName)
+	incrementalDirName := e.config.Paths.IncrementalSubDir
+	currentBackupPath := filepath.Join(e.config.Paths.TargetBase, incrementalDirName)
 
 	metaData, err := readBackupMetafile(currentBackupPath)
 	if os.IsNotExist(err) {
@@ -398,13 +399,18 @@ func (e *Engine) performRollover(ctx context.Context, currentRun *runState) erro
 		// The directory name must remain uniquely based on UTC time to avoid DST conflicts,
 		// but we add the user's local offset to make the timezone clear to the user.
 		archiveTimestamp := config.FormatTimestampWithOffset(lastBackupTime)
-		archiveDirName := fmt.Sprintf("%s%s", e.config.Naming.Prefix, archiveTimestamp)
-		archivePath := filepath.Join(e.config.Paths.TargetBase, archiveDirName)
+		archiveDirName := e.config.Naming.Prefix + archiveTimestamp
+
+		// Archives are stored in a dedicated subdirectory for clarity.
+		archivesSubDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.ArchivesSubDir)
+		archivePath := filepath.Join(archivesSubDir, archiveDirName)
 
 		// Sanity check: ensure the destination for the rollover does not already exist.
 		if _, err := os.Stat(archivePath); err == nil {
 			return fmt.Errorf("rollover destination %s already exists, cannot proceed", archivePath)
 		} else if !os.IsNotExist(err) {
+			// The error is not "file does not exist", so it might be a permissions issue
+			// or the archives subdir doesn't exist. Let's try to create it.
 			return fmt.Errorf("could not check rollover destination %s: %w", archivePath, err)
 		}
 
@@ -412,7 +418,12 @@ func (e *Engine) performRollover(ctx context.Context, currentRun *runState) erro
 		if e.config.DryRun {
 			plog.Info("[DRY RUN] Would rename", "from", currentBackupPath, "to", archivePath)
 			return nil
-		} else if err := os.Rename(currentBackupPath, archivePath); err != nil {
+		}
+
+		if err := os.MkdirAll(archivesSubDir, 0755); err != nil {
+			return fmt.Errorf("failed to create archives subdirectory %s: %w", archivesSubDir, err)
+		}
+		if err := os.Rename(currentBackupPath, archivePath); err != nil {
 			return fmt.Errorf("failed to roll over backup: %w", err)
 		}
 	}
@@ -546,8 +557,9 @@ func (e *Engine) checkRolloverInterval() {
 // applyRetentionPolicy scans the backup target directory and deletes snapshots
 // that are no longer needed according to the configured retention policy.
 func (e *Engine) applyRetentionPolicy(ctx context.Context) error {
-	currentDirName := e.config.Naming.Prefix + e.config.Naming.IncrementalModeSuffix
-	baseDir := e.config.Paths.TargetBase
+	incrementalDirName := e.config.Paths.IncrementalSubDir
+	// Historical archives are kept in the 'archives' subdirectory.
+	archivesDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.ArchivesSubDir)
 	retentionPolicy := e.config.RetentionPolicy
 
 	if retentionPolicy.Hours <= 0 && retentionPolicy.Days <= 0 && retentionPolicy.Weeks <= 0 && retentionPolicy.Months <= 0 && retentionPolicy.Years <= 0 {
@@ -556,9 +568,9 @@ func (e *Engine) applyRetentionPolicy(ctx context.Context) error {
 	}
 
 	plog.Info("Cleaning outdated backups")
-	plog.Debug("Applying retention policy", "directory", baseDir)
+	plog.Debug("Applying retention policy", "directory", archivesDir)
 	// --- 1. Get a sorted list of all valid, historical backups ---
-	allBackups, err := e.fetchSortedBackups(ctx, baseDir, currentDirName)
+	allBackups, err := e.fetchSortedBackups(ctx, archivesDir, incrementalDirName)
 	if err != nil {
 		return err
 	}
@@ -571,7 +583,7 @@ func (e *Engine) applyRetentionPolicy(ctx context.Context) error {
 	for _, backup := range allBackups {
 		dirName := backup.Name
 		if _, shouldKeep := backupsToKeep[dirName]; !shouldKeep {
-			dirsToDelete = append(dirsToDelete, filepath.Join(baseDir, dirName))
+			dirsToDelete = append(dirsToDelete, filepath.Join(archivesDir, dirName))
 		}
 	}
 
@@ -796,6 +808,10 @@ func (e *Engine) fetchSortedBackups(ctx context.Context, baseDir, excludeDir str
 
 	entries, err := os.ReadDir(baseDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			plog.Debug("Archives directory does not exist yet, no retention policy to apply.", "path", baseDir)
+			return nil, nil // Not an error, just means no archives exist yet.
+		}
 		return nil, fmt.Errorf("failed to read backup directory %s: %w", baseDir, err)
 	}
 

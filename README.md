@@ -85,12 +85,14 @@ Open the newly created `pgl-backup.conf` file. It will look something like this,
   "dryRun": false,
   "metrics": true,
   "naming": {
-    "prefix": "PGL_Backup_",
-    "incrementalModeSuffix": "Current"
+    "prefix": "PGL_Backup_"
   },
   "paths": {
     "source": "/home/user/Documents",
     "targetBase": "/media/backup-drive/MyDocumentsBackup",
+    "snapshotsSubDir": "PGL_Backup_Snapshots",
+    "archivesSubDir": "PGL_Backup_Archives",
+    "incrementalSubDir": "PGL_Backup_Current",
     "preserveSourceDirectoryName": true,
     "excludeFiles": [],
     "excludeDirs": []
@@ -114,7 +116,12 @@ Now, simply point `pgl-backup` at the target directory. It will automatically lo
 pgl-backup -target="/media/backup-drive/MyDocumentsBackup"
 ```
 
-The first run will copy all files into a `.../PGL_Backup_current` directory. Subsequent runs will update this directory. After 24 hours, the next run will first rename `PGL_Backup_current` to a timestamped archive (e.g., `PGL_Backup_2023-10-27-...`) and then create a new `current` backup.
+The first run will copy all files into a `.../PGL_Backup_Current` directory. Subsequent runs will update this directory. After 24 hours, the next run will first rename `PGL_Backup_Current` to a timestamped archive (e.g., `PGL_Backup_2023-10-27-...`) inside a new `PGL_Backup_Archives` sub-directory, and then create a new current backup.
+Your backup target will be organized with dedicated sub-directories for each mode:
+```/
+├── PGL_Backup_Current/ (The active incremental backup)
+├── PGL_Backup_Archives/ (Historical incremental archives)
+└── PGL_Backup_Snapshots/ (Snapshots from snapshot mode)```
 
 ## Usage and Examples
 
@@ -167,7 +174,10 @@ All command-line flags can be set in the `pgl-backup.conf` file.
 | ------------------------------- | ------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `source` / `paths.source`       | `string`      | `""`                                  | The directory to back up. **Required**.                                                                 |
 | `target` / `paths.targetBase`   | `string`      | `""`                                  | The base directory where backups are stored. **Required**.                                              |
-| `mode` / `mode`                 | `string`      | `"incremental"`                       | Backup mode: `"incremental"` or `"snapshot"`.                                                           |
+| `mode` / `mode`                 | `string`      | `"incremental"`                       | Backup mode: `"incremental"` or `"snapshot"`.
+| `paths.snapshotsSubDir`          | `string`      | `"PGL_Backup_Snapshots"`               | The name of the sub-directory where snapshots are stored (snapshot mode only). |
+| `paths.archivesSubDir`          | `string`      | `"PGL_Backup_Archives"`               | The name of the sub-directory within the target where historical archives are stored (incremental mode only). |
+| `paths.incrementalSubDir`       | `string`      | `"PGL_Backup_Current"`                | The name of the directory for the active incremental backup.                                    |
 | `init`                          | `bool`        | `false`                               | If true, generates a config file and exits.                                                             |
 | `dry-run` / `dryRun`            | `bool`        | `false`                               | If true, simulates the backup without making changes.                                                   |
 | `log-level` / `logLevel`        | `string`      | `"info"`                              | Set the logging level: `"debug"`, `"info"`, `"warn"`, or `"error"`.                                     |

@@ -46,9 +46,10 @@ func newTestEngine(cfg config.Config) *Engine {
 }
 
 // Helper to create a temporary directory structure for a backup.
-func createTestBackup(t *testing.T, baseDir, name string, backupTime time.Time) {
+func createTestBackup(t *testing.T, baseDir, name string, backupTime time.Time, inArchivesSubDir bool) {
 	t.Helper()
 	backupPath := filepath.Join(baseDir, name)
+	// The helper now needs to know if it should create the backup in the archives subdir.
 	if err := os.MkdirAll(backupPath, 0755); err != nil {
 		t.Fatalf("failed to create test backup dir: %v", err)
 	}
@@ -427,17 +428,17 @@ func TestPerformSync_PreserveSourceDirectoryName(t *testing.T) {
 		{
 			name:                        "PreserveSourceDirectoryName is true",
 			preserveSourceDirectoryName: true,
-			expectedDst:                 filepath.Join(targetBase, "Current", filepath.Base(srcDir)),
+			expectedDst:                 filepath.Join(targetBase, "test_current", filepath.Base(srcDir)),
 		},
 		{
 			name:                        "PreserveSourceDirectoryName is false",
 			preserveSourceDirectoryName: false,
-			expectedDst:                 filepath.Join(targetBase, "Current"),
+			expectedDst:                 filepath.Join(targetBase, "test_current"),
 		},
 		{
 			name:                        "PreserveSourceDirectoryName is true - Windows Drive Root",
 			preserveSourceDirectoryName: true,
-			expectedDst:                 filepath.Join(targetBase, "Current", "C"),
+			expectedDst:                 filepath.Join(targetBase, "test_current", "C"),
 			// This test case will only run on Windows, otherwise it will be skipped.
 			// On non-Windows, "C:" is not a root, so filepath.Base("C:") would be "C:".
 			// The logic should handle this gracefully.
@@ -446,13 +447,13 @@ func TestPerformSync_PreserveSourceDirectoryName(t *testing.T) {
 		{
 			name:                        "PreserveSourceDirectoryName is true - Unix Root",
 			preserveSourceDirectoryName: true,
-			expectedDst:                 filepath.Join(targetBase, "Current"), // Should not append anything for "/"
+			expectedDst:                 filepath.Join(targetBase, "test_current"), // Should not append anything for "/"
 			srcDir:                      "/",
 		},
 		{
 			name:                        "PreserveSourceDirectoryName is true - Relative Path",
 			preserveSourceDirectoryName: true,
-			expectedDst:                 filepath.Join(targetBase, "Current", "my_relative_dir"),
+			expectedDst:                 filepath.Join(targetBase, "test_current", "my_relative_dir"),
 			srcDir:                      "./my_relative_dir",
 		},
 		// Add more cases as needed, e.g., paths ending with a separator.
@@ -478,11 +479,11 @@ func TestPerformSync_PreserveSourceDirectoryName(t *testing.T) {
 
 			cfg.Paths.Source = testSrcDir
 			cfg.Paths.TargetBase = targetBase
-			cfg.Naming.IncrementalModeSuffix = "Current"
+			cfg.Paths.IncrementalSubDir = "test_current"
 			cfg.Paths.PreserveSourceDirectoryName = tc.preserveSourceDirectoryName
 
 			e := newTestEngine(cfg)
-			currentRun := &runState{target: filepath.Join(targetBase, "Current"), timestampUTC: time.Now()}
+			currentRun := &runState{target: filepath.Join(targetBase, cfg.Paths.IncrementalSubDir), timestampUTC: time.Now()}
 
 			// Inject the mock syncer
 			mock := &mockSyncer{}
@@ -564,17 +565,16 @@ func TestPerformRollover(t *testing.T) {
 	tempDir := t.TempDir()
 	cfg := config.NewDefault()
 	cfg.Paths.TargetBase = tempDir
-	cfg.Naming.Prefix = "PGL_Backup_"
-	cfg.Naming.IncrementalModeSuffix = "Current"
+	cfg.Paths.ArchivesSubDir = "Archives" // Explicitly set for test clarity
 	cfg.RolloverPolicy.Interval = 24 * time.Hour
 
 	e := newTestEngine(cfg)
-	currentRun := &runState{timestampUTC: time.Now().UTC()}
+	currentRun := &runState{timestampUTC: time.Now().UTC().Add(25 * time.Hour)}
 
 	// Create a "current" backup from yesterday
 	lastBackupTime := currentRun.timestampUTC.Add(-25 * time.Hour)
-	currentBackupDirName := "PGL_Backup_Current"
-	createTestBackup(t, tempDir, currentBackupDirName, lastBackupTime)
+	currentBackupDirName := cfg.Paths.IncrementalSubDir
+	createTestBackup(t, tempDir, currentBackupDirName, lastBackupTime, false)
 
 	// Act
 	err := e.performRollover(context.Background(), currentRun)
@@ -593,7 +593,8 @@ func TestPerformRollover(t *testing.T) {
 	// 2. A new archived directory should exist.
 	archiveTimestamp := config.FormatTimestampWithOffset(lastBackupTime)
 	archiveDirName := "PGL_Backup_" + archiveTimestamp
-	newPath := filepath.Join(tempDir, archiveDirName)
+	archivesSubDir := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir)
+	newPath := filepath.Join(archivesSubDir, archiveDirName)
 	_, err = os.Stat(newPath)
 	if err != nil {
 		t.Errorf("expected new archive directory to exist, but it does not: %v", err)
@@ -605,8 +606,7 @@ func TestPerformRollover_NoRollover(t *testing.T) {
 	tempDir := t.TempDir()
 	cfg := config.NewDefault()
 	cfg.Paths.TargetBase = tempDir
-	cfg.Naming.Prefix = "PGL_Backup_"
-	cfg.Naming.IncrementalModeSuffix = "Current"
+	cfg.Paths.IncrementalSubDir = "test_current"
 	cfg.RolloverPolicy.Interval = 24 * time.Hour
 
 	// To test this reliably, we need to control the timestamps precisely.
@@ -619,8 +619,8 @@ func TestPerformRollover_NoRollover(t *testing.T) {
 	// Create a "current" backup from a few hours ago (same day)
 	// This is the timestamp that will be written to the metafile.
 	lastBackupTimeInMeta := currentRunTime.Add(-2 * time.Hour)
-	currentBackupDirName := "PGL_Backup_Current"
-	createTestBackup(t, tempDir, currentBackupDirName, lastBackupTimeInMeta)
+	currentBackupDirName := cfg.Paths.IncrementalSubDir
+	createTestBackup(t, tempDir, currentBackupDirName, lastBackupTimeInMeta, false)
 
 	// Act
 	err := e.performRollover(context.Background(), currentRun)
@@ -642,6 +642,7 @@ func TestApplyRetentionPolicy(t *testing.T) {
 	tempDir := t.TempDir()
 	cfg := config.NewDefault()
 	cfg.Paths.TargetBase = tempDir
+	cfg.Paths.ArchivesSubDir = "archives"
 	cfg.Naming.Prefix = "backup_"
 	cfg.RetentionPolicy = config.BackupRetentionPolicyConfig{
 		Hours:  0,
@@ -653,12 +654,16 @@ func TestApplyRetentionPolicy(t *testing.T) {
 	e := newTestEngine(cfg)
 	now := time.Now()
 
+	// The retention policy operates on the archives subdirectory.
+	archivesDir := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir)
+	os.MkdirAll(archivesDir, 0755)
+
 	// Create backups to be kept and deleted
-	createTestBackup(t, tempDir, "backup_kept", now.Add(-1*24*time.Hour))
-	createTestBackup(t, tempDir, "backup_to_delete", now.Add(-5*24*time.Hour))
+	createTestBackup(t, archivesDir, "backup_kept", now.Add(-1*24*time.Hour), true)
+	createTestBackup(t, archivesDir, "backup_to_delete", now.Add(-5*24*time.Hour), true)
 
 	// Create a non-backup directory that should be ignored
-	if err := os.Mkdir(filepath.Join(tempDir, "not_a_backup"), 0755); err != nil {
+	if err := os.Mkdir(filepath.Join(archivesDir, "not_a_backup"), 0755); err != nil {
 		t.Fatalf("failed to create non-backup dir: %v", err)
 	}
 
@@ -670,19 +675,19 @@ func TestApplyRetentionPolicy(t *testing.T) {
 
 	// Assert
 	// Kept backup should exist
-	_, err = os.Stat(filepath.Join(tempDir, "backup_kept"))
+	_, err = os.Stat(filepath.Join(archivesDir, "backup_kept"))
 	if err != nil {
 		t.Errorf("expected kept backup to exist, but it does not: %v", err)
 	}
 
 	// Deleted backup should not exist
-	_, err = os.Stat(filepath.Join(tempDir, "backup_to_delete"))
+	_, err = os.Stat(filepath.Join(archivesDir, "backup_to_delete"))
 	if !os.IsNotExist(err) {
 		t.Errorf("expected old backup to be deleted, but it still exists or another error occurred: %v", err)
 	}
 
 	// Ignored directory should exist
-	_, err = os.Stat(filepath.Join(tempDir, "not_a_backup"))
+	_, err = os.Stat(filepath.Join(archivesDir, "not_a_backup"))
 	if err != nil {
 		t.Errorf("expected non-backup directory to be ignored, but it was deleted or an error occurred: %v", err)
 	}
@@ -695,6 +700,7 @@ func TestPrepareDestination(t *testing.T) {
 		cfg := config.NewDefault()
 		cfg.Mode = config.SnapshotMode
 		cfg.Paths.TargetBase = tempDir
+		cfg.Paths.SnapshotsSubDir = "snapshots"
 		cfg.Naming.Prefix = "snap_"
 
 		e := newTestEngine(cfg)
@@ -708,7 +714,8 @@ func TestPrepareDestination(t *testing.T) {
 		}
 
 		// Assert
-		expectedPath := filepath.Join(tempDir, "snap_"+config.FormatTimestampWithOffset(testTime))
+		snapshotsDir := filepath.Join(tempDir, cfg.Paths.SnapshotsSubDir)
+		expectedPath := filepath.Join(snapshotsDir, "snap_"+config.FormatTimestampWithOffset(testTime))
 		if expectedPath != currentRun.target {
 			t.Errorf("expected target path %q, but got %q", expectedPath, currentRun.target)
 		}
@@ -720,8 +727,7 @@ func TestPrepareDestination(t *testing.T) {
 		cfg := config.NewDefault()
 		cfg.Mode = config.IncrementalMode
 		cfg.Paths.TargetBase = tempDir
-		cfg.Naming.Prefix = "incr_"
-		cfg.Naming.IncrementalModeSuffix = "latest"
+		cfg.Paths.IncrementalSubDir = "latest"
 
 		e := newTestEngine(cfg)
 		currentRun := &runState{timestampUTC: time.Now().UTC()}
@@ -733,7 +739,7 @@ func TestPrepareDestination(t *testing.T) {
 		}
 
 		// Assert
-		expectedPath := filepath.Join(tempDir, "incr_latest")
+		expectedPath := filepath.Join(tempDir, cfg.Paths.IncrementalSubDir)
 		if expectedPath != currentRun.target {
 			t.Errorf("expected target path %q, but got %q", expectedPath, currentRun.target)
 		}
@@ -752,9 +758,9 @@ func TestFetchSortedBackups(t *testing.T) {
 	backup2Time := now.Add(-5 * time.Hour) // Newest
 	backup3Time := now.Add(-20 * time.Hour)
 
-	createTestBackup(t, tempDir, "backup_1", backup1Time)
-	createTestBackup(t, tempDir, "backup_2_newest", backup2Time)
-	createTestBackup(t, tempDir, "backup_3", backup3Time)
+	createTestBackup(t, tempDir, "backup_1", backup1Time, false)
+	createTestBackup(t, tempDir, "backup_2_newest", backup2Time, false)
+	createTestBackup(t, tempDir, "backup_3", backup3Time, false)
 
 	// Create a directory without a metafile that should be ignored
 	if err := os.Mkdir(filepath.Join(tempDir, "backup_no_meta"), 0755); err != nil {
