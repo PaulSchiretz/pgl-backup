@@ -194,7 +194,7 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 	// the interval is calculated based on the retention policy. If 'manual', the
 	// user-configured interval is validated against the retention policy.
 	if e.config.Mode == config.IncrementalMode {
-		if e.config.RolloverPolicy.Mode == config.ManualInterval {
+		if e.config.IncrementalRolloverPolicy.Mode == config.ManualInterval {
 			e.checkRolloverInterval()
 		} else {
 			e.autoAdjustRolloverInterval()
@@ -280,7 +280,7 @@ func (e *Engine) autoAdjustRolloverInterval() {
 
 	plog.Debug("Auto-determined rollover interval", "interval", suggestedInterval)
 	// Override the interval in the engine's config for this run.
-	e.config.RolloverPolicy.Interval = suggestedInterval
+	e.config.IncrementalRolloverPolicy.Interval = suggestedInterval
 }
 
 // runHooks executes a list of shell commands for a given hook type.
@@ -404,7 +404,7 @@ func (e *Engine) performRollover(ctx context.Context, currentRun *runState) erro
 		plog.Info("Rollover threshold crossed, creating new archive.",
 			"last_backup_time", lastBackupTime,
 			"current_time_utc", currentRun.timestampUTC,
-			"rollover_interval", e.config.RolloverPolicy.Interval)
+			"rollover_interval", e.config.IncrementalRolloverPolicy.Interval)
 
 		// Check for cancellation before performing the rename.
 		select {
@@ -461,11 +461,11 @@ func (e *Engine) performRollover(ctx context.Context, currentRun *runState) erro
 func (e *Engine) shouldRollover(lastBackupTime time.Time, currentRun *runState) bool {
 	// Handle the default (0 = 24h) for comparison logic
 	// A value of 0 would panic, this is already accounted for in config validation, therefor it is handed beforehand
-	if e.config.RolloverPolicy.Interval == 0 {
+	if e.config.IncrementalRolloverPolicy.Interval == 0 {
 		return false // Rollover is explicitly disabled.
 	}
 
-	effectiveInterval := e.config.RolloverPolicy.Interval
+	effectiveInterval := e.config.IncrementalRolloverPolicy.Interval
 
 	// NOTE: For multi-day intervals, the full implementation requires normalizing to local midnight
 	// and calculating epoch day buckets to correctly handle DST and guarantee a new snapshot
@@ -519,7 +519,7 @@ func (e *Engine) shouldRollover(lastBackupTime time.Time, currentRun *runState) 
 // interval).
 func (e *Engine) checkRolloverInterval() {
 	policy := e.config.IncrementalRetentionPolicy
-	effectiveInterval := e.config.RolloverPolicy.Interval
+	effectiveInterval := e.config.IncrementalRolloverPolicy.Interval
 
 	if effectiveInterval == 0 {
 		plog.Debug("Rollover is disabled (rolloverPolicy.interval = 0). Retention policy warnings for interval mismatch are suppressed.")
@@ -530,7 +530,7 @@ func (e *Engine) checkRolloverInterval() {
 	if policy.Hours > 0 && effectiveInterval > 1*time.Hour {
 		plog.Warn("Configuration Mismatch: Hourly retention is enabled, but rollover is too slow.",
 			"keep_hourly", policy.Hours,
-			"rollover_interval", e.config.RolloverPolicy.Interval,
+			"rollover_interval", e.config.IncrementalRolloverPolicy.Interval,
 			"impact", "Hourly slots will fill at the speed of the rollover interval.")
 	}
 
@@ -538,7 +538,7 @@ func (e *Engine) checkRolloverInterval() {
 	if policy.Days > 0 && effectiveInterval > 24*time.Hour {
 		plog.Warn("Configuration Mismatch: Daily retention is enabled, but rollover is too slow.",
 			"keep_daily", policy.Days,
-			"rollover_interval", e.config.RolloverPolicy.Interval,
+			"rollover_interval", e.config.IncrementalRolloverPolicy.Interval,
 			"impact", "Daily slots will be filled by Weekly/Monthly backups, delaying the 'Weekly' retention rule.")
 	}
 
@@ -546,27 +546,27 @@ func (e *Engine) checkRolloverInterval() {
 	if policy.Weeks > 0 && effectiveInterval > 168*time.Hour {
 		plog.Warn("Configuration Mismatch: Weekly retention is enabled, but rollover is too slow.",
 			"keep_weekly", policy.Weeks,
-			"rollover_interval", e.config.RolloverPolicy.Interval)
+			"rollover_interval", e.config.IncrementalRolloverPolicy.Interval)
 	}
 
 	// 4. Check Monthly Mismatch
 	// We use 30 days (720h) as the rough approximation for a month.
 	// If the rollover is slower than 30 days (e.g., 60 days), we cannot satisfy "Keep N Monthly".
 	avgMonth := 30 * 24 * time.Hour
-	if policy.Months > 0 && e.config.RolloverPolicy.Interval > avgMonth {
+	if policy.Months > 0 && e.config.IncrementalRolloverPolicy.Interval > avgMonth {
 		plog.Warn("Configuration Mismatch: Monthly retention is enabled, but rollover is too slow.",
 			"keep_monthly", policy.Months,
-			"rollover_interval", e.config.RolloverPolicy.Interval,
+			"rollover_interval", e.config.IncrementalRolloverPolicy.Interval,
 			"impact", "Backups occur less frequently than once a month; some calendar months will have no backup.")
 	}
 
 	// 5. Check Yearly Mismatch
 	// We use 365 days as the rough approximation for a year.
 	avgYear := 365 * 24 * time.Hour
-	if policy.Years > 0 && e.config.RolloverPolicy.Interval > avgYear {
+	if policy.Years > 0 && e.config.IncrementalRolloverPolicy.Interval > avgYear {
 		plog.Warn("Configuration Mismatch: Yearly retention is enabled, but rollover is too slow.",
 			"keep_yearly", policy.Years,
-			"rollover_interval", e.config.RolloverPolicy.Interval,
+			"rollover_interval", e.config.IncrementalRolloverPolicy.Interval,
 			"impact", "Backups occur less frequently than once a year; some calendar years will have no backup.")
 	}
 }
@@ -724,14 +724,14 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 	var planParts []string
 	if retentionPolicy.Hours > 0 {
 		msg := fmt.Sprintf("%d hourly", len(savedHourly))
-		if e.config.RolloverPolicy.Interval > 1*time.Hour {
+		if e.config.IncrementalRolloverPolicy.Interval > 1*time.Hour {
 			msg += " (slow-fill)"
 		}
 		planParts = append(planParts, msg)
 	}
 	if retentionPolicy.Days > 0 {
 		msg := fmt.Sprintf("%d daily", len(savedDaily))
-		if e.config.RolloverPolicy.Interval > 24*time.Hour {
+		if e.config.IncrementalRolloverPolicy.Interval > 24*time.Hour {
 			msg += " (slow-fill)"
 		}
 		planParts = append(planParts, msg)
@@ -739,7 +739,7 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 	if retentionPolicy.Weeks > 0 {
 		msg := fmt.Sprintf("%d weekly", len(savedWeekly))
 		// 168 hours is exactly 7 days
-		if e.config.RolloverPolicy.Interval > 168*time.Hour {
+		if e.config.IncrementalRolloverPolicy.Interval > 168*time.Hour {
 			msg += " (slow-fill)"
 		}
 		planParts = append(planParts, msg)
@@ -748,7 +748,7 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 		msg := fmt.Sprintf("%d monthly", len(savedMonthly))
 		// Use 30 days (720 hours) as the monthly threshold
 		avgMonth := 30 * 24 * time.Hour
-		if e.config.RolloverPolicy.Interval > avgMonth {
+		if e.config.IncrementalRolloverPolicy.Interval > avgMonth {
 			msg += " (slow-fill)"
 		}
 		planParts = append(planParts, msg)
@@ -757,7 +757,7 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 		msg := fmt.Sprintf("%d yearly", len(savedYearly))
 		// Use 365 days (8760 hours) as the yearly threshold
 		avgYear := 365 * 24 * time.Hour
-		if e.config.RolloverPolicy.Interval > avgYear {
+		if e.config.IncrementalRolloverPolicy.Interval > avgYear {
 			msg += " (slow-fill)"
 		}
 		planParts = append(planParts, msg)

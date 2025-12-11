@@ -223,7 +223,7 @@ func (rim *RolloverIntervalMode) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-type RolloverPolicyConfig struct {
+type IncrementalRolloverPolicyConfig struct {
 	// Mode determines if the interval is set manually or derived automatically from the retention policy.
 	Mode RolloverIntervalMode `json:"mode"`
 	// Interval is the duration after which a new backup archive is created in incremental mode (e.g., "24h", "7d").
@@ -232,18 +232,18 @@ type RolloverPolicyConfig struct {
 }
 
 type Config struct {
-	Mode                       BackupMode                  `json:"mode"`
-	RolloverPolicy             RolloverPolicyConfig        `json:"rolloverPolicy"`
-	Engine                     BackupEngineConfig          `json:"engine"` // Keep this for engine-specific settings
-	LogLevel                   string                      `json:"logLevel"`
-	DryRun                     bool                        `json:"dryRun"`
-	FailFast                   bool                        `json:"failFast"`
-	Metrics                    bool                        `json:"metrics,omitempty"`
-	Naming                     BackupNamingConfig          `json:"naming"`
-	Paths                      BackupPathConfig            `json:"paths"`
-	IncrementalRetentionPolicy BackupRetentionPolicyConfig `json:"incrementalRetentionPolicy,omitempty"`
-	SnapshotRetentionPolicy    BackupRetentionPolicyConfig `json:"snapshotRetentionPolicy,omitempty"`
-	Hooks                      BackupHooksConfig           `json:"hooks,omitempty"`
+	Mode                       BackupMode                      `json:"mode"`
+	IncrementalRolloverPolicy  IncrementalRolloverPolicyConfig `json:"incrementalRolloverPolicy,omitempty"`
+	Engine                     BackupEngineConfig              `json:"engine"` // Keep this for engine-specific settings
+	LogLevel                   string                          `json:"logLevel"`
+	DryRun                     bool                            `json:"dryRun"`
+	FailFast                   bool                            `json:"failFast"`
+	Metrics                    bool                            `json:"metrics,omitempty"`
+	Naming                     BackupNamingConfig              `json:"naming"`
+	Paths                      BackupPathConfig                `json:"paths"`
+	IncrementalRetentionPolicy BackupRetentionPolicyConfig     `json:"incrementalRetentionPolicy,omitempty"`
+	SnapshotRetentionPolicy    BackupRetentionPolicyConfig     `json:"snapshotRetentionPolicy,omitempty"`
+	Hooks                      BackupHooksConfig               `json:"hooks,omitempty"`
 }
 
 // NewDefault creates and returns a Config struct with sensible default
@@ -254,7 +254,7 @@ func NewDefault() Config {
 	// Power users on Windows can still opt-in to 'robocopy' as a battle-tested alternative.
 	return Config{
 		Mode: IncrementalMode, // Default mode
-		RolloverPolicy: RolloverPolicyConfig{
+		IncrementalRolloverPolicy: IncrementalRolloverPolicyConfig{
 			Mode:     AutoInterval,   // Default to auto-adjusting the interval based on the retention policy.
 			Interval: 24 * time.Hour, // Interval will be calculated by the engine in 'auto' mode.
 			// If a user switches to 'manual' mode, they must specify an interval.
@@ -462,8 +462,8 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("copyBufferSizeKB must be greater than 0")
 	}
 	if c.Mode == IncrementalMode {
-		if c.RolloverPolicy.Mode == ManualInterval && c.RolloverPolicy.Interval < 0 {
-			return fmt.Errorf("rolloverPolicy.interval cannot be negative when mode is 'manual'. Use '0' to disable rollover")
+		if c.IncrementalRolloverPolicy.Mode == ManualInterval && c.IncrementalRolloverPolicy.Interval < 0 {
+			return fmt.Errorf("incrementalRolloverPolicy.interval cannot be negative when mode is 'manual'. Use '0' to disable rollover")
 		}
 	}
 
@@ -496,9 +496,9 @@ func (c *Config) LogSummary() {
 	case IncrementalMode:
 		logArgs = append(logArgs, "incremental_subdir", c.Paths.IncrementalSubDir)
 		logArgs = append(logArgs, "archives_subdir", c.Paths.ArchivesSubDir)
-		logArgs = append(logArgs, "rollover_mode", c.RolloverPolicy.Mode)
-		if c.RolloverPolicy.Mode == ManualInterval {
-			logArgs = append(logArgs, "rollover_interval", c.RolloverPolicy.Interval)
+		logArgs = append(logArgs, "rollover_mode", c.IncrementalRolloverPolicy.Mode)
+		if c.IncrementalRolloverPolicy.Mode == ManualInterval {
+			logArgs = append(logArgs, "rollover_interval", c.IncrementalRolloverPolicy.Interval)
 		}
 	case SnapshotMode:
 		logArgs = append(logArgs, "snapshots_subdir", c.Paths.SnapshotsSubDir)
@@ -623,10 +623,6 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 			merged.Paths.ExcludeDirs = value.([]string)
 		case "preserve-source-name":
 			merged.Paths.PreserveSourceDirectoryName = value.(bool)
-		case "rollover-mode":
-			merged.RolloverPolicy.Mode = value.(RolloverIntervalMode)
-		case "rollover-interval":
-			merged.RolloverPolicy.Interval = value.(time.Duration)
 		case "pre-backup-hooks":
 			merged.Hooks.PreBackup = value.([]string)
 		case "post-backup-hooks":

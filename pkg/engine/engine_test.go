@@ -211,7 +211,7 @@ func TestShouldRollover(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Arrange
 			cfg := config.NewDefault()
-			cfg.RolloverPolicy.Interval = tc.interval
+			cfg.IncrementalRolloverPolicy.Interval = tc.interval
 
 			e := newTestEngine(cfg)
 			currentRun := &runState{timestampUTC: tc.currentBackup}
@@ -530,7 +530,7 @@ func TestDetermineBackupsToKeep_Promotion(t *testing.T) {
 
 	cfg := config.NewDefault()
 	// Set a rollover that is fast enough to not trigger "slow-fill" warnings
-	cfg.RolloverPolicy.Interval = 1 * time.Hour
+	cfg.IncrementalRolloverPolicy.Interval = 1 * time.Hour
 	e := newTestEngine(cfg)
 
 	// Act
@@ -567,7 +567,7 @@ func TestPerformRollover(t *testing.T) {
 	cfg := config.NewDefault()
 	cfg.Paths.TargetBase = tempDir
 	cfg.Paths.ArchivesSubDir = "Archives" // Explicitly set for test clarity
-	cfg.RolloverPolicy.Interval = 24 * time.Hour
+	cfg.IncrementalRolloverPolicy.Interval = 24 * time.Hour
 
 	e := newTestEngine(cfg)
 	currentRun := &runState{timestampUTC: time.Now().UTC().Add(25 * time.Hour)}
@@ -608,7 +608,7 @@ func TestPerformRollover_NoRollover(t *testing.T) {
 	cfg := config.NewDefault()
 	cfg.Paths.TargetBase = tempDir
 	cfg.Paths.IncrementalSubDir = "test_current"
-	cfg.RolloverPolicy.Interval = 24 * time.Hour
+	cfg.IncrementalRolloverPolicy.Interval = 24 * time.Hour
 
 	// To test this reliably, we need to control the timestamps precisely.
 	// Let's set the "current" run to be on a specific day.

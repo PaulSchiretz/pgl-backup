@@ -65,7 +65,7 @@ Open the newly created `pgl-backup.conf` file. It will look something like this,
 ```json
 {
   "mode": "incremental",
-  "rolloverPolicy": {
+  "incrementalRolloverPolicy": {
     "mode": "auto",
     "interval": "24h0m0s"
   },
@@ -192,8 +192,8 @@ All command-line flags can be set in the `pgl-backup.conf` file.
 | `log-level` / `logLevel`        | `string`      | `"info"`                              | Set the logging level: `"debug"`, `"info"`, `"warn"`, or `"error"`.                                     |
 | `metrics` / `metrics`           | `bool`        | `true`                                | If true, enables detailed performance and file-counting metrics.                                        |
 | `sync-engine` / `engine.type`   | `string`      | `"native"`                            | The sync engine to use: `"native"` or `"robocopy"` (Windows only).                                      |
-| `rollover-mode` / `rolloverPolicy.mode` | `string` | `"auto"` | Rollover policy mode: `"auto"` (derives interval from retention policy) or `"manual"`. |
-| `rollover-interval` / `rolloverPolicy.interval` | `duration` | `"24h"` | In `manual` mode, the interval after which a new archive is created (e.g., "24h", "168h"). Use "0" to disable rollover. |
+| `incrementalRolloverPolicy.mode` | `string` | `"auto"` | Rollover policy mode: `"auto"` (derives interval from retention policy) or `"manual"`. |
+| `incrementalRolloverPolicy.interval` | `duration` | `"24h"` | In `manual` mode, the interval after which a new archive is created (e.g., "24h", "168h"). Use "0" to disable rollover. |
 | `incrementalRetentionPolicy.enabled`         | `bool`         | `true`                             | Enables the retention policy for incremental mode archives.
 | `incrementalRetentionPolicy.hours`         | `int`         | `0`                                   | Number of recent hourly incremental archives to keep.                                                                |
 | `incrementalRetentionPolicy.days`          | `int`         | `7`                                   | Number of recent daily incremental archives to keep.                                                                 |

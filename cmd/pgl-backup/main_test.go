@@ -5,9 +5,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
-
-	"pixelgardenlabs.io/pgl-backup/pkg/config"
 )
 
 // runTestWithFlags is a helper to safely run tests that use the global flag package.
@@ -132,40 +129,6 @@ func TestParseFlagConfig(t *testing.T) {
 		})
 	})
 
-	t.Run("Set Rollover Mode Flag", func(t *testing.T) {
-		args := []string{"-rollover-mode=manual"}
-		runTestWithFlags(t, args, func() {
-			_, setFlags, err := parseFlagConfig()
-			if err != nil {
-				t.Fatalf("expected no error, but got: %v", err)
-			}
-			val, ok := setFlags["rollover-mode"]
-			if !ok {
-				t.Fatal("expected 'rollover-mode' flag to be in setFlags map")
-			}
-			if modeVal, typeOK := val.(config.RolloverIntervalMode); !typeOK || modeVal != config.ManualInterval {
-				t.Errorf("expected rollover-mode to be 'manual', but got %v (type %T)", val, val)
-			}
-		})
-	})
-
-	t.Run("Set Rollover Interval Flag", func(t *testing.T) {
-		args := []string{"-rollover-interval=48h"}
-		runTestWithFlags(t, args, func() {
-			_, setFlags, err := parseFlagConfig()
-			if err != nil {
-				t.Fatalf("expected no error, but got: %v", err)
-			}
-			val, ok := setFlags["rollover-interval"]
-			if !ok {
-				t.Fatal("expected 'rollover-interval' flag to be in setFlags map")
-			}
-			if intervalVal, typeOK := val.(time.Duration); !typeOK || intervalVal != 48*time.Hour {
-				t.Errorf("expected rollover-interval to be '48h', but got %v (type %T)", val, val)
-			}
-		})
-	})
-
 	t.Run("Set Mod Time Window Flag", func(t *testing.T) {
 		args := []string{"-mod-time-window=2"}
 		runTestWithFlags(t, args, func() {
@@ -179,19 +142,6 @@ func TestParseFlagConfig(t *testing.T) {
 			}
 			if intVal, typeOK := val.(int); !typeOK || intVal != 2 {
 				t.Errorf("expected mod-time-window to be 2, but got %v (type %T)", val, val)
-			}
-		})
-	})
-
-	t.Run("Invalid Rollover Mode Flag", func(t *testing.T) {
-		args := []string{"-rollover-mode=invalid"}
-		runTestWithFlags(t, args, func() {
-			_, _, err := parseFlagConfig()
-			if err == nil {
-				t.Fatal("expected an error for invalid rollover mode, but got nil")
-			}
-			if !strings.Contains(err.Error(), "invalid RolloverIntervalMode") {
-				t.Errorf("expected error to contain 'invalid RolloverIntervalMode', but got: %v", err)
 			}
 		})
 	})

@@ -42,6 +42,15 @@ func init() {
 // parseFlagConfig defines and parses command-line flags, and constructs a
 // configuration object containing only the values provided by those flags.
 func parseFlagConfig() (action, map[string]interface{}, error) {
+	// --- Flag Design Philosophy ---
+	// Flags are exposed for options that are useful to override for a single run
+	// (e.g., -dry-run, -mode=snapshot, -log-level=debug).
+	//
+	// Core strategic options that define the long-term behavior of a backup set
+	// (e.g., retention policies, rollover intervals) do not have corresponding flags.
+	// These should be set consistently in the pgl-backup.conf file to ensure
+	// predictable behavior over time.
+
 	// Define flags with zero-value defaults. We will merge them later.
 	srcFlag := flag.String("source", "", "Source directory to copy from")
 	targetFlag := flag.String("target", "", "Base destination directory for backups")
@@ -64,8 +73,6 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	excludeDirsFlag := flag.String("exclude-dirs", "", "Comma-separated list of directory names to exclude (supports glob patterns).")
 	preserveSourceNameFlag := flag.Bool("preserve-source-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
 	preBackupHooksFlag := flag.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
-	rolloverModeFlag := flag.String("rollover-mode", "auto", "Rollover policy mode: 'auto' or 'manual'.")
-	rolloverIntervalFlag := flag.Duration("rollover-interval", 24*time.Hour, "Rollover interval for incremental mode (e.g., '24h', '7d'). Use '0' to disable rollover.")
 	postBackupHooksFlag := flag.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
 
 	flag.Parse()
@@ -101,14 +108,6 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 			flagMap[name] = flagparse.ParseCmdList(*preBackupHooksFlag)
 		case "post-backup-hooks":
 			flagMap[name] = flagparse.ParseCmdList(*postBackupHooksFlag)
-		case "rollover-mode":
-			mode, err := config.RolloverIntervalModeFromString(*rolloverModeFlag)
-			if err != nil {
-				return actionRunBackup, nil, err
-			}
-			flagMap[name] = mode
-		case "rollover-interval":
-			flagMap[name] = *rolloverIntervalFlag
 		case "source":
 			flagMap[name] = *srcFlag
 		case "target":
