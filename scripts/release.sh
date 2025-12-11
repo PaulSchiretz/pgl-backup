@@ -13,8 +13,9 @@ RELEASE_DIR="release"
 
 # --- Helper Functions ---
 function print_usage() {
-  echo "Usage: ./release.sh <version>"
+  echo "Usage: ./release.sh <version> [--dry-run]"
   echo "Example: ./release.sh v1.0.0"
+  echo "  --dry-run: Performs the build and packaging but skips the final git tag push."
   exit 1
 }
 
@@ -27,7 +28,24 @@ function print_header() {
 # --- Script Start ---
 
 # 1. Validate arguments
-VERSION=$1
+VERSION=""
+DRY_RUN=false
+
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --dry-run) DRY_RUN=true ;;
+    -h|--help) print_usage; exit 0 ;;
+    -*) echo "Unknown option: $1"; print_usage; exit 1 ;;
+    *)
+      if [ -z "$VERSION" ]; then
+        VERSION=$1
+      else
+        echo "Unknown argument: $1"; print_usage; exit 1
+      fi ;;
+  esac
+  shift # Consume the argument for the next iteration
+done
+
 if [ -z "$VERSION" ]; then
   echo "Error: Version argument is required."
   print_usage
@@ -98,9 +116,9 @@ for platform in "${PLATFORMS[@]}"; do
   # Create an archive for the binary
   pushd "$RELEASE_DIR" > /dev/null
   if [ "$GOOS" = "windows" ]; then
-    zip "${BINARY_NAME}_${VERSION}_${GOOS}_${GOARCH}.zip" "$OUTPUT_NAME" "../LICENSE"
+    zip "${BINARY_NAME}_${VERSION}_${GOOS}_${GOARCH}.zip" "$OUTPUT_NAME" "../LICENSE" "../README.md"
   else
-    tar -czf "${BINARY_NAME}_${VERSION}_${GOOS}_${GOARCH}.tar.gz" "$OUTPUT_NAME" "../LICENSE"
+    tar -czf "${BINARY_NAME}_${VERSION}_${GOOS}_${GOARCH}.tar.gz" "$OUTPUT_NAME" "../LICENSE" "../README.md"
   fi
   rm "$OUTPUT_NAME" # Clean up the raw binary after archiving
   popd > /dev/null
@@ -127,9 +145,15 @@ popd > /dev/null
 
 # 6. Create and push git tag
 print_header "Tagging release in git"
-echo "Creating git tag '$VERSION'..."
-git tag "$VERSION"
-echo "Pushing tag to remote..."
-git push origin "$VERSION"
-echo "✅ Git tag '$VERSION' created and pushed."
+if [ "$DRY_RUN" = true ]; then
+    echo "✅ [DRY RUN] Skipping git tag creation and push."
+    # Ensure local tag doesn't exist from a previous dry run
+    git tag --delete "$VERSION" 2>/dev/null || true
+else
+    echo "Creating git tag '$VERSION'..."
+    git tag "$VERSION"
+    echo "Pushing tag to remote..."
+    git push origin "$VERSION"
+    echo "✅ Git tag '$VERSION' created and pushed."
+fi
 print_header "Release $VERSION is complete! Artifacts are in the '$RELEASE_DIR' directory."
