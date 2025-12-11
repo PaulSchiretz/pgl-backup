@@ -39,7 +39,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -47,12 +46,8 @@ import (
 	"pixelgardenlabs.io/pgl-backup/pkg/metrics"
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 	"pixelgardenlabs.io/pgl-backup/pkg/sharded"
+	"pixelgardenlabs.io/pgl-backup/pkg/util"
 )
-
-// isCaseInsensitiveFS checks if the current operating system has a case-insensitive filesystem by default.
-func isCaseInsensitiveFS() bool {
-	return runtime.GOOS == "windows" || runtime.GOOS == "darwin"
-}
 
 // compactPathInfo holds the essential, primitive data from an os.FileInfo.
 // Storing this directly instead of the os.FileInfo interface avoids a pointer
@@ -469,7 +464,7 @@ func (r *syncRun) processDirectorySync(task *syncTask) error {
 
 	// Convert the path to the OS-native format for file access
 	absTrgPath := r.denormalizedAbsPath(r.trg, task.RelPathKey)
-	expectedPerms := withBackupWritePermission(task.PathInfo.Mode.Perm())
+	expectedPerms := util.WithWritePermission(task.PathInfo.Mode.Perm())
 
 	// 2. Perform the concurrent I/O.
 	// Optimistic creation: Try Chmod first (cheapest syscall).
@@ -976,7 +971,7 @@ func (r *syncRun) execute() error {
 
 // handleNative initializes the sync run structure and kicks off the execution.
 func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror bool, excludeFiles, excludeDirs []string, enableMetrics bool) error {
-	isCaseInsensitive := isCaseInsensitiveFS()
+	isCaseInsensitive := util.IsCaseInsensitiveFS()
 
 	var m metrics.Metrics
 	if enableMetrics {

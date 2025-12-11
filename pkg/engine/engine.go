@@ -18,6 +18,7 @@ import (
 	"pixelgardenlabs.io/pgl-backup/pkg/pathsync"
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 	"pixelgardenlabs.io/pgl-backup/pkg/preflight"
+	"pixelgardenlabs.io/pgl-backup/pkg/util"
 )
 
 // --- ARCHITECTURAL OVERVIEW: Rollover vs. Retention Time Handling ---
@@ -195,9 +196,9 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 	// user-configured interval is validated against the retention policy.
 	if e.config.Mode == config.IncrementalMode {
 		if e.config.IncrementalRolloverPolicy.Mode == config.ManualInterval {
-			e.checkRolloverInterval()
+			e.checkIncrementalRolloverInterval()
 		} else {
-			e.autoAdjustRolloverInterval()
+			e.autoAdjustIncrementalRolloverInterval()
 		}
 	}
 
@@ -254,10 +255,10 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 	return nil
 }
 
-// autoAdjustRolloverInterval calculates the optimal rollover interval based on the retention
+// autoAdjustIncrementalRolloverInterval calculates the optimal rollover interval based on the retention
 // policy and overrides the interval in the engine's configuration for the current run.
 // This is only called when the rollover policy mode is 'auto'.
-func (e *Engine) autoAdjustRolloverInterval() {
+func (e *Engine) autoAdjustIncrementalRolloverInterval() {
 	policy := e.config.IncrementalRetentionPolicy
 	var suggestedInterval time.Duration
 
@@ -331,6 +332,9 @@ func (e *Engine) prepareDestination(ctx context.Context, currentRun *runState) e
 		timestamp := config.FormatTimestampWithOffset(currentRun.timestampUTC)
 		backupDirName := e.config.Naming.Prefix + timestamp
 		snapshotsSubDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.SnapshotsSubDir)
+		if !e.config.DryRun {
+			os.MkdirAll(snapshotsSubDir, util.WithWritePermission(0755))
+		}
 		currentRun.target = filepath.Join(snapshotsSubDir, backupDirName)
 	} else {
 		// INCREMENTAL MODE (DEFAULT)
@@ -437,7 +441,7 @@ func (e *Engine) performRollover(ctx context.Context, currentRun *runState) erro
 			return nil
 		}
 
-		if err := os.MkdirAll(archivesSubDir, 0755); err != nil {
+		if err := os.MkdirAll(archivesSubDir, util.WithWritePermission(0755)); err != nil {
 			return fmt.Errorf("failed to create archives subdirectory %s: %w", archivesSubDir, err)
 		}
 		if err := os.Rename(currentBackupPath, archivePath); err != nil {
@@ -513,11 +517,11 @@ func (e *Engine) shouldRollover(lastBackupTime time.Time, currentRun *runState) 
 	return !currentBackupBoundary.Equal(lastBackupBoundary)
 }
 
-// checkRolloverInterval validates the user-configured manual rollover interval against the
+// checkIncrementalRolloverInterval validates the user-configured manual rollover interval against the
 // retention policy. It warns the user if the interval is too slow to satisfy the
 // frequency of the configured retention slots (e.g., hourly retention with a daily
 // interval).
-func (e *Engine) checkRolloverInterval() {
+func (e *Engine) checkIncrementalRolloverInterval() {
 	policy := e.config.IncrementalRetentionPolicy
 	effectiveInterval := e.config.IncrementalRolloverPolicy.Interval
 

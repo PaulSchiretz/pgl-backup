@@ -11,6 +11,7 @@ import (
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
 	"pixelgardenlabs.io/pgl-backup/pkg/metrics"
+	"pixelgardenlabs.io/pgl-backup/pkg/util"
 )
 
 // helper to create a file with specific content and mod time.
@@ -401,7 +402,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				dstDirInfo := getPathInfo(t, filepath.Join(dst, "special_dir"))
 
 				// The expected permissions should include the backup write bit.
-				expectedPerm := withBackupWritePermission(srcDirInfo.Mode().Perm())
+				expectedPerm := util.WithWritePermission(srcDirInfo.Mode().Perm())
 				if expectedPerm != dstDirInfo.Mode().Perm() {
 					t.Errorf("expected destination dir permissions to be %v, but got %v", expectedPerm, dstDirInfo.Mode().Perm())
 				}
@@ -449,7 +450,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				if err != nil {
 					t.Fatalf("failed to read destination directory: %v", err)
 				}
-				if isCaseInsensitiveFS() {
+				if util.IsCaseInsensitiveFS() {
 					for _, entry := range entries {
 						// On case-insensitive systems, we expect the original file 'image.png' to be updated in place.
 						// A new file 'Image.PNG' should NOT be created.

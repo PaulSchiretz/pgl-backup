@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
+	"pixelgardenlabs.io/pgl-backup/pkg/util"
 )
 
 // Syncer defines the interface for a file synchronization implementation.
@@ -56,7 +57,7 @@ func (s *PathSyncer) Sync(ctx context.Context, src, dst string, mirror bool, exc
 	// Crucially, `withBackupWritePermission` is applied to ensure the backup user
 	// can always write to the destination on subsequent runs, preventing permission lockouts.
 	if !s.dryRun {
-		if err := os.MkdirAll(dst, withBackupWritePermission(srcInfo.Mode().Perm())); err != nil {
+		if err := os.MkdirAll(dst, util.WithWritePermission(srcInfo.Mode().Perm())); err != nil {
 			return fmt.Errorf("failed to create destination directory %s: %w", dst, err)
 		}
 	}
@@ -69,11 +70,4 @@ func (s *PathSyncer) Sync(ctx context.Context, src, dst string, mirror bool, exc
 	default:
 		return fmt.Errorf("unknown sync engine configured: %v", s.engine.Type)
 	}
-}
-
-// withBackupWritePermission ensures that any directory/file permission has the owner-write
-// bit (0200) set. This prevents the backup user from being locked out on subsequent runs.
-func withBackupWritePermission(basePerm os.FileMode) os.FileMode {
-	// Ensure the backup user always retains write permission.
-	return basePerm | 0200
 }

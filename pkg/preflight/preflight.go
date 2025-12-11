@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
+	"pixelgardenlabs.io/pgl-backup/pkg/util"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
@@ -33,7 +34,7 @@ func RunChecks(c *config.Config) error {
 
 	// 3. If not a dry run, perform state-changing checks (create dir, check writability).
 	if !c.DryRun {
-		if err := os.MkdirAll(c.Paths.TargetBase, 0755); err != nil {
+		if err := os.MkdirAll(c.Paths.TargetBase, util.WithWritePermission(0755)); err != nil {
 			return fmt.Errorf("failed to create target directory: %w", err)
 		}
 		if err := checkBackupTargetWritable(c.Paths.TargetBase); err != nil {
