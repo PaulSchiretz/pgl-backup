@@ -246,17 +246,18 @@ func TestDetermineBackupsToKeep(t *testing.T) {
 	}
 
 	policy := config.BackupRetentionPolicyConfig{
-		Hours:  2,
-		Days:   2,
-		Weeks:  2,
-		Months: 2,
-		Years:  2,
+		Enabled: true,
+		Hours:   2,
+		Days:    2,
+		Weeks:   2,
+		Months:  2,
+		Years:   2,
 	}
 
 	e := newTestEngine(config.NewDefault())
 
 	// Act
-	kept := e.determineBackupsToKeep(allBackups, policy)
+	kept := e.determineBackupsToKeep(allBackups, policy, "test_policy")
 
 	// Assert
 	if len(kept) != 10 {
@@ -533,7 +534,7 @@ func TestDetermineBackupsToKeep_Promotion(t *testing.T) {
 	e := newTestEngine(cfg)
 
 	// Act
-	kept := e.determineBackupsToKeep(allBackups, policy)
+	kept := e.determineBackupsToKeep(allBackups, policy, "test_policy")
 
 	// Assert
 	// The logic should keep 5 backups, each filling one slot, and delete the 6th.
@@ -644,11 +645,12 @@ func TestApplyRetentionPolicy(t *testing.T) {
 	cfg.Paths.TargetBase = tempDir
 	cfg.Paths.ArchivesSubDir = "archives"
 	cfg.Naming.Prefix = "backup_"
-	cfg.RetentionPolicy = config.BackupRetentionPolicyConfig{
-		Hours:  0,
-		Days:   1, // Keep one daily backup
-		Weeks:  0,
-		Months: 0,
+	cfg.IncrementalRetentionPolicy = config.BackupRetentionPolicyConfig{
+		Enabled: true,
+		Hours:   0,
+		Days:    1, // Keep one daily backup
+		Weeks:   0,
+		Months:  0,
 	}
 
 	e := newTestEngine(cfg)
@@ -668,7 +670,7 @@ func TestApplyRetentionPolicy(t *testing.T) {
 	}
 
 	// Act
-	err := e.applyRetentionPolicy(context.Background())
+	err := e.applyRetentionFor(context.Background(), "test", archivesDir, cfg.IncrementalRetentionPolicy, "")
 	if err != nil {
 		t.Fatalf("applyRetentionPolicy failed: %v", err)
 	}

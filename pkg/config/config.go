@@ -46,11 +46,12 @@ type BackupPathConfig struct {
 }
 
 type BackupRetentionPolicyConfig struct {
-	Hours  int `json:"hours"`
-	Days   int `json:"days"`
-	Weeks  int `json:"weeks"`
-	Months int `json:"months"`
-	Years  int `json:"years"`
+	Enabled bool `json:"enabled"`
+	Hours   int  `json:"hours"`
+	Days    int  `json:"days"`
+	Weeks   int  `json:"weeks"`
+	Months  int  `json:"months"`
+	Years   int  `json:"years"`
 }
 
 type BackupHooksConfig struct {
@@ -231,17 +232,18 @@ type RolloverPolicyConfig struct {
 }
 
 type Config struct {
-	Mode            BackupMode                  `json:"mode"`
-	RolloverPolicy  RolloverPolicyConfig        `json:"rolloverPolicy"`
-	Engine          BackupEngineConfig          `json:"engine"` // Keep this for engine-specific settings
-	LogLevel        string                      `json:"logLevel"`
-	DryRun          bool                        `json:"dryRun"`
-	FailFast        bool                        `json:"failFast"`
-	Metrics         bool                        `json:"metrics,omitempty"`
-	Naming          BackupNamingConfig          `json:"naming"`
-	Paths           BackupPathConfig            `json:"paths"`
-	RetentionPolicy BackupRetentionPolicyConfig `json:"retentionPolicy"`
-	Hooks           BackupHooksConfig           `json:"hooks,omitempty"`
+	Mode                       BackupMode                  `json:"mode"`
+	RolloverPolicy             RolloverPolicyConfig        `json:"rolloverPolicy"`
+	Engine                     BackupEngineConfig          `json:"engine"` // Keep this for engine-specific settings
+	LogLevel                   string                      `json:"logLevel"`
+	DryRun                     bool                        `json:"dryRun"`
+	FailFast                   bool                        `json:"failFast"`
+	Metrics                    bool                        `json:"metrics,omitempty"`
+	Naming                     BackupNamingConfig          `json:"naming"`
+	Paths                      BackupPathConfig            `json:"paths"`
+	IncrementalRetentionPolicy BackupRetentionPolicyConfig `json:"incrementalRetentionPolicy,omitempty"`
+	SnapshotRetentionPolicy    BackupRetentionPolicyConfig `json:"snapshotRetentionPolicy,omitempty"`
+	Hooks                      BackupHooksConfig           `json:"hooks,omitempty"`
 }
 
 // NewDefault creates and returns a Config struct with sensible default
@@ -285,12 +287,21 @@ func NewDefault() Config {
 			ExcludeFiles:                []string{},             // User-defined list of files to exclude.
 			ExcludeDirs:                 []string{},             // User-defined list of directories to exclude.
 		},
-		RetentionPolicy: BackupRetentionPolicyConfig{
-			Hours:  0, // Default: No hourly backups.
-			Days:   7, // Default: Keep one backup for each of the last 7 days.
-			Weeks:  4, // Default: Keep one backup for each of the last 4 weeks.
-			Months: 3, // Default: Keep one backup for each of the last 3 months.
-			Years:  1, // Default: Keep one backup for each of the last 1 year.
+		IncrementalRetentionPolicy: BackupRetentionPolicyConfig{
+			Enabled: true, // Enabled by default for incremental mode.
+			Hours:   0,    // Default: No hourly backups.
+			Days:    7,    // Default: Keep one backup for each of the last 7 days.
+			Weeks:   4,    // Default: Keep one backup for each of the last 4 weeks.
+			Months:  3,    // Default: Keep one backup for each of the last 3 months.
+			Years:   1,    // Default: Keep one backup for each of the last 1 year.
+		},
+		SnapshotRetentionPolicy: BackupRetentionPolicyConfig{
+			Enabled: false, // Disabled by default to protect snapshots.
+			Hours:   0,
+			Days:    0,
+			Weeks:   0,
+			Months:  0,
+			Years:   0,
 		},
 		Hooks: BackupHooksConfig{
 			PreBackup:  []string{},
@@ -503,6 +514,18 @@ func (c *Config) LogSummary() {
 	}
 	if len(c.Hooks.PostBackup) > 0 {
 		logArgs = append(logArgs, "post_backup_hooks", strings.Join(c.Hooks.PostBackup, "; "))
+	}
+	if c.IncrementalRetentionPolicy.Enabled {
+		retentionSummary := fmt.Sprintf("enabled (h:%d d:%d w:%d m:%d y:%d)",
+			c.IncrementalRetentionPolicy.Hours, c.IncrementalRetentionPolicy.Days, c.IncrementalRetentionPolicy.Weeks,
+			c.IncrementalRetentionPolicy.Months, c.IncrementalRetentionPolicy.Years)
+		logArgs = append(logArgs, "incremental_retention", retentionSummary)
+	}
+	if c.SnapshotRetentionPolicy.Enabled {
+		snapshotRetentionSummary := fmt.Sprintf("enabled (h:%d d:%d w:%d m:%d y:%d)",
+			c.SnapshotRetentionPolicy.Hours, c.SnapshotRetentionPolicy.Days, c.SnapshotRetentionPolicy.Weeks,
+			c.SnapshotRetentionPolicy.Months, c.SnapshotRetentionPolicy.Years)
+		logArgs = append(logArgs, "snapshot_retention", snapshotRetentionSummary)
 	}
 
 	plog.Info("Backup configuration loaded", logArgs...)

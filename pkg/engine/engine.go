@@ -228,11 +228,29 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 
 	plog.Info("Backup operation completed.")
 
-	// --- 3. Clean up outdated backups ---
-	if err := e.applyRetentionPolicy(ctx); err != nil {
-		// We log this as a non-fatal error because the main backup was successful.
-		plog.Warn("Error applying retention policy", "error", err)
+	// --- 3. Clean up outdated backups (archives and snapshots) ---
+	// We apply all enabled retention policies regardless of the current backup mode.
+	// This ensures the backup target is always kept in a consistent state according
+	// to the user's configuration and prevents "retention debt" if one mode is
+	// run less frequently than another.
+
+	// Apply retention for incremental archives, if enabled.
+	if e.config.IncrementalRetentionPolicy.Enabled {
+		archivesDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.ArchivesSubDir)
+		incrementalDirName := e.config.Paths.IncrementalSubDir
+		if err := e.applyRetentionFor(ctx, "incremental", archivesDir, e.config.IncrementalRetentionPolicy, incrementalDirName); err != nil {
+			plog.Warn("Error applying incremental retention policy", "error", err)
+		}
 	}
+
+	// Apply retention for snapshots, if enabled.
+	if e.config.SnapshotRetentionPolicy.Enabled {
+		snapshotsDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.SnapshotsSubDir)
+		if err := e.applyRetentionFor(ctx, "snapshot", snapshotsDir, e.config.SnapshotRetentionPolicy, ""); err != nil {
+			plog.Warn("Error applying snapshot retention policy", "error", err)
+		}
+	}
+
 	return nil
 }
 
@@ -240,8 +258,7 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 // policy and overrides the interval in the engine's configuration for the current run.
 // This is only called when the rollover policy mode is 'auto'.
 func (e *Engine) autoAdjustRolloverInterval() {
-
-	policy := e.config.RetentionPolicy
+	policy := e.config.IncrementalRetentionPolicy
 	var suggestedInterval time.Duration
 
 	// The logic is to pick the shortest duration required to satisfy the configured retention slots.
@@ -501,7 +518,7 @@ func (e *Engine) shouldRollover(lastBackupTime time.Time, currentRun *runState) 
 // frequency of the configured retention slots (e.g., hourly retention with a daily
 // interval).
 func (e *Engine) checkRolloverInterval() {
-	policy := e.config.RetentionPolicy
+	policy := e.config.IncrementalRetentionPolicy
 	effectiveInterval := e.config.RolloverPolicy.Interval
 
 	if effectiveInterval == 0 {
@@ -554,45 +571,44 @@ func (e *Engine) checkRolloverInterval() {
 	}
 }
 
-// applyRetentionPolicy scans the backup target directory and deletes snapshots
+// applyRetentionFor scans a given directory and deletes backups
 // that are no longer needed according to the configured retention policy.
-func (e *Engine) applyRetentionPolicy(ctx context.Context) error {
-	incrementalDirName := e.config.Paths.IncrementalSubDir
-	// Historical archives are kept in the 'archives' subdirectory.
-	archivesDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.ArchivesSubDir)
-	retentionPolicy := e.config.RetentionPolicy
-
+func (e *Engine) applyRetentionFor(ctx context.Context, policyTitle string, targetDir string, retentionPolicy config.BackupRetentionPolicyConfig, excludeDir string) error {
 	if retentionPolicy.Hours <= 0 && retentionPolicy.Days <= 0 && retentionPolicy.Weeks <= 0 && retentionPolicy.Months <= 0 && retentionPolicy.Years <= 0 {
-		plog.Info("Retention policy is disabled. Skipping cleanup.")
+		plog.Debug(fmt.Sprintf("Retention policy for %s is disabled (all values are zero). Skipping cleanup.", policyTitle))
 		return nil
 	}
 
-	plog.Info("Cleaning outdated backups")
-	plog.Debug("Applying retention policy", "directory", archivesDir)
+	plog.Info(fmt.Sprintf("Cleaning outdated %s backups", policyTitle))
+	plog.Debug("Applying retention policy", "policy", policyTitle, "directory", targetDir)
 	// --- 1. Get a sorted list of all valid, historical backups ---
-	allBackups, err := e.fetchSortedBackups(ctx, archivesDir, incrementalDirName)
+	allBackups, err := e.fetchSortedBackups(ctx, targetDir, excludeDir)
 	if err != nil {
 		return err
 	}
+	if len(allBackups) == 0 {
+		plog.Debug(fmt.Sprintf("No %s backups found to apply retention to", policyTitle))
+		return nil
+	}
 
 	// --- 2. Apply retention rules to find which backups to keep ---
-	backupsToKeep := e.determineBackupsToKeep(allBackups, retentionPolicy)
+	backupsToKeep := e.determineBackupsToKeep(allBackups, retentionPolicy, policyTitle)
 
 	// --- 3. Collect all backups that are not in our final `backupsToKeep` set ---
 	var dirsToDelete []string
 	for _, backup := range allBackups {
 		dirName := backup.Name
 		if _, shouldKeep := backupsToKeep[dirName]; !shouldKeep {
-			dirsToDelete = append(dirsToDelete, filepath.Join(archivesDir, dirName))
+			dirsToDelete = append(dirsToDelete, filepath.Join(targetDir, dirName))
 		}
 	}
 
 	if len(dirsToDelete) == 0 && !e.config.DryRun {
-		plog.Debug("No outdated backups to delete.")
+		plog.Debug("No outdated backups to delete", "policy", policyTitle)
 		return nil
 	}
 
-	plog.Info("Preparing to delete outdated backups", "count", len(dirsToDelete))
+	plog.Info("Preparing to delete outdated backups", "policy", policyTitle, "count", len(dirsToDelete))
 
 	// --- 4. Delete backups in parallel using a worker pool ---
 	// This is especially effective for network drives where latency is a factor.
@@ -614,13 +630,13 @@ func (e *Engine) applyRetentionPolicy(ctx context.Context) error {
 				default:
 				}
 
-				plog.Debug("Deleting outdated backup", "path", dirToDelete, "worker", workerID)
+				plog.Debug("Deleting outdated backup", "policy", policyTitle, "path", dirToDelete, "worker", workerID)
 				if e.config.DryRun {
-					plog.Info("[DRY RUN] Would delete directory", "path", dirToDelete)
+					plog.Info("[DRY RUN] Would delete directory", "policy", policyTitle, "path", dirToDelete)
 					continue
 				}
 				if err := os.RemoveAll(dirToDelete); err != nil {
-					plog.Warn("Failed to delete outdated backup directory", "path", dirToDelete, "error", err)
+					plog.Warn("Failed to delete outdated backup directory", "policy", policyTitle, "path", dirToDelete, "error", err)
 				}
 			}
 		}(i + 1)
@@ -645,7 +661,7 @@ func (e *Engine) applyRetentionPolicy(ctx context.Context) error {
 }
 
 // determineBackupsToKeep applies the retention policy to a sorted list of backups.
-func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy config.BackupRetentionPolicyConfig) map[string]bool {
+func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy config.BackupRetentionPolicyConfig, policyTitle string) map[string]bool {
 	backupsToKeep := make(map[string]bool)
 
 	// Keep track of which periods we've already saved a backup for.
@@ -746,8 +762,8 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 		}
 		planParts = append(planParts, msg)
 	}
-	plog.Debug("Retention plan", "details", strings.Join(planParts, ", "))
-	plog.Debug("Total unique backups to be kept", "count", len(backupsToKeep))
+	plog.Debug("Retention plan", "policy", policyTitle, "details", strings.Join(planParts, ", "))
+	plog.Debug("Total unique backups to be kept", "policy", policyTitle, "count", len(backupsToKeep))
 
 	return backupsToKeep
 }

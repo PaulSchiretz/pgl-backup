@@ -97,12 +97,21 @@ Open the newly created `pgl-backup.conf` file. It will look something like this,
     "excludeFiles": [],
     "excludeDirs": []
   },
-  "retentionPolicy": {
+  "incrementalRetentionPolicy": {
+    "enabled": true,
     "hours": 0,
     "days": 7,
     "weeks": 4,
     "months": 3,
     "years": 1
+  },
+  "snapshotRetentionPolicy": {
+    "enabled": false,
+    "hours": 0,
+    "days": 0,
+    "weeks": 0,
+    "months": 0,
+    "years": 0
   },
   "hooks": {}
 }
@@ -185,11 +194,18 @@ All command-line flags can be set in the `pgl-backup.conf` file.
 | `sync-engine` / `engine.type`   | `string`      | `"native"`                            | The sync engine to use: `"native"` or `"robocopy"` (Windows only).                                      |
 | `rollover-mode` / `rolloverPolicy.mode` | `string` | `"auto"` | Rollover policy mode: `"auto"` (derives interval from retention policy) or `"manual"`. |
 | `rollover-interval` / `rolloverPolicy.interval` | `duration` | `"24h"` | In `manual` mode, the interval after which a new archive is created (e.g., "24h", "168h"). Use "0" to disable rollover. |
-| `retentionPolicy.hours`         | `int`         | `0`                                   | Number of recent hourly backups to keep.                                                                |
-| `retentionPolicy.days`          | `int`         | `7`                                   | Number of recent daily backups to keep.                                                                 |
-| `retentionPolicy.weeks`         | `int`         | `4`                                   | Number of recent weekly backups to keep.                                                                |
-| `retentionPolicy.months`        | `int`         | `6`                                   | Number of recent monthly backups to keep.                                                               |
-| `retentionPolicy.years`         | `int`         | `5`                                   | Number of recent yearly backups to keep.                                                                |
+| `incrementalRetentionPolicy.enabled`         | `bool`         | `true`                             | Enables the retention policy for incremental mode archives.
+| `incrementalRetentionPolicy.hours`         | `int`         | `0`                                   | Number of recent hourly incremental archives to keep.                                                                |
+| `incrementalRetentionPolicy.days`          | `int`         | `7`                                   | Number of recent daily incremental archives to keep.                                                                 |
+| `incrementalRetentionPolicy.weeks`         | `int`         | `4`                                   | Number of recent weekly incremental archives to keep.                                                                |
+| `incrementalRetentionPolicy.months`        | `int`         | `6`                                   | Number of recent monthly incremental archives to keep.                                                               |
+| `incrementalRetentionPolicy.years`         | `int`         | `5`                                   | Number of recent yearly incremental archives to keep.        
+| `snapshotRetentionPolicy.enabled`         | `bool`         | `false`                               | Set to true to enable the retention policy for snapshot mode backups. Disabled by default.
+| `snapshotRetentionPolicy.hours`         | `int`         | `0`                                      | Number of recent hourly snapshots to keep.                                                                |
+| `snapshotRetentionPolicy.days`          | `int`         | `7`                                      | Number of recent daily snapshots to keep.                                                                 |
+| `snapshotRetentionPolicy.weeks`         | `int`         | `4`                                      | Number of recent weekly snapshots to keep.                                                                |
+| `snapshotRetentionPolicy.months`        | `int`         | `6`                                      | Number of recent monthly snapshots to keep.                                                               |
+| `snapshotRetentionPolicy.years`         | `int`         | `5`                                      | Number of recent yearly snapshots to keep.                                                           |
 | `exclude-files` / `excludeFiles`| `[]string`    | `[]`                                  | List of file patterns to exclude.                                                                       |
 | `exclude-dirs` / `excludeDirs`  | `[]string`    | `[]`                                  | List of directory patterns to exclude.                                                                  |
 | `pre-backup-hooks` / `preBackup`| `[]string`    | `[]`                                  | List of shell commands to run before the backup.                                                        |
@@ -228,7 +244,8 @@ The best policy depends on how much data you are backing up and how much disk sp
 **Auto Rollover Sets To**: 24 Hours
 
 ```json
-"retentionPolicy": {
+"incrementalRetentionPolicy": {
+  "enabled": true,
   "hours": 0,
   "days": 2,
   "weeks": 1,
@@ -244,7 +261,8 @@ The best policy depends on how much data you are backing up and how much disk sp
 **Auto Rollover Sets To**: 24 Hours
 
 ```json
-"retentionPolicy": {
+"incrementalRetentionPolicy": {
+  "enabled": true,
   "hours": 0,
   "days": 7,
   "weeks": 4,
@@ -259,7 +277,8 @@ The best policy depends on how much data you are backing up and how much disk sp
 **Auto Rollover Sets To**: 1 Hour
 
 ```json
-"retentionPolicy": {
+"incrementalRetentionPolicy": {
+  "enabled": true,
   "hours": 24,
   "days": 7,
   "weeks": 0,
@@ -273,7 +292,8 @@ The best policy depends on how much data you are backing up and how much disk sp
 **Auto Rollover Sets To**: 24 Hours
 
 ```json
-"retentionPolicy": {
+"incrementalRetentionPolicy": {
+  "enabled": true,
   "hours": 0,
   "days": 7,
   "weeks": 4,
@@ -288,7 +308,8 @@ The best policy depends on how much data you are backing up and how much disk sp
 **Auto Rollover Sets To**: 24 Hours
 
 ```json
-"retentionPolicy": {
+"incrementalRetentionPolicy": {
+  "enabled": true,
   "hours": 0,
   "days": 30,
   "weeks": 0,
@@ -303,7 +324,8 @@ The best policy depends on how much data you are backing up and how much disk sp
 **Auto Rollover Sets To**: 24 Hours
 
 ```json
-"retentionPolicy": {
+"incrementalRetentionPolicy": {
+  "enabled": true,
   "hours": 0,
   "days": 2,
   "weeks": 2,
