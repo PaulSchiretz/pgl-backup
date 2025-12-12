@@ -46,7 +46,7 @@ func newTestEngine(cfg config.Config) *Engine {
 }
 
 // Helper to create a temporary directory structure for a backup.
-func createTestBackup(t *testing.T, baseDir, name string, backupTime time.Time, inArchivesSubDir bool) {
+func createTestBackup(t *testing.T, baseDir, name string, backupTime time.Time) {
 	t.Helper()
 	backupPath := filepath.Join(baseDir, name)
 	// The helper now needs to know if it should create the backup in the archives subdir.
@@ -575,7 +575,7 @@ func TestPerformRollover(t *testing.T) {
 	// Create a "current" backup from yesterday
 	lastBackupTime := currentRun.timestampUTC.Add(-25 * time.Hour)
 	currentBackupDirName := cfg.Paths.IncrementalSubDir
-	createTestBackup(t, tempDir, currentBackupDirName, lastBackupTime, false)
+	createTestBackup(t, tempDir, currentBackupDirName, lastBackupTime)
 
 	// Act
 	err := e.performRollover(context.Background(), currentRun)
@@ -621,7 +621,7 @@ func TestPerformRollover_NoRollover(t *testing.T) {
 	// This is the timestamp that will be written to the metafile.
 	lastBackupTimeInMeta := currentRunTime.Add(-2 * time.Hour)
 	currentBackupDirName := cfg.Paths.IncrementalSubDir
-	createTestBackup(t, tempDir, currentBackupDirName, lastBackupTimeInMeta, false)
+	createTestBackup(t, tempDir, currentBackupDirName, lastBackupTimeInMeta)
 
 	// Act
 	err := e.performRollover(context.Background(), currentRun)
@@ -661,8 +661,8 @@ func TestApplyRetentionPolicy(t *testing.T) {
 	os.MkdirAll(archivesDir, 0755)
 
 	// Create backups to be kept and deleted
-	createTestBackup(t, archivesDir, "backup_kept", now.Add(-1*24*time.Hour), true)
-	createTestBackup(t, archivesDir, "backup_to_delete", now.Add(-5*24*time.Hour), true)
+	createTestBackup(t, archivesDir, "backup_kept", now.Add(-1*24*time.Hour))
+	createTestBackup(t, archivesDir, "backup_to_delete", now.Add(-5*24*time.Hour))
 
 	// Create a non-backup directory that should be ignored
 	if err := os.Mkdir(filepath.Join(archivesDir, "not_a_backup"), 0755); err != nil {
@@ -760,9 +760,9 @@ func TestFetchSortedBackups(t *testing.T) {
 	backup2Time := now.Add(-5 * time.Hour) // Newest
 	backup3Time := now.Add(-20 * time.Hour)
 
-	createTestBackup(t, tempDir, "backup_1", backup1Time, false)
-	createTestBackup(t, tempDir, "backup_2_newest", backup2Time, false)
-	createTestBackup(t, tempDir, "backup_3", backup3Time, false)
+	createTestBackup(t, tempDir, "backup_1", backup1Time)
+	createTestBackup(t, tempDir, "backup_2_newest", backup2Time)
+	createTestBackup(t, tempDir, "backup_3", backup3Time)
 
 	// Create a directory without a metafile that should be ignored
 	if err := os.Mkdir(filepath.Join(tempDir, "backup_no_meta"), 0755); err != nil {
