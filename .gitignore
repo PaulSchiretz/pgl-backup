@@ -13,14 +13,14 @@
 # Logs
 logs/*
 *.log
-npm-debug.log*
 
-# Test
-website/*
+# Build artifacts
+releases/
 
 # Executables
 exe
 *.exe
+pgl-backup
 
 # Secrete Enviroment Vars
 .env.local

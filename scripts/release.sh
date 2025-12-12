@@ -5,11 +5,12 @@ set -e
 
 # --- Configuration ---
 # The path to your main package
+PROJECT_ROOT=$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")
 MAIN_PACKAGE_PATH="pixelgardenlabs.io/pgl-backup/cmd/pgl-backup"
 # The name of your application binary
 BINARY_NAME="pgl-backup"
 # The directory to output release artifacts
-RELEASE_DIR="release"
+RELEASE_DIR="$PROJECT_ROOT/releases/$VERSION"
 
 # --- Helper Functions ---
 function print_usage() {
@@ -51,6 +52,10 @@ if [ -z "$VERSION" ]; then
   print_usage
 fi
 
+# Now that we have the version, we can define the release directory.
+# This is placed here because the VERSION variable is needed.
+RELEASE_DIR="$PROJECT_ROOT/releases/$VERSION"
+
 # Regex to validate semantic versioning with a 'v' prefix (e.g., v1.2.3)
 if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "Error: Invalid version format. Expected format: vX.Y.Z"
@@ -84,8 +89,12 @@ echo "✅ Pre-flight checks passed."
 
 # 3. Clean and prepare release directory
 print_header "Preparing release directory"
-rm -rf "$RELEASE_DIR"
-mkdir -p "$RELEASE_DIR"
+if [ "$DRY_RUN" = true ]; then
+    echo "[DRY RUN] Would remove and recreate the '$RELEASE_DIR' directory."
+else
+    rm -rf "$RELEASE_DIR"
+    mkdir -p "$RELEASE_DIR"
+fi
 echo "✅ Cleaned and created '$RELEASE_DIR' directory."
 
 # 4. Cross-compile for target platforms
@@ -110,18 +119,22 @@ for platform in "${PLATFORMS[@]}"; do
 
   echo "Building for $GOOS/$GOARCH..."
   
-  # Execute the build command
-  env GOOS=$GOOS GOARCH=$GOARCH go build -ldflags="$LDFLAGS" -o "$RELEASE_DIR/$OUTPUT_NAME" "$MAIN_PACKAGE_PATH"
-
-  # Create an archive for the binary
-  pushd "$RELEASE_DIR" > /dev/null
-  if [ "$GOOS" = "windows" ]; then
-    zip "${BINARY_NAME}_${VERSION}_${GOOS}_${GOARCH}.zip" "$OUTPUT_NAME" "../LICENSE" "../README.md"
+  if [ "$DRY_RUN" = true ]; then
+    echo "[DRY RUN] Would build and archive for $GOOS/$GOARCH."
   else
-    tar -czf "${BINARY_NAME}_${VERSION}_${GOOS}_${GOARCH}.tar.gz" "$OUTPUT_NAME" "../LICENSE" "../README.md"
+    # Execute the build command
+    env GOOS=$GOOS GOARCH=$GOARCH go build -ldflags="$LDFLAGS" -o "$RELEASE_DIR/$OUTPUT_NAME" "$MAIN_PACKAGE_PATH"
+
+    # Create an archive for the binary
+    pushd "$RELEASE_DIR" > /dev/null
+    if [ "$GOOS" = "windows" ]; then
+      zip "${BINARY_NAME}_${VERSION}_${GOOS}_${GOARCH}.zip" "$OUTPUT_NAME" "../LICENSE" "../README.md" > /dev/null
+    else
+      tar -czf "${BINARY_NAME}_${VERSION}_${GOOS}_${GOARCH}.tar.gz" "$OUTPUT_NAME" "../LICENSE" "../README.md"
+    fi
+    rm "$OUTPUT_NAME" # Clean up the raw binary after archiving
+    popd > /dev/null
   fi
-  rm "$OUTPUT_NAME" # Clean up the raw binary after archiving
-  popd > /dev/null
 done
 
 echo "✅ All platforms built and archived successfully."

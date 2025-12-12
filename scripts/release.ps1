@@ -39,16 +39,21 @@
 param(
     [Parameter(Mandatory = $true, HelpMessage = "The semantic version for the release (e.g., v1.0.0).")]
     [ValidatePattern('^v\d+\.\d+\.\d+$')]
-    [string]$Version
+    [string]$Version,
+
+    [Parameter(Mandatory = $false, HelpMessage = "If specified, the script will show what it would do without executing.")]
+    [switch]$DryRun
 )
 
 # Stop script on any error
 $ErrorActionPreference = 'Stop'
 
 # --- Configuration ---
+# Get the project root directory (the parent of the script's directory)
+$ProjectRoot = Split-Path -Path $PSScriptRoot -Parent
 $MainPackagePath = "pixelgardenlabs.io/pgl-backup/cmd/pgl-backup"
 $BinaryName = "pgl-backup"
-$ReleaseDir = "release"
+$ReleaseDir = Join-Path -Path $ProjectRoot -ChildPath "releases\$Version"
 
 # --- Helper Functions ---
 function Print-Header {
@@ -88,9 +93,14 @@ Write-Host "✅ Pre-flight checks passed." -ForegroundColor Green
 # 2. Clean and prepare release directory
 Print-Header "Preparing release directory"
 if (Test-Path $ReleaseDir) {
-    Remove-Item -Path $ReleaseDir -Recurse -Force
+    if ($DryRun) {
+        Write-Host "[DRY RUN] Would remove directory: $ReleaseDir"
+    } else {
+        Remove-Item -Path $ReleaseDir -Recurse -Force
+    }
 }
-New-Item -Path $ReleaseDir -ItemType Directory | Out-Null
+if ($DryRun) { Write-Host "[DRY RUN] Would create directory: $ReleaseDir" }
+else { New-Item -Path $ReleaseDir -ItemType Directory | Out-Null }
 Write-Host "✅ Cleaned and created '$ReleaseDir' directory." -ForegroundColor Green
 
 # 3. Cross-compile for target platforms
@@ -122,24 +132,32 @@ foreach ($platform in $platforms) {
     Write-Host "Building for $GOOS/$GOARCH..."
 
     # Execute the build command with temporary environment variables
-    & {
-        $env:GOOS = $GOOS
-        $env:GOARCH = $GOARCH
-        go build -ldflags="$ldflags" -o "$ReleaseDir/$outputName" "$MainPackagePath"
+    if ($DryRun) {
+        Write-Host "[DRY RUN] Would build for $GOOS/$GOARCH with command: go build -ldflags=`"$ldflags`" -o `"$ReleaseDir/$outputName`" `"$MainPackagePath`""
+    } else {
+        & {
+            $env:GOOS = $GOOS
+            $env:GOARCH = $GOARCH
+            go build -ldflags="$ldflags" -o "$ReleaseDir/$outputName" "$MainPackagePath"
+        }
     }
 
     # Create an archive for the binary
-    Push-Location $ReleaseDir
     $archiveName = "${BinaryName}_${Version}_${GOOS}_${GOARCH}"
-    if ($GOOS -eq "windows") {
-        Compress-Archive -Path $outputName, "..\LICENSE", "..\README.md" -DestinationPath "$archiveName.zip" -Force
+    if ($DryRun) {
+        Write-Host "[DRY RUN] Would create archive for $outputName"
+    } else {
+        Push-Location $ReleaseDir
+        if ($GOOS -eq "windows") {
+            Compress-Archive -Path $outputName, "..\LICENSE", "..\README.md" -DestinationPath "$archiveName.zip" -Force
+        }
+        else {
+            # Modern Windows includes tar.exe
+            tar -czf "$archiveName.tar.gz" $outputName "../LICENSE" "../README.md"
+        }
+        Remove-Item $outputName # Clean up the raw binary after archiving
+        Pop-Location
     }
-    else {
-        # Modern Windows includes tar.exe
-        tar -czf "$archiveName.tar.gz" $outputName "../LICENSE" "../README.md"
-    }
-    Remove-Item $outputName # Clean up the raw binary after archiving
-    Pop-Location
 }
 
 Write-Host "✅ All platforms built and archived successfully." -ForegroundColor Green
@@ -147,14 +165,24 @@ Write-Host "✅ All platforms built and archived successfully." -ForegroundColor
 # 4. Generate Checksums
 Print-Header "Generating checksums"
 Get-FileHash -Path "$ReleaseDir\*" -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $($_.Path | Split-Path -Leaf)" } | Set-Content "$ReleaseDir\checksums.txt"
+if ($DryRun) {
+    Write-Host "[DRY RUN] Would generate checksums file: $ReleaseDir\checksums.txt"
+} else {
+    Get-FileHash -Path "$ReleaseDir\*" -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $($_.Path | Split-Path -Leaf)" } | Set-Content "$ReleaseDir\checksums.txt"
+}
 Write-Host "✅ Checksums generated in '$ReleaseDir\checksums.txt'." -ForegroundColor Green
 
 # 5. Create and push git tag
 Print-Header "Tagging release in git"
-Write-Host "Creating git tag '$Version'..."
-git tag $Version
-Write-Host "Pushing tag to remote..."
-git push origin $Version
+if ($DryRun) {
+    Write-Host "[DRY RUN] Would create git tag: $Version"
+    Write-Host "[DRY RUN] Would push tag to remote with: git push origin $Version"
+} else {
+    Write-Host "Creating git tag '$Version'..."
+    git tag $Version
+    Write-Host "Pushing tag to remote..."
+    git push origin $Version
+}
 Write-Host "✅ Git tag '$Version' created and pushed." -ForegroundColor Green
 
 Print-Header "Release $Version is complete! Artifacts are in the '$ReleaseDir' directory."
