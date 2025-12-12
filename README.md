@@ -108,11 +108,11 @@ Open the newly created `pgl-backup.conf` file. It will look something like this,
       "Icon?"
     ],
     "defaultExcludeDirs": [
-     "@tmp",
-     "@eadir",
-     ".SynologyWorkingDirectory",
-     "#recycle",
-     "$Recycle.Bin"
+      "@tmp",
+      "@eadir",
+      ".SynologyWorkingDirectory",
+      "#recycle",
+      "$Recycle.Bin"
     ],
     "userExcludeFiles": [],
     "userExcludeDirs": []
