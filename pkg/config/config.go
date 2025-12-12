@@ -46,8 +46,10 @@ type BackupPathConfig struct {
 	PreserveSourceDirectoryName bool     `json:"preserveSourceDirectoryName"`
 	DefaultExcludeFiles         []string `json:"defaultExcludeFiles,omitempty"`
 	DefaultExcludeDirs          []string `json:"defaultExcludeDirs,omitempty"`
-	UserExcludeFiles            []string `json:"userExcludeFiles,omitempty"`
-	UserExcludeDirs             []string `json:"userExcludeDirs,omitempty"`
+	// Note: omitempty is intentionally not used for user-configurable slices
+	// so that they appear in the generated config file for better discoverability.
+	UserExcludeFiles []string `json:"userExcludeFiles"`
+	UserExcludeDirs  []string `json:"userExcludeDirs"`
 }
 
 type BackupRetentionPolicyConfig struct {
@@ -60,12 +62,14 @@ type BackupRetentionPolicyConfig struct {
 }
 
 type BackupHooksConfig struct {
+	// Note: omitempty is intentionally not used so that the hook fields
+	// appear in the generated config file for better discoverability.
 	// PreBackup is a list of shell commands to execute before the backup sync begins.
 	// SECURITY: These commands are executed as provided. Ensure they are from a trusted source.
-	PreBackup []string `json:"preBackup,omitempty"`
+	PreBackup []string `json:"preBackup"`
 	// PostBackup is a list of shell commands to execute before the backup sync begins.
 	// SECURITY: These commands are executed as provided. Ensure they are from a trusted source.
-	PostBackup []string `json:"postBackup,omitempty"`
+	PostBackup []string `json:"postBackup"`
 }
 
 // BackupMode represents the operational mode of the backup (incremental or snapshot).
