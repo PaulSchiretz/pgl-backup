@@ -15,6 +15,9 @@ import (
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
 
+// appName is the canonical name of the application used for logging.
+const appName = "PGL-Backup"
+
 // version holds the application's version string.
 // It's a `var` so it can be set at compile time using ldflags.
 // Example: go build -ldflags="-X main.version=1.0.0"
@@ -33,7 +36,7 @@ const (
 // help message for the command-line flags.
 func init() {
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s (version %s):\n", os.Args[0], version)
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s (version %s):\n", appName, version)
 		fmt.Fprintf(flag.CommandLine.Output(), "A simple and powerful file backup utility with snapshot and incremental modes.\n\n")
 		flag.PrintDefaults()
 	}
@@ -163,7 +166,7 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 // run encapsulates the main application logic and returns an error if something
 // goes wrong, allowing the main function to handle exit codes.
 func run(ctx context.Context) error {
-	plog.Info("PGL-Backup", "version", version, "pid", os.Getpid())
+	plog.Info("Starting "+appName, "version", version, "pid", os.Getpid())
 
 	// --- 1. Parse command-line flags ---
 	// This is done only once. It gives us the user's explicit command-line intent.
@@ -174,7 +177,11 @@ func run(ctx context.Context) error {
 
 	switch action {
 	case actionShowVersion:
-		fmt.Printf("PGL-Backup version %s\n", version)
+		// This uses fmt.Printf directly to stdout because the output of the -version
+		// flag is often parsed by scripts and should be clean and predictable.
+		// Using the structured logger would add timestamps and other metadata,
+		// which is undesirable for this specific action.
+		fmt.Printf("%s version %s\n", appName, version)
 		return nil
 	case actionInitConfig:
 		// For init, source and target flags are mandatory.
