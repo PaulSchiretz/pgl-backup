@@ -72,8 +72,8 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	retryWaitFlag := flag.Int("retry-wait", 0, "Seconds to wait between retries.")
 	copyBufferKBFlag := flag.Int("copy-buffer-kb", 0, "Size of the I/O buffer in kilobytes for file copies.")
 	modTimeWindowFlag := flag.Int("mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact, -1=use config).")
-	excludeFilesFlag := flag.String("exclude-files", "", "Comma-separated list of file names to exclude (supports glob patterns).")
-	excludeDirsFlag := flag.String("exclude-dirs", "", "Comma-separated list of directory names to exclude (supports glob patterns).")
+	userExcludeFilesFlag := flag.String("user-exclude-files", "", "Comma-separated list of file names to exclude (supports glob patterns).")
+	userExcludeDirsFlag := flag.String("user-exclude-dirs", "", "Comma-separated list of directory names to exclude (supports glob patterns).")
 	preserveSourceNameFlag := flag.Bool("preserve-source-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
 	preBackupHooksFlag := flag.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
 	postBackupHooksFlag := flag.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
@@ -103,10 +103,10 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 				return actionRunBackup, nil, err
 			}
 			flagMap[name] = engineType
-		case "exclude-files":
-			flagMap[name] = flagparse.ParseExcludeList(*excludeFilesFlag)
-		case "exclude-dirs":
-			flagMap[name] = flagparse.ParseExcludeList(*excludeDirsFlag)
+		case "user-exclude-files":
+			flagMap[name] = flagparse.ParseExcludeList(*userExcludeFilesFlag)
+		case "user-exclude-dirs":
+			flagMap[name] = flagparse.ParseExcludeList(*userExcludeDirsFlag)
 		case "pre-backup-hooks":
 			flagMap[name] = flagparse.ParseCmdList(*preBackupHooksFlag)
 		case "post-backup-hooks":

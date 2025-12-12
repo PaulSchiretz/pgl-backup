@@ -175,7 +175,7 @@ func TestConfig_Validate(t *testing.T) {
 
 	t.Run("Invalid Glob Pattern", func(t *testing.T) {
 		cfg := newValidConfig(t)
-		cfg.Paths.ExcludeFiles = []string{"["} // Invalid glob pattern
+		cfg.Paths.UserExcludeFiles = []string{"["} // Invalid glob pattern
 		if err := cfg.Validate(); err == nil {
 			t.Error("expected error for invalid glob pattern, but got nil")
 		}
@@ -217,12 +217,28 @@ func TestMergeConfigWithFlags(t *testing.T) {
 
 	t.Run("Slice flags override base slice", func(t *testing.T) {
 		base := NewDefault()
-		base.Paths.ExcludeFiles = []string{"from_base.txt"}
-		setFlags := map[string]interface{}{"exclude-files": []string{"from_flag.txt"}}
+		base.Paths.UserExcludeFiles = []string{"from_base.txt"}
+		setFlags := map[string]interface{}{"user-exclude-files": []string{"from_flag.txt"}}
 
 		merged := MergeConfigWithFlags(base, setFlags)
-		if len(merged.Paths.ExcludeFiles) != 1 || merged.Paths.ExcludeFiles[0] != "from_flag.txt" {
-			t.Errorf("expected exclude files from flag to override base, but got %v", merged.Paths.ExcludeFiles)
+		finalExcludes := merged.Paths.ExcludeFiles()
+
+		foundFlagValue := false
+		foundBaseValue := false
+		for _, p := range finalExcludes {
+			if p == "from_flag.txt" {
+				foundFlagValue = true
+			}
+			if p == "from_base.txt" {
+				foundBaseValue = true
+			}
+		}
+
+		if !foundFlagValue {
+			t.Error("expected final exclusion list to contain value from flag, but it was missing")
+		}
+		if foundBaseValue {
+			t.Error("expected final exclusion list to NOT contain value from base config (should be overridden), but it was present")
 		}
 	})
 

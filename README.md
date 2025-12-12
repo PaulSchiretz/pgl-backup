@@ -96,8 +96,26 @@ Open the newly created `pgl-backup.conf` file. It will look something like this,
     "archivesSubDir": "PGL_Backup_Archives",
     "incrementalSubDir": "PGL_Backup_Current",
     "preserveSourceDirectoryName": true,
-    "excludeFiles": [],
-    "excludeDirs": []
+    "defaultExcludeFiles": [
+      "*.tmp",
+      "*.temp",
+      "*.swp",
+      "*.lnk",
+      "~*",
+      "desktop.ini",
+      ".DS_Store",
+      "Thumbs.db",
+      "Icon?"
+    ],
+    "defaultExcludeDirs": [
+    	"@tmp",
+			"@eadir",
+			".SynologyWorkingDirectory",
+			"#recycle",
+			"$Recycle.Bin"
+    ],
+    "userExcludeFiles": [],
+    "userExcludeDirs": []
   },
   "incrementalRetentionPolicy": {
     "enabled": true,
@@ -168,7 +186,7 @@ pgl-backup -target="/path/to/your/backup-target" -mode=snapshot
 Exclude temporary files and `node_modules` directories. Patterns support standard file globbing.
 
 ```sh
-pgl-backup -target="..." -exclude-files="*.tmp,*.log" -exclude-dirs="node_modules,.cache"
+pgl-backup -target="..." -user-exclude-files="*.tmp,*.log" -user-exclude-dirs="node_modules,.cache"
 ```
 
 ### Default and System Exclusions
@@ -180,13 +198,14 @@ A small, non-configurable list of files are always excluded to prevent the backu
 These are:
 *   `pgl-backup.conf`
 *   `.pgl-backup.meta`
-*   `.pgl-backup.lock`
+*   `~.pgl-backup.lock`
 
 #### 2. Predefined Exclusions (Sensible Defaults)
 A list of common temporary and system files are excluded by default. When you generate a new configuration file with `-init`, these defaults are included, and you can customize them in your `pgl-backup.conf` file.
+The JSON keys for these are `defaultExcludeFiles` and `defaultExcludeDirs`.
 
-*   **Default Excluded Files:** `*.tmp`, `*.temp`, `*.swp`, `*.lnk`, `~*`, `desktop.ini`, `.DS_Store`, `Thumbs.db`, `Icon?`
-*   **Default Excluded Directories:** `@tmp`, `@eadir`, `.SynologyWorkingDirectory`, `#recycle`, `$Recycle.Bin`
+*   **Default Excluded Files:** `*.tmp`, `*.temp`, `*.swp`, `*.lnk`, `~*`, `desktop.ini`, `.DS_Store`, `Thumbs.db`, `Icon?`.
+*   **Default Excluded Directories:** `@tmp`, `@eadir`, `.SynologyWorkingDirectory`, `#recycle`, `$Recycle.Bin`.
 
 ### Using Hooks
 
@@ -227,9 +246,11 @@ All command-line flags can be set in the `pgl-backup.conf` file.
 | `snapshotRetentionPolicy.days`          | `int`         | `0`                                      | Number of recent daily snapshots to keep.                                                                 |
 | `snapshotRetentionPolicy.weeks`         | `int`         | `0`                                      | Number of recent weekly snapshots to keep.                                                                |
 | `snapshotRetentionPolicy.months`        | `int`         | `0`                                      | Number of recent monthly snapshots to keep.                                                               |
-| `snapshotRetentionPolicy.years`         | `int`         | `0`                                      | Number of recent yearly snapshots to keep.                                                           |
-| `exclude-files` / `excludeFiles`| `[]string`    | `[]`                                  | List of file patterns to exclude.                                                                       |
-| `exclude-dirs` / `excludeDirs`  | `[]string`    | `[]`                                  | List of directory patterns to exclude.                                                                  |
+| `snapshotRetentionPolicy.years`         | `int`         | `0`                                      | Number of recent yearly snapshots to keep.
+| `defaultExcludeFiles`           | `[]string`    | `[*.tmp, *.temp, *.swp, *.lnk, ~*, desktop.ini, .DS_Store, Thumbs.db, Icon?]`                     | The list of default file patterns to exclude. Can be customized.                                        |
+| `defaultExcludeDirs`            | `[]string`    | `[@tmp, @eadir, .SynologyWorkingDirectory, #recycle, $Recycle.Bin]`                     | The list of default directory patterns to exclude. Can be customized.                                                           |
+| `user-exclude-files` / `userExcludeFiles`| `[]string`    | `[]`                                  | List of file patterns to exclude.                                                                       |
+| `user-exclude-dirs` / `userExcludeDirs`  | `[]string`    | `[]`                                  | List of directory patterns to exclude.                                                                  |                                |
 | `pre-backup-hooks` / `preBackup`| `[]string`    | `[]`                                  | List of shell commands to run before the backup.                                                        |
 | `post-backup-hooks` / `postBackup`| `[]string`    | `[]`                                  | List of shell commands to run after the backup.                                                         |
 | `preserve-source-name` / `paths.preserveSourceDirectoryName` | `bool` | `true` | If true, appends the source directory's name to the destination path. |

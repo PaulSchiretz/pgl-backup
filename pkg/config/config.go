@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
+	"pixelgardenlabs.io/pgl-backup/pkg/util"
 )
 
 // configFileName is the name of the configuration file.
@@ -18,53 +19,19 @@ const ConfigFileName = "pgl-backup.conf"
 // MetaFileName is the name of the backup metadata file.
 const MetaFileName = ".pgl-backup.meta"
 
-// LockFileName is the name of the lock file created in the target directory.
-const LockFileName = ".pgl-backup.lock"
+// LockFileName is the name of the lock file created in the target directory. ~ markes as temporary
+const LockFileName = "~.pgl-backup.lock"
 
 // backupTimeFormat defines the standard, non-configurable time format for backup directory names.
 const backupTimeFormat = "2006-01-02-15-04-05"
 
-// GetSystemExcludeFilePatterns returns a slice of file patterns that should
+// systemExcludeFilePatterns is a slice of file patterns that should
 // always be excluded from synchronization for the system to function correctly.
-func GetSystemExcludeFilePatterns() []string {
-	return []string{MetaFileName, LockFileName, ConfigFileName}
-}
+var systemExcludeFilePatterns = []string{MetaFileName, LockFileName, ConfigFileName}
 
-// GetSystemExcludeDirPatterns returns a slice of directory patterns that should
+// systemExcludeDirPatterns is a slice of directory patterns that should
 // always be excluded from synchronization for the system to function correctly.
-func GetSystemExcludeDirPatterns() []string {
-	return []string{}
-}
-
-// GetPredefinedExcludeFilePatterns returns a slice of file patterns that are commonly
-// excluded from backups to avoid syncing temporary or system-specific files.
-func GetPredefinedExcludeFilePatterns() []string {
-	return []string{
-		// Common temporary and system files across platforms.
-		"*.tmp",       // Temporary files
-		"*.temp",      // Temporary files
-		"*.swp",       // Vim swap files
-		"*.lnk",       // Windows shortcuts
-		"~*",          // Files starting with a tilde (often temporary)
-		"desktop.ini", // Windows folder customization file
-		".DS_Store",   // macOS folder customization file
-		"Thumbs.db",   // Windows image thumbnail cache
-		"Icon?",       // macOS custom folder icons (Icon\r)
-	}
-}
-
-// GetPredefinedExcludeDirPatterns returns a slice of directory patterns that are commonly
-// excluded from backups, such as recycle bins and system-specific cache folders.
-func GetPredefinedExcludeDirPatterns() []string {
-	return []string{
-		// Common temporary, system, and trash directories.
-		"@tmp",                      // Synology temporary folder
-		"@eadir",                    // Synology index folder
-		".SynologyWorkingDirectory", // Synology Drive temporary folder
-		"#recycle",                  // Synology recycle bin
-		"$Recycle.Bin",              // Windows recycle bin
-	}
-}
+var systemExcludeDirPatterns = []string{}
 
 type BackupNamingConfig struct {
 	Prefix string `json:"prefix"`
@@ -77,8 +44,10 @@ type BackupPathConfig struct {
 	ArchivesSubDir              string   `json:"archivesSubDir,omitempty"`
 	IncrementalSubDir           string   `json:"incrementalSubDir,omitempty"`
 	PreserveSourceDirectoryName bool     `json:"preserveSourceDirectoryName"`
-	ExcludeFiles                []string `json:"excludeFiles,omitempty"`
-	ExcludeDirs                 []string `json:"excludeDirs,omitempty"`
+	DefaultExcludeFiles         []string `json:"defaultExcludeFiles,omitempty"`
+	DefaultExcludeDirs          []string `json:"defaultExcludeDirs,omitempty"`
+	UserExcludeFiles            []string `json:"userExcludeFiles,omitempty"`
+	UserExcludeDirs             []string `json:"userExcludeDirs,omitempty"`
 }
 
 type BackupRetentionPolicyConfig struct {
@@ -109,7 +78,7 @@ const (
 )
 
 var backupModeToString = map[BackupMode]string{IncrementalMode: "incremental", SnapshotMode: "snapshot"}
-var stringToBackupMode = invertMap(backupModeToString)
+var stringToBackupMode = util.InvertMap(backupModeToString)
 
 // String returns the string representation of a BackupMode.
 func (bm BackupMode) String() string {
@@ -158,7 +127,7 @@ const (
 )
 
 var syncEngineToString = map[SyncEngine]string{NativeEngine: "native", RobocopyEngine: "robocopy"}
-var stringToSyncEngine = invertMap(syncEngineToString)
+var stringToSyncEngine = util.InvertMap(syncEngineToString)
 
 // String returns the string representation of a SyncEngine.
 func (se SyncEngine) String() string {
@@ -222,7 +191,7 @@ const (
 )
 
 var rolloverIntervalModeToString = map[RolloverIntervalMode]string{ManualInterval: "manual", AutoInterval: "auto"}
-var stringToRolloverIntervalMode = invertMap(rolloverIntervalModeToString)
+var stringToRolloverIntervalMode = util.InvertMap(rolloverIntervalModeToString)
 
 // String returns the string representation of a RolloverIntervalMode.
 func (rim RolloverIntervalMode) String() string {
@@ -320,8 +289,28 @@ func NewDefault() Config {
 			ArchivesSubDir:              "PGL_Backup_Archives",  // Default name for the archives sub-directory.
 			IncrementalSubDir:           "PGL_Backup_Current",   // Default name for the active incremental backup directory.
 			PreserveSourceDirectoryName: true,                   // Default to preserving the source folder name in the destination.
-			ExcludeFiles:                []string{},             // User-defined list of files to exclude.
-			ExcludeDirs:                 []string{},             // User-defined list of directories to exclude.
+			UserExcludeFiles:            []string{},             // User-defined list of files to exclude.
+			UserExcludeDirs:             []string{},             // User-defined list of directories to exclude.
+			DefaultExcludeFiles: []string{
+				// Common temporary and system files across platforms.
+				"*.tmp",       // Temporary files
+				"*.temp",      // Temporary files
+				"*.swp",       // Vim swap files
+				"*.lnk",       // Windows shortcuts
+				"~*",          // Files starting with a tilde (often temporary)
+				"desktop.ini", // Windows folder customization file
+				".DS_Store",   // macOS folder customization file
+				"Thumbs.db",   // Windows image thumbnail cache
+				"Icon?",       // macOS custom folder icons (Icon\r)
+			},
+			DefaultExcludeDirs: []string{
+				// Common temporary, system, and trash directories.
+				"@tmp",                      // Synology temporary folder
+				"@eadir",                    // Synology index folder
+				".SynologyWorkingDirectory", // Synology Drive temporary folder
+				"#recycle",                  // Synology recycle bin
+				"$Recycle.Bin",              // Windows recycle bin
+			},
 		},
 		IncrementalRetentionPolicy: BackupRetentionPolicyConfig{
 			Enabled: true, // Enabled by default for incremental mode.
@@ -424,7 +413,7 @@ func (c *Config) Validate() error {
 
 	// --- Validate Source Path ---
 	if c.Paths.Source != "" {
-		c.Paths.Source, err = expandPath(c.Paths.Source)
+		c.Paths.Source, err = util.ExpandPath(c.Paths.Source)
 		if err != nil {
 			return fmt.Errorf("could not expand source path: %w", err)
 		}
@@ -438,7 +427,7 @@ func (c *Config) Validate() error {
 
 	// --- Validate Target Path ---
 	if c.Paths.TargetBase != "" {
-		c.Paths.TargetBase, err = expandPath(c.Paths.TargetBase)
+		c.Paths.TargetBase, err = util.ExpandPath(c.Paths.TargetBase)
 		if err != nil {
 			return fmt.Errorf("could not expand target path: %w", err)
 		}
@@ -503,10 +492,19 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	if err := validateGlobPatterns("excludeFiles", c.Paths.ExcludeFiles); err != nil {
+	if err := validateGlobPatterns("defaultExcludeFiles", c.Paths.DefaultExcludeFiles); err != nil {
 		return err
 	}
-	if err := validateGlobPatterns("excludeDirs", c.Paths.ExcludeDirs); err != nil {
+
+	if err := validateGlobPatterns("userExcludeFiles", c.Paths.UserExcludeFiles); err != nil {
+		return err
+	}
+
+	if err := validateGlobPatterns("defaultExcludeDirs", c.Paths.DefaultExcludeDirs); err != nil {
+		return err
+	}
+
+	if err := validateGlobPatterns("userExcludeDirs", c.Paths.UserExcludeDirs); err != nil {
 		return err
 	}
 	return nil
@@ -539,11 +537,17 @@ func (c *Config) LogSummary() {
 	case SnapshotMode:
 		logArgs = append(logArgs, "snapshots_subdir", c.Paths.SnapshotsSubDir)
 	}
-	if len(c.Paths.ExcludeFiles) > 0 {
-		logArgs = append(logArgs, "exclude_files", strings.Join(c.Paths.ExcludeFiles, ", "))
+	if finalExcludeFiles := c.Paths.ExcludeFiles(); len(finalExcludeFiles) > 0 {
+		logArgs = append(logArgs, "exclude_files", strings.Join(finalExcludeFiles, ", "))
 	}
-	if len(c.Paths.ExcludeDirs) > 0 {
-		logArgs = append(logArgs, "exclude_dirs", strings.Join(c.Paths.ExcludeDirs, ", "))
+	if finalExcludeDirs := c.Paths.ExcludeDirs(); len(finalExcludeDirs) > 0 {
+		logArgs = append(logArgs, "exclude_dirs", strings.Join(finalExcludeDirs, ", "))
+	}
+	if len(c.Paths.DefaultExcludeFiles) > 0 {
+		logArgs = append(logArgs, "default_exclude_files", strings.Join(c.Paths.DefaultExcludeFiles, ", "))
+	}
+	if len(c.Paths.DefaultExcludeDirs) > 0 {
+		logArgs = append(logArgs, "default_exclude_dirs", strings.Join(c.Paths.DefaultExcludeDirs, ", "))
 	}
 	if len(c.Hooks.PreBackup) > 0 {
 		logArgs = append(logArgs, "pre_backup_hooks", strings.Join(c.Hooks.PreBackup, "; "))
@@ -567,31 +571,6 @@ func (c *Config) LogSummary() {
 	plog.Info("Backup configuration loaded", logArgs...)
 }
 
-// expandPath expands the tilde (~) prefix in a path to the user's home directory.
-func expandPath(path string) (string, error) {
-	if !strings.HasPrefix(path, "~") {
-		return path, nil // No tilde, return as-is.
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("could not get user home directory: %w", err)
-	}
-
-	// Replace the tilde with the home directory.
-	return filepath.Join(home, path[1:]), nil
-}
-
-// invertMap takes a map[K]V and returns a map[V]K.
-// It's a generic helper for creating reverse lookup maps for enums.
-func invertMap[K comparable, V comparable](m map[K]V) map[V]K {
-	inv := make(map[V]K, len(m))
-	for k, v := range m {
-		inv[v] = k
-	}
-	return inv
-}
-
 // validateGlobPatterns checks if a list of strings are valid glob patterns.
 func validateGlobPatterns(fieldName string, patterns []string) error {
 	for _, pattern := range patterns {
@@ -600,6 +579,20 @@ func validateGlobPatterns(fieldName string, patterns []string) error {
 		}
 	}
 	return nil
+}
+
+// ExcludeFiles returns the final, combined slice of file exclusion patterns, including
+// non-overridable system patterns, default patterns, and user-configured patterns.
+// It automatically handles deduplication.
+func (p *BackupPathConfig) ExcludeFiles() []string {
+	return util.MergeAndDeduplicate(systemExcludeFilePatterns, p.DefaultExcludeFiles, p.UserExcludeFiles)
+}
+
+// ExcludeDirs returns the final, combined slice of directory exclusion patterns, including
+// non-overridable system patterns, default patterns, and user-configured patterns.
+// It automatically handles deduplication.
+func (p *BackupPathConfig) ExcludeDirs() []string {
+	return util.MergeAndDeduplicate(systemExcludeDirPatterns, p.DefaultExcludeDirs, p.UserExcludeDirs)
 }
 
 // FormatTimestampWithOffset formats a UTC timestamp into a string that includes
@@ -653,10 +646,10 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 			merged.Engine.Performance.CopyBufferSizeKB = value.(int)
 		case "mod-time-window":
 			merged.Engine.ModTimeWindowSeconds = value.(int)
-		case "exclude-files":
-			merged.Paths.ExcludeFiles = value.([]string)
-		case "exclude-dirs":
-			merged.Paths.ExcludeDirs = value.([]string)
+		case "user-exclude-files":
+			merged.Paths.UserExcludeFiles = value.([]string)
+		case "user-exclude-dirs":
+			merged.Paths.UserExcludeDirs = value.([]string)
 		case "preserve-source-name":
 			merged.Paths.PreserveSourceDirectoryName = value.(bool)
 		case "pre-backup-hooks":

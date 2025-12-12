@@ -91,7 +91,7 @@ func TestParseFlagConfig(t *testing.T) {
 	})
 
 	t.Run("Parse Exclude Flags", func(t *testing.T) {
-		args := []string{"-exclude-files=*.tmp,*.log", "-exclude-dirs=node_modules,.cache"}
+		args := []string{"-user-exclude-files=*.tmp,*.log", "-user-exclude-dirs=node_modules,.cache"}
 		runTestWithFlags(t, args, func() {
 			_, setFlags, err := parseFlagConfig()
 			if err != nil {
@@ -99,13 +99,13 @@ func TestParseFlagConfig(t *testing.T) {
 			}
 
 			expectedFiles := []string{"*.tmp", "*.log"}
-			if !equalSlices(setFlags["exclude-files"].([]string), expectedFiles) {
-				t.Errorf("expected exclude files %v, but got %v", expectedFiles, setFlags["exclude-files"])
+			if !equalSlices(setFlags["user-exclude-files"].([]string), expectedFiles) {
+				t.Errorf("expected exclude files %v, but got %v", expectedFiles, setFlags["user-exclude-files"])
 			}
 
 			expectedDirs := []string{"node_modules", ".cache"}
-			if !equalSlices(setFlags["exclude-dirs"].([]string), expectedDirs) {
-				t.Errorf("expected exclude dirs %v, but got %v", expectedDirs, setFlags["exclude-dirs"])
+			if !equalSlices(setFlags["user-exclude-dirs"].([]string), expectedDirs) {
+				t.Errorf("expected exclude dirs %v, but got %v", expectedDirs, setFlags["user-exclude-dirs"])
 			}
 		})
 	})
