@@ -376,10 +376,16 @@ func (e *Engine) performSync(ctx context.Context, currentRun *runState) error {
 		}
 	}
 
-	// Combine system-required ignored files with user-defined ones for the sync operation.
+	// Combine system-required, predefined, and user-defined patterns for the sync operation.
+	// This ensures that even if a user clears the exclude list in their config,
+	// the sensible defaults are still applied.
 	excludeFiles := config.GetSystemExcludeFilePatterns()
+	excludeFiles = append(excludeFiles, config.GetPredefinedExcludeFilePatterns()...)
 	excludeFiles = append(excludeFiles, e.config.Paths.ExcludeFiles...)
-	excludeDirs := e.config.Paths.ExcludeDirs
+
+	excludeDirs := config.GetSystemExcludeDirPatterns()
+	excludeDirs = append(excludeDirs, config.GetPredefinedExcludeDirPatterns()...)
+	excludeDirs = append(excludeDirs, e.config.Paths.ExcludeDirs...)
 
 	// Sync and check for errors after attempting the sync.
 	if syncErr := e.syncer.Sync(ctx, source, destination, mirror, excludeFiles, excludeDirs, e.config.Metrics); syncErr != nil {

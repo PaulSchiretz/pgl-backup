@@ -129,11 +129,13 @@ pgl-backup -target="/media/backup-drive/MyDocumentsBackup"
 
 The first run will copy all files into a `.../PGL_Backup_Current` directory. Subsequent runs will update this directory. After 24 hours, the next run will first rename `PGL_Backup_Current` to a timestamped archive (e.g., `PGL_Backup_2023-10-27-...`) inside a new `PGL_Backup_Archives` sub-directory, and then create a new current backup.
 Your backup target will be organized like this:
-```/path/to/your/backup-target/
+```
+/path/to/your/backup-target/
 ├── pgl-backup.conf (The configuration for this backup set)
 ├── PGL_Backup_Current/ (The active incremental backup)
 ├── PGL_Backup_Archives/ (Timestamped historical incremental archives)
-└── PGL_Backup_Snapshots/ (Timestamped snapshots from snapshot mode)```
+└── PGL_Backup_Snapshots/ (Timestamped snapshots from snapshot mode)
+```
 
 ## Usage and Examples
 
@@ -168,6 +170,23 @@ Exclude temporary files and `node_modules` directories. Patterns support standar
 ```sh
 pgl-backup -target="..." -exclude-files="*.tmp,*.log" -exclude-dirs="node_modules,.cache"
 ```
+
+### Default and System Exclusions
+
+To provide a better out-of-the-box experience and protect its own metadata, `pgl-backup` uses two layers of exclusions.
+
+#### 1. System Exclusions (Always Active)
+A small, non-configurable list of files are always excluded to prevent the backup tool from backing up its own operational files.
+These are:
+*   `pgl-backup.conf`
+*   `.pgl-backup.meta`
+*   `.pgl-backup.lock`
+
+#### 2. Predefined Exclusions (Sensible Defaults)
+A list of common temporary and system files are excluded by default. When you generate a new configuration file with `-init`, these defaults are included, and you can customize them in your `pgl-backup.conf` file.
+
+*   **Default Excluded Files:** `*.tmp`, `*.temp`, `*.swp`, `*.lnk`, `~*`, `desktop.ini`, `.DS_Store`, `Thumbs.db`, `Icon?`
+*   **Default Excluded Directories:** `@tmp`, `@eadir`, `.SynologyWorkingDirectory`, `#recycle`, `$Recycle.Bin`
 
 ### Using Hooks
 

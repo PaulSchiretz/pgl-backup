@@ -30,6 +30,42 @@ func GetSystemExcludeFilePatterns() []string {
 	return []string{MetaFileName, LockFileName, ConfigFileName}
 }
 
+// GetSystemExcludeDirPatterns returns a slice of directory patterns that should
+// always be excluded from synchronization for the system to function correctly.
+func GetSystemExcludeDirPatterns() []string {
+	return []string{}
+}
+
+// GetPredefinedExcludeFilePatterns returns a slice of file patterns that are commonly
+// excluded from backups to avoid syncing temporary or system-specific files.
+func GetPredefinedExcludeFilePatterns() []string {
+	return []string{
+		// Common temporary and system files across platforms.
+		"*.tmp",       // Temporary files
+		"*.temp",      // Temporary files
+		"*.swp",       // Vim swap files
+		"*.lnk",       // Windows shortcuts
+		"~*",          // Files starting with a tilde (often temporary)
+		"desktop.ini", // Windows folder customization file
+		".DS_Store",   // macOS folder customization file
+		"Thumbs.db",   // Windows image thumbnail cache
+		"Icon?",       // macOS custom folder icons (Icon\r)
+	}
+}
+
+// GetPredefinedExcludeDirPatterns returns a slice of directory patterns that are commonly
+// excluded from backups, such as recycle bins and system-specific cache folders.
+func GetPredefinedExcludeDirPatterns() []string {
+	return []string{
+		// Common temporary, system, and trash directories.
+		"@tmp",                      // Synology temporary folder
+		"@eadir",                    // Synology index folder
+		".SynologyWorkingDirectory", // Synology Drive temporary folder
+		"#recycle",                  // Synology recycle bin
+		"$Recycle.Bin",              // Windows recycle bin
+	}
+}
+
 type BackupNamingConfig struct {
 	Prefix string `json:"prefix"`
 }
