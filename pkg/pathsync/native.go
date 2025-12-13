@@ -79,6 +79,7 @@ const (
 	prefixMatch
 	suffixMatch
 	globMatch
+	basenameMatch
 )
 
 // exclusionSet holds the categorized exclusion patterns for efficient matching.
@@ -279,17 +280,24 @@ func preProcessExclusions(patterns []string, isDirPatterns bool, caseInsensitive
 			}
 		} else {
 			// No wildcards. Check if it's a directory prefix or a literal match.
-			// Refinement: If this is the directory exclusion list OR the pattern ends in a slash,
-			// we treat it as a prefix match to exclude contents inside.
-			if isDirPatterns || strings.HasSuffix(p, "/") {
+			// If the pattern ends in a slash, it's explicitly a prefix match.
+			if strings.HasSuffix(p, "/") {
 				set.nonLiterals = append(set.nonLiterals, preProcessedExclusion{
 					pattern:      p,
 					cleanPattern: strings.TrimSuffix(p, "/"),
 					matchType:    prefixMatch,
 				})
+			} else if !strings.Contains(p, "/") {
+				// If the pattern does not contain a path separator (e.g., "node_modules" or "Thumbs.db"),
+				// treat it as a literal match against the basename of any path component. This is
+				// more efficient than a glob and correctly excludes the file/dir by name at any depth.
+				set.nonLiterals = append(set.nonLiterals, preProcessedExclusion{
+					pattern: p, cleanPattern: p, matchType: basenameMatch,
+				})
 			} else {
-				// Pure literal file match (e.g., "README.md")
-				set.literals[p] = struct{}{}
+				// It's a full or partial path without wildcards (e.g., "docs/README.md").
+				// Treat it as a literal match against the full relative path.
+				set.literals[p] = struct{}{} // O(1) lookup is fastest for this.
 			}
 		}
 	}
@@ -384,6 +392,10 @@ func (r *syncRun) isExcluded(relPathKey string, isDir bool) bool {
 			// because we only care if the path ends with this string. Unlike prefix matching,
 			// there is no container/directory that needs a separate literal check.
 			if strings.HasSuffix(relPathKey, p.cleanPattern) {
+				return true
+			}
+		case basenameMatch:
+			if filepath.Base(relPathKey) == p.cleanPattern {
 				return true
 			}
 
