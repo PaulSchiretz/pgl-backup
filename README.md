@@ -15,7 +15,7 @@
 *   **Intelligent Rollover (Incremental Mode)**: The backup interval can be set to `auto` (the default) to automatically align with your retention policy. If you keep hourly backups, it will roll over hourly. This prevents configuration mismatches and ensures your retention slots are filled efficiently.
 *   **Concurrency Safe**: A robust file-locking mechanism prevents multiple backup instances from running against the same target directory simultaneously, protecting data integrity.
 *   **Pre- and Post-Backup Hooks**: Execute custom shell commands before the sync begins or after it completes, perfect for tasks like dumping a database or sending a notification.
-*   **Adjustable Configuration**: Configure backups using a simple `pgl-backup.conf` JSON file, and override any setting with command-line flags for one-off tasks.
+*   **Adjustable Configuration**: Configure backups using a simple `pgl-backup.config.json` JSON file, and override any setting with command-line flags for one-off tasks.
 *   **Multiple Sync Engines**:
     *   **`native`**: The default engine. It is a high-performance, concurrent, cross-platform engine written in pure Go that generally offers the best performance with no external dependencies.
     *   **`robocopy`** (Windows only): An alternative engine that uses the battle-tested `robocopy.exe` utility. While reliable, the `native` engine is often faster due to its modern design.
@@ -45,7 +45,7 @@ Let's set up a daily incremental backup for your `~/Documents` folder to an exte
 
 ### Step 1: Initialize Configuration
 
-The easiest way to get started is to use the `-init` flag. This will generate a `pgl-backup.conf` file in your target directory. The `-source` and `-target` flags are required for this step.
+The easiest way to get started is to use the `-init` flag. This will generate a `pgl-backup.config.json` file in your target directory. The `-source` and `-target` flags are required for this step.
 
 ```sh
 # Example for Linux/macOS
@@ -58,11 +58,11 @@ pgl-backup -source="C:\Users\YourUser\Documents" -target="E:\Backups\MyDocuments
 This command will:
 1.  Perform pre-flight checks to ensure the paths are valid.
 2.  Create the target directory `/media/backup-drive/MyDocumentsBackup`.
-3.  Generate a `pgl-backup.conf` file inside it.
+3.  Generate a `pgl-backup.config.json` file inside it.
 
 ### Step 2: Review Configuration (Optional)
 
-Open the newly created `pgl-backup.conf` file. It will look something like this, filled with sensible defaults. You can adjust the retention policy, rollover interval, or add exclusions.
+Open the newly created `pgl-backup.config.json` file. It will look something like this, filled with sensible defaults. You can adjust the retention policy, rollover interval, or add exclusions.
 
 ```json
 {
@@ -149,7 +149,7 @@ The first run will copy all files into a `.../PGL_Backup_Current` directory. Sub
 Your backup target will be organized like this:
 ```
 /path/to/your/backup-target/
-├── pgl-backup.conf (The configuration for this backup set)
+├── pgl-backup.config.json (The configuration for this backup set)
 ├── PGL_Backup_Current/ (The active incremental backup)
 ├── PGL_Backup_Archives/ (Timestamped historical incremental archives)
 └── PGL_Backup_Snapshots/ (Timestamped snapshots from snapshot mode)
@@ -196,12 +196,12 @@ To provide a better out-of-the-box experience and protect its own metadata, `pgl
 #### 1. System Exclusions (Always Active)
 A small, non-configurable list of files are always excluded to prevent the backup tool from backing up its own operational files.
 These are:
-*   `pgl-backup.conf`
-*   `.pgl-backup.meta`
-*   `~.pgl-backup.lock`
+*   `pgl-backup.config.json`
+*   `.pgl-backup.meta.json`
+*   `.~pgl-backup.lock`
 
 #### 2. Predefined Exclusions (Sensible Defaults)
-A list of common temporary and system files are excluded by default. When you generate a new configuration file with `-init`, these defaults are included, and you can customize them in your `pgl-backup.conf` file.
+A list of common temporary and system files are excluded by default. When you generate a new configuration file with `-init`, these defaults are included, and you can customize them in your `pgl-backup.config.json` file.
 The JSON keys for these are `defaultExcludeFiles` and `defaultExcludeDirs`.
 
 *   **Default Excluded Files:** `*.tmp`, `*.temp`, `*.swp`, `*.lnk`, `~*`, `desktop.ini`, `.DS_Store`, `Thumbs.db`, `Icon?`.
@@ -218,7 +218,7 @@ pgl-backup -target="..." -pre-backup-hooks="'/usr/local/bin/dump_database.sh', '
 
 ## Configuration Details
 
-All command-line flags can be set in the `pgl-backup.conf` file.
+All command-line flags can be set in the `pgl-backup.config.json` file.
 
 | Flag / JSON Key                 | Type          | Default                               | Description                                                                                             |
 | ------------------------------- | ------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------- |
@@ -278,7 +278,7 @@ If a backup doesn't fill any available slot, it is deleted. This ensures that a 
 
 ### Retention Policy Examples
 
-Here are a few example policies you can use in your `pgl-backup.conf` file.
+Here are a few example policies you can use in your `pgl-backup.config.json` file.
 The best policy depends on how much data you are backing up and how much disk space you have available. For many use cases, a simple policy of keeping 2 daily, 1 weekly, and perhaps 1 monthly backup is more than enough.
 
 
@@ -393,7 +393,7 @@ The best policy depends on how much data you are backing up and how much disk sp
 *   **Cause**: Another `pgl-backup` process is currently running against the same target directory, or a previous run crashed without cleanly releasing the lock. The application has stale-lock detection, but it may not cover all edge cases (e.g., system clock changes).
 *   **Solution**:
     1.  First, verify that no other `pgl-backup` process is running. Use `ps aux | grep pgl-backup` (Linux/macOS) or check Task Manager (Windows).
-    2.  If you are certain no other process is active, the lock file is stale. You can safely delete the `.pgl-backup.lock` file from the root of your target backup directory and re-run the command.
+    2.  If you are certain no other process is active, the lock file is stale. You can safely delete the `.~pgl-backup.lock` file from the root of your target backup directory and re-run the command.
 
 ### Pre/Post-Backup Hooks are failing
 
@@ -407,7 +407,7 @@ The best policy depends on how much data you are backing up and how much disk sp
 
 *   **Cause**: The default number of concurrent workers may not be optimal for your specific hardware (e.g., slow spinning disks vs. fast SSDs, network latency).
 *   **Solution**:
-    *   Adjust the `sync-workers` and `copy-buffer-kb` settings in your `pgl-backup.conf` file.
+    *   Adjust the `sync-workers` and `copy-buffer-kb` settings in your `pgl-backup.config.json` file.
     *   For systems with slow I/O (like a single spinning disk or a high-latency network share), *decreasing* the number of `sync-workers` (e.g., to `2` or `4`) can sometimes improve performance by reducing disk head thrashing.
     *   For systems with very fast I/O (like a local NVMe SSD), increasing `sync-workers` might yield better results.
 

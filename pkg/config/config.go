@@ -13,14 +13,15 @@ import (
 	"pixelgardenlabs.io/pgl-backup/pkg/util"
 )
 
-// configFileName is the name of the configuration file.
-const ConfigFileName = "pgl-backup.conf"
+// ConfigFileName is the name of the configuration file.
+const ConfigFileName = "pgl-backup.config.json"
 
 // MetaFileName is the name of the backup metadata file.
-const MetaFileName = ".pgl-backup.meta"
+const MetaFileName = ".pgl-backup.meta.json"
 
-// LockFileName is the name of the lock file created in the target directory. ~ markes as temporary
-const LockFileName = "~.pgl-backup.lock"
+// LockFileName is the name of the lock file created in the target directory.
+// The '~' prefix marks it as temporary.
+const LockFileName = ".~pgl-backup.lock"
 
 // backupTimeFormat defines the standard, non-configurable time format for backup directory names.
 const backupTimeFormat = "2006-01-02-15-04-05"
@@ -339,7 +340,7 @@ func NewDefault() Config {
 	}
 }
 
-// Load attempts to load a configuration from "pgl-backup.conf".
+// Load attempts to load a configuration from "pgl-backup.config.json".
 // If the file doesn't exist, it returns the provided default config without an error.
 // If the file exists but fails to parse, it returns an error and a zero-value config.
 func Load(targetBase string) (Config, error) {
@@ -381,7 +382,7 @@ func Load(targetBase string) (Config, error) {
 	return config, nil
 }
 
-// Generate creates or overwrites a default pgl-backup.conf file in the specified
+// Generate creates or overwrites a default pgl-backup.config.json file in the specified
 // target directory.
 func Generate(configToGenerate Config) error {
 	configPath := filepath.Join(configToGenerate.Paths.TargetBase, ConfigFileName)

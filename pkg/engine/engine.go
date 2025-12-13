@@ -144,7 +144,7 @@ func (e *Engine) InitializeBackupTarget(ctx context.Context) error {
 
 	plog.Info("Pre-flight checks passed. Generating configuration file.")
 
-	// Generate the pgl-backup.conf file in the target directory.
+	// Generate the pgl-backup.config.json file in the target directory.
 	return config.Generate(e.config)
 }
 
@@ -767,7 +767,7 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 	return backupsToKeep
 }
 
-// writeBackupMetafile creates and writes the .pgl-backup.meta file into a given directory.
+// writeBackupMetafile creates and writes the .pgl-backup.meta.json file into a given directory.
 func writeBackupMetafile(dirPath, version, mode, source string, backupTime time.Time, dryRun bool) error {
 	if dryRun {
 		plog.Info("[DRY RUN] Would write metafile", "directory", dirPath)
@@ -794,7 +794,7 @@ func writeBackupMetafile(dirPath, version, mode, source string, backupTime time.
 	return nil
 }
 
-// readBackupMetafile opens and parses the .pgl-backup.meta file within a given directory.
+// readBackupMetafile opens and parses the .pgl-backup.meta.json file within a given directory.
 // It returns the parsed metadata or an error if the file cannot be read.
 func readBackupMetafile(dirPath string) (*runMetadata, error) {
 	metaFilePath := filepath.Join(dirPath, config.MetaFileName)
@@ -816,7 +816,7 @@ func readBackupMetafile(dirPath string) (*runMetadata, error) {
 
 // fetchSortedBackups scans a directory for valid backup folders, parses their
 // metadata to get an accurate timestamp, and returns them sorted from newest to oldest.
-// It relies exclusively on the `.pgl-backup.meta` file; directories without a
+// It relies exclusively on the `.pgl-backup.meta.json` file; directories without a
 // readable metafile are ignored for retention purposes.
 func (e *Engine) fetchSortedBackups(ctx context.Context, baseDir, excludeDir string) ([]backupInfo, error) {
 	prefix := e.config.Naming.Prefix
