@@ -82,67 +82,60 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 
 	// Create a map of the flags that were explicitly set by the user, along with their values.
 	// This map is used to selectively override the base configuration.
-	setFlags := make(map[string]bool)
-	flag.Visit(func(f *flag.Flag) {
-		setFlags[f.Name] = true // Mark the flag as set.
-	})
+	usedFlags := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) { usedFlags[f.Name] = true })
 
-	// Now, iterate over the set flags and populate a new map with their actual values.
 	flagMap := make(map[string]interface{})
-	for name := range setFlags {
-		switch name {
-		case "mode":
-			mode, err := config.BackupModeFromString(*modeFlag)
-			if err != nil {
-				return actionRunBackup, nil, err
-			}
-			flagMap[name] = mode
-		case "sync-engine":
-			engineType, err := config.SyncEngineFromString(*syncEngineFlag)
-			if err != nil {
-				return actionRunBackup, nil, err
-			}
-			flagMap[name] = engineType
-		case "user-exclude-files":
-			flagMap[name] = flagparse.ParseExcludeList(*userExcludeFilesFlag)
-		case "user-exclude-dirs":
-			flagMap[name] = flagparse.ParseExcludeList(*userExcludeDirsFlag)
-		case "pre-backup-hooks":
-			flagMap[name] = flagparse.ParseCmdList(*preBackupHooksFlag)
-		case "post-backup-hooks":
-			flagMap[name] = flagparse.ParseCmdList(*postBackupHooksFlag)
-		case "source":
-			flagMap[name] = *srcFlag
-		case "target":
-			flagMap[name] = *targetFlag
-		case "log-level":
-			flagMap[name] = *logLevelFlag
-		case "fail-fast":
-			flagMap[name] = *failFastFlag
-		case "dry-run":
-			flagMap[name] = *dryRunFlag
-		case "metrics":
-			flagMap[name] = *metricsFlag
-		case "preserve-source-name":
-			// The flag's value is only used if it was explicitly set.
-			// The default is handled by the base config.
-			// We can just assign the value directly.
-			flagMap[name] = *preserveSourceNameFlag
-		case "sync-workers":
-			flagMap[name] = *syncWorkersFlag
-		case "mirror-workers":
-			flagMap[name] = *mirrorWorkersFlag
-		case "delete-workers":
-			flagMap[name] = *deleteWorkersFlag
-		case "retry-count":
-			flagMap[name] = *retryCountFlag
-		case "retry-wait":
-			flagMap[name] = *retryWaitFlag
-		case "copy-buffer-kb":
-			flagMap[name] = *copyBufferKBFlag
-		case "mod-time-window":
-			flagMap[name] = *modTimeWindowFlag
+
+	// Helper to add a value to the map only if the corresponding flag was set.
+	addIfUsed := func(name string, value interface{}) {
+		if usedFlags[name] {
+			flagMap[name] = value
 		}
+	}
+
+	// Helper for flags that need parsing. It only calls the parser if the flag was used.
+	addParsedIfUsed := func(name string, rawValue string, parser func(string) []string) {
+		if usedFlags[name] {
+			flagMap[name] = parser(rawValue)
+		}
+	}
+
+	// Populate the map using the helper.
+	addIfUsed("source", *srcFlag)
+	addIfUsed("target", *targetFlag)
+	addIfUsed("log-level", *logLevelFlag)
+	addIfUsed("fail-fast", *failFastFlag)
+	addIfUsed("dry-run", *dryRunFlag)
+	addIfUsed("metrics", *metricsFlag)
+	addIfUsed("preserve-source-name", *preserveSourceNameFlag)
+	addIfUsed("sync-workers", *syncWorkersFlag)
+	addIfUsed("mirror-workers", *mirrorWorkersFlag)
+	addIfUsed("delete-workers", *deleteWorkersFlag)
+	addIfUsed("retry-count", *retryCountFlag)
+	addIfUsed("retry-wait", *retryWaitFlag)
+	addIfUsed("copy-buffer-kb", *copyBufferKBFlag)
+	addIfUsed("mod-time-window", *modTimeWindowFlag)
+
+	// Handle flags that require parsing/validation.
+	addParsedIfUsed("user-exclude-files", *userExcludeFilesFlag, flagparse.ParseExcludeList)
+	addParsedIfUsed("user-exclude-dirs", *userExcludeDirsFlag, flagparse.ParseExcludeList)
+	addParsedIfUsed("pre-backup-hooks", *preBackupHooksFlag, flagparse.ParseCmdList)
+	addParsedIfUsed("post-backup-hooks", *postBackupHooksFlag, flagparse.ParseCmdList)
+
+	if usedFlags["mode"] {
+		mode, err := config.BackupModeFromString(*modeFlag)
+		if err != nil {
+			return actionRunBackup, nil, err
+		}
+		flagMap["mode"] = mode
+	}
+	if usedFlags["sync-engine"] {
+		engineType, err := config.SyncEngineFromString(*syncEngineFlag)
+		if err != nil {
+			return actionRunBackup, nil, err
+		}
+		flagMap["sync-engine"] = engineType
 	}
 
 	// Final sanity check: if robocopy was requested on a non-windows OS, force native.
