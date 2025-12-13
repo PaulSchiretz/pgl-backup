@@ -464,7 +464,7 @@ func (r *syncRun) processDirectorySync(task *syncTask) error {
 
 	// Convert the path to the OS-native format for file access
 	absTrgPath := r.denormalizedAbsPath(r.trg, task.RelPathKey)
-	expectedPerms := util.WithWritePermission(task.PathInfo.Mode.Perm())
+	expectedPerms := util.WithUserWritePermission(task.PathInfo.Mode.Perm())
 
 	// 2. Perform the concurrent I/O.
 	// Optimistic creation: Try Chmod first (cheapest syscall).

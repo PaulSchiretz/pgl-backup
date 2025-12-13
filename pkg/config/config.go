@@ -393,7 +393,7 @@ func Generate(configToGenerate Config) error {
 	}
 
 	// Write the JSON data to the file.
-	if err := os.WriteFile(configPath, jsonData, 0664); err != nil {
+	if err := os.WriteFile(configPath, jsonData, util.UserWritableFilePerms); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 

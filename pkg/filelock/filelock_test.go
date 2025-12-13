@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"pixelgardenlabs.io/pgl-backup/pkg/util"
 )
 
 // TestAcquireAndRelease verifies the basic functionality of acquiring and releasing a lock.
@@ -77,7 +79,7 @@ func TestStaleLockCleanup(t *testing.T) {
 		AppID:      "stale-app",
 	}
 	data, _ := json.Marshal(staleContent)
-	if err := os.WriteFile(lockPath, data, lockFileMode); err != nil {
+	if err := os.WriteFile(lockPath, data, util.WithUserWritePermission(util.UserWritableFilePerms)); err != nil {
 		t.Fatalf("failed to create stale lock file: %v", err)
 	}
 
@@ -114,7 +116,7 @@ func TestStaleLockContention(t *testing.T) {
 		AppID:      "stale-app",
 	}
 	data, _ := json.Marshal(staleContent)
-	if err := os.WriteFile(lockPath, data, lockFileMode); err != nil {
+	if err := os.WriteFile(lockPath, data, util.WithUserWritePermission(util.UserWritableFilePerms)); err != nil {
 		t.Fatalf("failed to create stale lock file: %v", err)
 	}
 
@@ -219,7 +221,7 @@ func TestReadLockContentSafely(t *testing.T) {
 		hostname, _ := os.Hostname()
 		content := LockContent{PID: 1, AppID: "valid", Hostname: hostname, Nonce: "abc"}
 		data, _ := json.Marshal(content)
-		if err := os.WriteFile(lockPath, data, lockFileMode); err != nil {
+		if err := os.WriteFile(lockPath, data, util.WithUserWritePermission(util.UserWritableFilePerms)); err != nil {
 			t.Fatalf("failed to write test lock file: %v", err)
 		}
 		readContent, err := readLockContentSafely(lockPath)
@@ -232,8 +234,8 @@ func TestReadLockContentSafely(t *testing.T) {
 	})
 
 	t.Run("Fails on persistently empty file", func(t *testing.T) {
-		os.WriteFile(lockPath, []byte{}, lockFileMode)
-		if err := os.WriteFile(lockPath, []byte{}, lockFileMode); err != nil {
+		os.WriteFile(lockPath, []byte{}, util.WithUserWritePermission(util.UserWritableFilePerms))
+		if err := os.WriteFile(lockPath, []byte{}, util.WithUserWritePermission(util.UserWritableFilePerms)); err != nil {
 			t.Fatalf("failed to write empty file: %v", err)
 		}
 		_, err := readLockContentSafely(lockPath)
@@ -246,7 +248,7 @@ func TestReadLockContentSafely(t *testing.T) {
 	})
 
 	t.Run("Fails on persistently corrupt file", func(t *testing.T) {
-		if err := os.WriteFile(lockPath, []byte("{corrupt"), lockFileMode); err != nil {
+		if err := os.WriteFile(lockPath, []byte("{corrupt"), util.WithUserWritePermission(util.UserWritableFilePerms)); err != nil {
 			t.Fatalf("failed to write corrupt file: %v", err)
 		}
 		_, err := readLockContentSafely(lockPath)
@@ -260,7 +262,7 @@ func TestReadLockContentSafely(t *testing.T) {
 
 	t.Run("Succeeds after transient empty state", func(t *testing.T) {
 		// Simulate a file being written: empty -> content
-		if err := os.WriteFile(lockPath, []byte{}, lockFileMode); err != nil {
+		if err := os.WriteFile(lockPath, []byte{}, util.WithUserWritePermission(util.UserWritableFilePerms)); err != nil {
 			t.Fatalf("failed to write initial empty file: %v", err)
 		}
 
@@ -269,7 +271,7 @@ func TestReadLockContentSafely(t *testing.T) {
 			hostname, _ := os.Hostname()
 			content := LockContent{PID: 2, AppID: "transient", Hostname: hostname, Nonce: "xyz"}
 			data, _ := json.Marshal(content)
-			if err := os.WriteFile(lockPath, data, lockFileMode); err != nil {
+			if err := os.WriteFile(lockPath, data, util.WithUserWritePermission(util.UserWritableFilePerms)); err != nil {
 				// Can't t.Fatal in a goroutine, but this will cause the main test to fail.
 				t.Logf("error writing final content in goroutine: %v", err)
 			}

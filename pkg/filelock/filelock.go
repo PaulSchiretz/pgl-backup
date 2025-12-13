@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
+	"pixelgardenlabs.io/pgl-backup/pkg/util"
 )
 
 // LockContent defines the structure of the data written to the lock file.
@@ -62,8 +63,6 @@ var (
 	// staleTimeout is defined in relation to the heartbeat to ensure a safe margin.
 	staleTimeout = 3 * heartbeatInterval
 )
-
-const lockFileMode = 0644
 
 // Acquire attempts to acquire the lock.
 // ctx is used for the lifecycle of the acquisition attempt, not the background heartbeat.
@@ -141,7 +140,7 @@ func Acquire(ctx context.Context, lockFilePath string, appID string) (*Lock, err
 // tryAcquire attempts atomic creation using O_EXCL to guarantee "I created this file first".
 func tryAcquire(path string, appID string) (*Lock, error) {
 	// O_CREATE|O_EXCL guarantees we only succeed if file doesn't exist
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, lockFileMode)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, util.UserWritableFilePerms)
 	if err != nil {
 		return nil, err
 	}

@@ -402,7 +402,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				dstDirInfo := getPathInfo(t, filepath.Join(dst, "special_dir"))
 
 				// The expected permissions should include the backup write bit.
-				expectedPerm := util.WithWritePermission(srcDirInfo.Mode().Perm())
+				expectedPerm := util.WithUserWritePermission(srcDirInfo.Mode().Perm())
 				if expectedPerm != dstDirInfo.Mode().Perm() {
 					t.Errorf("expected destination dir permissions to be %v, but got %v", expectedPerm, dstDirInfo.Mode().Perm())
 				}

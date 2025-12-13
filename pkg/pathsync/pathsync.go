@@ -56,8 +56,8 @@ func (s *PathSyncer) Sync(ctx context.Context, src, dst string, mirror bool, exc
 	// We use the source directory's permissions as a template for the destination.
 	// Crucially, `withBackupWritePermission` is applied to ensure the backup user
 	// can always write to the destination on subsequent runs, preventing permission lockouts.
-	if !s.dryRun {
-		if err := os.MkdirAll(dst, util.WithWritePermission(srcInfo.Mode().Perm())); err != nil {
+	if !s.dryRun && dst != "" {
+		if err := os.MkdirAll(dst, util.WithUserWritePermission(srcInfo.Mode().Perm())); err != nil {
 			return fmt.Errorf("failed to create destination directory %s: %w", dst, err)
 		}
 	}

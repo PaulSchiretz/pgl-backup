@@ -9,7 +9,45 @@ import (
 	"testing"
 )
 
-func TestWithWritePermission(t *testing.T) {
+func TestWithUserReadPermission(t *testing.T) {
+	testCases := []struct {
+		name     string
+		input    os.FileMode
+		expected os.FileMode
+	}{
+		{
+			name:     "Write-only permission",
+			input:    PermUserWrite,                // 0200
+			expected: PermUserWrite | PermUserRead, // 0600
+		},
+		{
+			name:     "Already has read permission",
+			input:    UserWritableDirPerms, // 0755
+			expected: UserWritableDirPerms, // 0755 (should not change)
+		},
+		{
+			name:     "No permissions",
+			input:    0000,         // ---------
+			expected: PermUserRead, // 0400
+		},
+		{
+			name:     "Execute-only permission",
+			input:    PermUserExecute,                // 0100
+			expected: PermUserExecute | PermUserRead, // 0500
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := WithUserReadPermission(tc.input)
+			if result != tc.expected {
+				t.Errorf("expected permission %o, but got %o", tc.expected, result)
+			}
+		})
+	}
+}
+
+func TestWithUserWritePermission(t *testing.T) {
 	testCases := []struct {
 		name     string
 		input    os.FileMode
@@ -17,29 +55,67 @@ func TestWithWritePermission(t *testing.T) {
 	}{
 		{
 			name:     "Read-only permission",
-			input:    0444, // r--r--r--
-			expected: 0644, // rw-r--r--
+			input:    PermUserRead,                 // 0400
+			expected: PermUserRead | PermUserWrite, // 0600
 		},
 		{
 			name:     "Already has write permission",
-			input:    0755, // rwxr-xr-x
-			expected: 0755, // rwxr-xr-x (should not change)
+			input:    UserWritableDirPerms, // 0755
+			expected: UserWritableDirPerms, // 0755 (should not change)
 		},
 		{
 			name:     "No permissions",
-			input:    0000, // ---------
-			expected: 0200, // -w-------
+			input:    0000,          // ---------
+			expected: PermUserWrite, // 0200
 		},
 		{
 			name:     "Execute-only permission",
-			input:    0111, // --x--x--x
-			expected: 0311, // -wx--x--x
+			input:    PermUserExecute,                 // 0100
+			expected: PermUserExecute | PermUserWrite, // 0300
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := WithWritePermission(tc.input)
+			result := WithUserWritePermission(tc.input)
+			if result != tc.expected {
+				t.Errorf("expected permission %o, but got %o", tc.expected, result)
+			}
+		})
+	}
+}
+
+func TestWithUserExecutePermission(t *testing.T) {
+	testCases := []struct {
+		name     string
+		input    os.FileMode
+		expected os.FileMode
+	}{
+		{
+			name:     "Read-only permission",
+			input:    PermUserRead,                   // 0400
+			expected: PermUserRead | PermUserExecute, // 0500
+		},
+		{
+			name:     "Already has execute permission",
+			input:    UserWritableDirPerms, // 0755
+			expected: UserWritableDirPerms, // 0755 (should not change)
+		},
+		{
+			name:     "No permissions",
+			input:    0000,            // ---------
+			expected: PermUserExecute, // 0100
+		},
+		{
+			name:     "Write-only permission",
+			input:    PermUserWrite,                   // 0200
+			expected: PermUserWrite | PermUserExecute, // 0300
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := WithUserExecutePermission(tc.input)
 			if result != tc.expected {
 				t.Errorf("expected permission %o, but got %o", tc.expected, result)
 			}

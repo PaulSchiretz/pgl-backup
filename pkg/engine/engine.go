@@ -333,7 +333,7 @@ func (e *Engine) prepareDestination(ctx context.Context, currentRun *runState) e
 		backupDirName := e.config.Naming.Prefix + timestamp
 		snapshotsSubDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.SnapshotsSubDir)
 		if !e.config.DryRun {
-			os.MkdirAll(snapshotsSubDir, util.WithWritePermission(0755))
+			os.MkdirAll(snapshotsSubDir, util.UserWritableDirPerms)
 		}
 		currentRun.target = filepath.Join(snapshotsSubDir, backupDirName)
 	} else {
@@ -436,7 +436,7 @@ func (e *Engine) performRollover(ctx context.Context, currentRun *runState) erro
 			return nil
 		}
 
-		if err := os.MkdirAll(archivesSubDir, util.WithWritePermission(0755)); err != nil {
+		if err := os.MkdirAll(archivesSubDir, util.UserWritableDirPerms); err != nil {
 			return fmt.Errorf("failed to create archives subdirectory %s: %w", archivesSubDir, err)
 		}
 		if err := os.Rename(currentBackupPath, archivePath); err != nil {
@@ -787,7 +787,7 @@ func writeBackupMetafile(dirPath, version, mode, source string, backupTime time.
 		return fmt.Errorf("could not marshal meta data: %w", err)
 	}
 
-	if err := os.WriteFile(metaFilePath, jsonData, 0664); err != nil {
+	if err := os.WriteFile(metaFilePath, jsonData, util.UserGroupWritableFilePerms); err != nil {
 		return fmt.Errorf("could not write meta file %s: %w", metaFilePath, err)
 	}
 
