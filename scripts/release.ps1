@@ -70,6 +70,16 @@ Print-Header "Starting release process for pgl-backup version $Version"
 # 1. Pre-flight checks
 Print-Header "Running pre-flight checks"
 
+# Check for required tools
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    Write-Error "Git is not found in your PATH. Please install Git and try again."
+    exit 1
+}
+if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
+    Write-Error "Go is not found in your PATH. Please install Go and try again."
+    exit 1
+}
+
 # Check for uncommitted changes
 $gitStatus = git status --porcelain
 if ($gitStatus) {
@@ -147,16 +157,17 @@ foreach ($platform in $platforms) {
     if ($DryRun) {
         Write-Host "[DRY RUN] Would create archive for $outputName"
     } else {
-        Push-Location $ReleaseDir
+        $binaryPath = Join-Path -Path $ReleaseDir -ChildPath $outputName
+        $licensePath = Join-Path -Path $ProjectRoot -ChildPath "LICENSE"
+        $readmePath = Join-Path -Path $ProjectRoot -ChildPath "README.md"
+        $archivePath = Join-Path -Path $ReleaseDir -ChildPath "$archiveName"
+
         if ($GOOS -eq "windows") {
-            Compress-Archive -Path $outputName, "..\LICENSE", "..\README.md" -DestinationPath "$archiveName.zip" -Force
+            Compress-Archive -Path $binaryPath, $licensePath, $readmePath -DestinationPath "$archivePath.zip" -Force
+        } else {
+            tar -czf "$archivePath.tar.gz" -C $ReleaseDir $outputName -C $ProjectRoot "LICENSE" "README.md"
         }
-        else {
-            # Modern Windows includes tar.exe
-            tar -czf "$archiveName.tar.gz" $outputName "../LICENSE" "../README.md"
-        }
-        Remove-Item $outputName # Clean up the raw binary after archiving
-        Pop-Location
+        Remove-Item $binaryPath # Clean up the raw binary after archiving
     }
 }
 
@@ -164,13 +175,12 @@ Write-Host "✅ All platforms built and archived successfully." -ForegroundColor
 
 # 4. Generate Checksums
 Print-Header "Generating checksums"
-Get-FileHash -Path "$ReleaseDir\*" -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $($_.Path | Split-Path -Leaf)" } | Set-Content "$ReleaseDir\checksums.txt"
 if ($DryRun) {
     Write-Host "[DRY RUN] Would generate checksums file: $ReleaseDir\checksums.txt"
 } else {
     Get-FileHash -Path "$ReleaseDir\*" -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $($_.Path | Split-Path -Leaf)" } | Set-Content "$ReleaseDir\checksums.txt"
+    Write-Host "✅ Checksums generated in '$ReleaseDir\checksums.txt'." -ForegroundColor Green
 }
-Write-Host "✅ Checksums generated in '$ReleaseDir\checksums.txt'." -ForegroundColor Green
 
 # 5. Create and push git tag
 Print-Header "Tagging release in git"

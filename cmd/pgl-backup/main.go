@@ -71,7 +71,7 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	retryCountFlag := flag.Int("retry-count", 0, "Number of retries for failed file copies.")
 	retryWaitFlag := flag.Int("retry-wait", 0, "Seconds to wait between retries.")
 	copyBufferKBFlag := flag.Int("copy-buffer-kb", 0, "Size of the I/O buffer in kilobytes for file copies.")
-	modTimeWindowFlag := flag.Int("mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact, -1=use config).")
+	modTimeWindowFlag := flag.Int("mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
 	userExcludeFilesFlag := flag.String("user-exclude-files", "", "Comma-separated list of file names to exclude (supports glob patterns).")
 	userExcludeDirsFlag := flag.String("user-exclude-dirs", "", "Comma-separated list of directory names to exclude (supports glob patterns).")
 	preserveSourceNameFlag := flag.Bool("preserve-source-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
@@ -156,13 +156,62 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	return actionRunBackup, flagMap, nil
 }
 
+// runInit handles the logic for the 'init' action.
+func runInit(ctx context.Context, flagMap map[string]interface{}, version string) error {
+	// For init, source and target flags are mandatory.
+	if _, ok := flagMap["target"]; !ok {
+		return fmt.Errorf("the -target flag is required for the init operation")
+	}
+	if _, ok := flagMap["source"]; !ok {
+		return fmt.Errorf("the -source flag is required for the init operation")
+	}
+
+	// Create a config from defaults merged with user flags.
+	runConfig := config.MergeConfigWithFlags(config.NewDefault(), flagMap)
+
+	initEngine := engine.New(runConfig, version)
+	return initEngine.InitializeBackupTarget(ctx)
+}
+
+// runBackup handles the logic for the main backup action.
+func runBackup(ctx context.Context, flagMap map[string]interface{}, version string) error {
+	// For backup, the target flag is mandatory.
+	targetPath, ok := flagMap["target"].(string)
+	if !ok || targetPath == "" {
+		return fmt.Errorf("the -target flag is required to run a backup")
+	}
+
+	// Load config from the target directory, or use defaults if not found.
+	loadedConfig, err := config.Load(targetPath)
+	if err != nil {
+		return fmt.Errorf("failed to load configuration from target: %w", err)
+	}
+
+	// Merge the flag values over the loaded config to get the final run config.
+	runConfig := config.MergeConfigWithFlags(loadedConfig, flagMap)
+
+	// Set the global log level based on the final configuration.
+	plog.SetLevel(plog.LevelFromString(runConfig.LogLevel))
+
+	runConfig.LogSummary()
+
+	startTime := time.Now()
+	backupEngine := engine.New(runConfig, version)
+	err = backupEngine.ExecuteBackup(ctx)
+	duration := time.Since(startTime).Round(time.Millisecond)
+	if err != nil {
+		plog.Info("Backup process finished with an error.", "duration", duration)
+		return err // The error will be logged with full details by main()
+	}
+	plog.Info("Backup process finished successfully.", "duration", duration)
+	return nil
+}
+
 // run encapsulates the main application logic and returns an error if something
 // goes wrong, allowing the main function to handle exit codes.
 func run(ctx context.Context) error {
 	plog.Info("Starting "+appName, "version", version, "pid", os.Getpid())
 
-	// --- 1. Parse command-line flags ---
-	// This is done only once. It gives us the user's explicit command-line intent.
 	action, flagMap, err := parseFlagConfig()
 	if err != nil {
 		return err
@@ -170,58 +219,12 @@ func run(ctx context.Context) error {
 
 	switch action {
 	case actionShowVersion:
-		// This uses fmt.Printf directly to stdout because the output of the -version
-		// flag is often parsed by scripts and should be clean and predictable.
-		// Using the structured logger would add timestamps and other metadata,
-		// which is undesirable for this specific action.
 		fmt.Printf("%s version %s\n", appName, version)
 		return nil
 	case actionInitConfig:
-		// For init, source and target flags are mandatory.
-		if _, ok := flagMap["target"]; !ok {
-			return fmt.Errorf("the -target flag is required for the init operation")
-		}
-		if _, ok := flagMap["source"]; !ok {
-			return fmt.Errorf("the -source flag is required for the init operation")
-		}
-
-		// Create a config from defaults merged with user flags.
-		runConfig := config.MergeConfigWithFlags(config.NewDefault(), flagMap)
-
-		initEngine := engine.New(runConfig, version)
-		return initEngine.InitializeBackupTarget(ctx)
+		return runInit(ctx, flagMap, version)
 	case actionRunBackup:
-		// For backup, the target flag is mandatory.
-		targetPath, ok := flagMap["target"].(string)
-		if !ok || targetPath == "" {
-			return fmt.Errorf("the -target flag is required to run a backup")
-		}
-
-		// Load config from the target directory, or use defaults if not found.
-		loadedConfig, err := config.Load(targetPath)
-		if err != nil {
-			return fmt.Errorf("failed to load configuration from target: %w", err)
-		}
-
-		// Merge the flag values over the loaded config to get the final run config.
-		runConfig := config.MergeConfigWithFlags(loadedConfig, flagMap)
-
-		// Set the global log level based on the final configuration.
-		plog.SetLevel(plog.LevelFromString(runConfig.LogLevel))
-
-		runConfig.LogSummary()
-
-		startTime := time.Now()
-		backupEngine := engine.New(runConfig, version)
-		err = backupEngine.ExecuteBackup(ctx)
-		duration := time.Since(startTime).Round(time.Millisecond)
-
-		if err != nil {
-			plog.Info("Backup process finished with an error.", "duration", duration)
-			return err // The error will be logged by main()
-		}
-		plog.Info("Backup process finished successfully.", "duration", duration)
-		return nil
+		return runBackup(ctx, flagMap, version)
 	default:
 		return fmt.Errorf("internal error: unknown action %d", action)
 	}

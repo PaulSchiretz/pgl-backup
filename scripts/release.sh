@@ -67,6 +67,16 @@ print_header "Starting release process for pgl-backup version $VERSION"
 # 2. Pre-flight checks
 print_header "Running pre-flight checks"
 
+# Check for required tools
+if ! command -v git &> /dev/null; then
+    echo "Error: Git is not found in your PATH. Please install Git and try again."
+    exit 1
+fi
+if ! command -v go &> /dev/null; then
+    echo "Error: Go is not found in your PATH. Please install Go and try again."
+    exit 1
+fi
+
 # Check for uncommitted changes
 if ! git diff-index --quiet HEAD --; then
   echo "Error: You have uncommitted changes. Please commit or stash them before releasing."
@@ -126,14 +136,17 @@ for platform in "${PLATFORMS[@]}"; do
     env GOOS=$GOOS GOARCH=$GOARCH go build -ldflags="$LDFLAGS" -o "$RELEASE_DIR/$OUTPUT_NAME" "$MAIN_PACKAGE_PATH"
 
     # Create an archive for the binary
-    pushd "$RELEASE_DIR" > /dev/null
+    ARCHIVE_PATH="$RELEASE_DIR/${BINARY_NAME}_${VERSION}_${GOOS}_${GOARCH}"
     if [ "$GOOS" = "windows" ]; then
-      zip "${BINARY_NAME}_${VERSION}_${GOOS}_${GOARCH}.zip" "$OUTPUT_NAME" "../LICENSE" "../README.md" > /dev/null
+      # On non-Windows systems, we might not have `zip`. `tar` is more universal.
+      # On Windows (via Git Bash/WSL), `zip` might be available.
+      # For consistency, we could use `tar` for all non-zip archives, but zip is standard for Windows.
+      zip "${ARCHIVE_PATH}.zip" -j "$RELEASE_DIR/$OUTPUT_NAME" "$PROJECT_ROOT/LICENSE" "$PROJECT_ROOT/README.md" > /dev/null
     else
-      tar -czf "${BINARY_NAME}_${VERSION}_${GOOS}_${GOARCH}.tar.gz" "$OUTPUT_NAME" "../LICENSE" "../README.md"
+      # Use -C to change directory for each input, preventing nested paths in the archive.
+      tar -czf "${ARCHIVE_PATH}.tar.gz" -C "$RELEASE_DIR" "$OUTPUT_NAME" -C "$PROJECT_ROOT" "LICENSE" "README.md"
     fi
-    rm "$OUTPUT_NAME" # Clean up the raw binary after archiving
-    popd > /dev/null
+    rm "$RELEASE_DIR/$OUTPUT_NAME" # Clean up the raw binary after archiving
   fi
 done
 
