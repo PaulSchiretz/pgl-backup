@@ -787,6 +787,10 @@ func writeBackupMetafile(dirPath, version, mode, source string, backupTime time.
 		return fmt.Errorf("could not marshal meta data: %w", err)
 	}
 
+	// Use group-writable permissions for the metafile. Unlike the top-level config and lock files,
+	// the metafile is part of the backup data itself. In multi-user environments, allowing
+	// group members to write to backup contents is a common and useful scenario.
+	// The config/lock files remain user-only writable for security.
 	if err := os.WriteFile(metaFilePath, jsonData, util.UserGroupWritableFilePerms); err != nil {
 		return fmt.Errorf("could not write meta file %s: %w", metaFilePath, err)
 	}
