@@ -204,8 +204,9 @@ func (r *syncRun) copyFileHelper(absSrcPath, absTrgPath string, task *syncTask, 
 				return fmt.Errorf("failed to copy content from %s to %s: %w", absSrcPath, absTempPath, err)
 			}
 
-			// 4. Copy file permissions from the source, ensuring the user always has write permission
-			// to prevent being locked out on subsequent runs.
+			// 4. Copy file permissions from the source.
+			// CRITICAL: We must ensure the user always has write permission on the destination file
+			// to prevent being locked out on subsequent runs (e.g., if the source was read-only).
 			if err := out.Chmod(util.WithUserWritePermission(task.PathInfo.Mode)); err != nil {
 				out.Close() // Close before returning on error
 				return fmt.Errorf("failed to set permissions on temporary file %s: %w", absTempPath, err)
@@ -419,13 +420,13 @@ func (r *syncRun) processFileSync(task *syncTask) error {
 	if err == nil {
 		// Destination path exists.
 		if trgInfo.Mode().IsRegular() {
-			// The expected permission on the destination is the source's permission with the user-write bit added.
-			expectedPerm := util.WithUserWritePermission(task.PathInfo.Mode)
-
 			// It's a regular file. Use the info from os.Lstat directly for comparison.
-			// We skip the copy only if the modification times (within the configured window), sizes, and permissions are identical.
+			// We skip the copy only if the modification times (within the configured window) and sizes are identical.
 			// We truncate the times to handle filesystems with different timestamp resolutions.
-			if r.truncateModTime(time.Unix(0, task.PathInfo.ModTime)).Equal(r.truncateModTime(trgInfo.ModTime())) && task.PathInfo.Size == trgInfo.Size() && trgInfo.Mode().Perm() == expectedPerm {
+			// NOTE: Permissions are intentionally not compared. This prevents unnecessary file copies
+			// when only metadata (like the executable bit) changes, which is common with version
+			// control systems like Git. The backup process already ensures the destination is writable.
+			if r.truncateModTime(time.Unix(0, task.PathInfo.ModTime)).Equal(r.truncateModTime(trgInfo.ModTime())) && task.PathInfo.Size == trgInfo.Size() {
 				r.metrics.AddFilesUpToDate(1)
 				return nil // Not changed
 			}
