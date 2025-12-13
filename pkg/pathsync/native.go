@@ -79,20 +79,24 @@ const (
 	prefixMatch
 	suffixMatch
 	globMatch
-	basenameMatch
 )
 
 // exclusionSet holds the categorized exclusion patterns for efficient matching.
 type exclusionSet struct {
-	literals    map[string]struct{}
+	// literals are for exact full-path matches, which are the fastest to check.
+	literals map[string]struct{}
+	// basenameLiterals are for exact basename matches (e.g., "node_modules"), also very fast.
+	basenameLiterals map[string]struct{}
+	// nonLiterals are for patterns requiring more complex logic (wildcards, basename matches).
 	nonLiterals []preProcessedExclusion
 }
 
 // preProcessedExclusion stores the pre-analyzed pattern details.
 type preProcessedExclusion struct {
-	pattern      string
-	cleanPattern string // The pattern without the wildcard for prefix/suffix matching
-	matchType    exclusionType
+	pattern       string        // The original pattern for logging/debugging.
+	cleanPattern  string        // The pattern without wildcards for prefix/suffix matching, or the full pattern for glob/literal.
+	matchType     exclusionType // The type of match to perform (prefix, suffix, glob, literal).
+	matchBasename bool          // If true, the match is against the path's basename; otherwise, the full relative path.
 }
 
 type syncRun struct {
@@ -244,60 +248,83 @@ func (r *syncRun) copyFileHelper(absSrcPath, absTrgPath string, task *syncTask, 
 }
 
 // preProcessExclusions analyzes and categorizes patterns to enable optimized matching later.
-func preProcessExclusions(patterns []string, isDirPatterns bool, caseInsensitive bool) exclusionSet {
+func preProcessExclusions(patterns []string, caseInsensitive bool) exclusionSet {
 	set := exclusionSet{
-		literals:    make(map[string]struct{}),
-		nonLiterals: make([]preProcessedExclusion, 0, len(patterns)),
+		literals:         make(map[string]struct{}),
+		basenameLiterals: make(map[string]struct{}),
+		nonLiterals:      make([]preProcessedExclusion, 0, len(patterns)),
 	}
 
-	for _, p := range patterns {
-		// Normalize to use forward slashes for consistent matching logic.
+	// normalizePattern normalizes an exclusion pattern to a standardized format
+	// (forward slashes, lowercase if applicable) for consistent matching.
+	normalizePattern := func(p string) string {
 		p = filepath.ToSlash(p)
-
-		// On case-insensitive systems, convert pattern to lowercase to match normalized paths.
 		if caseInsensitive {
 			p = strings.ToLower(p)
 		}
+		return p
+	}
+
+	// A pattern should match against the basename if it does NOT contain a path separator.
+	// This aligns with .gitignore behavior (e.g., "node_modules" matches anywhere).
+	shouldMatchBasename := func(p string) bool { return !strings.Contains(p, "/") }
+
+	for _, p := range patterns {
+		// Normalize to use forward slashes for consistent matching logic.
+		// On case-insensitive systems, convert pattern to lowercase to match normalized paths.
+		p = normalizePattern(p)
 
 		if strings.ContainsAny(p, "*?[]") {
 			// If it's a prefix pattern like `node_modules/*`, we can optimize it.
 			if strings.HasSuffix(p, "/*") {
 				set.nonLiterals = append(set.nonLiterals, preProcessedExclusion{
-					pattern:      p,
-					cleanPattern: strings.TrimSuffix(p, "/*"),
-					matchType:    prefixMatch,
+					pattern:       p,
+					cleanPattern:  strings.TrimSuffix(p, "/*"), // e.g., "build"
+					matchType:     prefixMatch,
+					matchBasename: false, // This is a full-path prefix.
+				})
+			} else if strings.HasSuffix(p, "*") && !strings.ContainsAny(p[:len(p)-1], "*?[]") {
+				// A pattern like `~*` or `temp_*`.
+				set.nonLiterals = append(set.nonLiterals, preProcessedExclusion{
+					pattern:       p,
+					cleanPattern:  strings.TrimSuffix(p, "*"), // e.g., "~"
+					matchType:     prefixMatch,
+					matchBasename: shouldMatchBasename(p),
 				})
 			} else if strings.HasPrefix(p, "*") && !strings.ContainsAny(p[1:], "*?[]") {
-				// If it's a suffix pattern like `*.log`, we can also optimize it.
+				// A pattern like `*.log` or `*.tmp`.
 				set.nonLiterals = append(set.nonLiterals, preProcessedExclusion{
-					pattern:      p,
-					cleanPattern: p[1:], // The part after the *, e.g., ".log"
-					matchType:    suffixMatch,
+					pattern:       p,
+					cleanPattern:  p[1:], // e.g., ".log"
+					matchType:     suffixMatch,
+					matchBasename: shouldMatchBasename(p),
 				})
 			} else {
 				// Otherwise, it's a general glob pattern.
-				set.nonLiterals = append(set.nonLiterals, preProcessedExclusion{pattern: p, matchType: globMatch})
+				set.nonLiterals = append(set.nonLiterals, preProcessedExclusion{
+					pattern: p, cleanPattern: p, matchType: globMatch, matchBasename: shouldMatchBasename(p),
+				})
 			}
 		} else {
-			// No wildcards. Check if it's a directory prefix or a literal match.
-			// If the pattern ends in a slash, it's explicitly a prefix match.
+			// No wildcards.
 			if strings.HasSuffix(p, "/") {
+				// A pattern like `build/` is explicitly a full-path prefix match.
 				set.nonLiterals = append(set.nonLiterals, preProcessedExclusion{
-					pattern:      p,
-					cleanPattern: strings.TrimSuffix(p, "/"),
-					matchType:    prefixMatch,
-				})
-			} else if !strings.Contains(p, "/") {
-				// If the pattern does not contain a path separator (e.g., "node_modules" or "Thumbs.db"),
-				// treat it as a literal match against the basename of any path component. This is
-				// more efficient than a glob and correctly excludes the file/dir by name at any depth.
-				set.nonLiterals = append(set.nonLiterals, preProcessedExclusion{
-					pattern: p, cleanPattern: p, matchType: basenameMatch,
+					pattern:       p,
+					cleanPattern:  strings.TrimSuffix(p, "/"),
+					matchType:     prefixMatch,
+					matchBasename: false,
 				})
 			} else {
-				// It's a full or partial path without wildcards (e.g., "docs/README.md").
-				// Treat it as a literal match against the full relative path.
-				set.literals[p] = struct{}{} // O(1) lookup is fastest for this.
+				// A pattern like "node_modules" or "docs/config.json".
+				// If it contains a path separator, it's a full-path literal match.
+				// If not, it's a basename literal match.
+				isBasenameMatch := shouldMatchBasename(p)
+				if isBasenameMatch { // e.g., "node_modules"
+					set.basenameLiterals[p] = struct{}{}
+				} else { // e.g., "docs/config.json"
+					set.literals[p] = struct{}{}
+				}
 			}
 		}
 	}
@@ -359,8 +386,8 @@ func (r *syncRun) denormalizedAbsPath(base, relPathKey string) string {
 
 // isExcluded checks if a given relative path key matches any of the exclusion patterns,
 // using a tiered optimization strategy to avoid expensive glob matching when possible.
-// It assumes `relPathKey` has already been normalized.
-func (r *syncRun) isExcluded(relPathKey string, isDir bool) bool {
+// It assumes `relPathKey` and `relPathBasename` have already been normalized.
+func (r *syncRun) isExcluded(relPathKey, relPathBasename string, isDir bool) bool {
 	var patterns exclusionSet
 
 	if isDir {
@@ -369,41 +396,45 @@ func (r *syncRun) isExcluded(relPathKey string, isDir bool) bool {
 		patterns = r.fileExcludes
 	}
 
-	// 1. Check for O(1) literal matches first.
+	// 1. Check for O(1) full-path literal matches.
 	if _, ok := patterns.literals[relPathKey]; ok {
 		return true
 	}
 
-	// 2. If no literal match, check other pattern types.
+	// 2. Check for O(1) basename literal matches if the map is not empty.
+	if _, ok := patterns.basenameLiterals[relPathBasename]; ok {
+		return true
+	}
+
+	// 3. If no literal match, check other pattern types (wildcards).
 	for _, p := range patterns.nonLiterals {
+		pathToCheck := relPathKey
+		if p.matchBasename {
+			pathToCheck = relPathBasename
+		}
+
 		switch p.matchType {
 		case prefixMatch:
-			// Check 1: Exact match for the excluded directory/folder name (e.g., relPathKey == "build")
-			if relPathKey == p.cleanPattern {
-				return true
-			}
-
-			// Check 2: Match any file/dir inside the excluded folder (e.g., relPathKey starts with "build/")
-			if strings.HasPrefix(relPathKey, p.cleanPattern+"/") {
+			if strings.HasPrefix(pathToCheck, p.cleanPattern) {
+				// For full-path directory prefixes ("build/"), we must avoid false positives on "build-tools".
+				// This check is only relevant for full-path matches.
+				if !p.matchBasename && strings.HasSuffix(p.pattern, "/") {
+					if pathToCheck != p.cleanPattern && !strings.HasPrefix(pathToCheck, p.cleanPattern+"/") {
+						continue // Not a true directory prefix match.
+					}
+				}
 				return true
 			}
 		case suffixMatch:
-			// A pattern like "*.log" is cleaned to ".log". A simple suffix check is sufficient
-			// because we only care if the path ends with this string. Unlike prefix matching,
-			// there is no container/directory that needs a separate literal check.
-			if strings.HasSuffix(relPathKey, p.cleanPattern) {
-				return true
-			}
-		case basenameMatch:
-			if filepath.Base(relPathKey) == p.cleanPattern {
+			if strings.HasSuffix(pathToCheck, p.cleanPattern) {
 				return true
 			}
 
 		case globMatch:
-			match, err := filepath.Match(p.pattern, relPathKey)
+			match, err := filepath.Match(p.cleanPattern, pathToCheck)
 			if err != nil {
 				// Log the error for the invalid pattern but continue checking others.
-				plog.Warn("Invalid exclusion pattern", "pattern", p.pattern, "error", err)
+				plog.Warn("Invalid exclusion pattern", "pattern", p.cleanPattern, "error", err)
 				continue
 			}
 			if match {
@@ -571,7 +602,9 @@ func (r *syncRun) syncWalker() {
 		}
 
 		// Check for exclusions.
-		if r.isExcluded(relPathKey, d.IsDir()) {
+		// `relPathKey` is already normalized, but `d.Name()` is the raw basename from the filesystem
+		// and must be normalized before being passed to `isExcluded` for basename matching.
+		if r.isExcluded(relPathKey, r.normalizePathKey(d.Name()), d.IsDir()) {
 			plog.Info("EXCL", "reason", "excluded by pattern", "path", relPathKey)
 			if d.IsDir() {
 				r.metrics.AddDirsExcluded(1) // Track excluded directory
@@ -806,7 +839,10 @@ func (r *syncRun) mirrorWalker() []string {
 			return nil // Path exists in source, keep it.
 		}
 
-		if r.isExcluded(relPathKey, d.IsDir()) {
+		// Check for exclusions.
+		// `relPathKey` is already normalized, but `d.Name()` is the raw basename from the filesystem
+		// and must be normalized before being passed to `isExcluded` for basename matching.
+		if r.isExcluded(relPathKey, r.normalizePathKey(d.Name()), d.IsDir()) {
 			if d.IsDir() {
 				return filepath.SkipDir // Excluded dir, leave it and its contents.
 			}
@@ -1005,8 +1041,8 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror b
 		dryRun:           s.dryRun,
 		failFast:         s.failFast,
 		caseInsensitive:  isCaseInsensitive,
-		fileExcludes:     preProcessExclusions(excludeFiles, false, isCaseInsensitive),
-		dirExcludes:      preProcessExclusions(excludeDirs, true, isCaseInsensitive),
+		fileExcludes:     preProcessExclusions(excludeFiles, isCaseInsensitive),
+		dirExcludes:      preProcessExclusions(excludeDirs, isCaseInsensitive),
 		numSyncWorkers:   s.engine.Performance.SyncWorkers,
 		numMirrorWorkers: s.engine.Performance.MirrorWorkers,
 		retryCount:       s.engine.RetryCount,
