@@ -106,7 +106,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
       "desktop.ini",
       ".DS_Store",
       "Thumbs.db",
-      "Icon?"
+      "Icon\r"
     ],
     "defaultExcludeDirs": [
       "@tmp",
@@ -205,7 +205,7 @@ These are:
 A list of common temporary and system files are excluded by default. When you generate a new configuration file with `-init`, these defaults are included, and you can customize them in your `pgl-backup.config.json` file.
 The JSON keys for these are `defaultExcludeFiles` and `defaultExcludeDirs`.
 
-*   **Default Excluded Files:** `*.tmp`, `*.temp`, `*.swp`, `*.lnk`, `~*`, `desktop.ini`, `.DS_Store`, `Thumbs.db`, `Icon?`.
+*   **Default Excluded Files:** `*.tmp`, `*.temp`, `*.swp`, `*.lnk`, `~*`, `desktop.ini`, `.DS_Store`, `Thumbs.db`, `Icon\r`.
 *   **Default Excluded Directories:** `@tmp`, `@eadir`, `.SynologyWorkingDirectory`, `#recycle`, `$Recycle.Bin`.
 
 ### Using Hooks
@@ -248,7 +248,7 @@ All command-line flags can be set in the `pgl-backup.config.json` file.
 | `snapshotRetentionPolicy.weeks`         | `int`         | `0`                                      | Number of recent weekly snapshots to keep.                                                                |
 | `snapshotRetentionPolicy.months`        | `int`         | `0`                                      | Number of recent monthly snapshots to keep.                                                               |
 | `snapshotRetentionPolicy.years`         | `int`         | `0`                                      | Number of recent yearly snapshots to keep.
-| `defaultExcludeFiles`           | `[]string`    | `[*.tmp, *.temp, *.swp, *.lnk, ~*, desktop.ini, .DS_Store, Thumbs.db, Icon?]`                     | The list of default file patterns to exclude. Can be customized.                                        |
+| `defaultExcludeFiles`           | `[]string`    | `[*.tmp, *.temp, *.swp, *.lnk, ~*, desktop.ini, .DS_Store, Thumbs.db, Icon\r]`                     | The list of default file patterns to exclude. Can be customized.                                        |
 | `defaultExcludeDirs`            | `[]string`    | `[@tmp, @eadir, .SynologyWorkingDirectory, #recycle, $Recycle.Bin]`                     | The list of default directory patterns to exclude. Can be customized.                                                           |
 | `user-exclude-files` / `userExcludeFiles`| `[]string`    | `[]`                                  | List of file patterns to exclude.                                                                       |
 | `user-exclude-dirs` / `userExcludeDirs`  | `[]string`    | `[]`                                  | List of directory patterns to exclude.                                                                  |                                |

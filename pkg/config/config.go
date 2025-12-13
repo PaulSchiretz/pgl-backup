@@ -306,7 +306,7 @@ func NewDefault() Config {
 				"desktop.ini", // Windows folder customization file
 				".DS_Store",   // macOS folder customization file
 				"Thumbs.db",   // Windows image thumbnail cache
-				"Icon?",       // macOS custom folder icons (Icon\r)
+				"Icon\r",      // macOS custom folder icons
 			},
 			DefaultExcludeDirs: []string{
 				// Common temporary, system, and trash directories.
