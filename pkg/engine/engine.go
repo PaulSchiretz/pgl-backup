@@ -175,7 +175,13 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 	// --- Pre-Backup Hooks ---
 	plog.Info("Running pre-backup hooks")
 	if err := e.runHooks(ctx, e.config.Hooks.PreBackup, "pre-backup"); err != nil {
-		return fmt.Errorf("pre-backup hook failed: %w", err) // This is a fatal error.
+		// All pre-backup hook errors are fatal. We wrap the error with a message
+		// that distinguishes between a cancellation and a failure.
+		errMsg := "pre-backup hook failed"
+		if errors.Is(err, context.Canceled) {
+			errMsg = "pre-backup hook canceled"
+		}
+		return fmt.Errorf("%s: %w", errMsg, err)
 	}
 
 	// --- Post-Backup Hooks (deferred) ---

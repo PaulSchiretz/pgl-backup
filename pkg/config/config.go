@@ -661,6 +661,8 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 			merged.Hooks.PreBackup = value.([]string)
 		case "post-backup-hooks":
 			merged.Hooks.PostBackup = value.([]string)
+		default:
+			plog.Debug("unhandled flag in MergeConfigWithFlags", "flag", name)
 		}
 	}
 	return merged
