@@ -54,7 +54,7 @@ const (
 	yearFormat  = "2006"          // YYYY
 )
 
-// backupMetadataInfo holds the parsed metadata and directory name of a backup found on disk.
+// backupMetadataInfo holds the parsed metadata and rel directory path of a backup found on disk.
 type backupMetadataInfo struct {
 	RelPath  string
 	Metadata backupMetadata
