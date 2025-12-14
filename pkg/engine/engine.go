@@ -68,9 +68,9 @@ type runMetadata struct {
 	Source     string    `json:"source"`
 }
 
-// runState holds the mutable state for a single execution of the backup engine.
+// engineRunState holds the mutable state for a single execution of the backup engine.
 // This makes the Engine itself stateless and safe for concurrent use if needed.
-type runState struct {
+type engineRunState struct {
 	target       string
 	timestampUTC time.Time
 }
@@ -202,7 +202,7 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 
 	// Capture a consistent UTC timestamp for the entire run to ensure unambiguous folder names
 	// and avoid daylight saving time conflicts.
-	currentRun := &runState{timestampUTC: time.Now().UTC()}
+	currentRun := &engineRunState{timestampUTC: time.Now().UTC()}
 
 	// --- 1. Pre-backup tasks (archive) and destination calculation ---
 	if err := e.prepareDestination(ctx, currentRun); err != nil {
@@ -292,7 +292,7 @@ func (e *Engine) runHooks(ctx context.Context, commands []string, hookType strin
 
 // prepareDestination calculates the target directory for the backup, performing
 // a archive if necessary for incremental backups.
-func (e *Engine) prepareDestination(ctx context.Context, currentRun *runState) error {
+func (e *Engine) prepareDestination(ctx context.Context, currentRun *engineRunState) error {
 	if e.config.Mode == config.SnapshotMode {
 		// SNAPSHOT MODE
 		//
@@ -317,7 +317,7 @@ func (e *Engine) prepareDestination(ctx context.Context, currentRun *runState) e
 }
 
 // performSync is the main entry point for synchronization.
-func (e *Engine) performSync(ctx context.Context, currentRun *runState) error {
+func (e *Engine) performSync(ctx context.Context, currentRun *engineRunState) error {
 	source := e.config.Paths.Source
 	destination := currentRun.target
 	mirror := e.config.Mode == config.IncrementalMode
@@ -356,7 +356,7 @@ func (e *Engine) performSync(ctx context.Context, currentRun *runState) error {
 }
 
 // performArchiving is the main entry point for archive updates.
-func (e *Engine) performArchiving(ctx context.Context, currentRun *runState) error {
+func (e *Engine) performArchiving(ctx context.Context, currentRun *engineRunState) error {
 	incrementalDirName := e.config.Paths.IncrementalSubDir
 	currentBackupPath := filepath.Join(e.config.Paths.TargetBase, incrementalDirName)
 
@@ -523,45 +523,21 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 	}
 
 	// Build a descriptive log message for the retention plan
-	// Note we add slow fill warnings cause:
-	// If the user asked for Daily backups for instance, but the interval is > 24h (e.g. Weekly),
-	// add a note so they understand why they don't see 7 daily backups immediately.
 	var planParts []string
-
 	if retentionPolicy.Hours > 0 {
-		msg := fmt.Sprintf("%d hourly", len(savedHourly))
-		if e.archiver.IsSlowFillingArchive(1 * time.Hour) {
-			msg += " (slow-fill)"
-		}
-		planParts = append(planParts, msg)
+		planParts = append(planParts, fmt.Sprintf("%d hourly", len(savedHourly)))
 	}
 	if retentionPolicy.Days > 0 {
-		msg := fmt.Sprintf("%d daily", len(savedDaily))
-		if e.archiver.IsSlowFillingArchive(24 * time.Hour) {
-			msg += " (slow-fill)"
-		}
-		planParts = append(planParts, msg)
+		planParts = append(planParts, fmt.Sprintf("%d daily", len(savedDaily)))
 	}
 	if retentionPolicy.Weeks > 0 {
-		msg := fmt.Sprintf("%d weekly", len(savedWeekly))
-		if e.archiver.IsSlowFillingArchive(7 * 24 * time.Hour) {
-			msg += " (slow-fill)"
-		}
-		planParts = append(planParts, msg)
+		planParts = append(planParts, fmt.Sprintf("%d weekly", len(savedWeekly)))
 	}
 	if retentionPolicy.Months > 0 {
-		msg := fmt.Sprintf("%d monthly", len(savedMonthly))
-		if e.archiver.IsSlowFillingArchive(30 * 24 * time.Hour) { // Approximation
-			msg += " (slow-fill)"
-		}
-		planParts = append(planParts, msg)
+		planParts = append(planParts, fmt.Sprintf("%d monthly", len(savedMonthly)))
 	}
 	if retentionPolicy.Years > 0 {
-		msg := fmt.Sprintf("%d yearly", len(savedYearly))
-		if e.archiver.IsSlowFillingArchive(365 * 24 * time.Hour) { // Approximation
-			msg += " (slow-fill)"
-		}
-		planParts = append(planParts, msg)
+		planParts = append(planParts, fmt.Sprintf("%d yearly", len(savedYearly)))
 	}
 	plog.Debug("Retention plan", "policy", policyTitle, "details", strings.Join(planParts, ", "))
 	plog.Debug("Total unique backups to be kept", "policy", policyTitle, "count", len(backupsToKeep))

@@ -43,16 +43,11 @@ func (m *mockSyncer) Sync(ctx context.Context, src, dst string, mirror bool, exc
 type mockArchiver struct {
 	archiveCalled bool
 	err           error
-	isSlowFill    bool
 }
 
 func (m *mockArchiver) Archive(ctx context.Context, currentBackupPath string, lastBackupUTC, currentBackupUTC time.Time) error {
 	m.archiveCalled = true
 	return m.err
-}
-
-func (m *mockArchiver) IsSlowFillingArchive(requiredInterval time.Duration) bool {
-	return m.isSlowFill
 }
 
 // Helper to create a dummy engine for testing.
@@ -385,7 +380,7 @@ func TestPerformSync_PreserveSourceDirectoryName(t *testing.T) {
 			cfg.Paths.PreserveSourceDirectoryName = tc.preserveSourceDirectoryName
 
 			e := newTestEngine(cfg)
-			currentRun := &runState{target: filepath.Join(targetBase, cfg.Paths.IncrementalSubDir), timestampUTC: time.Now()}
+			currentRun := &engineRunState{target: filepath.Join(targetBase, cfg.Paths.IncrementalSubDir), timestampUTC: time.Now()}
 
 			// Inject the mock syncer
 			mock := &mockSyncer{}
@@ -471,7 +466,7 @@ func TestPrepareDestination_IncrementalMode(t *testing.T) {
 	cfg.Paths.IncrementalSubDir = "latest"
 
 	e := newTestEngine(cfg)
-	currentRun := &runState{timestampUTC: time.Now().UTC()}
+	currentRun := &engineRunState{timestampUTC: time.Now().UTC()}
 
 	// Create a dummy "current" backup to trigger the archiver
 	createTestBackup(t, tempDir, cfg.Paths.IncrementalSubDir, time.Now().Add(-25*time.Hour))
@@ -568,7 +563,7 @@ func TestPrepareDestination(t *testing.T) {
 
 		e := newTestEngine(cfg)
 		testTime := time.Date(2023, 10, 27, 14, 30, 0, 0, time.UTC)
-		currentRun := &runState{timestampUTC: testTime}
+		currentRun := &engineRunState{timestampUTC: testTime}
 
 		// Act
 		err := e.prepareDestination(context.Background(), currentRun)
@@ -593,7 +588,7 @@ func TestPrepareDestination(t *testing.T) {
 		cfg.Paths.IncrementalSubDir = "latest"
 
 		e := newTestEngine(cfg)
-		currentRun := &runState{timestampUTC: time.Now().UTC()}
+		currentRun := &engineRunState{timestampUTC: time.Now().UTC()}
 
 		// Act
 		err := e.prepareDestination(context.Background(), currentRun)

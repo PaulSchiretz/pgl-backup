@@ -105,11 +105,13 @@ func TestShouldArchive(t *testing.T) {
 			cfg.IncrementalArchivePolicy.Interval = tc.interval
 			archiver := NewPathArchiver(cfg)
 
-			// Set the runState to simulate the conditions for shouldArchive
-			archiver.runState.lastBackupUTC = tc.lastBackup
-			archiver.runState.currentBackupUTC = tc.currentBackup
-			archiver.runState.interval = tc.interval
-			result := archiver.shouldArchive()
+			// Create a runState struct to pass to shouldArchive
+			runState := &archiveRunState{
+				lastBackupUTC:    tc.lastBackup,
+				currentBackupUTC: tc.currentBackup,
+				interval:         tc.interval,
+			}
+			result := archiver.shouldArchive(runState)
 
 			if tc.shouldArchive != result {
 				t.Errorf("expected shouldArchive to be %v, but got %v", tc.shouldArchive, result)
@@ -239,11 +241,12 @@ func TestPrepareInterval(t *testing.T) {
 				archiver := NewPathArchiver(cfg)
 
 				// Act
-				result := archiver.prepareInterval()
+				runState := &archiveRunState{}
+				archiver.prepareInterval(runState)
 
 				// Assert
-				if result != tc.expected {
-					t.Errorf("expected interval %v, but got %v", tc.expected, result)
+				if runState.interval != tc.expected {
+					t.Errorf("expected interval %v, but got %v", tc.expected, runState.interval)
 				}
 			})
 		}
@@ -258,11 +261,14 @@ func TestPrepareInterval(t *testing.T) {
 			archiver := NewPathArchiver(cfg)
 
 			// Act
-			result := archiver.prepareInterval()
+			runState := &archiveRunState{
+				interval: cfg.IncrementalArchivePolicy.Interval,
+			}
+			archiver.prepareInterval(runState)
 
 			// Assert
-			if result != 12*time.Hour {
-				t.Errorf("expected interval to be 12h, but got %v", result)
+			if runState.interval != 12*time.Hour {
+				t.Errorf("expected interval to be 12h, but got %v", runState.interval)
 			}
 		})
 
@@ -280,12 +286,18 @@ func TestPrepareInterval(t *testing.T) {
 			archiver := NewPathArchiver(cfg)
 
 			// Act
-			archiver.prepareInterval()
+			runState := &archiveRunState{
+				interval: cfg.IncrementalArchivePolicy.Interval,
+			}
+			archiver.prepareInterval(runState)
 
 			// Assert
 			logOutput := logBuf.String()
-			if !strings.Contains(logOutput, "Configuration Mismatch: Daily retention is enabled") {
-				t.Errorf("expected a daily mismatch warning in logs, but got: %q", logOutput)
+			if !strings.Contains(logOutput, "Configuration Mismatch") {
+				t.Errorf("expected a 'Configuration Mismatch' warning in logs, but got none in: %q", logOutput)
+			}
+			if !strings.Contains(logOutput, "mismatched_periods=Daily") {
+				t.Errorf("expected mismatched_periods to contain 'Daily', but got: %q", logOutput)
 			}
 		})
 
@@ -303,7 +315,8 @@ func TestPrepareInterval(t *testing.T) {
 			archiver := NewPathArchiver(cfg)
 
 			// Act
-			archiver.prepareInterval()
+			runState := &archiveRunState{}
+			archiver.prepareInterval(runState)
 
 			// Assert
 			logOutput := logBuf.String()
@@ -311,63 +324,5 @@ func TestPrepareInterval(t *testing.T) {
 				t.Errorf("expected no mismatch warnings, but got: %q", logOutput)
 			}
 		})
-	})
-}
-
-func TestIsSlowFillingArchive(t *testing.T) {
-	t.Run("Manual Mode - Slow Fill", func(t *testing.T) {
-		// Arrange
-		cfg := config.NewDefault()
-		cfg.IncrementalArchivePolicy.Mode = config.ManualInterval
-		cfg.IncrementalArchivePolicy.Interval = 48 * time.Hour // Manual interval is slow
-		archiver := NewPathArchiver(cfg)
-
-		// Act: Call Archive to set the effectiveInterval
-		// We can use dummy time values as we only care about the interval calculation.
-		archiver.Archive(context.Background(), "", time.Time{}, time.Time{})
-
-		// Assert
-		if !archiver.IsSlowFillingArchive(24 * time.Hour) {
-			t.Error("expected IsSlowFillingArchive to be true for daily retention (48h > 24h)")
-		}
-		if archiver.IsSlowFillingArchive(168 * time.Hour) {
-			t.Error("expected IsSlowFillingArchive to be false for weekly retention (48h < 168h)")
-		}
-	})
-
-	t.Run("Manual Mode - Not Slow Fill", func(t *testing.T) {
-		// Arrange
-		cfg := config.NewDefault()
-		cfg.IncrementalArchivePolicy.Mode = config.ManualInterval
-		cfg.IncrementalArchivePolicy.Interval = 1 * time.Hour // Manual interval is fast
-		archiver := NewPathArchiver(cfg)
-
-		// Act
-		archiver.Archive(context.Background(), "", time.Time{}, time.Time{})
-
-		// Assert
-		if archiver.IsSlowFillingArchive(24 * time.Hour) {
-			t.Error("expected IsSlowFillingArchive to be false (1h < 24h)")
-		}
-	})
-
-	t.Run("Auto Mode - Never Slow Fill", func(t *testing.T) {
-		// Arrange
-		cfg := config.NewDefault()
-		cfg.IncrementalArchivePolicy.Mode = config.AutoInterval
-		// In auto mode, the interval is calculated based on retention.
-		// Let's set daily retention.
-		cfg.IncrementalRetentionPolicy.Days = 7
-		cfg.IncrementalRetentionPolicy.Hours = 0 // Ensure daily is the fastest
-
-		archiver := NewPathArchiver(cfg)
-
-		// Act
-		archiver.Archive(context.Background(), "", time.Time{}, time.Time{})
-
-		// Assert: The effective interval should be 24h, so it's not a slow fill for daily.
-		if archiver.IsSlowFillingArchive(24 * time.Hour) {
-			t.Error("expected IsSlowFillingArchive to be false in auto mode")
-		}
 	})
 }
