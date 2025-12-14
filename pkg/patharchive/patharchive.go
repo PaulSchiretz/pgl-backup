@@ -17,11 +17,10 @@ import (
 
 // archiveRunState holds the state specific to a single archive operation.
 type archiveRunState struct {
-	// interval holds the final interval for the current run.
-	interval          time.Duration
-	lastBackupUTC     time.Time
-	currentBackupUTC  time.Time
-	currentBackupPath string
+	interval                  time.Duration // interval holds the final interval for the current run.
+	currentBackupPath         string
+	currentBackupTimestampUTC time.Time
+	currentTimestampUTC       time.Time
 }
 
 type PathArchiver struct {
@@ -31,7 +30,7 @@ type PathArchiver struct {
 // Archiver defines the interface for a component that archives a backup, turning the
 // 'current' state into a permanent historical record.
 type Archiver interface {
-	Archive(ctx context.Context, currentBackupPath string, lastBackupUTC, currentBackupUTC time.Time) error
+	Archive(ctx context.Context, currentBackupPath string, currentBackupTimestampUTC, currentTimestampUTC time.Time) error
 }
 
 // Statically assert that *PathArchiver implements the Archiver interface.
@@ -47,12 +46,12 @@ func NewPathArchiver(cfg config.Config) *PathArchiver {
 // Archive checks if the time since the last backup has crossed the configured interval.
 // If it has, it renames the current backup directory to a permanent, timestamped archive directory. It also
 // prepares the archive interval before checking.
-func (a *PathArchiver) Archive(ctx context.Context, currentBackupPath string, lastBackupUTC, currentBackupUTC time.Time) error {
+func (a *PathArchiver) Archive(ctx context.Context, currentBackupPath string, currentBackupTimestampUTC, currentTimestampUTC time.Time) error {
 	runState := &archiveRunState{
-		interval:          a.config.IncrementalArchivePolicy.Interval,
-		currentBackupPath: currentBackupPath,
-		lastBackupUTC:     lastBackupUTC,
-		currentBackupUTC:  currentBackupUTC,
+		interval:                  a.config.IncrementalArchivePolicy.Interval,
+		currentBackupPath:         currentBackupPath,
+		currentBackupTimestampUTC: currentBackupTimestampUTC,
+		currentTimestampUTC:       currentTimestampUTC,
 	}
 	// Calculate and set the effective interval for this run, and log warnings.
 	a.prepareInterval(runState)
@@ -62,8 +61,8 @@ func (a *PathArchiver) Archive(ctx context.Context, currentBackupPath string, la
 	}
 
 	plog.Info("Archive interval crossed, creating new archive.",
-		"last_backup_time", runState.lastBackupUTC,
-		"current_time", runState.currentBackupUTC,
+		"backup_time", runState.currentBackupTimestampUTC,
+		"current_time", runState.currentTimestampUTC,
 		"archive_interval", runState.interval)
 
 	// Check for cancellation before performing the rename.
@@ -75,7 +74,7 @@ func (a *PathArchiver) Archive(ctx context.Context, currentBackupPath string, la
 
 	// The directory name must remain uniquely based on UTC time to avoid DST conflicts,
 	// but we add the user's local offset to make the timezone clear to the user.
-	archiveTimestamp := config.FormatTimestampWithOffset(runState.lastBackupUTC)
+	archiveTimestamp := config.FormatTimestampWithOffset(runState.currentBackupTimestampUTC)
 	archiveDirName := a.config.Naming.Prefix + archiveTimestamp
 
 	// Archives are stored in a dedicated subdirectory for clarity.
@@ -116,25 +115,21 @@ func (a *PathArchiver) Archive(ctx context.Context, currentBackupPath string, la
 // The conversion handles Daylight Saving Time (DST) shifts correctly by checking
 // for midnight-to-midnight boundary crossings (epoch day counting).
 func (a *PathArchiver) shouldArchive(runState *archiveRunState) bool {
-	interval := runState.interval
-	lastBackupUTC := runState.lastBackupUTC
-	currentBackupUTC := runState.currentBackupUTC
-
-	if interval == 0 {
+	if runState.interval == 0 {
 		return false // Archive is explicitly disabled.
 	}
 
 	// For intervals of 24 hours or longer, this function intentionally calculates
 	// archive boundaries based on the local system's midnight to align with a
 	// user's calendar day, even though all stored timestamps are UTC.
-	if interval >= 24*time.Hour {
+	if runState.interval >= 24*time.Hour {
 		loc := time.Local
 
 		// Normalize both times to the system's local midnight.
-		y1, m1, d1 := lastBackupUTC.In(loc).Date()
+		y1, m1, d1 := runState.currentBackupTimestampUTC.In(loc).Date()
 		lastDayMidnight := time.Date(y1, m1, d1, 0, 0, 0, 0, loc)
 
-		y2, m2, d2 := currentBackupUTC.In(loc).Date()
+		y2, m2, d2 := runState.currentTimestampUTC.In(loc).Date()
 		currentDayMidnight := time.Date(y2, m2, d2, 0, 0, 0, 0, loc)
 
 		// Calculate days since a fixed anchor (Unix Epoch Local).
@@ -143,7 +138,7 @@ func (a *PathArchiver) shouldArchive(runState *archiveRunState) bool {
 		currentDayNum := int64(currentDayMidnight.Sub(anchor).Hours() / 24)
 
 		// Calculate the Bucket Size in Days
-		daysInBucket := int64(interval / (24 * time.Hour))
+		daysInBucket := int64(runState.interval / (24 * time.Hour))
 
 		// Check if we have crossed a bucket boundary
 		// Example: Interval = 7 days.
@@ -154,8 +149,8 @@ func (a *PathArchiver) shouldArchive(runState *archiveRunState) bool {
 
 	// Sub-Daily Intervals (Hourly, 6-Hourly)
 	// Use standard truncation for clean UTC time buckets.
-	lastBackupBoundary := lastBackupUTC.Truncate(interval)
-	currentBackupBoundary := currentBackupUTC.Truncate(interval)
+	lastBackupBoundary := runState.currentBackupTimestampUTC.Truncate(runState.interval)
+	currentBackupBoundary := runState.currentTimestampUTC.Truncate(runState.interval)
 
 	return !currentBackupBoundary.Equal(lastBackupBoundary)
 }

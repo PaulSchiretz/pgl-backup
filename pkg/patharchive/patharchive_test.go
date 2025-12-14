@@ -49,53 +49,53 @@ func createTestBackup(t *testing.T, baseDir, name string, backupTime time.Time) 
 
 func TestShouldArchive(t *testing.T) {
 	testCases := []struct {
-		name          string
-		interval      time.Duration
-		lastBackup    time.Time
-		currentBackup time.Time
-		shouldArchive bool
+		name                      string
+		interval                  time.Duration
+		currentBackupTimestampUTC time.Time
+		currentTimestampUTC       time.Time
+		shouldArchive             bool
 	}{
 		{
-			name:          "Hourly - Same Hour",
-			interval:      time.Hour,
-			lastBackup:    time.Date(2023, 10, 26, 14, 10, 0, 0, time.UTC),
-			currentBackup: time.Date(2023, 10, 26, 14, 55, 0, 0, time.UTC),
-			shouldArchive: false,
+			name:                      "Hourly - Same Hour",
+			interval:                  time.Hour,
+			currentBackupTimestampUTC: time.Date(2023, 10, 26, 14, 10, 0, 0, time.UTC),
+			currentTimestampUTC:       time.Date(2023, 10, 26, 14, 55, 0, 0, time.UTC),
+			shouldArchive:             false,
 		},
 		{
-			name:          "Hourly - Next Hour",
-			interval:      time.Hour,
-			lastBackup:    time.Date(2023, 10, 26, 14, 55, 0, 0, time.UTC),
-			currentBackup: time.Date(2023, 10, 26, 15, 05, 0, 0, time.UTC),
-			shouldArchive: true,
+			name:                      "Hourly - Next Hour",
+			interval:                  time.Hour,
+			currentBackupTimestampUTC: time.Date(2023, 10, 26, 14, 55, 0, 0, time.UTC),
+			currentTimestampUTC:       time.Date(2023, 10, 26, 15, 05, 0, 0, time.UTC),
+			shouldArchive:             true,
 		},
 		{
-			name:          "Daily - Same Day",
-			interval:      24 * time.Hour,
-			lastBackup:    time.Date(2023, 10, 26, 10, 0, 0, 0, time.UTC),
-			currentBackup: time.Date(2023, 10, 26, 14, 0, 0, 0, time.UTC),
-			shouldArchive: false,
+			name:                      "Daily - Same Day",
+			interval:                  24 * time.Hour,
+			currentBackupTimestampUTC: time.Date(2023, 10, 26, 10, 0, 0, 0, time.UTC),
+			currentTimestampUTC:       time.Date(2023, 10, 26, 14, 0, 0, 0, time.UTC),
+			shouldArchive:             false,
 		},
 		{
-			name:          "Daily - Crosses Midnight",
-			interval:      24 * time.Hour,
-			lastBackup:    time.Date(2023, 10, 26, 14, 0, 0, 0, time.UTC),
-			currentBackup: time.Date(2023, 10, 26, 14, 0, 0, 0, time.UTC).Add(26 * time.Hour),
-			shouldArchive: true,
+			name:                      "Daily - Crosses Midnight",
+			interval:                  24 * time.Hour,
+			currentBackupTimestampUTC: time.Date(2023, 10, 26, 14, 0, 0, 0, time.UTC),
+			currentTimestampUTC:       time.Date(2023, 10, 26, 14, 0, 0, 0, time.UTC).Add(26 * time.Hour),
+			shouldArchive:             true,
 		},
 		{
-			name:          "Weekly - No Archive (Day 3)",
-			interval:      7 * 24 * time.Hour,
-			lastBackup:    time.Date(2023, 10, 23, 12, 0, 0, 0, time.UTC), // Day D
-			currentBackup: time.Date(2023, 10, 26, 12, 0, 0, 0, time.UTC), // Day D + 3
-			shouldArchive: false,
+			name:                      "Weekly - No Archive (Day 3)",
+			interval:                  7 * 24 * time.Hour,
+			currentBackupTimestampUTC: time.Date(2023, 10, 23, 12, 0, 0, 0, time.UTC), // Day D
+			currentTimestampUTC:       time.Date(2023, 10, 26, 12, 0, 0, 0, time.UTC), // Day D + 3
+			shouldArchive:             false,
 		},
 		{
-			name:          "Weekly - Archive (Day 7 Boundary)",
-			interval:      7 * 24 * time.Hour,
-			lastBackup:    time.Date(2023, 10, 23, 12, 0, 0, 0, time.UTC), // Day D (Bucket B)
-			currentBackup: time.Date(2023, 10, 30, 12, 0, 0, 0, time.UTC), // Day D + 7 (Bucket B + 1)
-			shouldArchive: true,
+			name:                      "Weekly - Archive (Day 7 Boundary)",
+			interval:                  7 * 24 * time.Hour,
+			currentBackupTimestampUTC: time.Date(2023, 10, 23, 12, 0, 0, 0, time.UTC), // Day D (Bucket B)
+			currentTimestampUTC:       time.Date(2023, 10, 30, 12, 0, 0, 0, time.UTC), // Day D + 7 (Bucket B + 1)
+			shouldArchive:             true,
 		},
 	}
 
@@ -107,9 +107,9 @@ func TestShouldArchive(t *testing.T) {
 
 			// Create a runState struct to pass to shouldArchive
 			runState := &archiveRunState{
-				lastBackupUTC:    tc.lastBackup,
-				currentBackupUTC: tc.currentBackup,
-				interval:         tc.interval,
+				currentBackupTimestampUTC: tc.currentBackupTimestampUTC,
+				currentTimestampUTC:       tc.currentTimestampUTC,
+				interval:                  tc.interval,
 			}
 			result := archiver.shouldArchive(runState)
 

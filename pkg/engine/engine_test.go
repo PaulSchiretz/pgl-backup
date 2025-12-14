@@ -380,7 +380,7 @@ func TestPerformSync_PreserveSourceDirectoryName(t *testing.T) {
 			cfg.Paths.PreserveSourceDirectoryName = tc.preserveSourceDirectoryName
 
 			e := newTestEngine(cfg)
-			currentRun := &engineRunState{target: filepath.Join(targetBase, cfg.Paths.IncrementalSubDir), timestampUTC: time.Now()}
+			currentRun := &engineRunState{target: filepath.Join(targetBase, cfg.Paths.IncrementalSubDir), currentTimestampUTC: time.Now().UTC()}
 
 			// Inject the mock syncer
 			mock := &mockSyncer{}
@@ -466,7 +466,7 @@ func TestPrepareDestination_IncrementalMode(t *testing.T) {
 	cfg.Paths.IncrementalSubDir = "latest"
 
 	e := newTestEngine(cfg)
-	currentRun := &engineRunState{timestampUTC: time.Now().UTC()}
+	currentRun := &engineRunState{currentTimestampUTC: time.Now().UTC()}
 
 	// Create a dummy "current" backup to trigger the archiver
 	createTestBackup(t, tempDir, cfg.Paths.IncrementalSubDir, time.Now().Add(-25*time.Hour))
@@ -563,7 +563,7 @@ func TestPrepareDestination(t *testing.T) {
 
 		e := newTestEngine(cfg)
 		testTime := time.Date(2023, 10, 27, 14, 30, 0, 0, time.UTC)
-		currentRun := &engineRunState{timestampUTC: testTime}
+		currentRun := &engineRunState{currentTimestampUTC: testTime}
 
 		// Act
 		err := e.prepareDestination(context.Background(), currentRun)
@@ -588,7 +588,7 @@ func TestPrepareDestination(t *testing.T) {
 		cfg.Paths.IncrementalSubDir = "latest"
 
 		e := newTestEngine(cfg)
-		currentRun := &engineRunState{timestampUTC: time.Now().UTC()}
+		currentRun := &engineRunState{currentTimestampUTC: time.Now().UTC()}
 
 		// Act
 		err := e.prepareDestination(context.Background(), currentRun)

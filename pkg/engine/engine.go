@@ -71,8 +71,8 @@ type runMetadata struct {
 // engineRunState holds the mutable state for a single execution of the backup engine.
 // This makes the Engine itself stateless and safe for concurrent use if needed.
 type engineRunState struct {
-	target       string
-	timestampUTC time.Time
+	target              string
+	currentTimestampUTC time.Time
 }
 
 // Engine orchestrates the entire backup process.
@@ -202,7 +202,7 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 
 	// Capture a consistent UTC timestamp for the entire run to ensure unambiguous folder names
 	// and avoid daylight saving time conflicts.
-	currentRun := &engineRunState{timestampUTC: time.Now().UTC()}
+	currentRun := &engineRunState{currentTimestampUTC: time.Now().UTC()}
 
 	// --- 1. Pre-backup tasks (archive) and destination calculation ---
 	if err := e.prepareDestination(ctx, currentRun); err != nil {
@@ -298,7 +298,7 @@ func (e *Engine) prepareDestination(ctx context.Context, currentRun *engineRunSt
 		//
 		// The directory name must remain uniquely based on UTC time to avoid DST conflicts,
 		// but we add the user's local offset to make the timezone clear to the user.
-		timestamp := config.FormatTimestampWithOffset(currentRun.timestampUTC)
+		timestamp := config.FormatTimestampWithOffset(currentRun.currentTimestampUTC)
 		backupDirName := e.config.Naming.Prefix + timestamp
 		snapshotsSubDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.SnapshotsSubDir)
 		if !e.config.DryRun {
@@ -352,7 +352,7 @@ func (e *Engine) performSync(ctx context.Context, currentRun *engineRunState) er
 	}
 
 	// If the sync was successful, write the metafile for retention purposes.
-	return writeBackupMetafile(currentRun.target, e.version, e.config.Mode.String(), source, currentRun.timestampUTC, e.config.DryRun)
+	return writeBackupMetafile(currentRun.target, e.version, e.config.Mode.String(), source, currentRun.currentTimestampUTC, e.config.DryRun)
 }
 
 // performArchiving is the main entry point for archive updates.
@@ -368,8 +368,8 @@ func (e *Engine) performArchiving(ctx context.Context, currentRun *engineRunStat
 	// Only perform archiving if a previous backup exists.
 	if metaData != nil {
 		// Use the precise time from the file content, not the file's modification time.
-		lastBackupTime := metaData.BackupTime
-		if err := e.archiver.Archive(ctx, currentBackupPath, lastBackupTime, currentRun.timestampUTC); err != nil {
+		currentBackupTimestampUTC := metaData.BackupTime
+		if err := e.archiver.Archive(ctx, currentBackupPath, currentBackupTimestampUTC, currentRun.currentTimestampUTC); err != nil {
 			return fmt.Errorf("error during backup archiving: %w", err)
 		}
 	}
