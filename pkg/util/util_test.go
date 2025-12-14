@@ -130,6 +130,25 @@ func TestIsHostCaseInsensitiveFS(t *testing.T) {
 	}
 }
 
+func TestNormalizeAndDenormalizePath(t *testing.T) {
+	// On Windows, this will be `a\b\c`
+	// On Linux/macOS, this will be `a/b/c`
+	nativePath := filepath.Join("a", "b", "c")
+
+	// Normalization should always produce forward slashes.
+	normalized := NormalizePath(nativePath)
+	expectedNormalized := "a/b/c"
+	if normalized != expectedNormalized {
+		t.Errorf("NormalizePath: expected %q, but got %q", expectedNormalized, normalized)
+	}
+
+	// Denormalization should convert back to the native format.
+	denormalized := DenormalizePath(normalized)
+	if denormalized != nativePath {
+		t.Errorf("DenormalizePath: expected %q, but got %q", nativePath, denormalized)
+	}
+}
+
 func TestExpandPath(t *testing.T) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {

@@ -49,6 +49,17 @@ func IsHostCaseInsensitiveFS() bool {
 	return runtime.GOOS == "windows" || runtime.GOOS == "darwin"
 }
 
+// NormalizePath converts a path into a standardized key format (forward slashes, maybe otherwise modified key).
+// This key is intended for internal logic (like map keys) and not for direct filesystem access.
+func NormalizePath(path string) string {
+	return filepath.ToSlash(path)
+}
+
+// DenormalizePath converts a standardized (forward-slash, maybe otherwise modified key) path key back into a native OS path.
+func DenormalizePath(pathKey string) string {
+	return filepath.FromSlash(pathKey)
+}
+
 // ExpandPath expands the tilde (~) prefix in a path to the user's home directory.
 func ExpandPath(path string) (string, error) {
 	if !strings.HasPrefix(path, "~") {

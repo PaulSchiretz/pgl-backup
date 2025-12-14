@@ -131,18 +131,18 @@ func TestDetermineBackupsToKeep(t *testing.T) {
 	// Arrange: Create a series of backups over time
 	now := time.Now()
 	allBackups := []backupMetadataInfo{
-		{RelPath: "backup_hourly_1", Metadata: backupMetadata{TimestampUTC: now.Add(-1 * time.Hour)}},
-		{RelPath: "backup_hourly_2", Metadata: backupMetadata{TimestampUTC: now.Add(-2 * time.Hour)}},
-		{RelPath: "backup_daily_1", Metadata: backupMetadata{TimestampUTC: now.Add(-25 * time.Hour)}},
-		{RelPath: "backup_daily_2", Metadata: backupMetadata{TimestampUTC: now.Add(-50 * time.Hour)}},
-		{RelPath: "backup_weekly_1", Metadata: backupMetadata{TimestampUTC: now.Add(-8 * 24 * time.Hour)}},
-		{RelPath: "backup_weekly_2", Metadata: backupMetadata{TimestampUTC: now.Add(-16 * 24 * time.Hour)}},
-		{RelPath: "backup_monthly_1", Metadata: backupMetadata{TimestampUTC: now.Add(-35 * 24 * time.Hour)}},
-		{RelPath: "backup_monthly_2", Metadata: backupMetadata{TimestampUTC: now.Add(-70 * 24 * time.Hour)}},
-		{RelPath: "backup_yearly_1", Metadata: backupMetadata{TimestampUTC: now.Add(-400 * 24 * time.Hour)}},
-		{RelPath: "backup_yearly_2", Metadata: backupMetadata{TimestampUTC: now.Add(-800 * 24 * time.Hour)}},
-		{RelPath: "backup_old_1", Metadata: backupMetadata{TimestampUTC: now.Add(-1200 * 24 * time.Hour)}},
-		{RelPath: "backup_old_2", Metadata: backupMetadata{TimestampUTC: now.Add(-1600 * 24 * time.Hour)}},
+		{RelPathKey: "backup_hourly_1", Metadata: backupMetadata{TimestampUTC: now.Add(-1 * time.Hour)}},
+		{RelPathKey: "backup_hourly_2", Metadata: backupMetadata{TimestampUTC: now.Add(-2 * time.Hour)}},
+		{RelPathKey: "backup_daily_1", Metadata: backupMetadata{TimestampUTC: now.Add(-25 * time.Hour)}},
+		{RelPathKey: "backup_daily_2", Metadata: backupMetadata{TimestampUTC: now.Add(-50 * time.Hour)}},
+		{RelPathKey: "backup_weekly_1", Metadata: backupMetadata{TimestampUTC: now.Add(-8 * 24 * time.Hour)}},
+		{RelPathKey: "backup_weekly_2", Metadata: backupMetadata{TimestampUTC: now.Add(-16 * 24 * time.Hour)}},
+		{RelPathKey: "backup_monthly_1", Metadata: backupMetadata{TimestampUTC: now.Add(-35 * 24 * time.Hour)}},
+		{RelPathKey: "backup_monthly_2", Metadata: backupMetadata{TimestampUTC: now.Add(-70 * 24 * time.Hour)}},
+		{RelPathKey: "backup_yearly_1", Metadata: backupMetadata{TimestampUTC: now.Add(-400 * 24 * time.Hour)}},
+		{RelPathKey: "backup_yearly_2", Metadata: backupMetadata{TimestampUTC: now.Add(-800 * 24 * time.Hour)}},
+		{RelPathKey: "backup_old_1", Metadata: backupMetadata{TimestampUTC: now.Add(-1200 * 24 * time.Hour)}},
+		{RelPathKey: "backup_old_2", Metadata: backupMetadata{TimestampUTC: now.Add(-1600 * 24 * time.Hour)}},
 	}
 
 	policy := config.BackupRetentionPolicyConfig{
@@ -420,12 +420,12 @@ func TestDetermineBackupsToKeep_Promotion(t *testing.T) {
 	// This backup set is designed to fill every available retention slot,
 	// leaving one backup that is truly redundant and should be deleted.
 	allBackups := []backupMetadataInfo{
-		{RelPath: "kept_hourly", Metadata: backupMetadata{TimestampUTC: now.Add(-1 * time.Hour)}},
-		{RelPath: "kept_daily", Metadata: backupMetadata{TimestampUTC: now.Add(-25 * time.Hour)}},
-		{RelPath: "kept_weekly", Metadata: backupMetadata{TimestampUTC: now.Add(-8 * 24 * time.Hour)}},
-		{RelPath: "kept_monthly", Metadata: backupMetadata{TimestampUTC: now.Add(-35 * 24 * time.Hour)}},
-		{RelPath: "kept_yearly", Metadata: backupMetadata{TimestampUTC: now.Add(-400 * 24 * time.Hour)}},
-		{RelPath: "to_be_deleted", Metadata: backupMetadata{TimestampUTC: now.Add(-800 * 24 * time.Hour)}},
+		{RelPathKey: "kept_hourly", Metadata: backupMetadata{TimestampUTC: now.Add(-1 * time.Hour)}},
+		{RelPathKey: "kept_daily", Metadata: backupMetadata{TimestampUTC: now.Add(-25 * time.Hour)}},
+		{RelPathKey: "kept_weekly", Metadata: backupMetadata{TimestampUTC: now.Add(-8 * 24 * time.Hour)}},
+		{RelPathKey: "kept_monthly", Metadata: backupMetadata{TimestampUTC: now.Add(-35 * 24 * time.Hour)}},
+		{RelPathKey: "kept_yearly", Metadata: backupMetadata{TimestampUTC: now.Add(-400 * 24 * time.Hour)}},
+		{RelPathKey: "to_be_deleted", Metadata: backupMetadata{TimestampUTC: now.Add(-800 * 24 * time.Hour)}},
 	}
 
 	policy := config.BackupRetentionPolicyConfig{
@@ -662,9 +662,9 @@ func TestFetchSortedBackups(t *testing.T) {
 
 	// Check that they are sorted newest to oldest
 	expectedOrder := []string{"backup_2_newest", "backup_1", "backup_3"}
-	for i, relPath := range expectedOrder {
-		if backups[i].RelPath != relPath {
-			t.Errorf("expected backup at index %d to be %s, but got %s", i, relPath, backups[i].RelPath)
+	for i, relPathKey := range expectedOrder {
+		if backups[i].RelPathKey != relPathKey {
+			t.Errorf("expected backup at index %d to be %s, but got %s", i, relPathKey, backups[i].RelPathKey)
 		}
 	}
 

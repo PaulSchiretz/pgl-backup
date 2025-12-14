@@ -334,19 +334,6 @@ func (r *syncRun) truncateModTime(t time.Time) time.Time {
 	return t
 }
 
-// normalizePathKey normalizes the pathKey to a standardized key format
-// (forward slashes, maybe otherwise modified key). This key is for internal logic, not direct filesystem access.
-func (r *syncRun) normalizePathKey(pathKey string) string {
-	// 1. Ensures the map key is consistent across all OS types.
-	return filepath.ToSlash(pathKey)
-}
-
-// denormalizePathKey converts the standardized (forward-slash) relative path key
-// back into native OS path.
-func (r *syncRun) denormalizePathKey(pathKey string) string {
-	return filepath.FromSlash(pathKey)
-}
-
 // normalizedRelPathParentKey calculates the relative path of the parent and normalizes it to a standardized key format
 // (forward slashes, maybe otherwise modified key). This key is for internal logic, not direct filesystem access.
 func (r *syncRun) normalizedParentRelPathKey(relPathKey string) string {
@@ -354,7 +341,7 @@ func (r *syncRun) normalizedParentRelPathKey(relPathKey string) string {
 	// CRITICAL: Re-normalize the parent key. `filepath.Dir` can return a path with
 	// OS-specific separators (e.g., '\' on Windows), but our cache keys are
 	// standardized to use forward slashes.
-	return r.normalizePathKey(parentRelPathKey)
+	return util.NormalizePath(parentRelPathKey)
 }
 
 // normalizedRelPathKey calculates the relative path and normalizes it to a standardized key format
@@ -364,13 +351,13 @@ func (r *syncRun) normalizedRelPathKey(base, absPath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to get relative path for %s: %w", absPath, err)
 	}
-	return r.normalizePathKey(relPathKey), nil
+	return util.NormalizePath(relPathKey), nil
 }
 
-// denormalizedAbsPath converts the standardized (forward-slash) relative path key
+// denormalizedAbsPath converts the standardized (forward-slash, maybe otherwise modified key) relative path key
 // back into the final, absolute, native OS path for filesystem access.
 func (r *syncRun) denormalizedAbsPath(base, relPathKey string) string {
-	return filepath.Join(base, r.denormalizePathKey(relPathKey))
+	return filepath.Join(base, util.DenormalizePath(relPathKey))
 }
 
 // isExcluded checks if a given relative path key matches any of the exclusion patterns,
@@ -593,7 +580,7 @@ func (r *syncRun) syncWalker() {
 		// Check for exclusions.
 		// `relPathKey` is already normalized, but `d.Name()` is the raw basename from the filesystem
 		// and must be normalized before being passed to `isExcluded` for basename matching.
-		if r.isExcluded(relPathKey, r.normalizePathKey(d.Name()), d.IsDir()) {
+		if r.isExcluded(relPathKey, util.NormalizePath(d.Name()), d.IsDir()) {
 			plog.Info("EXCL", "reason", "excluded by pattern", "path", relPathKey)
 			if d.IsDir() {
 				r.metrics.AddDirsExcluded(1) // Track excluded directory
@@ -831,7 +818,7 @@ func (r *syncRun) mirrorWalker() []string {
 		// Check for exclusions.
 		// `relPathKey` is already normalized, but `d.Name()` is the raw basename from the filesystem
 		// and must be normalized before being passed to `isExcluded` for basename matching.
-		if r.isExcluded(relPathKey, r.normalizePathKey(d.Name()), d.IsDir()) {
+		if r.isExcluded(relPathKey, util.NormalizePath(d.Name()), d.IsDir()) {
 			if d.IsDir() {
 				return filepath.SkipDir // Excluded dir, leave it and its contents.
 			}

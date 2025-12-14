@@ -56,8 +56,8 @@ const (
 
 // backupMetadataInfo holds the parsed metadata and rel directory path of a backup found on disk.
 type backupMetadataInfo struct {
-	RelPath  string
-	Metadata backupMetadata
+	RelPathKey string // Normalized, forward-slash and maybe otherwise modified key. NOT for direct FS access.
+	Metadata   backupMetadata
 }
 
 // backupMetadata holds metadata for a single backup, which is written to a metafile.
@@ -414,8 +414,8 @@ func (e *Engine) applyRetentionFor(ctx context.Context, policyTitle string, targ
 	// --- 3. Collect all backups that are not in our final `backupsToKeep` set ---
 	var dirsToDelete []string
 	for _, backup := range allBackups {
-		if _, shouldKeep := backupsToKeep[backup.RelPath]; !shouldKeep {
-			dirsToDelete = append(dirsToDelete, filepath.Join(targetDir, backup.RelPath))
+		if _, shouldKeep := backupsToKeep[backup.RelPathKey]; !shouldKeep {
+			dirsToDelete = append(dirsToDelete, filepath.Join(targetDir, util.DenormalizePath(backup.RelPathKey)))
 		}
 	}
 
@@ -492,27 +492,27 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupMetadataInfo, retenti
 		// Once a backup is kept, it's not considered for longer-duration rules.
 		// This "promotes" a backup to the highest-frequency slot it qualifies for.
 
-		// Rule: Keep N hourly backups
+		// Rule: Keep N hourly backups.
 		hourKey := b.Metadata.TimestampUTC.Format(hourFormat)
 		if retentionPolicy.Hours > 0 && len(savedHourly) < retentionPolicy.Hours && !savedHourly[hourKey] {
-			backupsToKeep[b.RelPath] = true
+			backupsToKeep[b.RelPathKey] = true
 			savedHourly[hourKey] = true
 			continue // Promoted to hourly, skip other rules
 		}
 
-		// Rule: Keep N daily backups
+		// Rule: Keep N daily backups.
 		dayKey := b.Metadata.TimestampUTC.Format(dayFormat)
 		if retentionPolicy.Days > 0 && len(savedDaily) < retentionPolicy.Days && !savedDaily[dayKey] {
-			backupsToKeep[b.RelPath] = true
+			backupsToKeep[b.RelPathKey] = true
 			savedDaily[dayKey] = true
 			continue // Promoted to daily
 		}
 
-		// Rule: Keep N weekly backups
+		// Rule: Keep N weekly backups.
 		year, week := b.Metadata.TimestampUTC.ISOWeek()
 		weekKey := fmt.Sprintf(weekFormat, year, week)
 		if retentionPolicy.Weeks > 0 && len(savedWeekly) < retentionPolicy.Weeks && !savedWeekly[weekKey] {
-			backupsToKeep[b.RelPath] = true
+			backupsToKeep[b.RelPathKey] = true
 			savedWeekly[weekKey] = true
 			continue // Promoted to weekly
 		}
@@ -520,15 +520,15 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupMetadataInfo, retenti
 		// Rule: Keep N monthly backups
 		monthKey := b.Metadata.TimestampUTC.Format(monthFormat)
 		if retentionPolicy.Months > 0 && len(savedMonthly) < retentionPolicy.Months && !savedMonthly[monthKey] {
-			backupsToKeep[b.RelPath] = true
+			backupsToKeep[b.RelPathKey] = true
 			savedMonthly[monthKey] = true
 			continue // Promoted to monthly
 		}
 
-		// Rule: Keep N yearly backups
+		// Rule: Keep N yearly backups.
 		yearKey := b.Metadata.TimestampUTC.Format(yearFormat)
 		if retentionPolicy.Years > 0 && len(savedYearly) < retentionPolicy.Years && !savedYearly[yearKey] {
-			backupsToKeep[b.RelPath] = true
+			backupsToKeep[b.RelPathKey] = true
 			savedYearly[yearKey] = true
 		}
 	}
@@ -640,7 +640,7 @@ func (e *Engine) fetchSortedBackups(ctx context.Context, baseDir, excludeDir str
 		}
 
 		// The metafile is the sole source of truth for the backup time.
-		backups = append(backups, backupMetadataInfo{RelPath: dirName, Metadata: metadata})
+		backups = append(backups, backupMetadataInfo{RelPathKey: util.NormalizePath(dirName), Metadata: metadata})
 	}
 
 	// Sort all backups from newest to oldest for consistent processing.
