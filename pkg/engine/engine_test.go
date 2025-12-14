@@ -57,15 +57,23 @@ func newTestEngine(cfg config.Config) *Engine {
 }
 
 // Helper to create a temporary directory structure for a backup.
-func createTestBackup(t *testing.T, baseDir, name string, backupTime time.Time) {
+func createTestBackup(t *testing.T, e *Engine, baseDir, name string, backupTime time.Time) {
 	t.Helper()
 	backupPath := filepath.Join(baseDir, name)
 	// The helper now needs to know if it should create the backup in the archives subdir.
 	if err := os.MkdirAll(backupPath, 0755); err != nil {
 		t.Fatalf("failed to create test backup dir: %v", err)
 	}
-	err := writeBackupMetafile(backupPath, "test", "incremental", "/src", backupTime, false)
-	if err != nil {
+
+	// Create a runState that mirrors what writeBackupMetafile expects.
+	runState := &engineRunState{
+		target:              backupPath,
+		currentTimestampUTC: backupTime,
+		source:              "/src", // A dummy source path for the metafile content.
+		mode:                config.IncrementalMode,
+	}
+
+	if err := e.writeBackupMetafile(runState); err != nil {
 		t.Fatalf("failed to write metafile for test backup: %v", err)
 	}
 }
@@ -380,7 +388,11 @@ func TestPerformSync_PreserveSourceDirectoryName(t *testing.T) {
 			cfg.Paths.PreserveSourceDirectoryName = tc.preserveSourceDirectoryName
 
 			e := newTestEngine(cfg)
-			currentRun := &engineRunState{target: filepath.Join(targetBase, cfg.Paths.IncrementalSubDir), currentTimestampUTC: time.Now().UTC()}
+			currentRun := &engineRunState{
+				target:              filepath.Join(targetBase, cfg.Paths.IncrementalSubDir),
+				currentTimestampUTC: time.Now().UTC(),
+				source:              cfg.Paths.Source,
+			}
 
 			// Inject the mock syncer
 			mock := &mockSyncer{}
@@ -466,17 +478,21 @@ func TestPrepareDestination_IncrementalMode(t *testing.T) {
 	cfg.Paths.IncrementalSubDir = "latest"
 
 	e := newTestEngine(cfg)
-	currentRun := &engineRunState{currentTimestampUTC: time.Now().UTC()}
+	currentRun := &engineRunState{
+		currentTimestampUTC: time.Now().UTC(),
+		source:              cfg.Paths.Source,
+		mode:                cfg.Mode,
+	}
 
 	// Create a dummy "current" backup to trigger the archiver
-	createTestBackup(t, tempDir, cfg.Paths.IncrementalSubDir, time.Now().Add(-25*time.Hour))
+	createTestBackup(t, e, tempDir, cfg.Paths.IncrementalSubDir, time.Now().Add(-25*time.Hour))
 
 	// Inject a mock archiver
 	mock := &mockArchiver{}
 	e.archiver = mock
 
 	// Act
-	err := e.prepareDestination(context.Background(), currentRun)
+	err := e.prepareRun(context.Background(), currentRun)
 	if err != nil {
 		t.Fatalf("prepareDestination failed: %v", err)
 	}
@@ -517,8 +533,8 @@ func TestApplyRetentionPolicy(t *testing.T) {
 	os.MkdirAll(archivesDir, 0755)
 
 	// Create backups to be kept and deleted
-	createTestBackup(t, archivesDir, "backup_kept", now.Add(-1*24*time.Hour))
-	createTestBackup(t, archivesDir, "backup_to_delete", now.Add(-5*24*time.Hour))
+	createTestBackup(t, e, archivesDir, "backup_kept", now.Add(-1*24*time.Hour))
+	createTestBackup(t, e, archivesDir, "backup_to_delete", now.Add(-5*24*time.Hour))
 
 	// Create a non-backup directory that should be ignored
 	if err := os.Mkdir(filepath.Join(archivesDir, "not_a_backup"), 0755); err != nil {
@@ -563,10 +579,14 @@ func TestPrepareDestination(t *testing.T) {
 
 		e := newTestEngine(cfg)
 		testTime := time.Date(2023, 10, 27, 14, 30, 0, 0, time.UTC)
-		currentRun := &engineRunState{currentTimestampUTC: testTime}
+		currentRun := &engineRunState{
+			currentTimestampUTC: testTime,
+			source:              cfg.Paths.Source,
+			mode:                cfg.Mode,
+		}
 
 		// Act
-		err := e.prepareDestination(context.Background(), currentRun)
+		err := e.prepareRun(context.Background(), currentRun)
 		if err != nil {
 			t.Fatalf("prepareDestination failed: %v", err)
 		}
@@ -588,10 +608,14 @@ func TestPrepareDestination(t *testing.T) {
 		cfg.Paths.IncrementalSubDir = "latest"
 
 		e := newTestEngine(cfg)
-		currentRun := &engineRunState{currentTimestampUTC: time.Now().UTC()}
+		currentRun := &engineRunState{
+			currentTimestampUTC: time.Now().UTC(),
+			source:              cfg.Paths.Source,
+			mode:                cfg.Mode,
+		}
 
 		// Act
-		err := e.prepareDestination(context.Background(), currentRun)
+		err := e.prepareRun(context.Background(), currentRun)
 		if err != nil {
 			t.Fatalf("prepareDestination failed: %v", err)
 		}
@@ -616,9 +640,9 @@ func TestFetchSortedBackups(t *testing.T) {
 	backup2Time := now.Add(-5 * time.Hour) // Newest
 	backup3Time := now.Add(-20 * time.Hour)
 
-	createTestBackup(t, tempDir, "backup_1", backup1Time)
-	createTestBackup(t, tempDir, "backup_2_newest", backup2Time)
-	createTestBackup(t, tempDir, "backup_3", backup3Time)
+	createTestBackup(t, e, tempDir, "backup_1", backup1Time)
+	createTestBackup(t, e, tempDir, "backup_2_newest", backup2Time)
+	createTestBackup(t, e, tempDir, "backup_3", backup3Time)
 
 	// Create a directory without a metafile that should be ignored
 	if err := os.Mkdir(filepath.Join(tempDir, "backup_no_meta"), 0755); err != nil {

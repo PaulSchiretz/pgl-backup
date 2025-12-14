@@ -54,7 +54,10 @@ func (a *PathArchiver) Archive(ctx context.Context, currentBackupPath string, cu
 		currentTimestampUTC:       currentTimestampUTC,
 	}
 	// Calculate and set the effective interval for this run, and log warnings.
-	a.prepareInterval(runState)
+	// Prepare for the archive run
+	if err := a.prepareRun(ctx, runState); err != nil {
+		return err
+	}
 
 	if !a.shouldArchive(runState) {
 		return nil
@@ -155,15 +158,16 @@ func (a *PathArchiver) shouldArchive(runState *archiveRunState) bool {
 	return !currentBackupBoundary.Equal(lastBackupBoundary)
 }
 
-// prepareInterval sets the archive interval for the current run.
+// prepareRun prepares the runState for an archive operation.
 // If the mode is 'auto', it calculates the optimal interval based on the retention policy.
-// If the mode is 'manual', it validates the user-configured interval and returns it.
-func (a *PathArchiver) prepareInterval(runState *archiveRunState) {
+// If the mode is 'manual', it validates the user-configured interval.
+func (a *PathArchiver) prepareRun(ctx context.Context, runState *archiveRunState) error {
 	if a.config.IncrementalArchivePolicy.Mode == config.ManualInterval {
 		a.checkInterval(runState)
 	} else {
 		a.adjustInterval(runState)
 	}
+	return nil
 }
 
 // adjustInterval calculates the optimal archive interval based on the retention

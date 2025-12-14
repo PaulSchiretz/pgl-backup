@@ -216,7 +216,7 @@ func TestArchive(t *testing.T) {
 	})
 }
 
-func TestPrepareInterval(t *testing.T) {
+func TestPrepareRun(t *testing.T) {
 	t.Run("Auto Mode", func(t *testing.T) {
 		testCases := []struct {
 			name            string
@@ -242,7 +242,7 @@ func TestPrepareInterval(t *testing.T) {
 
 				// Act
 				runState := &archiveRunState{}
-				archiver.prepareInterval(runState)
+				archiver.prepareRun(context.Background(), runState)
 
 				// Assert
 				if runState.interval != tc.expected {
@@ -264,7 +264,7 @@ func TestPrepareInterval(t *testing.T) {
 			runState := &archiveRunState{
 				interval: cfg.IncrementalArchivePolicy.Interval,
 			}
-			archiver.prepareInterval(runState)
+			archiver.prepareRun(context.Background(), runState)
 
 			// Assert
 			if runState.interval != 12*time.Hour {
@@ -289,7 +289,7 @@ func TestPrepareInterval(t *testing.T) {
 			runState := &archiveRunState{
 				interval: cfg.IncrementalArchivePolicy.Interval,
 			}
-			archiver.prepareInterval(runState)
+			archiver.prepareRun(context.Background(), runState)
 
 			// Assert
 			logOutput := logBuf.String()
@@ -316,7 +316,7 @@ func TestPrepareInterval(t *testing.T) {
 
 			// Act
 			runState := &archiveRunState{}
-			archiver.prepareInterval(runState)
+			archiver.prepareRun(context.Background(), runState)
 
 			// Assert
 			logOutput := logBuf.String()

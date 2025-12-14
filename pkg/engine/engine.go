@@ -71,8 +71,10 @@ type runMetadata struct {
 // engineRunState holds the mutable state for a single execution of the backup engine.
 // This makes the Engine itself stateless and safe for concurrent use if needed.
 type engineRunState struct {
-	target              string
+	source              string
+	mode                config.BackupMode
 	currentTimestampUTC time.Time
+	target              string
 }
 
 // Engine orchestrates the entire backup process.
@@ -202,10 +204,15 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 
 	// Capture a consistent UTC timestamp for the entire run to ensure unambiguous folder names
 	// and avoid daylight saving time conflicts.
-	currentRun := &engineRunState{currentTimestampUTC: time.Now().UTC()}
+	runState := &engineRunState{
+		source:              e.config.Paths.Source,
+		mode:                e.config.Mode,
+		currentTimestampUTC: time.Now().UTC(),
+		target:              "",
+	}
 
-	// --- 1. Pre-backup tasks (archive) and destination calculation ---
-	if err := e.prepareDestination(ctx, currentRun); err != nil {
+	// --- 1. Prepare for the backup run ---
+	if err := e.prepareRun(ctx, runState); err != nil {
 		return err
 	}
 
@@ -215,13 +222,13 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 		logMsg = "Starting backup process (DRY RUN)"
 	}
 	plog.Info(logMsg,
-		"source", e.config.Paths.Source,
-		"destination", currentRun.target,
-		"mode", e.config.Mode,
+		"source", runState.source,
+		"target", runState.target,
+		"mode", runState.mode,
 	)
 
 	// --- 2. Perform the backup ---
-	if err := e.performSync(ctx, currentRun); err != nil {
+	if err := e.performSync(ctx, runState); err != nil {
 		return fmt.Errorf("fatal backup error during sync: %w", err) // This is a fatal error, so we return it.
 	}
 
@@ -290,46 +297,45 @@ func (e *Engine) runHooks(ctx context.Context, commands []string, hookType strin
 	return nil
 }
 
-// prepareDestination calculates the target directory for the backup, performing
-// a archive if necessary for incremental backups.
-func (e *Engine) prepareDestination(ctx context.Context, currentRun *engineRunState) error {
-	if e.config.Mode == config.SnapshotMode {
+// prepareRun calculates the target directory for the backup, performing
+// an archive if necessary for incremental backups.
+func (e *Engine) prepareRun(ctx context.Context, runState *engineRunState) error {
+	if runState.mode == config.SnapshotMode {
 		// SNAPSHOT MODE
 		//
 		// The directory name must remain uniquely based on UTC time to avoid DST conflicts,
 		// but we add the user's local offset to make the timezone clear to the user.
-		timestamp := config.FormatTimestampWithOffset(currentRun.currentTimestampUTC)
+		timestamp := config.FormatTimestampWithOffset(runState.currentTimestampUTC)
 		backupDirName := e.config.Naming.Prefix + timestamp
 		snapshotsSubDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.SnapshotsSubDir)
 		if !e.config.DryRun {
 			os.MkdirAll(snapshotsSubDir, util.UserWritableDirPerms)
 		}
-		currentRun.target = filepath.Join(snapshotsSubDir, backupDirName)
+		runState.target = filepath.Join(snapshotsSubDir, backupDirName)
 	} else {
 		// INCREMENTAL MODE
-		if err := e.performArchiving(ctx, currentRun); err != nil {
+		if err := e.performArchiving(ctx, runState); err != nil {
 			return fmt.Errorf("error during backup archiving: %w", err)
 		}
 		incrementalDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.IncrementalSubDir)
-		currentRun.target = incrementalDir
+		runState.target = incrementalDir
 	}
 	return nil
 }
 
 // performSync is the main entry point for synchronization.
-func (e *Engine) performSync(ctx context.Context, currentRun *engineRunState) error {
-	source := e.config.Paths.Source
-	destination := currentRun.target
-	mirror := e.config.Mode == config.IncrementalMode
+func (e *Engine) performSync(ctx context.Context, runState *engineRunState) error {
+	adjustedTarget := runState.target
+	mirror := runState.mode == config.IncrementalMode
 
 	// If configured, append the source's base directory name to the destination path.
 	if e.config.Paths.PreserveSourceDirectoryName {
 		var nameToAppend string
 
 		// Check if the path is a root path (e.g., "/" or "C:\")
-		if filepath.Dir(source) == source {
+		if filepath.Dir(runState.source) == runState.source {
 			// Handle Windows Drive Roots (e.g., "D:\") -> "D"
-			vol := filepath.VolumeName(source)
+			vol := filepath.VolumeName(runState.source)
 			// On Windows, for "C:\", VolumeName is "C:", we trim the colon.
 			// On Unix, for "/", VolumeName is "", so nameToAppend remains empty.
 			if vol != "" && strings.HasSuffix(vol, ":") {
@@ -337,30 +343,34 @@ func (e *Engine) performSync(ctx context.Context, currentRun *engineRunState) er
 			}
 		} else {
 			// Standard folder
-			nameToAppend = filepath.Base(source)
+			nameToAppend = filepath.Base(runState.source)
 		}
 
 		// Append if valid
 		if nameToAppend != "" && nameToAppend != "." && nameToAppend != string(filepath.Separator) {
-			destination = filepath.Join(destination, nameToAppend)
+			adjustedTarget = filepath.Join(adjustedTarget, nameToAppend)
 		}
 	}
 
 	// Sync and check for errors after attempting the sync.
-	if syncErr := e.syncer.Sync(ctx, source, destination, mirror, e.config.Paths.ExcludeFiles(), e.config.Paths.ExcludeDirs(), e.config.Metrics); syncErr != nil {
+	if syncErr := e.syncer.Sync(ctx, runState.source, adjustedTarget, mirror, e.config.Paths.ExcludeFiles(), e.config.Paths.ExcludeDirs(), e.config.Metrics); syncErr != nil {
 		return fmt.Errorf("sync failed: %w", syncErr)
 	}
 
+	if e.config.DryRun {
+		plog.Info("[DRY RUN] Would write metafile", "directory", runState.target)
+		return nil
+	}
 	// If the sync was successful, write the metafile for retention purposes.
-	return writeBackupMetafile(currentRun.target, e.version, e.config.Mode.String(), source, currentRun.currentTimestampUTC, e.config.DryRun)
+	return e.writeBackupMetafile(runState)
 }
 
 // performArchiving is the main entry point for archive updates.
-func (e *Engine) performArchiving(ctx context.Context, currentRun *engineRunState) error {
+func (e *Engine) performArchiving(ctx context.Context, runState *engineRunState) error {
 	incrementalDirName := e.config.Paths.IncrementalSubDir
 	currentBackupPath := filepath.Join(e.config.Paths.TargetBase, incrementalDirName)
 
-	metaData, err := readBackupMetafile(currentBackupPath)
+	metaData, err := e.readBackupMetafile(currentBackupPath)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("could not read previous backup metadata for archive check: %w", err)
 	}
@@ -369,7 +379,7 @@ func (e *Engine) performArchiving(ctx context.Context, currentRun *engineRunStat
 	if metaData != nil {
 		// Use the precise time from the file content, not the file's modification time.
 		currentBackupTimestampUTC := metaData.BackupTime
-		if err := e.archiver.Archive(ctx, currentBackupPath, currentBackupTimestampUTC, currentRun.currentTimestampUTC); err != nil {
+		if err := e.archiver.Archive(ctx, currentBackupPath, currentBackupTimestampUTC, runState.currentTimestampUTC); err != nil {
 			return fmt.Errorf("error during backup archiving: %w", err)
 		}
 	}
@@ -546,18 +556,13 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 }
 
 // writeBackupMetafile creates and writes the .pgl-backup.meta.json file into a given directory.
-func writeBackupMetafile(dirPath, version, mode, source string, backupTime time.Time, dryRun bool) error {
-	if dryRun {
-		plog.Info("[DRY RUN] Would write metafile", "directory", dirPath)
-		return nil
-	}
-
-	metaFilePath := filepath.Join(dirPath, config.MetaFileName)
+func (e *Engine) writeBackupMetafile(runState *engineRunState) error {
+	metaFilePath := filepath.Join(runState.target, config.MetaFileName)
 	metaData := runMetadata{
-		Version:    version,
-		BackupTime: backupTime,
-		Mode:       mode,
-		Source:     source,
+		Version:    e.version,
+		BackupTime: runState.currentTimestampUTC,
+		Mode:       runState.mode.String(),
+		Source:     runState.source,
 	}
 
 	jsonData, err := json.MarshalIndent(metaData, "", "  ")
@@ -578,7 +583,7 @@ func writeBackupMetafile(dirPath, version, mode, source string, backupTime time.
 
 // readBackupMetafile opens and parses the .pgl-backup.meta.json file within a given directory.
 // It returns the parsed metadata or an error if the file cannot be read.
-func readBackupMetafile(dirPath string) (*runMetadata, error) {
+func (e *Engine) readBackupMetafile(dirPath string) (*runMetadata, error) {
 	metaFilePath := filepath.Join(dirPath, config.MetaFileName)
 	metaFile, err := os.Open(metaFilePath)
 	if err != nil {
@@ -627,7 +632,7 @@ func (e *Engine) fetchSortedBackups(ctx context.Context, baseDir, excludeDir str
 		}
 
 		backupPath := filepath.Join(baseDir, dirName)
-		metaData, err := readBackupMetafile(backupPath)
+		metaData, err := e.readBackupMetafile(backupPath)
 		if err != nil {
 			plog.Warn("Skipping directory for retention check", "directory", dirName, "reason", err)
 			continue
