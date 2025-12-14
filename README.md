@@ -381,6 +381,13 @@ The best policy depends on how much data you are backing up and how much disk sp
 
 ## Troubleshooting
 
+### A Note on Cross-Platform Backups and Case-Sensitivity
+
+For maximum data integrity when backing up a case-sensitive source (like a Linux server or a WSL environment), it is **strongly recommended to run `pgl-backup` on a case-sensitive operating system** (like Linux, macOS, or from within WSL).
+
+Running the tool on Windows to back up a case-sensitive source may result in an incomplete backup. This is because the Windows operating system itself may not report the existence of files that differ only by case (e.g., it might see `File.txt` but not `file.txt`). Since `pgl-backup` can only back up what the host OS tells it exists, this can lead to silent data loss.
+
+
 ### Error: `permission denied` when reading source or writing to target
 
 *   **Cause**: The user running `pgl-backup` does not have the necessary read permissions for the source directory or write permissions for the target directory.

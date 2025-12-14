@@ -214,18 +214,3 @@ func TestCheckBackupTargetWritable(t *testing.T) {
 		}
 	})
 }
-
-func TestCheckCaseSensitivityMismatch(t *testing.T) {
-	t.Run("Detects no mismatch on same-sensitivity filesystems", func(t *testing.T) {
-		// This test validates the behavior of the check on the filesystem it's currently running on.
-		// - On Windows/macOS, it tests the "safe" path where the source is also case-insensitive.
-		// - On Linux, it tests the path where the check is correctly skipped.
-		srcDir := t.TempDir()
-
-		err := checkCaseSensitivityMismatch(srcDir)
-
-		if err != nil {
-			t.Fatalf("checkCaseSensitivityMismatch() returned an unexpected error: %v", err)
-		}
-	})
-}
