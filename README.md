@@ -68,10 +68,6 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
 ```json
 {
   "mode": "incremental",
-  "incrementalArchivePolicy": {
-    "mode": "auto",
-    "interval": "24h0m0s"
-  },
   "engine": {
     "type": "native",
     "retryCount": 3,
@@ -117,6 +113,10 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
     ],
     "userExcludeFiles": [],
     "userExcludeDirs": []
+  },
+  "incrementalArchivePolicy": {
+    "mode": "auto",
+    "interval": "24h0m0s"
   },
   "incrementalRetentionPolicy": {
     "enabled": true,

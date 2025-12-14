@@ -243,7 +243,6 @@ type IncrementalArchivePolicyConfig struct {
 
 type Config struct {
 	Mode                       BackupMode                     `json:"mode"`
-	IncrementalArchivePolicy   IncrementalArchivePolicyConfig `json:"incrementalArchivePolicy,omitempty"`
 	Engine                     BackupEngineConfig             `json:"engine"` // Keep this for engine-specific settings
 	LogLevel                   string                         `json:"logLevel"`
 	DryRun                     bool                           `json:"dryRun"`
@@ -251,6 +250,7 @@ type Config struct {
 	Metrics                    bool                           `json:"metrics,omitempty"`
 	Naming                     BackupNamingConfig             `json:"naming"`
 	Paths                      BackupPathConfig               `json:"paths"`
+	IncrementalArchivePolicy   IncrementalArchivePolicyConfig `json:"incrementalArchivePolicy,omitempty"`
 	IncrementalRetentionPolicy BackupRetentionPolicyConfig    `json:"incrementalRetentionPolicy,omitempty"`
 	SnapshotRetentionPolicy    BackupRetentionPolicyConfig    `json:"snapshotRetentionPolicy,omitempty"`
 	Hooks                      BackupHooksConfig              `json:"hooks,omitempty"`
@@ -263,13 +263,8 @@ func NewDefault() Config {
 	// the best performance and consistency with no external dependencies.
 	// Power users on Windows can still opt-in to 'robocopy' as a battle-tested alternative.
 	return Config{
-		Mode: IncrementalMode, // Default mode
-		IncrementalArchivePolicy: IncrementalArchivePolicyConfig{
-			Mode:     AutoInterval,   // Default to auto-adjusting the interval based on the retention policy.
-			Interval: 24 * time.Hour, // Interval will be calculated by the engine in 'auto' mode.
-			// If a user switches to 'manual' mode, they must specify an interval.
-		},
-		LogLevel: "info", // Default log level.
+		Mode:     IncrementalMode, // Default mode
+		LogLevel: "info",          // Default log level.
 		DryRun:   false,
 		FailFast: false,
 		Metrics:  true, // Default to enabled for detailed performance and file-counting metrics.
@@ -316,6 +311,11 @@ func NewDefault() Config {
 				"#recycle",                  // Synology recycle bin
 				"$Recycle.Bin",              // Windows recycle bin
 			},
+		},
+		IncrementalArchivePolicy: IncrementalArchivePolicyConfig{
+			Mode:     AutoInterval,   // Default to auto-adjusting the interval based on the retention policy.
+			Interval: 24 * time.Hour, // Interval will be calculated by the engine in 'auto' mode.
+			// If a user switches to 'manual' mode, they must specify an interval.
 		},
 		IncrementalRetentionPolicy: BackupRetentionPolicyConfig{
 			Enabled: true, // Enabled by default for incremental mode.
