@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
 	"pixelgardenlabs.io/pgl-backup/pkg/util"
@@ -30,6 +31,11 @@ func RunChecks(c *config.Config) error {
 	}
 	if err := checkBackupSourceAccessible(c.Paths.Source); err != nil {
 		return fmt.Errorf("source path validation failed: %w", err)
+	}
+
+	// 3. Check for dangerous case-sensitivity mismatches.
+	if err := checkCaseSensitivityMismatch(c.Paths.Source); err != nil {
+		return fmt.Errorf("case-sensitivity check failed: %w", err)
 	}
 
 	// 3. If not a dry run, perform state-changing checks (create dir, check writability).
@@ -125,6 +131,53 @@ func checkBackupSourceAccessible(srcPath string) error {
 	}
 
 	return nil
+}
+
+// checkCaseSensitivityMismatch detects a dangerous scenario where the backup tool is running on a
+// case-insensitive OS (like Windows) but the source filesystem is case-sensitive (like Linux).
+// In this state, the host OS may only report one of two files that differ only by case (e.g.,
+// 'File.txt' vs 'file.txt'), leading to silent data loss. This check prevents the backup from
+// running in this configuration.
+func checkCaseSensitivityMismatch(srcPath string) error {
+	// This check is only relevant when the tool itself is running on a case-insensitive OS.
+	if !util.IsHostCaseInsensitiveFS() {
+		return nil
+	}
+
+	// Create a temporary file with a known name in the source directory.
+	// We use a unique name to avoid conflicts.
+	testFileNameLower := fmt.Sprintf(".pgl-case-test-%d.tmp", os.Getpid())
+	testFilePathLower := filepath.Join(srcPath, testFileNameLower)
+
+	// Ensure the test file is removed even if something panics.
+	defer os.Remove(testFilePathLower)
+
+	// Create the file.
+	f, err := os.Create(testFilePathLower)
+	if err != nil {
+		// If we can't create a temporary file, the source is likely not writable.
+		// This is a fatal pre-flight condition.
+		return fmt.Errorf("source directory is not writable; cannot perform case-sensitivity check: %w", err)
+	}
+	f.Close()
+
+	// Now, try to access the same file but with a different case.
+	testFileNameUpper := filepath.Base(strings.ToUpper(testFilePathLower))
+	testFilePathUpper := filepath.Join(srcPath, testFileNameUpper)
+
+	_, err = os.Stat(testFilePathUpper)
+	if err == nil {
+		// Success! The OS found the file using a different case, which means the source
+		// filesystem is also case-insensitive. This is a safe configuration.
+		return nil
+	} else if os.IsNotExist(err) {
+		// This is the DANGER ZONE. The OS could not find the file using a different case,
+		// proving the source is case-sensitive.
+		return fmt.Errorf("source is case-sensitive but the tool is running on a case-insensitive OS (Windows/macOS). This can lead to data loss. To back up this source, please run pgl-backup from a case-sensitive OS (like Linux or inside WSL)")
+	}
+
+	// Any other error during the stat is unexpected.
+	return fmt.Errorf("unexpected error during case-sensitivity check on source: %w", err)
 }
 
 // checkBackupTargetWritable ensures the target directory can be created and is writable

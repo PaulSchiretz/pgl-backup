@@ -62,13 +62,13 @@ type compactPathInfo struct {
 // syncTask holds all the necessary metadata for a worker to process a file
 // without re-calculating paths or re-fetching filesystem stats.
 type syncTask struct {
-	RelPathKey string          // Normalized, forward-slash, lowercase (if applicable) key. NOT for direct FS access.
+	RelPathKey string          // Normalized, forward-slash and maybe otherwise modified key. NOT for direct FS access.
 	PathInfo   compactPathInfo // Cached info from the Walker
 }
 
 // mirrorTask holds the necessary metadata for a worker to process a deletion.
 type mirrorTask struct {
-	// Normalized, forward-slash, lowercase (if applicable) key. NOT for direct FS access.
+	// Normalized, forward-slash and maybe otherwise modified key. NOT for direct FS access.
 	RelPathKey string
 }
 
@@ -104,7 +104,6 @@ type syncRun struct {
 	mirror, dryRun, failFast bool
 	numSyncWorkers           int
 	numMirrorWorkers         int
-	caseInsensitive          bool
 	fileExcludes             exclusionSet
 	dirExcludes              exclusionSet
 	retryCount               int
@@ -248,7 +247,7 @@ func (r *syncRun) copyFileHelper(absSrcPath, absTrgPath string, task *syncTask, 
 }
 
 // preProcessExclusions analyzes and categorizes patterns to enable optimized matching later.
-func preProcessExclusions(patterns []string, caseInsensitive bool) exclusionSet {
+func preProcessExclusions(patterns []string) exclusionSet {
 	set := exclusionSet{
 		literals:         make(map[string]struct{}),
 		basenameLiterals: make(map[string]struct{}),
@@ -256,12 +255,9 @@ func preProcessExclusions(patterns []string, caseInsensitive bool) exclusionSet 
 	}
 
 	// normalizePattern normalizes an exclusion pattern to a standardized format
-	// (forward slashes, lowercase if applicable) for consistent matching.
+	// (forward slashes, maybe otherwise modified key) for consistent matching.
 	normalizePattern := func(p string) string {
 		p = filepath.ToSlash(p)
-		if caseInsensitive {
-			p = strings.ToLower(p)
-		}
 		return p
 	}
 
@@ -271,7 +267,6 @@ func preProcessExclusions(patterns []string, caseInsensitive bool) exclusionSet 
 
 	for _, p := range patterns {
 		// Normalize to use forward slashes for consistent matching logic.
-		// On case-insensitive systems, convert pattern to lowercase to match normalized paths.
 		p = normalizePattern(p)
 
 		if strings.ContainsAny(p, "*?[]") {
@@ -340,16 +335,10 @@ func (r *syncRun) truncateModTime(t time.Time) time.Time {
 }
 
 // normalizePathKey normalizes the pathKey to a standardized key format
-// (forward slashes, lowercase if applicable). This key is for internal logic, not direct filesystem access.
+// (forward slashes, maybe otherwise modified key). This key is for internal logic, not direct filesystem access.
 func (r *syncRun) normalizePathKey(pathKey string) string {
 	// 1. Ensures the map key is consistent across all OS types.
-	pathKey = filepath.ToSlash(pathKey)
-
-	// 2. Apply case-insensitivity if required (for Windows/macOS key comparison)
-	if r.caseInsensitive {
-		pathKey = strings.ToLower(pathKey)
-	}
-	return pathKey
+	return filepath.ToSlash(pathKey)
 }
 
 // denormalizePathKey converts the standardized (forward-slash) relative path key
@@ -359,7 +348,7 @@ func (r *syncRun) denormalizePathKey(pathKey string) string {
 }
 
 // normalizedRelPathParentKey calculates the relative path of the parent and normalizes it to a standardized key format
-// (forward slashes, lowercase if applicable). This key is for internal logic, not direct filesystem access.
+// (forward slashes, maybe otherwise modified key). This key is for internal logic, not direct filesystem access.
 func (r *syncRun) normalizedParentRelPathKey(relPathKey string) string {
 	parentRelPathKey := filepath.Dir(relPathKey)
 	// CRITICAL: Re-normalize the parent key. `filepath.Dir` can return a path with
@@ -369,7 +358,7 @@ func (r *syncRun) normalizedParentRelPathKey(relPathKey string) string {
 }
 
 // normalizedRelPathKey calculates the relative path and normalizes it to a standardized key format
-// (forward slashes, lowercase if applicable). This key is for internal logic, not direct filesystem access.
+// (forward slashes, maybe otherwise modified key). This key is for internal logic, not direct filesystem access.
 func (r *syncRun) normalizedRelPathKey(base, absPath string) (string, error) {
 	relPathKey, err := filepath.Rel(base, absPath)
 	if err != nil {
@@ -1024,8 +1013,6 @@ func (r *syncRun) execute() error {
 
 // handleNative initializes the sync run structure and kicks off the execution.
 func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror bool, excludeFiles, excludeDirs []string, enableMetrics bool) error {
-	isCaseInsensitive := util.IsCaseInsensitiveFS()
-
 	var m metrics.Metrics
 	if enableMetrics {
 		m = &metrics.SyncMetrics{}
@@ -1040,9 +1027,8 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror b
 		mirror:           mirror,
 		dryRun:           s.dryRun,
 		failFast:         s.failFast,
-		caseInsensitive:  isCaseInsensitive,
-		fileExcludes:     preProcessExclusions(excludeFiles, isCaseInsensitive),
-		dirExcludes:      preProcessExclusions(excludeDirs, isCaseInsensitive),
+		fileExcludes:     preProcessExclusions(excludeFiles),
+		dirExcludes:      preProcessExclusions(excludeDirs),
 		numSyncWorkers:   s.engine.Performance.SyncWorkers,
 		numMirrorWorkers: s.engine.Performance.MirrorWorkers,
 		retryCount:       s.engine.RetryCount,

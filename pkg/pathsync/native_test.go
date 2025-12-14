@@ -427,50 +427,27 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
-			name:   "Case Insensitive Mirror - Keep Mismatched Case",
+			name:   "Case-Sensitive Mirror - Deletes Mismatched Case",
 			mirror: true,
 			srcFiles: []testFile{
+				// Source has only the upper-case version.
 				{path: "Image.PNG", content: "new content", modTime: baseTime.Add(time.Hour)},
 			},
 			dstFiles: []testFile{
+				// Destination has only the lower-case version.
 				{path: "image.png", content: "old content", modTime: baseTime},
 			},
 			expectedDstFiles: map[string]testFile{
-				// On case-insensitive systems, the destination file should be updated, not deleted and recreated.
-				// The final casing might depend on the OS, but the content and time must match the source.
-				// We check against the original destination path `image.png`.
-				"image.png": {path: "image.png", content: "new content", modTime: baseTime.Add(time.Hour)},
+				// The new file "Image.PNG" should be copied from the source.
+				"Image.PNG": {path: "Image.PNG", content: "new content", modTime: baseTime.Add(time.Hour)},
 			},
-			expectedMissingDstFiles: []string{}, // Nothing should be deleted
+			// The old file "image.png" should be deleted by the mirror because it's not in the source.
+			expectedMissingDstFiles: []string{"image.png"},
 			verify: func(t *testing.T, src, dst string) {
-				// Crucially, verify that the differently-cased source file was NOT created.
-				// On a case-insensitive OS, os.Stat("Image.PNG") would succeed even if only "image.png" exists.
-				// We must read the directory to get the actual filename on disk.
-				entries, err := os.ReadDir(dst)
-				if err != nil {
-					t.Fatalf("failed to read destination directory: %v", err)
-				}
-				if util.IsCaseInsensitiveFS() {
-					for _, entry := range entries {
-						// On case-insensitive systems, we expect the original file 'image.png' to be updated in place.
-						// A new file 'Image.PNG' should NOT be created.
-						if entry.Name() == "Image.PNG" {
-							t.Error("expected file 'Image.PNG' not to be created in destination, but it was")
-						}
-						if entry.Name() != "image.png" {
-							t.Errorf("unexpected file found in destination: %s", entry.Name())
-						}
-					}
-				} else {
-					// On case-sensitive systems (like Linux), we expect a NEW file 'Image.PNG' to be created,
-					// and the old 'image.png' to be deleted by the mirror.
-					if !pathExists(t, filepath.Join(dst, "Image.PNG")) {
-						t.Error("expected file 'Image.PNG' to be created on case-sensitive filesystem, but it was not")
-					}
-					// Also assert the old file is gone.
-					if pathExists(t, filepath.Join(dst, "image.png")) {
-						t.Error("expected file 'image.png' to be deleted by mirror on case-sensitive filesystem, but it still exists")
-					}
+				// The test framework already checks for existence/absence via the expected maps.
+				// This is an explicit check for clarity.
+				if !pathExists(t, filepath.Join(dst, "Image.PNG")) {
+					t.Error("expected file 'Image.PNG' to exist in destination, but it does not")
 				}
 			},
 		},
@@ -651,10 +628,8 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// --- Test-specific setup ---
-			if tc.name == "Case Insensitive Mirror - Keep Mismatched Case" {
-				if runtime.GOOS != "windows" && runtime.GOOS != "darwin" {
-					t.Skip("Skipping case-insensitive test on case-sensitive OS")
-				}
+			if tc.name == "Case-Sensitive Mirror - Deletes Mismatched Case" && util.IsHostCaseInsensitiveFS() {
+				t.Skip("Skipping test that deletes mismatched case on a case-insensitive filesystem")
 			}
 
 			runner := &nativeSyncTestRunner{

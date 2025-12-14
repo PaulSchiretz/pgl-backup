@@ -44,8 +44,8 @@ func WithUserExecutePermission(basePerm os.FileMode) os.FileMode {
 	return basePerm | PermUserExecute
 }
 
-// IsCaseInsensitiveFS checks if the current operating system has a case-insensitive filesystem by default.
-func IsCaseInsensitiveFS() bool {
+// IsHostCaseInsensitiveFS checks if the current operating system (the "host") has a case-insensitive filesystem by default.
+func IsHostCaseInsensitiveFS() bool {
 	return runtime.GOOS == "windows" || runtime.GOOS == "darwin"
 }
 

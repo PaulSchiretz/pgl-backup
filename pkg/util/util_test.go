@@ -123,10 +123,10 @@ func TestWithUserExecutePermission(t *testing.T) {
 	}
 }
 
-func TestIsCaseInsensitiveFS(t *testing.T) {
+func TestIsHostCaseInsensitiveFS(t *testing.T) {
 	expected := (runtime.GOOS == "windows" || runtime.GOOS == "darwin")
-	if IsCaseInsensitiveFS() != expected {
-		t.Errorf("IsCaseInsensitiveFS() returned %v, but expected %v for OS %s", IsCaseInsensitiveFS(), expected, runtime.GOOS)
+	if IsHostCaseInsensitiveFS() != expected {
+		t.Errorf("IsHostCaseInsensitiveFS() returned %v, but expected %v for OS %s", IsHostCaseInsensitiveFS(), expected, runtime.GOOS)
 	}
 }
 
