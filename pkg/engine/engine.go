@@ -15,20 +15,21 @@ import (
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
 	"pixelgardenlabs.io/pgl-backup/pkg/filelock"
+	"pixelgardenlabs.io/pgl-backup/pkg/patharchive"
 	"pixelgardenlabs.io/pgl-backup/pkg/pathsync"
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 	"pixelgardenlabs.io/pgl-backup/pkg/preflight"
 	"pixelgardenlabs.io/pgl-backup/pkg/util"
 )
 
-// --- ARCHITECTURAL OVERVIEW: Rollover vs. Retention Time Handling ---
+// --- ARCHITECTURAL OVERVIEW: Archive vs. Retention Time Handling ---
 //
 // This engine employs two distinct time-handling strategies for creating and deleting backups,
 // each designed to address a separate user concern:
 //
-// 1. Rollover (Snapshot Creation) - Predictable Creation
-//    - Goal: To honor the user's configured `RolloverInterval` as literally as possible.
-//    - Logic: The `shouldRollover` function calculates time-based "bucketing" based on the
+// 1. Archive (Snapshot Creation) - Predictable Creation
+//    - Goal: To honor the user's configured `ArchiveInterval` as literally as possible.
+//    - Logic: The `shouldArchive` function calculates time-based "bucketing" based on the
 //      **local system's midnight** for day-or-longer intervals. This gives the user direct,
 //      predictable control over the *frequency* of new archives, anchored to their local day.
 //
@@ -76,9 +77,10 @@ type runState struct {
 
 // Engine orchestrates the entire backup process.
 type Engine struct {
-	config  config.Config
-	version string
-	syncer  pathsync.Syncer
+	config   config.Config
+	version  string
+	syncer   pathsync.Syncer
+	archiver patharchive.Archiver
 	// hookCommandExecutor allows mocking os/exec for testing hooks.
 	hookCommandExecutor func(ctx context.Context, name string, arg ...string) *exec.Cmd
 }
@@ -88,8 +90,9 @@ func New(cfg config.Config, version string) *Engine {
 	return &Engine{
 		config:              cfg,
 		version:             version,
-		syncer:              pathsync.NewPathSyncer(cfg), // Default to the real implementation.
-		hookCommandExecutor: exec.CommandContext,         // Default to the real implementation.
+		syncer:              pathsync.NewPathSyncer(cfg),
+		archiver:            patharchive.NewPathArchiver(cfg),
+		hookCommandExecutor: exec.CommandContext, // Default to the real implementation.
 	}
 }
 
@@ -197,22 +200,11 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 		}
 	}()
 
-	// In incremental mode, prepare the rollover configuration. If the mode is 'auto',
-	// the interval is calculated based on the retention policy. If 'manual', the
-	// user-configured interval is validated against the retention policy.
-	if e.config.Mode == config.IncrementalMode {
-		if e.config.IncrementalRolloverPolicy.Mode == config.ManualInterval {
-			e.checkIncrementalRolloverInterval()
-		} else {
-			e.autoAdjustIncrementalRolloverInterval()
-		}
-	}
-
 	// Capture a consistent UTC timestamp for the entire run to ensure unambiguous folder names
 	// and avoid daylight saving time conflicts.
 	currentRun := &runState{timestampUTC: time.Now().UTC()}
 
-	// --- 1. Pre-backup tasks (rollover) and destination calculation ---
+	// --- 1. Pre-backup tasks (archive) and destination calculation ---
 	if err := e.prepareDestination(ctx, currentRun); err != nil {
 		return err
 	}
@@ -261,35 +253,6 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 	return nil
 }
 
-// autoAdjustIncrementalRolloverInterval calculates the optimal rollover interval based on the retention
-// policy and overrides the interval in the engine's configuration for the current run.
-// This is only called when the rollover policy mode is 'auto'.
-func (e *Engine) autoAdjustIncrementalRolloverInterval() {
-	policy := e.config.IncrementalRetentionPolicy
-	var suggestedInterval time.Duration
-
-	// The logic is to pick the shortest duration required to satisfy the configured retention slots.
-	switch {
-	case policy.Hours > 0:
-		suggestedInterval = 1 * time.Hour
-	case policy.Days > 0:
-		suggestedInterval = 24 * time.Hour
-	case policy.Weeks > 0:
-		suggestedInterval = 7 * 24 * time.Hour
-	case policy.Months > 0:
-		suggestedInterval = 30 * 24 * time.Hour // Approximation for a month
-	case policy.Years > 0:
-		suggestedInterval = 365 * 24 * time.Hour // Approximation for a year
-	default:
-		// Fallback if retention is disabled but mode is auto.
-		suggestedInterval = 24 * time.Hour
-	}
-
-	plog.Debug("Auto-determined rollover interval", "interval", suggestedInterval)
-	// Override the interval in the engine's config for this run.
-	e.config.IncrementalRolloverPolicy.Interval = suggestedInterval
-}
-
 // runHooks executes a list of shell commands for a given hook type.
 func (e *Engine) runHooks(ctx context.Context, commands []string, hookType string) error {
 	if len(commands) == 0 {
@@ -328,7 +291,7 @@ func (e *Engine) runHooks(ctx context.Context, commands []string, hookType strin
 }
 
 // prepareDestination calculates the target directory for the backup, performing
-// a rollover if necessary for incremental backups.
+// a archive if necessary for incremental backups.
 func (e *Engine) prepareDestination(ctx context.Context, currentRun *runState) error {
 	if e.config.Mode == config.SnapshotMode {
 		// SNAPSHOT MODE
@@ -343,9 +306,9 @@ func (e *Engine) prepareDestination(ctx context.Context, currentRun *runState) e
 		}
 		currentRun.target = filepath.Join(snapshotsSubDir, backupDirName)
 	} else {
-		// INCREMENTAL MODE (DEFAULT)
-		if err := e.performRollover(ctx, currentRun); err != nil {
-			return fmt.Errorf("error during backup rollover: %w", err)
+		// INCREMENTAL MODE
+		if err := e.performArchiving(ctx, currentRun); err != nil {
+			return fmt.Errorf("error during backup archiving: %w", err)
 		}
 		incrementalDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.IncrementalSubDir)
 		currentRun.target = incrementalDir
@@ -365,12 +328,13 @@ func (e *Engine) performSync(ctx context.Context, currentRun *runState) error {
 
 		// Check if the path is a root path (e.g., "/" or "C:\")
 		if filepath.Dir(source) == source {
-			// Handle Windows Drive Roots (e.g. "D:\") -> "D"
+			// Handle Windows Drive Roots (e.g., "D:\") -> "D"
 			vol := filepath.VolumeName(source)
-			if vol != "" {
+			// On Windows, for "C:\", VolumeName is "C:", we trim the colon.
+			// On Unix, for "/", VolumeName is "", so nameToAppend remains empty.
+			if vol != "" && strings.HasSuffix(vol, ":") {
 				nameToAppend = strings.TrimSuffix(vol, ":")
 			}
-			// If vol is empty (Unix "/"), we append nothing.
 		} else {
 			// Standard folder
 			nameToAppend = filepath.Base(source)
@@ -391,189 +355,25 @@ func (e *Engine) performSync(ctx context.Context, currentRun *runState) error {
 	return writeBackupMetafile(currentRun.target, e.version, e.config.Mode.String(), source, currentRun.timestampUTC, e.config.DryRun)
 }
 
-// performRollover checks if the incremental backup directory is from a previous day > RolloverInterval.
-// If so, it renames it to a permanent timestamped archive.
-func (e *Engine) performRollover(ctx context.Context, currentRun *runState) error {
+// performArchiving is the main entry point for archive updates.
+func (e *Engine) performArchiving(ctx context.Context, currentRun *runState) error {
 	incrementalDirName := e.config.Paths.IncrementalSubDir
 	currentBackupPath := filepath.Join(e.config.Paths.TargetBase, incrementalDirName)
 
 	metaData, err := readBackupMetafile(currentBackupPath)
-	if os.IsNotExist(err) {
-		return nil // No previous backup, nothing to roll over.
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("could not read previous backup metadata for archive check: %w", err)
 	}
 
-	// Use the precise time from the file content, not the file's modification time.
-	lastBackupTime := metaData.BackupTime
-
-	if e.shouldRollover(lastBackupTime, currentRun) {
-		plog.Info("Rollover threshold crossed, creating new archive.",
-			"last_backup_time", lastBackupTime,
-			"current_time_utc", currentRun.timestampUTC,
-			"rollover_interval", e.config.IncrementalRolloverPolicy.Interval)
-
-		// Check for cancellation before performing the rename.
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		// The directory name must remain uniquely based on UTC time to avoid DST conflicts,
-		// but we add the user's local offset to make the timezone clear to the user.
-		archiveTimestamp := config.FormatTimestampWithOffset(lastBackupTime)
-		archiveDirName := e.config.Naming.Prefix + archiveTimestamp
-
-		// Archives are stored in a dedicated subdirectory for clarity.
-		archivesSubDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.ArchivesSubDir)
-		archivePath := filepath.Join(archivesSubDir, archiveDirName)
-
-		// Sanity check: ensure the destination for the rollover does not already exist.
-		if _, err := os.Stat(archivePath); err == nil {
-			return fmt.Errorf("rollover destination %s already exists, cannot proceed", archivePath)
-		} else if !os.IsNotExist(err) {
-			// The error is not "file does not exist", so it might be a permissions issue
-			// or the archives subdir doesn't exist. Let's try to create it.
-			return fmt.Errorf("could not check rollover destination %s: %w", archivePath, err)
-		}
-
-		plog.Info("Rolling over previous day's backup", "destination", archivePath)
-		if e.config.DryRun {
-			plog.Info("[DRY RUN] Would rename", "from", currentBackupPath, "to", archivePath)
-			return nil
-		}
-
-		if err := os.MkdirAll(archivesSubDir, util.UserWritableDirPerms); err != nil {
-			return fmt.Errorf("failed to create archives subdirectory %s: %w", archivesSubDir, err)
-		}
-		if err := os.Rename(currentBackupPath, archivePath); err != nil {
-			return fmt.Errorf("failed to roll over backup: %w", err)
+	// Only perform archiving if a previous backup exists.
+	if metaData != nil {
+		// Use the precise time from the file content, not the file's modification time.
+		lastBackupTime := metaData.BackupTime
+		if err := e.archiver.Archive(ctx, currentBackupPath, lastBackupTime, currentRun.timestampUTC); err != nil {
+			return fmt.Errorf("error during backup archiving: %w", err)
 		}
 	}
-
 	return nil
-}
-
-// shouldRollover determines if a new backup archive should be created based on the
-// configured interval and the time of the last backup.
-//
-// DESIGN NOTE on time zones:
-// For intervals of 24 hours or longer, this function intentionally calculates
-// rollover boundaries based on the **local system's midnight** (`time.Local`).
-// This ensures that rollovers align with a user's calendar day ("start a new
-// weekly backup on Sunday night"), even though all stored timestamps are UTC.
-// The conversion handles Daylight Saving Time (DST) shifts correctly by checking
-// for midnight-to-midnight boundary crossings (epoch day counting).
-func (e *Engine) shouldRollover(lastBackupTime time.Time, currentRun *runState) bool {
-	// Handle the default (0 = 24h) for comparison logic
-	// A value of 0 would panic, this is already accounted for in config validation, therefor it is handed beforehand
-	if e.config.IncrementalRolloverPolicy.Interval == 0 {
-		return false // Rollover is explicitly disabled.
-	}
-
-	effectiveInterval := e.config.IncrementalRolloverPolicy.Interval
-
-	// NOTE: For multi-day intervals, the full implementation requires normalizing to local midnight
-	// and calculating epoch day buckets to correctly handle DST and guarantee a new snapshot
-	// at the start of every N-day cycle.
-
-	// Multi-Day Intervals (Weekly, Every 3 Days, etc.)
-	if effectiveInterval >= 24*time.Hour {
-		// We want to ignore hours/minutes and just compare "Day Numbers".
-
-		// Ensure Rollover happens at Local Midnight ---
-		// To align the rollover boundary with the user's local calendar day (e.g.,
-		// a daily backup always rolls over at 00:00 local time, regardless of DST),
-		// we must perform the "day number" comparison in the system's local timezone.
-		// 1. Normalize both times to the system's local midnight.
-		loc := time.Local
-
-		y1, m1, d1 := lastBackupTime.In(loc).Date() // Convert last backup to current/local time
-		lastDayMidnight := time.Date(y1, m1, d1, 0, 0, 0, 0, loc)
-
-		y2, m2, d2 := currentRun.timestampUTC.In(loc).Date()
-		currentDayMidnight := time.Date(y2, m2, d2, 0, 0, 0, 0, loc)
-
-		// 2. Calculate days since a fixed anchor (Unix Epoch Local).
-		//    We use 24h logic here because we have already normalized to midnight.
-		// Force the math to occur in the current system's timezone
-		anchor := time.Date(1970, 1, 1, 0, 0, 0, 0, loc)
-
-		lastDayNum := int64(lastDayMidnight.Sub(anchor).Hours() / 24)
-		currentDayNum := int64(currentDayMidnight.Sub(anchor).Hours() / 24)
-
-		// 3. Calculate the Bucket Size in Days (e.g., 168h / 24h = 7 days)
-		daysInBucket := int64(effectiveInterval / (24 * time.Hour))
-
-		// 4. Check if we have crossed a bucket boundary
-		//    Example: Interval = 7 days.
-		//    Day 10 / 7 = 1.  Day 12 / 7 = 1.  (No Rollover)
-		//    Day 13 / 7 = 1.  Day 14 / 7 = 2.  (Rollover!)
-		return (currentDayNum / daysInBucket) != (lastDayNum / daysInBucket)
-	}
-	// Sub-Daily Intervals (Hourly, 6-Hourly)
-	// Use standard truncation for clean UTC time buckets.
-	lastBackupBoundary := lastBackupTime.Truncate(effectiveInterval)
-	currentBackupBoundary := currentRun.timestampUTC.Truncate(effectiveInterval)
-
-	return !currentBackupBoundary.Equal(lastBackupBoundary)
-}
-
-// checkIncrementalRolloverInterval validates the user-configured manual rollover interval against the
-// retention policy. It warns the user if the interval is too slow to satisfy the
-// frequency of the configured retention slots (e.g., hourly retention with a daily
-// interval).
-func (e *Engine) checkIncrementalRolloverInterval() {
-	policy := e.config.IncrementalRetentionPolicy
-	effectiveInterval := e.config.IncrementalRolloverPolicy.Interval
-
-	if effectiveInterval == 0 {
-		plog.Debug("Rollover is disabled (rolloverPolicy.interval = 0). Retention policy warnings for interval mismatch are suppressed.")
-		return // No warnings if rollover is disabled.
-	}
-
-	// 1. Check Hourly Mismatch
-	if policy.Hours > 0 && effectiveInterval > 1*time.Hour {
-		plog.Warn("Configuration Mismatch: Hourly retention is enabled, but rollover is too slow.",
-			"keep_hourly", policy.Hours,
-			"rollover_interval", e.config.IncrementalRolloverPolicy.Interval,
-			"impact", "Hourly slots will fill at the speed of the rollover interval.")
-	}
-
-	// 2. Check Daily Mismatch
-	if policy.Days > 0 && effectiveInterval > 24*time.Hour {
-		plog.Warn("Configuration Mismatch: Daily retention is enabled, but rollover is too slow.",
-			"keep_daily", policy.Days,
-			"rollover_interval", e.config.IncrementalRolloverPolicy.Interval,
-			"impact", "Daily slots will be filled by Weekly/Monthly backups, delaying the 'Weekly' retention rule.")
-	}
-
-	// 3. Check Weekly Mismatch
-	if policy.Weeks > 0 && effectiveInterval > 168*time.Hour {
-		plog.Warn("Configuration Mismatch: Weekly retention is enabled, but rollover is too slow.",
-			"keep_weekly", policy.Weeks,
-			"rollover_interval", e.config.IncrementalRolloverPolicy.Interval)
-	}
-
-	// 4. Check Monthly Mismatch
-	// We use 30 days (720h) as the rough approximation for a month.
-	// If the rollover is slower than 30 days (e.g., 60 days), we cannot satisfy "Keep N Monthly".
-	avgMonth := 30 * 24 * time.Hour
-	if policy.Months > 0 && e.config.IncrementalRolloverPolicy.Interval > avgMonth {
-		plog.Warn("Configuration Mismatch: Monthly retention is enabled, but rollover is too slow.",
-			"keep_monthly", policy.Months,
-			"rollover_interval", e.config.IncrementalRolloverPolicy.Interval,
-			"impact", "Backups occur less frequently than once a month; some calendar months will have no backup.")
-	}
-
-	// 5. Check Yearly Mismatch
-	// We use 365 days as the rough approximation for a year.
-	avgYear := 365 * 24 * time.Hour
-	if policy.Years > 0 && e.config.IncrementalRolloverPolicy.Interval > avgYear {
-		plog.Warn("Configuration Mismatch: Yearly retention is enabled, but rollover is too slow.",
-			"keep_yearly", policy.Years,
-			"rollover_interval", e.config.IncrementalRolloverPolicy.Interval,
-			"impact", "Backups occur less frequently than once a year; some calendar years will have no backup.")
-	}
 }
 
 // applyRetentionFor scans a given directory and deletes backups
@@ -727,42 +527,38 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 	// If the user asked for Daily backups for instance, but the interval is > 24h (e.g. Weekly),
 	// add a note so they understand why they don't see 7 daily backups immediately.
 	var planParts []string
+
 	if retentionPolicy.Hours > 0 {
 		msg := fmt.Sprintf("%d hourly", len(savedHourly))
-		if e.config.IncrementalRolloverPolicy.Interval > 1*time.Hour {
+		if e.archiver.IsSlowFillingArchive(1 * time.Hour) {
 			msg += " (slow-fill)"
 		}
 		planParts = append(planParts, msg)
 	}
 	if retentionPolicy.Days > 0 {
 		msg := fmt.Sprintf("%d daily", len(savedDaily))
-		if e.config.IncrementalRolloverPolicy.Interval > 24*time.Hour {
+		if e.archiver.IsSlowFillingArchive(24 * time.Hour) {
 			msg += " (slow-fill)"
 		}
 		planParts = append(planParts, msg)
 	}
 	if retentionPolicy.Weeks > 0 {
 		msg := fmt.Sprintf("%d weekly", len(savedWeekly))
-		// 168 hours is exactly 7 days
-		if e.config.IncrementalRolloverPolicy.Interval > 168*time.Hour {
+		if e.archiver.IsSlowFillingArchive(7 * 24 * time.Hour) {
 			msg += " (slow-fill)"
 		}
 		planParts = append(planParts, msg)
 	}
 	if retentionPolicy.Months > 0 {
 		msg := fmt.Sprintf("%d monthly", len(savedMonthly))
-		// Use 30 days (720 hours) as the monthly threshold
-		avgMonth := 30 * 24 * time.Hour
-		if e.config.IncrementalRolloverPolicy.Interval > avgMonth {
+		if e.archiver.IsSlowFillingArchive(30 * 24 * time.Hour) { // Approximation
 			msg += " (slow-fill)"
 		}
 		planParts = append(planParts, msg)
 	}
 	if retentionPolicy.Years > 0 {
 		msg := fmt.Sprintf("%d yearly", len(savedYearly))
-		// Use 365 days (8760 hours) as the yearly threshold
-		avgYear := 365 * 24 * time.Hour
-		if e.config.IncrementalRolloverPolicy.Interval > avgYear {
+		if e.archiver.IsSlowFillingArchive(365 * 24 * time.Hour) { // Approximation
 			msg += " (slow-fill)"
 		}
 		planParts = append(planParts, msg)

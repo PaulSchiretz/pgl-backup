@@ -185,47 +185,47 @@ type BackupEnginePerformanceConfig struct {
 	CopyBufferSizeKB int `json:"copyBufferSizeKB" comment:"Size of the I/O buffer in kilobytes for file copies. Default is 4096 (4MB)."`
 }
 
-// RolloverIntervalMode represents how the rollover interval is determined.
-type RolloverIntervalMode int
+// ArchiveIntervalMode represents how the archive interval is determined.
+type ArchiveIntervalMode int
 
 const (
 	// ManualInterval uses the user-specified interval value directly.
-	ManualInterval RolloverIntervalMode = iota // 0
+	ManualInterval ArchiveIntervalMode = iota // 0
 	// AutoInterval calculates the interval based on the finest-grained retention policy.
 	AutoInterval // 1
 )
 
-var rolloverIntervalModeToString = map[RolloverIntervalMode]string{ManualInterval: "manual", AutoInterval: "auto"}
-var stringToRolloverIntervalMode = util.InvertMap(rolloverIntervalModeToString)
+var archiveIntervalModeToString = map[ArchiveIntervalMode]string{ManualInterval: "manual", AutoInterval: "auto"}
+var stringToArchiveIntervalMode = util.InvertMap(archiveIntervalModeToString)
 
-// String returns the string representation of a RolloverIntervalMode.
-func (rim RolloverIntervalMode) String() string {
-	if str, ok := rolloverIntervalModeToString[rim]; ok {
+// String returns the string representation of a ArchiveIntervalMode.
+func (rim ArchiveIntervalMode) String() string {
+	if str, ok := archiveIntervalModeToString[rim]; ok {
 		return str
 	}
 	return fmt.Sprintf("unknown_interval_mode(%d)", rim)
 }
 
-// RolloverIntervalModeFromString parses a string and returns the corresponding RolloverIntervalMode.
-func RolloverIntervalModeFromString(s string) (RolloverIntervalMode, error) {
-	if mode, ok := stringToRolloverIntervalMode[s]; ok {
+// ArchiveIntervalModeFromString parses a string and returns the corresponding ArchiveIntervalMode.
+func ArchiveIntervalModeFromString(s string) (ArchiveIntervalMode, error) {
+	if mode, ok := stringToArchiveIntervalMode[s]; ok {
 		return mode, nil
 	}
-	return 0, fmt.Errorf("invalid RolloverIntervalMode: %q. Must be 'manual' or 'auto'", s)
+	return 0, fmt.Errorf("invalid ArchiveIntervalMode: %q. Must be 'manual' or 'auto'", s)
 }
 
-// MarshalJSON implements the json.Marshaler interface for RolloverIntervalMode.
-func (rim RolloverIntervalMode) MarshalJSON() ([]byte, error) {
+// MarshalJSON implements the json.Marshaler interface for ArchiveIntervalMode.
+func (rim ArchiveIntervalMode) MarshalJSON() ([]byte, error) {
 	return json.Marshal(rim.String())
 }
 
-// UnmarshalJSON implements the json.Unmarshaler interface for RolloverIntervalMode.
-func (rim *RolloverIntervalMode) UnmarshalJSON(data []byte) error {
+// UnmarshalJSON implements the json.Unmarshaler interface for ArchiveIntervalMode.
+func (rim *ArchiveIntervalMode) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
-		return fmt.Errorf("RolloverIntervalMode should be a string, got %s", data)
+		return fmt.Errorf("ArchiveIntervalMode should be a string, got %s", data)
 	}
-	mode, err := RolloverIntervalModeFromString(s)
+	mode, err := ArchiveIntervalModeFromString(s)
 	if err != nil {
 		return err
 	}
@@ -233,27 +233,27 @@ func (rim *RolloverIntervalMode) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-type IncrementalRolloverPolicyConfig struct {
+type IncrementalArchivePolicyConfig struct {
 	// Mode determines if the interval is set manually or derived automatically from the retention policy.
-	Mode RolloverIntervalMode `json:"mode"`
+	Mode ArchiveIntervalMode `json:"mode"`
 	// Interval is the duration after which a new backup archive is created in incremental mode (e.g., "24h", "7d").
 	// This is only used when Mode is 'manual'.
 	Interval time.Duration `json:"interval,omitempty"`
 }
 
 type Config struct {
-	Mode                       BackupMode                      `json:"mode"`
-	IncrementalRolloverPolicy  IncrementalRolloverPolicyConfig `json:"incrementalRolloverPolicy,omitempty"`
-	Engine                     BackupEngineConfig              `json:"engine"` // Keep this for engine-specific settings
-	LogLevel                   string                          `json:"logLevel"`
-	DryRun                     bool                            `json:"dryRun"`
-	FailFast                   bool                            `json:"failFast"`
-	Metrics                    bool                            `json:"metrics,omitempty"`
-	Naming                     BackupNamingConfig              `json:"naming"`
-	Paths                      BackupPathConfig                `json:"paths"`
-	IncrementalRetentionPolicy BackupRetentionPolicyConfig     `json:"incrementalRetentionPolicy,omitempty"`
-	SnapshotRetentionPolicy    BackupRetentionPolicyConfig     `json:"snapshotRetentionPolicy,omitempty"`
-	Hooks                      BackupHooksConfig               `json:"hooks,omitempty"`
+	Mode                       BackupMode                     `json:"mode"`
+	IncrementalArchivePolicy   IncrementalArchivePolicyConfig `json:"incrementalArchivePolicy,omitempty"`
+	Engine                     BackupEngineConfig             `json:"engine"` // Keep this for engine-specific settings
+	LogLevel                   string                         `json:"logLevel"`
+	DryRun                     bool                           `json:"dryRun"`
+	FailFast                   bool                           `json:"failFast"`
+	Metrics                    bool                           `json:"metrics,omitempty"`
+	Naming                     BackupNamingConfig             `json:"naming"`
+	Paths                      BackupPathConfig               `json:"paths"`
+	IncrementalRetentionPolicy BackupRetentionPolicyConfig    `json:"incrementalRetentionPolicy,omitempty"`
+	SnapshotRetentionPolicy    BackupRetentionPolicyConfig    `json:"snapshotRetentionPolicy,omitempty"`
+	Hooks                      BackupHooksConfig              `json:"hooks,omitempty"`
 }
 
 // NewDefault creates and returns a Config struct with sensible default
@@ -264,7 +264,7 @@ func NewDefault() Config {
 	// Power users on Windows can still opt-in to 'robocopy' as a battle-tested alternative.
 	return Config{
 		Mode: IncrementalMode, // Default mode
-		IncrementalRolloverPolicy: IncrementalRolloverPolicyConfig{
+		IncrementalArchivePolicy: IncrementalArchivePolicyConfig{
 			Mode:     AutoInterval,   // Default to auto-adjusting the interval based on the retention policy.
 			Interval: 24 * time.Hour, // Interval will be calculated by the engine in 'auto' mode.
 			// If a user switches to 'manual' mode, they must specify an interval.
@@ -449,7 +449,7 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("incrementalSubDir cannot be empty in incremental mode")
 		}
 		// Disallow path separators to ensure the archives directory is a direct child of the target.
-		// This is critical for guaranteeing that the atomic `os.Rename` operation during rollover
+		// This is critical for guaranteeing that the atomic `os.Rename` operation during archive
 		// works correctly, as it requires the source and destination to be on the same filesystem.
 		if strings.ContainsAny(c.Paths.ArchivesSubDir, `\/`) {
 			return fmt.Errorf("archivesSubDir cannot contain path separators ('/' or '\\')")
@@ -492,8 +492,8 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("copyBufferSizeKB must be greater than 0")
 	}
 	if c.Mode == IncrementalMode {
-		if c.IncrementalRolloverPolicy.Mode == ManualInterval && c.IncrementalRolloverPolicy.Interval < 0 {
-			return fmt.Errorf("incrementalRolloverPolicy.interval cannot be negative when mode is 'manual'. Use '0' to disable rollover")
+		if c.IncrementalArchivePolicy.Mode == ManualInterval && c.IncrementalArchivePolicy.Interval < 0 {
+			return fmt.Errorf("incrementalArchivePolicy.interval cannot be negative when mode is 'manual'. Use '0' to disable archive")
 		}
 	}
 
@@ -535,9 +535,9 @@ func (c *Config) LogSummary() {
 	case IncrementalMode:
 		logArgs = append(logArgs, "incremental_subdir", c.Paths.IncrementalSubDir)
 		logArgs = append(logArgs, "archives_subdir", c.Paths.ArchivesSubDir)
-		logArgs = append(logArgs, "rollover_mode", c.IncrementalRolloverPolicy.Mode)
-		if c.IncrementalRolloverPolicy.Mode == ManualInterval {
-			logArgs = append(logArgs, "rollover_interval", c.IncrementalRolloverPolicy.Interval)
+		logArgs = append(logArgs, "archive_mode", c.IncrementalArchivePolicy.Mode)
+		if c.IncrementalArchivePolicy.Mode == ManualInterval {
+			logArgs = append(logArgs, "archive_interval", c.IncrementalArchivePolicy.Interval)
 		}
 	case SnapshotMode:
 		logArgs = append(logArgs, "snapshots_subdir", c.Paths.SnapshotsSubDir)

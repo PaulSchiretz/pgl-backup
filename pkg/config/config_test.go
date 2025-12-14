@@ -91,28 +91,28 @@ func TestConfig_Validate(t *testing.T) {
 		}
 	})
 
-	t.Run("Invalid RolloverInterval", func(t *testing.T) {
+	t.Run("Invalid ArchiveInterval", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Mode = IncrementalMode
 
 		// Test negative interval in manual mode (should error)
-		cfg.IncrementalRolloverPolicy.Mode = ManualInterval
-		cfg.IncrementalRolloverPolicy.Interval = -1 * time.Hour
+		cfg.IncrementalArchivePolicy.Mode = ManualInterval
+		cfg.IncrementalArchivePolicy.Interval = -1 * time.Hour
 		if err := cfg.Validate(); err == nil {
-			t.Error("expected error for negative rollover interval in manual mode, but got nil")
+			t.Error("expected error for negative archive interval in manual mode, but got nil")
 		}
 
-		// Test zero interval in manual mode (should NOT error, as it disables rollover)
-		cfg.IncrementalRolloverPolicy.Interval = 0
+		// Test zero interval in manual mode (should NOT error, as it disables archive)
+		cfg.IncrementalArchivePolicy.Interval = 0
 		if err := cfg.Validate(); err != nil {
-			t.Errorf("expected no error for zero rollover interval in manual mode (disables rollover), but got: %v", err)
+			t.Errorf("expected no error for zero archive interval in manual mode (disables archive), but got: %v", err)
 		}
 
 		// In auto mode, the interval is calculated, so a user-set 0 should not error.
-		cfg.IncrementalRolloverPolicy.Mode = AutoInterval
-		cfg.IncrementalRolloverPolicy.Interval = 0
+		cfg.IncrementalArchivePolicy.Mode = AutoInterval
+		cfg.IncrementalArchivePolicy.Interval = 0
 		if err := cfg.Validate(); err != nil {
-			t.Errorf("expected no error for zero rollover interval in auto mode (value is ignored), but got: %v", err)
+			t.Errorf("expected no error for zero archive interval in auto mode (value is ignored), but got: %v", err)
 		}
 	})
 
@@ -382,8 +382,8 @@ func TestLoad(t *testing.T) {
 			t.Errorf("expected prefix to be 'custom_prefix_', but got %s", cfg.Naming.Prefix)
 		}
 		// Check that a default value not in the file is still present
-		if cfg.IncrementalRolloverPolicy.Mode != AutoInterval {
-			t.Errorf("expected default rollover mode to be auto, but got %v", cfg.IncrementalRolloverPolicy.Mode)
+		if cfg.IncrementalArchivePolicy.Mode != AutoInterval {
+			t.Errorf("expected default archive mode to be auto, but got %v", cfg.IncrementalArchivePolicy.Mode)
 		}
 	})
 

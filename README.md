@@ -11,8 +11,8 @@
 *   **Backup Modes**:
     *   **Incremental (default)**: Maintains a single "current" backup directory that is efficiently updated. At a configurable interval (e.g., daily), the "current" backup is rolled over into a timestamped archive. This is ideal for frequent, low-overhead backups.
     *   **Snapshot**: Each backup run creates a new, unique, timestamped directory. This is useful for creating distinct, point-in-time copies.
-*   **Flexible Retention Policy**: Automatically cleans up outdated backups by keeping a configurable number of hourly, daily, weekly, and monthly archives. This gives you a fine-grained history without filling up your disk.
-*   **Intelligent Rollover (Incremental Mode)**: The backup interval can be set to `auto` (the default) to automatically align with your retention policy. If you keep hourly backups, it will roll over hourly. This prevents configuration mismatches and ensures your retention slots are filled efficiently.
+*   **Flexible Retention Policy**: Automatically cleans up outdated backups by keeping a configurable number of hourly, daily, weekly, monthly, and yearly archives. This gives you a fine-grained history without filling up your disk.
+*   **Intelligent Archiving (Incremental Mode)**: The archive interval can be set to `auto` (the default) to automatically align with your retention policy. If you keep hourly backups, it will archive hourly. This prevents configuration mismatches and ensures your retention slots are filled efficiently.
 *   **Concurrency Safe**: A robust file-locking mechanism prevents multiple backup instances from running against the same target directory simultaneously, protecting data integrity.
 *   **Pre- and Post-Backup Hooks**: Execute custom shell commands before the sync begins or after it completes, perfect for tasks like dumping a database or sending a notification.
 *   **Adjustable Configuration**: Configure backups using a simple `pgl-backup.config.json` JSON file, and override any setting with command-line flags for one-off tasks.
@@ -63,12 +63,12 @@ This command will:
 
 ### Step 2: Review Configuration (Optional)
 
-Open the newly created `pgl-backup.config.json` file. It will look something like this, filled with sensible defaults. You can adjust the retention policy, rollover interval, or add exclusions.
+Open the newly created `pgl-backup.config.json` file. It will look something like this, filled with sensible defaults. You can adjust the retention policy, archive policy, or add exclusions.
 
 ```json
 {
   "mode": "incremental",
-  "incrementalRolloverPolicy": {
+  "incrementalArchivePolicy": {
     "mode": "auto",
     "interval": "24h0m0s"
   },
@@ -234,8 +234,8 @@ All command-line flags can be set in the `pgl-backup.config.json` file.
 | `log-level` / `logLevel`        | `string`      | `"info"`                              | Set the logging level: `"debug"`, `"info"`, `"warn"`, or `"error"`.                                     |
 | `metrics` / `metrics`           | `bool`        | `true`                                | If true, enables detailed performance and file-counting metrics.                                        |
 | `sync-engine` / `engine.type`   | `string`      | `"native"`                            | The sync engine to use: `"native"` or `"robocopy"` (Windows only).                                      |
-| `incrementalRolloverPolicy.mode` | `string` | `"auto"` | Rollover policy mode: `"auto"` (derives interval from retention policy) or `"manual"`. |
-| `incrementalRolloverPolicy.interval` | `duration` | `"24h"` | In `manual` mode, the interval after which a new archive is created (e.g., "24h", "168h"). Use "0" to disable rollover. |
+| `incrementalArchivePolicy.mode` | `string` | `"auto"` | Archive interval mode: `"auto"` (derives interval from retention policy) or `"manual"`. In `auto` mode, if the retention policy is disabled, archiving is also disabled. |
+| `incrementalArchivePolicy.interval` | `duration` | `"24h"` | In `manual` mode, the interval after which a new archive is created (e.g., "24h", "168h"). Use "0" to disable archiving. |
 | `incrementalRetentionPolicy.enabled`         | `bool`         | `true`                             | Enables the retention policy for incremental mode archives.
 | `incrementalRetentionPolicy.hours`         | `int`         | `0`                                   | Number of recent hourly incremental archives to keep.                                                                |
 | `incrementalRetentionPolicy.days`          | `int`         | `7`                                   | Number of recent daily incremental archives to keep.                                                                 |
@@ -251,7 +251,7 @@ All command-line flags can be set in the `pgl-backup.config.json` file.
 | `defaultExcludeFiles`           | `[]string`    | `[*.tmp, *.temp, *.swp, *.lnk, ~*, desktop.ini, .DS_Store, Thumbs.db, Icon\r]`                     | The list of default file patterns to exclude. Can be customized.                                        |
 | `defaultExcludeDirs`            | `[]string`    | `[@tmp, @eadir, .SynologyWorkingDirectory, #recycle, $Recycle.Bin]`                     | The list of default directory patterns to exclude. Can be customized.                                                           |
 | `user-exclude-files` / `userExcludeFiles`| `[]string`    | `[]`                                  | List of file patterns to exclude.                                                                       |
-| `user-exclude-dirs` / `userExcludeDirs`  | `[]string`    | `[]`                                  | List of directory patterns to exclude.                                                                  |                                |
+| `user-exclude-dirs` / `userExcludeDirs`  | `[]string`    | `[]`                                  | List of directory patterns to exclude.                                                                  |
 | `pre-backup-hooks` / `preBackup`| `[]string`    | `[]`                                  | List of shell commands to run before the backup.                                                        |
 | `post-backup-hooks` / `postBackup`| `[]string`    | `[]`                                  | List of shell commands to run after the backup.                                                         |
 | `preserve-source-name` / `paths.preserveSourceDirectoryName` | `bool` | `true` | If true, appends the source directory's name to the destination path. |
@@ -286,7 +286,7 @@ The best policy depends on how much data you are backing up and how much disk sp
 #### The "Simple" (Minimal)
 **Goal**: A minimal policy for users who need a basic safety net without using much disk space. It provides a few recent recovery points.
 **Total Backups Stored**: ~4 (2 daily + 1 weekly + 1 monthly)
-**Auto Rollover Sets To**: 24 Hours
+**Auto Archive Interval Sets To**: 24 Hours
 
 ```json
 "incrementalRetentionPolicy": {
@@ -303,7 +303,7 @@ The best policy depends on how much data you are backing up and how much disk sp
 #### The "Default" (Balanced)
 **Goal**: A balanced, "set-it-and-forget-it" policy that provides a good mix of recent and long-term history without using excessive disk space. This is the default policy when you first initialize `pgl-backup`.
 **Total Backups Stored**: ~15 (7 daily + 4 weekly + 3 monthly + 1 yearly)
-**Auto Rollover Sets To**: 24 Hours
+**Auto Archive Interval Sets To**: 24 Hours
 
 ```json
 "incrementalRetentionPolicy": {
@@ -319,7 +319,7 @@ The best policy depends on how much data you are backing up and how much disk sp
 #### The "Safety Net" (Developer Machine)
 **Goal**: Protect active work where recent recovery is critical. The priority is being able to undo a mistake made an hour ago. Long-term history is less important.
 **Total Backups Stored**: ~31 (24 hourly + 7 daily)
-**Auto Rollover Sets To**: 1 Hour
+**Auto Archive Interval Sets To**: 1 Hour
 
 ```json
 "incrementalRetentionPolicy": {
@@ -334,7 +334,7 @@ The best policy depends on how much data you are backing up and how much disk sp
 #### The "Standard GFS" (Balanced)
 **Goal**: The industry standard for production servers. It balances a reasonable safety net (1 week of daily backups) with a solid historical archive (1 year) without using excessive storage.
 **Total Backups Stored**: ~23 (7 daily + 4 weekly + 12 monthly)
-**Auto Rollover Sets To**: 24 Hours
+**Auto Archive Interval Sets To**: 24 Hours
 
 ```json
 "incrementalRetentionPolicy": {
@@ -350,7 +350,7 @@ The best policy depends on how much data you are backing up and how much disk sp
 #### The "Legal Compliance" (Long-Term Archive)
 **Goal**: Audit trails and regulatory compliance (e.g., tax or financial data). Recent recovery is less important than proving what data existed 5 years ago.
 **Total Backups Stored**: ~49 (30 daily + 12 monthly + 7 yearly)
-**Auto Rollover Sets To**: 24 Hours
+**Auto Archive Interval Sets To**: 24 Hours
 
 ```json
 "incrementalRetentionPolicy": {
@@ -366,7 +366,7 @@ The best policy depends on how much data you are backing up and how much disk sp
 #### The "Home Media" (Minimalist)
 **Goal**: Backing up terabytes of movies/photos where data rarely changes and storage costs are high. You just want a few recent versions in case of accidental deletion.
 **Total Backups Stored**: ~7 (2 daily + 2 weekly + 2 monthly + 1 yearly)
-**Auto Rollover Sets To**: 24 Hours
+**Auto Archive Interval Sets To**: 24 Hours
 
 ```json
 "incrementalRetentionPolicy": {

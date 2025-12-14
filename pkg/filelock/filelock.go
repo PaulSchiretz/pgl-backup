@@ -66,6 +66,9 @@ var (
 
 // Acquire attempts to acquire the lock.
 // ctx is used for the lifecycle of the acquisition attempt, not the background heartbeat.
+// It returns a non-nil Lock on success.
+// It returns (nil, *ErrLockActive) if the lock is already held.
+// It returns (nil, error) for any other failure.
 func Acquire(ctx context.Context, lockFilePath string, appID string) (*Lock, error) {
 	// We will attempt to acquire multiple times in case of race conditions during cleanup
 	maxAttempts := 3

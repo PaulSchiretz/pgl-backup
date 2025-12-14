@@ -39,6 +39,22 @@ func (m *mockSyncer) Sync(ctx context.Context, src, dst string, mirror bool, exc
 	return nil
 }
 
+// mockArchiver is a mock implementation of patharchive.Archiver for testing.
+type mockArchiver struct {
+	archiveCalled bool
+	err           error
+	isSlowFill    bool
+}
+
+func (m *mockArchiver) Archive(ctx context.Context, currentBackupPath string, lastBackupUTC, currentBackupUTC time.Time) error {
+	m.archiveCalled = true
+	return m.err
+}
+
+func (m *mockArchiver) IsSlowFillingArchive(requiredInterval time.Duration) bool {
+	return m.isSlowFill
+}
+
 // Helper to create a dummy engine for testing.
 func newTestEngine(cfg config.Config) *Engine {
 	e := New(cfg, "test-version")
@@ -106,105 +122,6 @@ func TestInitializeBackupTarget(t *testing.T) {
 			t.Error("expected config file NOT to be created on failure, but it was")
 		}
 	})
-}
-
-func TestShouldRollover(t *testing.T) {
-	// Test cases for shouldRollover
-	testCases := []struct {
-		name              string
-		interval          time.Duration
-		lastBackup        time.Time
-		currentBackup     time.Time
-		shouldRollover    bool
-		expectPanic       bool // For invalid intervals
-		effectiveInterval time.Duration
-	}{
-		// Sub-Daily Tests (UTC based)
-		{
-			name:           "Hourly - Same Hour",
-			interval:       time.Hour,
-			lastBackup:     time.Date(2023, 10, 26, 14, 10, 0, 0, time.UTC),
-			currentBackup:  time.Date(2023, 10, 26, 14, 55, 0, 0, time.UTC),
-			shouldRollover: false,
-		},
-		{
-			name:           "Hourly - Next Hour",
-			interval:       time.Hour,
-			lastBackup:     time.Date(2023, 10, 26, 14, 55, 0, 0, time.UTC),
-			currentBackup:  time.Date(2023, 10, 26, 15, 05, 0, 0, time.UTC),
-			shouldRollover: true,
-		},
-		// Daily Tests (Local Timezone based)
-		// These tests use UTC but cross the midnight boundary, which shouldRollover
-		// will evaluate using the system's local time.
-		{
-			name:       "Daily - Same Day",
-			interval:   24 * time.Hour,
-			lastBackup: time.Date(2023, 10, 26, 10, 0, 0, 0, time.UTC),
-			// Set current time only a few hours after the last backup. This guarantees
-			// they fall on the same local calendar day in any timezone.
-			currentBackup:  time.Date(2023, 10, 26, 14, 0, 0, 0, time.UTC),
-			shouldRollover: false,
-		},
-		{
-			name:       "Daily - Crosses Midnight",
-			interval:   24 * time.Hour,
-			lastBackup: time.Date(2023, 10, 26, 14, 0, 0, 0, time.UTC),
-			// We set the current time to be 26 hours after the last backup. This guarantees
-			// that no matter what the local timezone is (from UTC-12 to UTC+14), the two
-			// timestamps will fall on different calendar days.
-			currentBackup:  time.Date(2023, 10, 26, 14, 0, 0, 0, time.UTC).Add(26 * time.Hour),
-			shouldRollover: true,
-		},
-		{
-			name:           "Weekly - No Rollover (Day 3)",
-			interval:       7 * 24 * time.Hour,
-			lastBackup:     time.Date(2023, 10, 23, 12, 0, 0, 0, time.UTC), // Day D
-			currentBackup:  time.Date(2023, 10, 26, 12, 0, 0, 0, time.UTC), // Day D + 3
-			shouldRollover: false,                                          // 3 days is less than 7 days
-		},
-		{
-			name:           "Weekly - Rollover (Day 7 Boundary)",
-			interval:       7 * 24 * time.Hour,
-			lastBackup:     time.Date(2023, 10, 23, 12, 0, 0, 0, time.UTC), // Day D (Bucket B)
-			currentBackup:  time.Date(2023, 10, 30, 12, 0, 0, 0, time.UTC), // Day D + 7 (Bucket B + 1)
-			shouldRollover: true,                                           // Exactly 7 calendar days have elapsed, crossing the bucket
-		},
-		// Daylight Saving Time Change Test
-		{
-			name:           "Daily - Across DST Fallback",
-			interval:       24 * time.Hour,
-			lastBackup:     time.Date(2023, 11, 4, 12, 0, 0, 0, time.UTC), // Before DST change
-			currentBackup:  time.Date(2023, 11, 5, 12, 0, 0, 0, time.UTC), // After DST change
-			shouldRollover: true,
-		},
-		{
-			name:           "Daily - Across DST Spring Forward",
-			interval:       24 * time.Hour,
-			lastBackup:     time.Date(2023, 3, 11, 12, 0, 0, 0, time.UTC), // Before DST change
-			currentBackup:  time.Date(2023, 3, 12, 12, 0, 0, 0, time.UTC), // After DST change
-			shouldRollover: true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Arrange
-			cfg := config.NewDefault()
-			cfg.IncrementalRolloverPolicy.Interval = tc.interval
-
-			e := newTestEngine(cfg)
-			currentRun := &runState{timestampUTC: tc.currentBackup}
-
-			// Act
-			result := e.shouldRollover(tc.lastBackup, currentRun)
-
-			// Assert
-			if tc.shouldRollover != result {
-				t.Errorf("expected shouldRollover to be %v, but got %v", tc.shouldRollover, result)
-			}
-		})
-	}
 }
 
 func TestDetermineBackupsToKeep(t *testing.T) {
@@ -513,8 +430,8 @@ func TestDetermineBackupsToKeep_Promotion(t *testing.T) {
 	}
 
 	cfg := config.NewDefault()
-	// Set a rollover that is fast enough to not trigger "slow-fill" warnings
-	cfg.IncrementalRolloverPolicy.Interval = 1 * time.Hour
+	// Set a archive interval that is fast enough to not trigger "slow-fill" warnings
+	cfg.IncrementalArchivePolicy.Interval = 1 * time.Hour
 	e := newTestEngine(cfg)
 
 	// Act
@@ -545,80 +462,40 @@ func TestDetermineBackupsToKeep_Promotion(t *testing.T) {
 	}
 }
 
-func TestPerformRollover(t *testing.T) {
+func TestPrepareDestination_IncrementalMode(t *testing.T) {
 	// Arrange
 	tempDir := t.TempDir()
 	cfg := config.NewDefault()
+	cfg.Mode = config.IncrementalMode
 	cfg.Paths.TargetBase = tempDir
-	cfg.Paths.ArchivesSubDir = "Archives" // Explicitly set for test clarity
-	cfg.IncrementalRolloverPolicy.Interval = 24 * time.Hour
+	cfg.Paths.IncrementalSubDir = "latest"
 
 	e := newTestEngine(cfg)
-	currentRun := &runState{timestampUTC: time.Now().UTC().Add(25 * time.Hour)}
+	currentRun := &runState{timestampUTC: time.Now().UTC()}
 
-	// Create a "current" backup from yesterday
-	lastBackupTime := currentRun.timestampUTC.Add(-25 * time.Hour)
-	currentBackupDirName := cfg.Paths.IncrementalSubDir
-	createTestBackup(t, tempDir, currentBackupDirName, lastBackupTime)
+	// Create a dummy "current" backup to trigger the archiver
+	createTestBackup(t, tempDir, cfg.Paths.IncrementalSubDir, time.Now().Add(-25*time.Hour))
+
+	// Inject a mock archiver
+	mock := &mockArchiver{}
+	e.archiver = mock
 
 	// Act
-	err := e.performRollover(context.Background(), currentRun)
+	err := e.prepareDestination(context.Background(), currentRun)
 	if err != nil {
-		t.Fatalf("performRollover failed: %v", err)
+		t.Fatalf("prepareDestination failed: %v", err)
 	}
 
 	// Assert
-	// 1. The old "current" directory should be gone.
-	oldPath := filepath.Join(tempDir, currentBackupDirName)
-	_, err = os.Stat(oldPath)
-	if !os.IsNotExist(err) {
-		t.Errorf("expected old current directory to be renamed, but it still exists or another error occurred: %v", err)
+	// 1. The archiver should have been called because a "current" backup existed.
+	if !mock.archiveCalled {
+		t.Error("expected archiver.Archive to be called, but it was not")
 	}
 
-	// 2. A new archived directory should exist.
-	archiveTimestamp := config.FormatTimestampWithOffset(lastBackupTime)
-	archiveDirName := "PGL_Backup_" + archiveTimestamp
-	archivesSubDir := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir)
-	newPath := filepath.Join(archivesSubDir, archiveDirName)
-	_, err = os.Stat(newPath)
-	if err != nil {
-		t.Errorf("expected new archive directory to exist, but it does not: %v", err)
-	}
-}
-
-func TestPerformRollover_NoRollover(t *testing.T) {
-	// Arrange
-	tempDir := t.TempDir()
-	cfg := config.NewDefault()
-	cfg.Paths.TargetBase = tempDir
-	cfg.Paths.IncrementalSubDir = "test_current"
-	cfg.IncrementalRolloverPolicy.Interval = 24 * time.Hour
-
-	// To test this reliably, we need to control the timestamps precisely.
-	// Let's set the "current" run to be on a specific day.
-	currentRunTime := time.Date(2023, 10, 27, 14, 0, 0, 0, time.Local)
-
-	e := newTestEngine(cfg)
-	currentRun := &runState{timestampUTC: currentRunTime}
-
-	// Create a "current" backup from a few hours ago (same day)
-	// This is the timestamp that will be written to the metafile.
-	lastBackupTimeInMeta := currentRunTime.Add(-2 * time.Hour)
-	currentBackupDirName := cfg.Paths.IncrementalSubDir
-	createTestBackup(t, tempDir, currentBackupDirName, lastBackupTimeInMeta)
-
-	// Act
-	err := e.performRollover(context.Background(), currentRun)
-	if err != nil {
-		t.Fatalf("performRollover failed: %v", err)
-	}
-
-	// Assert
-	// The "current" directory should still exist, unchanged.
-	currentPath := filepath.Join(tempDir, currentBackupDirName)
-	_, err = os.Stat(currentPath)
-	if err != nil {
-		t.Errorf("current directory should not have been renamed, but it's missing or an error occurred: %v", err)
+	// 2. The target for the new sync should be the incremental directory.
+	expectedPath := filepath.Join(tempDir, cfg.Paths.IncrementalSubDir)
+	if expectedPath != currentRun.target {
+		t.Errorf("expected target path %q, but got %q", expectedPath, currentRun.target)
 	}
 }
 

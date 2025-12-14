@@ -244,7 +244,7 @@ func (r *syncRun) copyFileHelper(absSrcPath, absTrgPath string, task *syncTask, 
 			return nil // Success
 		}
 	}
-	return fmt.Errorf("failed to copy file %s after %d attempts: %w", absSrcPath, retryCount, lastErr)
+	return fmt.Errorf("failed to copy file from '%s' to '%s' after %d attempts: %w", absSrcPath, absTrgPath, retryCount, lastErr)
 }
 
 // preProcessExclusions analyzes and categorizes patterns to enable optimized matching later.
