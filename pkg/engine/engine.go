@@ -37,7 +37,7 @@ import (
 //    - Goal: To organize the backup history into intuitive, calendar-based slots for cleanup.
 //    - Logic: The `determineBackupsToKeep` function uses fixed calendar concepts (e.g.,
 //      `time.ISOWeek()`, `time.Format("2006-01-02")`) by examining the **UTC time** stored in
-//      the backup's metadata (`BackupTime`). This ensures that "keep one backup from last week"
+//      the backup's metadata (`TimestampUTC`). This ensures that "keep one backup from last week"
 //      always refers to a standard calendar week as defined in the UTC timezone, providing a
 //      clean, portable history.
 //
@@ -54,18 +54,18 @@ const (
 	yearFormat  = "2006"          // YYYY
 )
 
-// backupInfo holds the parsed time and name of a backup directory.
-type backupInfo struct {
-	Time time.Time
-	Name string
+// backupMetadataInfo holds the parsed metadata and directory name of a backup found on disk.
+type backupMetadataInfo struct {
+	RelPath  string
+	Metadata backupMetadata
 }
 
-// runMetadata holds metadata for a single execution of the backup engine.
-type runMetadata struct {
-	Version    string    `json:"version"`
-	BackupTime time.Time `json:"backupTime"`
-	Mode       string    `json:"mode"`
-	Source     string    `json:"source"`
+// backupMetadata holds metadata for a single backup, which is written to a metafile.
+type backupMetadata struct {
+	Version      string    `json:"version"`
+	TimestampUTC time.Time `json:"timestampUTC"`
+	Mode         string    `json:"mode"`
+	Source       string    `json:"source"`
 }
 
 // engineRunState holds the mutable state for a single execution of the backup engine.
@@ -370,18 +370,20 @@ func (e *Engine) performArchiving(ctx context.Context, runState *engineRunState)
 	incrementalDirName := e.config.Paths.IncrementalSubDir
 	currentBackupPath := filepath.Join(e.config.Paths.TargetBase, incrementalDirName)
 
-	metaData, err := e.readBackupMetafile(currentBackupPath)
-	if err != nil && !os.IsNotExist(err) {
+	metadata, err := e.readBackupMetafile(currentBackupPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// This is a normal condition on the first run; no previous backup to archive.
+			return nil
+		}
+		// Any other error (e.g., corrupt file, permissions) is a problem.
 		return fmt.Errorf("could not read previous backup metadata for archive check: %w", err)
 	}
 
-	// Only perform archiving if a previous backup exists.
-	if metaData != nil {
-		// Use the precise time from the file content, not the file's modification time.
-		currentBackupTimestampUTC := metaData.BackupTime
-		if err := e.archiver.Archive(ctx, currentBackupPath, currentBackupTimestampUTC, runState.currentTimestampUTC); err != nil {
-			return fmt.Errorf("error during backup archiving: %w", err)
-		}
+	// A valid metafile was found, so we can proceed with archiving.
+	currentBackupTimestampUTC := metadata.TimestampUTC
+	if err := e.archiver.Archive(ctx, currentBackupPath, currentBackupTimestampUTC, runState.currentTimestampUTC); err != nil {
+		return fmt.Errorf("error during backup archiving: %w", err)
 	}
 	return nil
 }
@@ -412,9 +414,8 @@ func (e *Engine) applyRetentionFor(ctx context.Context, policyTitle string, targ
 	// --- 3. Collect all backups that are not in our final `backupsToKeep` set ---
 	var dirsToDelete []string
 	for _, backup := range allBackups {
-		dirName := backup.Name
-		if _, shouldKeep := backupsToKeep[dirName]; !shouldKeep {
-			dirsToDelete = append(dirsToDelete, filepath.Join(targetDir, dirName))
+		if _, shouldKeep := backupsToKeep[backup.RelPath]; !shouldKeep {
+			dirsToDelete = append(dirsToDelete, filepath.Join(targetDir, backup.RelPath))
 		}
 	}
 
@@ -476,7 +477,7 @@ func (e *Engine) applyRetentionFor(ctx context.Context, policyTitle string, targ
 }
 
 // determineBackupsToKeep applies the retention policy to a sorted list of backups.
-func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy config.BackupRetentionPolicyConfig, policyTitle string) map[string]bool {
+func (e *Engine) determineBackupsToKeep(allBackups []backupMetadataInfo, retentionPolicy config.BackupRetentionPolicyConfig, policyTitle string) map[string]bool {
 	backupsToKeep := make(map[string]bool)
 
 	// Keep track of which periods we've already saved a backup for.
@@ -492,42 +493,42 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 		// This "promotes" a backup to the highest-frequency slot it qualifies for.
 
 		// Rule: Keep N hourly backups
-		hourKey := b.Time.Format(hourFormat)
+		hourKey := b.Metadata.TimestampUTC.Format(hourFormat)
 		if retentionPolicy.Hours > 0 && len(savedHourly) < retentionPolicy.Hours && !savedHourly[hourKey] {
-			backupsToKeep[b.Name] = true
+			backupsToKeep[b.RelPath] = true
 			savedHourly[hourKey] = true
 			continue // Promoted to hourly, skip other rules
 		}
 
 		// Rule: Keep N daily backups
-		dayKey := b.Time.Format(dayFormat)
+		dayKey := b.Metadata.TimestampUTC.Format(dayFormat)
 		if retentionPolicy.Days > 0 && len(savedDaily) < retentionPolicy.Days && !savedDaily[dayKey] {
-			backupsToKeep[b.Name] = true
+			backupsToKeep[b.RelPath] = true
 			savedDaily[dayKey] = true
 			continue // Promoted to daily
 		}
 
 		// Rule: Keep N weekly backups
-		year, week := b.Time.ISOWeek()
+		year, week := b.Metadata.TimestampUTC.ISOWeek()
 		weekKey := fmt.Sprintf(weekFormat, year, week)
 		if retentionPolicy.Weeks > 0 && len(savedWeekly) < retentionPolicy.Weeks && !savedWeekly[weekKey] {
-			backupsToKeep[b.Name] = true
+			backupsToKeep[b.RelPath] = true
 			savedWeekly[weekKey] = true
 			continue // Promoted to weekly
 		}
 
 		// Rule: Keep N monthly backups
-		monthKey := b.Time.Format(monthFormat)
+		monthKey := b.Metadata.TimestampUTC.Format(monthFormat)
 		if retentionPolicy.Months > 0 && len(savedMonthly) < retentionPolicy.Months && !savedMonthly[monthKey] {
-			backupsToKeep[b.Name] = true
+			backupsToKeep[b.RelPath] = true
 			savedMonthly[monthKey] = true
 			continue // Promoted to monthly
 		}
 
 		// Rule: Keep N yearly backups
-		yearKey := b.Time.Format(yearFormat)
+		yearKey := b.Metadata.TimestampUTC.Format(yearFormat)
 		if retentionPolicy.Years > 0 && len(savedYearly) < retentionPolicy.Years && !savedYearly[yearKey] {
-			backupsToKeep[b.Name] = true
+			backupsToKeep[b.RelPath] = true
 			savedYearly[yearKey] = true
 		}
 	}
@@ -558,14 +559,14 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupInfo, retentionPolicy
 // writeBackupMetafile creates and writes the .pgl-backup.meta.json file into a given directory.
 func (e *Engine) writeBackupMetafile(runState *engineRunState) error {
 	metaFilePath := filepath.Join(runState.target, config.MetaFileName)
-	metaData := runMetadata{
-		Version:    e.version,
-		BackupTime: runState.currentTimestampUTC,
-		Mode:       runState.mode.String(),
-		Source:     runState.source,
+	metadata := backupMetadata{
+		Version:      e.version,
+		TimestampUTC: runState.currentTimestampUTC,
+		Mode:         runState.mode.String(),
+		Source:       runState.source,
 	}
 
-	jsonData, err := json.MarshalIndent(metaData, "", "  ")
+	jsonData, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {
 		return fmt.Errorf("could not marshal meta data: %w", err)
 	}
@@ -583,29 +584,29 @@ func (e *Engine) writeBackupMetafile(runState *engineRunState) error {
 
 // readBackupMetafile opens and parses the .pgl-backup.meta.json file within a given directory.
 // It returns the parsed metadata or an error if the file cannot be read.
-func (e *Engine) readBackupMetafile(dirPath string) (*runMetadata, error) {
+func (e *Engine) readBackupMetafile(dirPath string) (backupMetadata, error) {
 	metaFilePath := filepath.Join(dirPath, config.MetaFileName)
 	metaFile, err := os.Open(metaFilePath)
 	if err != nil {
 		// Note: os.IsNotExist errors are handled by the caller.
-		return nil, err // Return the original error so os.IsNotExist works.
+		return backupMetadata{}, err // Return the original error so os.IsNotExist works.
 	}
 	defer metaFile.Close()
 
-	var metaData runMetadata
+	var metadata backupMetadata
 	decoder := json.NewDecoder(metaFile)
-	if err := decoder.Decode(&metaData); err != nil {
-		return nil, fmt.Errorf("could not parse metafile %s: %w. It may be corrupt", metaFilePath, err)
+	if err := decoder.Decode(&metadata); err != nil {
+		return backupMetadata{}, fmt.Errorf("could not parse metafile %s: %w. It may be corrupt", metaFilePath, err)
 	}
 
-	return &metaData, nil
+	return metadata, nil
 }
 
 // fetchSortedBackups scans a directory for valid backup folders, parses their
 // metadata to get an accurate timestamp, and returns them sorted from newest to oldest.
 // It relies exclusively on the `.pgl-backup.meta.json` file; directories without a
 // readable metafile are ignored for retention purposes.
-func (e *Engine) fetchSortedBackups(ctx context.Context, baseDir, excludeDir string) ([]backupInfo, error) {
+func (e *Engine) fetchSortedBackups(ctx context.Context, baseDir, excludeDir string) ([]backupMetadataInfo, error) {
 	prefix := e.config.Naming.Prefix
 
 	entries, err := os.ReadDir(baseDir)
@@ -617,7 +618,7 @@ func (e *Engine) fetchSortedBackups(ctx context.Context, baseDir, excludeDir str
 		return nil, fmt.Errorf("failed to read backup directory %s: %w", baseDir, err)
 	}
 
-	var backups []backupInfo
+	var backups []backupMetadataInfo
 	for _, entry := range entries {
 		// Check for cancellation during the directory scan.
 		select {
@@ -632,19 +633,19 @@ func (e *Engine) fetchSortedBackups(ctx context.Context, baseDir, excludeDir str
 		}
 
 		backupPath := filepath.Join(baseDir, dirName)
-		metaData, err := e.readBackupMetafile(backupPath)
+		metadata, err := e.readBackupMetafile(backupPath)
 		if err != nil {
 			plog.Warn("Skipping directory for retention check", "directory", dirName, "reason", err)
 			continue
 		}
 
 		// The metafile is the sole source of truth for the backup time.
-		backups = append(backups, backupInfo{Time: metaData.BackupTime, Name: dirName})
+		backups = append(backups, backupMetadataInfo{RelPath: dirName, Metadata: metadata})
 	}
 
 	// Sort all backups from newest to oldest for consistent processing.
 	sort.Slice(backups, func(i, j int) bool {
-		return backups[i].Time.After(backups[j].Time)
+		return backups[i].Metadata.TimestampUTC.After(backups[j].Metadata.TimestampUTC)
 	})
 
 	return backups, nil

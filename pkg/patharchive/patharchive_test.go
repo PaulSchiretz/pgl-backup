@@ -15,16 +15,16 @@ import (
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
 
-// runMetadata is a local copy for testing purposes, mirroring retention.RunMetadata
-type runMetadata struct {
-	Version    string    `json:"version"`
-	BackupTime time.Time `json:"backupTime"`
-	Mode       string    `json:"mode"`
-	Source     string    `json:"source"`
+// backupMetadata is a local copy for testing purposes, mirroring engine.backupMetadata
+type backupMetadata struct {
+	Version      string    `json:"version"`
+	TimestampUTC time.Time `json:"timestampUTC"`
+	Mode         string    `json:"mode"`
+	Source       string    `json:"source"`
 }
 
 // Helper to create a temporary directory structure for a backup.
-func createTestBackup(t *testing.T, baseDir, name string, backupTime time.Time) {
+func createTestBackup(t *testing.T, baseDir, name string, timestampUTC time.Time) {
 	t.Helper()
 	backupPath := filepath.Join(baseDir, name)
 	if err := os.MkdirAll(backupPath, 0755); err != nil {
@@ -32,13 +32,13 @@ func createTestBackup(t *testing.T, baseDir, name string, backupTime time.Time) 
 	}
 
 	metaFilePath := filepath.Join(backupPath, config.MetaFileName)
-	metaData := runMetadata{
-		Version:    "test",
-		BackupTime: backupTime,
-		Mode:       "incremental",
-		Source:     "/src",
+	metadata := backupMetadata{
+		Version:      "test",
+		TimestampUTC: timestampUTC,
+		Mode:         "incremental",
+		Source:       "/src",
 	}
-	jsonData, err := json.MarshalIndent(metaData, "", "  ")
+	jsonData, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {
 		t.Fatalf("could not marshal meta data: %v", err)
 	}
@@ -131,23 +131,23 @@ func TestArchive(t *testing.T) {
 
 		archiver := NewPathArchiver(cfg)
 
-		lastBackupTime := time.Now().UTC().Add(-25 * time.Hour)
-		currentBackupTime := time.Now().UTC()
-		currentBackupDir := filepath.Join(tempDir, "current")
-		createTestBackup(t, tempDir, "current", lastBackupTime)
+		currentBackupTimestampUTC := time.Now().UTC().Add(-25 * time.Hour)
+		currentTimestampUTC := time.Now().UTC()
+		currentBackupPath := filepath.Join(tempDir, "current")
+		createTestBackup(t, tempDir, "current", currentBackupTimestampUTC)
 
 		// Act
-		err := archiver.Archive(context.Background(), currentBackupDir, lastBackupTime, currentBackupTime)
+		err := archiver.Archive(context.Background(), currentBackupPath, currentBackupTimestampUTC, currentTimestampUTC)
 		if err != nil {
 			t.Fatalf("Archive failed: %v", err)
 		}
 
 		// Assert
-		if _, err := os.Stat(currentBackupDir); !os.IsNotExist(err) {
+		if _, err := os.Stat(currentBackupPath); !os.IsNotExist(err) {
 			t.Error("expected old current directory to be renamed, but it still exists")
 		}
 
-		archiveTimestamp := config.FormatTimestampWithOffset(lastBackupTime)
+		archiveTimestamp := config.FormatTimestampWithOffset(currentBackupTimestampUTC)
 		archiveDirName := cfg.Naming.Prefix + archiveTimestamp
 		expectedArchivePath := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir, archiveDirName)
 		if _, err := os.Stat(expectedArchivePath); os.IsNotExist(err) {
@@ -164,19 +164,19 @@ func TestArchive(t *testing.T) {
 
 		archiver := NewPathArchiver(cfg)
 
-		lastBackupTime := time.Now().UTC().Add(-2 * time.Hour)
-		currentBackupTime := time.Now().UTC()
-		currentBackupDir := filepath.Join(tempDir, "current")
-		createTestBackup(t, tempDir, "current", lastBackupTime)
+		currentBackupTimestampUTC := time.Now().UTC().Add(-2 * time.Hour)
+		currentTimestampUTC := time.Now().UTC()
+		currentBackupPath := filepath.Join(tempDir, "current")
+		createTestBackup(t, tempDir, "current", currentBackupTimestampUTC)
 
 		// Act
-		err := archiver.Archive(context.Background(), currentBackupDir, lastBackupTime, currentBackupTime)
+		err := archiver.Archive(context.Background(), currentBackupPath, currentBackupTimestampUTC, currentTimestampUTC)
 		if err != nil {
 			t.Fatalf("Archive failed unexpectedly: %v", err)
 		}
 
 		// Assert
-		if _, err := os.Stat(currentBackupDir); os.IsNotExist(err) {
+		if _, err := os.Stat(currentBackupPath); os.IsNotExist(err) {
 			t.Error("expected current directory to exist, but it was renamed")
 		}
 	})
@@ -191,19 +191,19 @@ func TestArchive(t *testing.T) {
 
 		archiver := NewPathArchiver(cfg)
 
-		lastBackupTime := time.Now().UTC().Add(-25 * time.Hour)
-		currentBackupTime := time.Now().UTC()
-		currentBackupDir := filepath.Join(tempDir, "current")
-		createTestBackup(t, tempDir, "current", lastBackupTime)
+		currentBackupTimestampUTC := time.Now().UTC().Add(-25 * time.Hour)
+		currentTimestampUTC := time.Now().UTC()
+		currentBackupPath := filepath.Join(tempDir, "current")
+		createTestBackup(t, tempDir, "current", currentBackupTimestampUTC)
 
 		// Manually create the destination to cause a conflict
-		archiveTimestamp := config.FormatTimestampWithOffset(lastBackupTime)
+		archiveTimestamp := config.FormatTimestampWithOffset(currentBackupTimestampUTC)
 		archiveDirName := cfg.Naming.Prefix + archiveTimestamp
 		conflictPath := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir, archiveDirName)
 		os.MkdirAll(conflictPath, 0755)
 
 		// Act
-		err := archiver.Archive(context.Background(), currentBackupDir, lastBackupTime, currentBackupTime)
+		err := archiver.Archive(context.Background(), currentBackupPath, currentBackupTimestampUTC, currentTimestampUTC)
 
 		// Assert
 		if err == nil {

@@ -57,7 +57,7 @@ func newTestEngine(cfg config.Config) *Engine {
 }
 
 // Helper to create a temporary directory structure for a backup.
-func createTestBackup(t *testing.T, e *Engine, baseDir, name string, backupTime time.Time) {
+func createTestBackup(t *testing.T, e *Engine, baseDir, name string, timestampUTC time.Time) {
 	t.Helper()
 	backupPath := filepath.Join(baseDir, name)
 	// The helper now needs to know if it should create the backup in the archives subdir.
@@ -68,7 +68,7 @@ func createTestBackup(t *testing.T, e *Engine, baseDir, name string, backupTime 
 	// Create a runState that mirrors what writeBackupMetafile expects.
 	runState := &engineRunState{
 		target:              backupPath,
-		currentTimestampUTC: backupTime,
+		currentTimestampUTC: timestampUTC,
 		source:              "/src", // A dummy source path for the metafile content.
 		mode:                config.IncrementalMode,
 	}
@@ -130,19 +130,19 @@ func TestInitializeBackupTarget(t *testing.T) {
 func TestDetermineBackupsToKeep(t *testing.T) {
 	// Arrange: Create a series of backups over time
 	now := time.Now()
-	allBackups := []backupInfo{
-		{Time: now.Add(-1 * time.Hour), Name: "backup_hourly_1"},        // Kept as hourly (Hour 1)
-		{Time: now.Add(-2 * time.Hour), Name: "backup_hourly_2"},        // Kept as hourly (Hour 2)
-		{Time: now.Add(-25 * time.Hour), Name: "backup_daily_1"},        // Kept as daily (Day 1)
-		{Time: now.Add(-50 * time.Hour), Name: "backup_daily_2"},        // Kept as daily (Day 2)
-		{Time: now.Add(-8 * 24 * time.Hour), Name: "backup_weekly_1"},   // Kept as weekly (Week 1)
-		{Time: now.Add(-16 * 24 * time.Hour), Name: "backup_weekly_2"},  // Kept as weekly (Week 2)
-		{Time: now.Add(-35 * 24 * time.Hour), Name: "backup_monthly_1"}, // Kept as monthly (Month 1)
-		{Time: now.Add(-70 * 24 * time.Hour), Name: "backup_monthly_2"}, // Kept as monthly (Month 2)
-		{Time: now.Add(-400 * 24 * time.Hour), Name: "backup_yearly_1"}, // Kept as yearly (Year 1)
-		{Time: now.Add(-800 * 24 * time.Hour), Name: "backup_yearly_2"}, // Kept as yearly (Year 2)
-		{Time: now.Add(-1200 * 24 * time.Hour), Name: "backup_old_1"},   // To be deleted
-		{Time: now.Add(-1600 * 24 * time.Hour), Name: "backup_old_2"},   // To be deleted
+	allBackups := []backupMetadataInfo{
+		{RelPath: "backup_hourly_1", Metadata: backupMetadata{TimestampUTC: now.Add(-1 * time.Hour)}},
+		{RelPath: "backup_hourly_2", Metadata: backupMetadata{TimestampUTC: now.Add(-2 * time.Hour)}},
+		{RelPath: "backup_daily_1", Metadata: backupMetadata{TimestampUTC: now.Add(-25 * time.Hour)}},
+		{RelPath: "backup_daily_2", Metadata: backupMetadata{TimestampUTC: now.Add(-50 * time.Hour)}},
+		{RelPath: "backup_weekly_1", Metadata: backupMetadata{TimestampUTC: now.Add(-8 * 24 * time.Hour)}},
+		{RelPath: "backup_weekly_2", Metadata: backupMetadata{TimestampUTC: now.Add(-16 * 24 * time.Hour)}},
+		{RelPath: "backup_monthly_1", Metadata: backupMetadata{TimestampUTC: now.Add(-35 * 24 * time.Hour)}},
+		{RelPath: "backup_monthly_2", Metadata: backupMetadata{TimestampUTC: now.Add(-70 * 24 * time.Hour)}},
+		{RelPath: "backup_yearly_1", Metadata: backupMetadata{TimestampUTC: now.Add(-400 * 24 * time.Hour)}},
+		{RelPath: "backup_yearly_2", Metadata: backupMetadata{TimestampUTC: now.Add(-800 * 24 * time.Hour)}},
+		{RelPath: "backup_old_1", Metadata: backupMetadata{TimestampUTC: now.Add(-1200 * 24 * time.Hour)}},
+		{RelPath: "backup_old_2", Metadata: backupMetadata{TimestampUTC: now.Add(-1600 * 24 * time.Hour)}},
 	}
 
 	policy := config.BackupRetentionPolicyConfig{
@@ -419,13 +419,13 @@ func TestDetermineBackupsToKeep_Promotion(t *testing.T) {
 	now := time.Now()
 	// This backup set is designed to fill every available retention slot,
 	// leaving one backup that is truly redundant and should be deleted.
-	allBackups := []backupInfo{
-		{Time: now.Add(-1 * time.Hour), Name: "kept_hourly"},          // Fills the hourly slot
-		{Time: now.Add(-25 * time.Hour), Name: "kept_daily"},          // Fills the daily slot
-		{Time: now.Add(-8 * 24 * time.Hour), Name: "kept_weekly"},     // Fills the weekly slot
-		{Time: now.Add(-35 * 24 * time.Hour), Name: "kept_monthly"},   // Fills the monthly slot
-		{Time: now.Add(-400 * 24 * time.Hour), Name: "kept_yearly"},   // Fills the yearly slot
-		{Time: now.Add(-800 * 24 * time.Hour), Name: "to_be_deleted"}, // Older than all slots, should be deleted
+	allBackups := []backupMetadataInfo{
+		{RelPath: "kept_hourly", Metadata: backupMetadata{TimestampUTC: now.Add(-1 * time.Hour)}},
+		{RelPath: "kept_daily", Metadata: backupMetadata{TimestampUTC: now.Add(-25 * time.Hour)}},
+		{RelPath: "kept_weekly", Metadata: backupMetadata{TimestampUTC: now.Add(-8 * 24 * time.Hour)}},
+		{RelPath: "kept_monthly", Metadata: backupMetadata{TimestampUTC: now.Add(-35 * 24 * time.Hour)}},
+		{RelPath: "kept_yearly", Metadata: backupMetadata{TimestampUTC: now.Add(-400 * 24 * time.Hour)}},
+		{RelPath: "to_be_deleted", Metadata: backupMetadata{TimestampUTC: now.Add(-800 * 24 * time.Hour)}},
 	}
 
 	policy := config.BackupRetentionPolicyConfig{
@@ -662,16 +662,16 @@ func TestFetchSortedBackups(t *testing.T) {
 
 	// Check that they are sorted newest to oldest
 	expectedOrder := []string{"backup_2_newest", "backup_1", "backup_3"}
-	for i, name := range expectedOrder {
-		if backups[i].Name != name {
-			t.Errorf("expected backup at index %d to be %s, but got %s", i, name, backups[i].Name)
+	for i, relPath := range expectedOrder {
+		if backups[i].RelPath != relPath {
+			t.Errorf("expected backup at index %d to be %s, but got %s", i, relPath, backups[i].RelPath)
 		}
 	}
 
 	expectedTimes := []time.Time{backup2Time, backup1Time, backup3Time}
 	for i, ti := range expectedTimes {
-		if !backups[i].Time.Equal(ti) {
-			t.Errorf("expected backup time at index %d to be %v, but got %v", i, ti, backups[i].Time)
+		if !backups[i].Metadata.TimestampUTC.Equal(ti) {
+			t.Errorf("expected backup time at index %d to be %v, but got %v", i, ti, backups[i].Metadata.TimestampUTC)
 		}
 	}
 }
