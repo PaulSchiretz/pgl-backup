@@ -246,6 +246,12 @@ func (r *syncRun) copyFileHelper(absSrcPath, absTrgPath string, task *syncTask, 
 	return fmt.Errorf("failed to copy file from '%s' to '%s' after %d attempts: %w", absSrcPath, absTrgPath, retryCount, lastErr)
 }
 
+// normalizeExclusionPattern converts a path or pattern into a standardized,
+// case-insensitive key format (forward slashes, lowercase).
+func normalizeExclusionPattern(p string) string {
+	return strings.ToLower(filepath.ToSlash(p))
+}
+
 // preProcessExclusions analyzes and categorizes patterns to enable optimized matching later.
 func preProcessExclusions(patterns []string) exclusionSet {
 	set := exclusionSet{
@@ -254,21 +260,13 @@ func preProcessExclusions(patterns []string) exclusionSet {
 		nonLiterals:      make([]preProcessedExclusion, 0, len(patterns)),
 	}
 
-	// normalizePattern normalizes an exclusion pattern to a standardized format
-	// (forward slashes, maybe otherwise modified key) for consistent matching.
-	normalizePattern := func(p string) string {
-		p = filepath.ToSlash(p)
-		return p
-	}
-
 	// A pattern should match against the basename if it does NOT contain a path separator.
 	// This aligns with .gitignore behavior (e.g., "node_modules" matches anywhere).
 	shouldMatchBasename := func(p string) bool { return !strings.Contains(p, "/") }
 
 	for _, p := range patterns {
-		// Normalize to use forward slashes for consistent matching logic.
-		p = normalizePattern(p)
-
+		// Normalize to a consistent, case-insensitive key.
+		p = normalizeExclusionPattern(p)
 		if strings.ContainsAny(p, "*?[]") {
 			// If it's a prefix pattern like `node_modules/*`, we can optimize it.
 			if strings.HasSuffix(p, "/*") {
@@ -372,21 +370,25 @@ func (r *syncRun) isExcluded(relPathKey, relPathBasename string, isDir bool) boo
 		patterns = r.fileExcludes
 	}
 
+	// Normalize paths to the same case-insensitive format as the patterns.
+	normalizedPath := normalizeExclusionPattern(relPathKey)
+	normalizedBasename := normalizeExclusionPattern(relPathBasename)
+
 	// 1. Check for O(1) full-path literal matches.
-	if _, ok := patterns.literals[relPathKey]; ok {
+	if _, ok := patterns.literals[normalizedPath]; ok {
 		return true
 	}
 
 	// 2. Check for O(1) basename literal matches if the map is not empty.
-	if _, ok := patterns.basenameLiterals[relPathBasename]; ok {
+	if _, ok := patterns.basenameLiterals[normalizedBasename]; ok {
 		return true
 	}
 
 	// 3. If no literal match, check other pattern types (wildcards).
 	for _, p := range patterns.nonLiterals {
-		pathToCheck := relPathKey
+		pathToCheck := normalizedPath
 		if p.matchBasename {
-			pathToCheck = relPathBasename
+			pathToCheck = normalizedBasename
 		}
 
 		switch p.matchType {

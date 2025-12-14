@@ -769,3 +769,35 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeExclusionPattern(t *testing.T) {
+	testCases := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "Simple path",
+			input:    "path/to/File.TXT",
+			expected: "path/to/file.txt",
+		},
+		{
+			name:     "Windows path",
+			input:    `Path\To\Another\File.JPEG`,
+			expected: "path/to/another/file.jpeg",
+		},
+		{
+			name:     "Already normalized",
+			input:    "already/normalized.log",
+			expected: "already/normalized.log",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeExclusionPattern(tc.input); got != tc.expected {
+				t.Errorf("normalizeExclusionPattern(%q) = %q; want %q", tc.input, got, tc.expected)
+			}
+		})
+	}
+}

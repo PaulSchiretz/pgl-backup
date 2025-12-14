@@ -190,6 +190,8 @@ Exclude temporary files and `node_modules` directories. Patterns support standar
 pgl-backup -target="..." -user-exclude-files="*.tmp,*.log" -user-exclude-dirs="node_modules,.cache"
 ```
 
+> **Note on Matching**: All exclusion patterns are case-insensitive on all operating systems. A pattern like *.jpeg will match photo.jpeg, photo.JPEG, and photo.JpEg. This ensures your configuration is portable and behaves predictably across Windows, macOS, and Linux.
+
 ### Default and System Exclusions
 
 To provide a better out-of-the-box experience and protect its own metadata, `pgl-backup` uses two layers of exclusions.
