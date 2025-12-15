@@ -137,7 +137,7 @@ func TestArchive(t *testing.T) {
 		createTestBackup(t, tempDir, "current", currentBackupTimestampUTC)
 
 		// Act
-		err := archiver.Archive(context.Background(), currentBackupPath, currentBackupTimestampUTC, currentTimestampUTC)
+		err := archiver.Archive(context.Background(), currentBackupPath, currentTimestampUTC)
 		if err != nil {
 			t.Fatalf("Archive failed: %v", err)
 		}
@@ -170,7 +170,7 @@ func TestArchive(t *testing.T) {
 		createTestBackup(t, tempDir, "current", currentBackupTimestampUTC)
 
 		// Act
-		err := archiver.Archive(context.Background(), currentBackupPath, currentBackupTimestampUTC, currentTimestampUTC)
+		err := archiver.Archive(context.Background(), currentBackupPath, currentTimestampUTC)
 		if err != nil {
 			t.Fatalf("Archive failed unexpectedly: %v", err)
 		}
@@ -203,7 +203,7 @@ func TestArchive(t *testing.T) {
 		os.MkdirAll(conflictPath, 0755)
 
 		// Act
-		err := archiver.Archive(context.Background(), currentBackupPath, currentBackupTimestampUTC, currentTimestampUTC)
+		err := archiver.Archive(context.Background(), currentBackupPath, currentTimestampUTC)
 
 		// Assert
 		if err == nil {

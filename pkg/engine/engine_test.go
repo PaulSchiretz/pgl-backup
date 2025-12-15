@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
+	"pixelgardenlabs.io/pgl-backup/pkg/metafile"
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
 
@@ -45,7 +46,7 @@ type mockArchiver struct {
 	err           error
 }
 
-func (m *mockArchiver) Archive(ctx context.Context, currentBackupPath string, lastBackupUTC, currentBackupUTC time.Time) error {
+func (m *mockArchiver) Archive(ctx context.Context, currentBackupPath string, currentBackupUTC time.Time) error {
 	m.archiveCalled = true
 	return m.err
 }
@@ -53,7 +54,7 @@ func (m *mockArchiver) Archive(ctx context.Context, currentBackupPath string, la
 // Helper to create a dummy engine for testing.
 func newTestEngine(cfg config.Config) *Engine {
 	e := New(cfg, "test-version")
-	return e
+	return e //nolint:all // This is a test helper, not production code.
 }
 
 // Helper to create a temporary directory structure for a backup.
@@ -73,7 +74,7 @@ func createTestBackup(t *testing.T, e *Engine, baseDir, name string, timestampUT
 		mode:                config.IncrementalMode,
 	}
 
-	if err := e.writeBackupMetafile(runState); err != nil {
+	if err := metafile.Write(backupPath, metafile.MetafileContent{Version: e.version, TimestampUTC: runState.currentTimestampUTC, Mode: runState.mode.String(), Source: runState.source}); err != nil {
 		t.Fatalf("failed to write metafile for test backup: %v", err)
 	}
 }
@@ -130,19 +131,19 @@ func TestInitializeBackupTarget(t *testing.T) {
 func TestDetermineBackupsToKeep(t *testing.T) {
 	// Arrange: Create a series of backups over time
 	now := time.Now()
-	allBackups := []backupMetadataInfo{
-		{RelPathKey: "backup_hourly_1", Metadata: backupMetadata{TimestampUTC: now.Add(-1 * time.Hour)}},
-		{RelPathKey: "backup_hourly_2", Metadata: backupMetadata{TimestampUTC: now.Add(-2 * time.Hour)}},
-		{RelPathKey: "backup_daily_1", Metadata: backupMetadata{TimestampUTC: now.Add(-25 * time.Hour)}},
-		{RelPathKey: "backup_daily_2", Metadata: backupMetadata{TimestampUTC: now.Add(-50 * time.Hour)}},
-		{RelPathKey: "backup_weekly_1", Metadata: backupMetadata{TimestampUTC: now.Add(-8 * 24 * time.Hour)}},
-		{RelPathKey: "backup_weekly_2", Metadata: backupMetadata{TimestampUTC: now.Add(-16 * 24 * time.Hour)}},
-		{RelPathKey: "backup_monthly_1", Metadata: backupMetadata{TimestampUTC: now.Add(-35 * 24 * time.Hour)}},
-		{RelPathKey: "backup_monthly_2", Metadata: backupMetadata{TimestampUTC: now.Add(-70 * 24 * time.Hour)}},
-		{RelPathKey: "backup_yearly_1", Metadata: backupMetadata{TimestampUTC: now.Add(-400 * 24 * time.Hour)}},
-		{RelPathKey: "backup_yearly_2", Metadata: backupMetadata{TimestampUTC: now.Add(-800 * 24 * time.Hour)}},
-		{RelPathKey: "backup_old_1", Metadata: backupMetadata{TimestampUTC: now.Add(-1200 * 24 * time.Hour)}},
-		{RelPathKey: "backup_old_2", Metadata: backupMetadata{TimestampUTC: now.Add(-1600 * 24 * time.Hour)}},
+	allBackups := []backupMetadataInfo{ //nolint:all
+		{RelPathKey: "backup_hourly_1", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-1 * time.Hour)}},
+		{RelPathKey: "backup_hourly_2", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-2 * time.Hour)}},
+		{RelPathKey: "backup_daily_1", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-25 * time.Hour)}},
+		{RelPathKey: "backup_daily_2", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-50 * time.Hour)}},
+		{RelPathKey: "backup_weekly_1", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-8 * 24 * time.Hour)}},
+		{RelPathKey: "backup_weekly_2", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-16 * 24 * time.Hour)}},
+		{RelPathKey: "backup_monthly_1", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-35 * 24 * time.Hour)}},
+		{RelPathKey: "backup_monthly_2", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-70 * 24 * time.Hour)}},
+		{RelPathKey: "backup_yearly_1", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-400 * 24 * time.Hour)}},
+		{RelPathKey: "backup_yearly_2", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-800 * 24 * time.Hour)}},
+		{RelPathKey: "backup_old_1", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-1200 * 24 * time.Hour)}},
+		{RelPathKey: "backup_old_2", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-1600 * 24 * time.Hour)}},
 	}
 
 	policy := config.BackupRetentionPolicyConfig{
@@ -420,14 +421,14 @@ func TestDetermineBackupsToKeep_Promotion(t *testing.T) {
 	// This backup set is designed to fill every available retention slot,
 	// leaving one backup that is truly redundant and should be deleted.
 	allBackups := []backupMetadataInfo{
-		{RelPathKey: "kept_hourly", Metadata: backupMetadata{TimestampUTC: now.Add(-1 * time.Hour)}},
-		{RelPathKey: "kept_daily", Metadata: backupMetadata{TimestampUTC: now.Add(-25 * time.Hour)}},
-		{RelPathKey: "kept_weekly", Metadata: backupMetadata{TimestampUTC: now.Add(-8 * 24 * time.Hour)}},
-		{RelPathKey: "kept_monthly", Metadata: backupMetadata{TimestampUTC: now.Add(-35 * 24 * time.Hour)}},
-		{RelPathKey: "kept_yearly", Metadata: backupMetadata{TimestampUTC: now.Add(-400 * 24 * time.Hour)}},
-		{RelPathKey: "to_be_deleted", Metadata: backupMetadata{TimestampUTC: now.Add(-800 * 24 * time.Hour)}},
+		{RelPathKey: "kept_hourly", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-1 * time.Hour)}},
+		{RelPathKey: "kept_daily", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-25 * time.Hour)}},
+		{RelPathKey: "kept_weekly", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-8 * 24 * time.Hour)}},
+		{RelPathKey: "kept_monthly", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-35 * 24 * time.Hour)}},
+		{RelPathKey: "kept_yearly", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-400 * 24 * time.Hour)}},
+		{RelPathKey: "to_be_deleted", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-800 * 24 * time.Hour)}},
 	}
-
+	//nolint:all
 	policy := config.BackupRetentionPolicyConfig{
 		Hours:  1,
 		Days:   1,

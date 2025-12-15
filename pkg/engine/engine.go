@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +14,7 @@ import (
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
 	"pixelgardenlabs.io/pgl-backup/pkg/lockfile"
+	"pixelgardenlabs.io/pgl-backup/pkg/metafile"
 	"pixelgardenlabs.io/pgl-backup/pkg/patharchive"
 	"pixelgardenlabs.io/pgl-backup/pkg/pathsync"
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
@@ -57,15 +57,7 @@ const (
 // backupMetadataInfo holds the parsed metadata and rel directory path of a backup found on disk.
 type backupMetadataInfo struct {
 	RelPathKey string // Normalized, forward-slash and maybe otherwise modified key. NOT for direct FS access.
-	Metadata   backupMetadata
-}
-
-// backupMetadata holds metadata for a single backup, which is written to a metafile.
-type backupMetadata struct {
-	Version      string    `json:"version"`
-	TimestampUTC time.Time `json:"timestampUTC"`
-	Mode         string    `json:"mode"`
-	Source       string    `json:"source"`
+	Metadata   metafile.MetafileContent
 }
 
 // engineRunState holds the mutable state for a single execution of the backup engine.
@@ -361,8 +353,14 @@ func (e *Engine) performSync(ctx context.Context, runState *engineRunState) erro
 		plog.Info("[DRY RUN] Would write metafile", "directory", runState.target)
 		return nil
 	}
-	// If the sync was successful, write the metafile for retention purposes.
-	return e.writeBackupMetafile(runState)
+	// If the sync was successful, write the metafile to the target for retention purposes.
+	metadata := metafile.MetafileContent{
+		Version:      e.version,
+		TimestampUTC: runState.currentTimestampUTC,
+		Mode:         runState.mode.String(),
+		Source:       runState.source,
+	}
+	return metafile.Write(runState.target, metadata)
 }
 
 // performArchiving is the main entry point for archive updates.
@@ -370,19 +368,9 @@ func (e *Engine) performArchiving(ctx context.Context, runState *engineRunState)
 	incrementalDirName := e.config.Paths.IncrementalSubDir
 	currentBackupPath := filepath.Join(e.config.Paths.TargetBase, incrementalDirName)
 
-	metadata, err := e.readBackupMetafile(currentBackupPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// This is a normal condition on the first run; no previous backup to archive.
-			return nil
-		}
-		// Any other error (e.g., corrupt file, permissions) is a problem.
-		return fmt.Errorf("could not read previous backup metadata for archive check: %w", err)
-	}
-
-	// A valid metafile was found, so we can proceed with archiving.
-	currentBackupTimestampUTC := metadata.TimestampUTC
-	if err := e.archiver.Archive(ctx, currentBackupPath, currentBackupTimestampUTC, runState.currentTimestampUTC); err != nil {
+	// The archiver responsible for reading the metadata file and determining
+	// if an archive is necessary.
+	if err := e.archiver.Archive(ctx, currentBackupPath, runState.currentTimestampUTC); err != nil {
 		return fmt.Errorf("error during backup archiving: %w", err)
 	}
 	return nil
@@ -556,52 +544,6 @@ func (e *Engine) determineBackupsToKeep(allBackups []backupMetadataInfo, retenti
 	return backupsToKeep
 }
 
-// writeBackupMetafile creates and writes the .pgl-backup.meta.json file into a given directory.
-func (e *Engine) writeBackupMetafile(runState *engineRunState) error {
-	metaFilePath := filepath.Join(runState.target, config.MetaFileName)
-	metadata := backupMetadata{
-		Version:      e.version,
-		TimestampUTC: runState.currentTimestampUTC,
-		Mode:         runState.mode.String(),
-		Source:       runState.source,
-	}
-
-	jsonData, err := json.MarshalIndent(metadata, "", "  ")
-	if err != nil {
-		return fmt.Errorf("could not marshal meta data: %w", err)
-	}
-
-	// Use group-writable permissions for the metafile. Unlike the top-level config and lock files,
-	// the metafile is part of the backup data itself. In multi-user environments, allowing
-	// group members to write to backup contents is a common and useful scenario.
-	// The config/lock files remain user-only writable for security.
-	if err := os.WriteFile(metaFilePath, jsonData, util.UserGroupWritableFilePerms); err != nil {
-		return fmt.Errorf("could not write meta file %s: %w", metaFilePath, err)
-	}
-
-	return nil
-}
-
-// readBackupMetafile opens and parses the .pgl-backup.meta.json file within a given directory.
-// It returns the parsed metadata or an error if the file cannot be read.
-func (e *Engine) readBackupMetafile(dirPath string) (backupMetadata, error) {
-	metaFilePath := filepath.Join(dirPath, config.MetaFileName)
-	metaFile, err := os.Open(metaFilePath)
-	if err != nil {
-		// Note: os.IsNotExist errors are handled by the caller.
-		return backupMetadata{}, err // Return the original error so os.IsNotExist works.
-	}
-	defer metaFile.Close()
-
-	var metadata backupMetadata
-	decoder := json.NewDecoder(metaFile)
-	if err := decoder.Decode(&metadata); err != nil {
-		return backupMetadata{}, fmt.Errorf("could not parse metafile %s: %w. It may be corrupt", metaFilePath, err)
-	}
-
-	return metadata, nil
-}
-
 // fetchSortedBackups scans a directory for valid backup folders, parses their
 // metadata to get an accurate timestamp, and returns them sorted from newest to oldest.
 // It relies exclusively on the `.pgl-backup.meta.json` file; directories without a
@@ -633,7 +575,7 @@ func (e *Engine) fetchSortedBackups(ctx context.Context, baseDir, excludeDir str
 		}
 
 		backupPath := filepath.Join(baseDir, dirName)
-		metadata, err := e.readBackupMetafile(backupPath)
+		metadata, err := metafile.Read(backupPath)
 		if err != nil {
 			plog.Warn("Skipping directory for retention check", "directory", dirName, "reason", err)
 			continue

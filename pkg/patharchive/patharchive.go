@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
+	"pixelgardenlabs.io/pgl-backup/pkg/metafile"
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 	"pixelgardenlabs.io/pgl-backup/pkg/util"
 )
@@ -30,7 +31,7 @@ type PathArchiver struct {
 // Archiver defines the interface for a component that archives a backup, turning the
 // 'current' state into a permanent historical record.
 type Archiver interface {
-	Archive(ctx context.Context, currentBackupPath string, currentBackupTimestampUTC, currentTimestampUTC time.Time) error
+	Archive(ctx context.Context, currentBackupPath string, currentTimestampUTC time.Time) error
 }
 
 // Statically assert that *PathArchiver implements the Archiver interface.
@@ -45,8 +46,21 @@ func NewPathArchiver(cfg config.Config) *PathArchiver {
 
 // Archive checks if the time since the last backup has crossed the configured interval.
 // If it has, it renames the current backup directory to a permanent, timestamped archive directory. It also
-// prepares the archive interval before checking.
-func (a *PathArchiver) Archive(ctx context.Context, currentBackupPath string, currentBackupTimestampUTC, currentTimestampUTC time.Time) error {
+// prepares the archive interval before checking. It is now responsible for reading its own metadata.
+func (a *PathArchiver) Archive(ctx context.Context, currentBackupPath string, currentTimestampUTC time.Time) error {
+	metadata, err := metafile.Read(currentBackupPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// This is a normal condition on the first run; no previous backup to archive.
+			return nil
+		}
+		// Any other error (e.g., corrupt file, permissions) is a problem.
+		return fmt.Errorf("could not read previous backup metadata for archive check: %w", err)
+	}
+
+	// A valid metafile was found, so we can proceed with archiving.
+	currentBackupTimestampUTC := metadata.TimestampUTC
+
 	runState := &archiveRunState{
 		interval:                  a.config.IncrementalArchivePolicy.Interval,
 		currentBackupPath:         currentBackupPath,
