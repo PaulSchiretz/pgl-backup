@@ -7,15 +7,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
 	"pixelgardenlabs.io/pgl-backup/pkg/lockfile"
 	"pixelgardenlabs.io/pgl-backup/pkg/metafile"
 	"pixelgardenlabs.io/pgl-backup/pkg/patharchive"
+	"pixelgardenlabs.io/pgl-backup/pkg/pathretention"
 	"pixelgardenlabs.io/pgl-backup/pkg/pathsync"
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 	"pixelgardenlabs.io/pgl-backup/pkg/preflight"
@@ -45,21 +44,6 @@ import (
 // creation schedule based on local time duration, and a clean, consistent historical view
 // based on standard UTC calendar periods.
 
-// Constants for time formats used in retention bucketing
-const (
-	hourFormat  = "2006-01-02-15" // YYYY-MM-DD-HH
-	dayFormat   = "2006-01-02"    // YYYY-MM-DD
-	weekFormat  = "%d-%d"         // Sprintf format for "YYYY-WW" using year and ISO week number (weeks start on Monday). Go's time package does not have a layout code (like WW). The only way to get the ISO week is to call the time.ISOWeek() method
-	monthFormat = "2006-01"       // YYYY-MM
-	yearFormat  = "2006"          // YYYY
-)
-
-// backupMetadataInfo holds the parsed metadata and rel directory path of a backup found on disk.
-type backupMetadataInfo struct {
-	RelPathKey string // Normalized, forward-slash and maybe otherwise modified key. NOT for direct FS access.
-	Metadata   metafile.MetafileContent
-}
-
 // engineRunState holds the mutable state for a single execution of the backup engine.
 // This makes the Engine itself stateless and safe for concurrent use if needed.
 type engineRunState struct {
@@ -71,10 +55,11 @@ type engineRunState struct {
 
 // Engine orchestrates the entire backup process.
 type Engine struct {
-	config   config.Config
-	version  string
-	syncer   pathsync.Syncer
-	archiver patharchive.Archiver
+	config           config.Config
+	version          string
+	syncer           pathsync.Syncer
+	archiver         patharchive.Archiver
+	retentionManager pathretention.RetentionManager
 	// hookCommandExecutor allows mocking os/exec for testing hooks.
 	hookCommandExecutor func(ctx context.Context, name string, arg ...string) *exec.Cmd
 }
@@ -86,6 +71,7 @@ func New(cfg config.Config, version string) *Engine {
 		version:             version,
 		syncer:              pathsync.NewPathSyncer(cfg),
 		archiver:            patharchive.NewPathArchiver(cfg),
+		retentionManager:    pathretention.NewPathRetentionManager(cfg),
 		hookCommandExecutor: exec.CommandContext, // Default to the real implementation.
 	}
 }
@@ -203,7 +189,7 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 		target:              "",
 	}
 
-	// --- 1. Prepare for the backup run ---
+	// Prepare for the backup run
 	if err := e.prepareRun(ctx, runState); err != nil {
 		return err
 	}
@@ -219,34 +205,16 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 		"mode", runState.mode,
 	)
 
-	// --- 2. Perform the backup ---
+	// Perform the backup
 	if err := e.performSync(ctx, runState); err != nil {
-		return fmt.Errorf("fatal backup error during sync: %w", err) // This is a fatal error, so we return it.
+		return fmt.Errorf("fatal backup error during sync: %w", err)
 	}
 
 	plog.Info("Backup operation completed.")
 
-	// --- 3. Clean up outdated backups (archives and snapshots) ---
-	// We apply all enabled retention policies regardless of the current backup mode.
-	// This ensures the backup target is always kept in a consistent state according
-	// to the user's configuration and prevents "retention debt" if one mode is
-	// run less frequently than another.
-
-	// Apply retention for incremental archives, if enabled.
-	if e.config.IncrementalRetentionPolicy.Enabled {
-		archivesDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.ArchivesSubDir)
-		incrementalDirName := e.config.Paths.IncrementalSubDir
-		if err := e.applyRetentionFor(ctx, "incremental", archivesDir, e.config.IncrementalRetentionPolicy, incrementalDirName); err != nil {
-			plog.Warn("Error applying incremental retention policy", "error", err)
-		}
-	}
-
-	// Apply retention for snapshots, if enabled.
-	if e.config.SnapshotRetentionPolicy.Enabled {
-		snapshotsDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.SnapshotsSubDir)
-		if err := e.applyRetentionFor(ctx, "snapshot", snapshotsDir, e.config.SnapshotRetentionPolicy, ""); err != nil {
-			plog.Warn("Error applying snapshot retention policy", "error", err)
-		}
+	// Clean up outdated backups (archives and snapshots)
+	if err := e.performRetention(ctx); err != nil {
+		return fmt.Errorf("fatal backup error during retention: %w", err)
 	}
 
 	return nil
@@ -284,6 +252,33 @@ func (e *Engine) runHooks(ctx context.Context, commands []string, hookType strin
 				return context.Canceled
 			}
 			return fmt.Errorf("command '%s' failed: %w", command, err)
+		}
+	}
+	return nil
+}
+
+// performRetention cleans up outdated backups based on the configured retention policies.
+// It applies all enabled retention policies regardless of the current backup mode.
+// This ensures the backup target is always kept in a consistent state according
+// to the user's configuration and prevents "retention debt" if one mode is
+// run less frequently than another.
+func (e *Engine) performRetention(ctx context.Context) error {
+	// Apply retention for incremental archives, if enabled.
+	if e.config.IncrementalRetentionPolicy.Enabled {
+		archivesDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.ArchivesSubDir)
+		incrementalDirName := e.config.Paths.IncrementalSubDir
+		if err := e.retentionManager.Apply(ctx, archivesDir, "incremental", e.config.IncrementalRetentionPolicy, incrementalDirName); err != nil {
+			plog.Warn("Error applying incremental retention policy", "error", err)
+			// no error is returned as our backup is still good no need to faile here
+		}
+	}
+
+	// Apply retention for snapshots, if enabled.
+	if e.config.SnapshotRetentionPolicy.Enabled {
+		snapshotsDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.SnapshotsSubDir)
+		if err := e.retentionManager.Apply(ctx, snapshotsDir, "snapshot", e.config.SnapshotRetentionPolicy, ""); err != nil {
+			plog.Warn("Error applying snapshot retention policy", "error", err)
+			// no error is returned as  our backup is still good no need to faile here
 		}
 	}
 	return nil
@@ -367,228 +362,12 @@ func (e *Engine) performSync(ctx context.Context, runState *engineRunState) erro
 func (e *Engine) performArchiving(ctx context.Context, runState *engineRunState) error {
 	incrementalDirName := e.config.Paths.IncrementalSubDir
 	currentBackupPath := filepath.Join(e.config.Paths.TargetBase, incrementalDirName)
+	archivesDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.ArchivesSubDir)
 
 	// The archiver responsible for reading the metadata file and determining
 	// if an archive is necessary.
-	if err := e.archiver.Archive(ctx, currentBackupPath, runState.currentTimestampUTC); err != nil {
+	if err := e.archiver.Archive(ctx, archivesDir, currentBackupPath, runState.currentTimestampUTC); err != nil {
 		return fmt.Errorf("error during backup archiving: %w", err)
 	}
 	return nil
-}
-
-// applyRetentionFor scans a given directory and deletes backups
-// that are no longer needed according to the configured retention policy.
-func (e *Engine) applyRetentionFor(ctx context.Context, policyTitle string, targetDir string, retentionPolicy config.BackupRetentionPolicyConfig, excludeDir string) error {
-	if retentionPolicy.Hours <= 0 && retentionPolicy.Days <= 0 && retentionPolicy.Weeks <= 0 && retentionPolicy.Months <= 0 && retentionPolicy.Years <= 0 {
-		plog.Debug(fmt.Sprintf("Retention policy for %s is disabled (all values are zero). Skipping cleanup.", policyTitle))
-		return nil
-	}
-
-	plog.Info(fmt.Sprintf("Cleaning outdated %s backups", policyTitle))
-	plog.Debug("Applying retention policy", "policy", policyTitle, "directory", targetDir)
-	// --- 1. Get a sorted list of all valid, historical backups ---
-	allBackups, err := e.fetchSortedBackups(ctx, targetDir, excludeDir)
-	if err != nil {
-		return err
-	}
-	if len(allBackups) == 0 {
-		plog.Debug(fmt.Sprintf("No %s backups found to apply retention to", policyTitle))
-		return nil
-	}
-
-	// --- 2. Apply retention rules to find which backups to keep ---
-	backupsToKeep := e.determineBackupsToKeep(allBackups, retentionPolicy, policyTitle)
-
-	// --- 3. Collect all backups that are not in our final `backupsToKeep` set ---
-	var dirsToDelete []string
-	for _, backup := range allBackups {
-		if _, shouldKeep := backupsToKeep[backup.RelPathKey]; !shouldKeep {
-			dirsToDelete = append(dirsToDelete, filepath.Join(targetDir, util.DenormalizePath(backup.RelPathKey)))
-		}
-	}
-
-	if len(dirsToDelete) == 0 && !e.config.DryRun {
-		plog.Debug("No outdated backups to delete", "policy", policyTitle)
-		return nil
-	}
-
-	plog.Info("Preparing to delete outdated backups", "policy", policyTitle, "count", len(dirsToDelete))
-
-	// --- 4. Delete backups in parallel using a worker pool ---
-	// This is especially effective for network drives where latency is a factor.
-	numWorkers := e.config.Engine.Performance.DeleteWorkers // Use the configured number of workers.
-	var wg sync.WaitGroup
-	deleteDirTasksChan := make(chan string, len(dirsToDelete))
-
-	// Start workers
-	for i := 0; i < numWorkers; i++ {
-		wg.Add(1)
-		go func(workerID int) {
-			defer wg.Done()
-			for dirToDelete := range deleteDirTasksChan {
-				// Check for cancellation before each deletion.
-				select {
-				case <-ctx.Done():
-					// Don't process any more jobs if context is cancelled.
-					return
-				default:
-				}
-
-				plog.Debug("Deleting outdated backup", "policy", policyTitle, "path", dirToDelete, "worker", workerID)
-				if e.config.DryRun {
-					plog.Info("[DRY RUN] Would delete directory", "policy", policyTitle, "path", dirToDelete)
-					continue
-				}
-				if err := os.RemoveAll(dirToDelete); err != nil {
-					plog.Warn("Failed to delete outdated backup directory", "policy", policyTitle, "path", dirToDelete, "error", err)
-				}
-			}
-		}(i + 1)
-	}
-
-	// Feed the jobs channel with all the directories to be deleted.
-	for _, dir := range dirsToDelete {
-		select {
-		case <-ctx.Done():
-			// If context is cancelled while feeding jobs, stop sending more.
-			plog.Info("Cancellation received, stopping deletion process.")
-			close(deleteDirTasksChan) // Close channel to unblock any waiting workers.
-			return ctx.Err()
-		case deleteDirTasksChan <- dir:
-		}
-	}
-	close(deleteDirTasksChan) // All jobs have been sent.
-
-	wg.Wait()
-
-	return nil
-}
-
-// determineBackupsToKeep applies the retention policy to a sorted list of backups.
-func (e *Engine) determineBackupsToKeep(allBackups []backupMetadataInfo, retentionPolicy config.BackupRetentionPolicyConfig, policyTitle string) map[string]bool {
-	backupsToKeep := make(map[string]bool)
-
-	// Keep track of which periods we've already saved a backup for.
-	savedHourly := make(map[string]bool)
-	savedDaily := make(map[string]bool)
-	savedWeekly := make(map[string]bool)
-	savedMonthly := make(map[string]bool)
-	savedYearly := make(map[string]bool)
-
-	for _, b := range allBackups {
-		// The rules are processed from shortest to longest duration.
-		// Once a backup is kept, it's not considered for longer-duration rules.
-		// This "promotes" a backup to the highest-frequency slot it qualifies for.
-
-		// Rule: Keep N hourly backups.
-		hourKey := b.Metadata.TimestampUTC.Format(hourFormat)
-		if retentionPolicy.Hours > 0 && len(savedHourly) < retentionPolicy.Hours && !savedHourly[hourKey] {
-			backupsToKeep[b.RelPathKey] = true
-			savedHourly[hourKey] = true
-			continue // Promoted to hourly, skip other rules
-		}
-
-		// Rule: Keep N daily backups.
-		dayKey := b.Metadata.TimestampUTC.Format(dayFormat)
-		if retentionPolicy.Days > 0 && len(savedDaily) < retentionPolicy.Days && !savedDaily[dayKey] {
-			backupsToKeep[b.RelPathKey] = true
-			savedDaily[dayKey] = true
-			continue // Promoted to daily
-		}
-
-		// Rule: Keep N weekly backups.
-		year, week := b.Metadata.TimestampUTC.ISOWeek()
-		weekKey := fmt.Sprintf(weekFormat, year, week)
-		if retentionPolicy.Weeks > 0 && len(savedWeekly) < retentionPolicy.Weeks && !savedWeekly[weekKey] {
-			backupsToKeep[b.RelPathKey] = true
-			savedWeekly[weekKey] = true
-			continue // Promoted to weekly
-		}
-
-		// Rule: Keep N monthly backups
-		monthKey := b.Metadata.TimestampUTC.Format(monthFormat)
-		if retentionPolicy.Months > 0 && len(savedMonthly) < retentionPolicy.Months && !savedMonthly[monthKey] {
-			backupsToKeep[b.RelPathKey] = true
-			savedMonthly[monthKey] = true
-			continue // Promoted to monthly
-		}
-
-		// Rule: Keep N yearly backups.
-		yearKey := b.Metadata.TimestampUTC.Format(yearFormat)
-		if retentionPolicy.Years > 0 && len(savedYearly) < retentionPolicy.Years && !savedYearly[yearKey] {
-			backupsToKeep[b.RelPathKey] = true
-			savedYearly[yearKey] = true
-		}
-	}
-
-	// Build a descriptive log message for the retention plan
-	var planParts []string
-	if retentionPolicy.Hours > 0 {
-		planParts = append(planParts, fmt.Sprintf("%d hourly", len(savedHourly)))
-	}
-	if retentionPolicy.Days > 0 {
-		planParts = append(planParts, fmt.Sprintf("%d daily", len(savedDaily)))
-	}
-	if retentionPolicy.Weeks > 0 {
-		planParts = append(planParts, fmt.Sprintf("%d weekly", len(savedWeekly)))
-	}
-	if retentionPolicy.Months > 0 {
-		planParts = append(planParts, fmt.Sprintf("%d monthly", len(savedMonthly)))
-	}
-	if retentionPolicy.Years > 0 {
-		planParts = append(planParts, fmt.Sprintf("%d yearly", len(savedYearly)))
-	}
-	plog.Debug("Retention plan", "policy", policyTitle, "details", strings.Join(planParts, ", "))
-	plog.Debug("Total unique backups to be kept", "policy", policyTitle, "count", len(backupsToKeep))
-
-	return backupsToKeep
-}
-
-// fetchSortedBackups scans a directory for valid backup folders, parses their
-// metadata to get an accurate timestamp, and returns them sorted from newest to oldest.
-// It relies exclusively on the `.pgl-backup.meta.json` file; directories without a
-// readable metafile are ignored for retention purposes.
-func (e *Engine) fetchSortedBackups(ctx context.Context, baseDir, excludeDir string) ([]backupMetadataInfo, error) {
-	prefix := e.config.Naming.Prefix
-
-	entries, err := os.ReadDir(baseDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			plog.Debug("Archives directory does not exist yet, no retention policy to apply.", "path", baseDir)
-			return nil, nil // Not an error, just means no archives exist yet.
-		}
-		return nil, fmt.Errorf("failed to read backup directory %s: %w", baseDir, err)
-	}
-
-	var backups []backupMetadataInfo
-	for _, entry := range entries {
-		// Check for cancellation during the directory scan.
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-
-		dirName := entry.Name()
-		if !entry.IsDir() || !strings.HasPrefix(dirName, prefix) || dirName == excludeDir {
-			continue
-		}
-
-		backupPath := filepath.Join(baseDir, dirName)
-		metadata, err := metafile.Read(backupPath)
-		if err != nil {
-			plog.Warn("Skipping directory for retention check", "directory", dirName, "reason", err)
-			continue
-		}
-
-		// The metafile is the sole source of truth for the backup time.
-		backups = append(backups, backupMetadataInfo{RelPathKey: util.NormalizePath(dirName), Metadata: metadata})
-	}
-
-	// Sort all backups from newest to oldest for consistent processing.
-	sort.Slice(backups, func(i, j int) bool {
-		return backups[i].Metadata.TimestampUTC.After(backups[j].Metadata.TimestampUTC)
-	})
-
-	return backups, nil
 }

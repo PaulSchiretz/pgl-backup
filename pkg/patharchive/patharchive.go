@@ -1,3 +1,16 @@
+// --- ARCHITECTURAL OVERVIEW: Archive Time Handling ---
+//
+// This package employs a specific time-handling strategy for creating archives,
+// designed to provide predictable creation schedules for the user.
+//
+// 1. Archive (Snapshot Creation) - Predictable Creation
+//    - Goal: To honor the user's configured `ArchiveInterval` as literally as possible.
+//    - Logic: The `shouldArchive` function calculates time-based "bucketing" based on the
+//      **local system's midnight** for day-or-longer intervals. This gives the user direct,
+//      predictable control over the *frequency* of new archives, anchored to their local day.
+//      This is distinct from the retention logic in the `engine` package, which uses UTC
+//      for consistent historical cleanup.
+
 // package patharchive is responsible for archiving the "current" incremental backup
 // into a permanent, timestamped directory when a configured time interval is crossed.
 package patharchive
@@ -18,6 +31,7 @@ import (
 
 // archiveRunState holds the state specific to a single archive operation.
 type archiveRunState struct {
+	dirPath                   string        // path of the archive
 	interval                  time.Duration // interval holds the final interval for the current run.
 	currentBackupPath         string
 	currentBackupTimestampUTC time.Time
@@ -31,7 +45,7 @@ type PathArchiver struct {
 // Archiver defines the interface for a component that archives a backup, turning the
 // 'current' state into a permanent historical record.
 type Archiver interface {
-	Archive(ctx context.Context, currentBackupPath string, currentTimestampUTC time.Time) error
+	Archive(ctx context.Context, dirPath, currentBackupPath string, currentTimestampUTC time.Time) error
 }
 
 // Statically assert that *PathArchiver implements the Archiver interface.
@@ -47,7 +61,7 @@ func NewPathArchiver(cfg config.Config) *PathArchiver {
 // Archive checks if the time since the last backup has crossed the configured interval.
 // If it has, it renames the current backup directory to a permanent, timestamped archive directory. It also
 // prepares the archive interval before checking. It is now responsible for reading its own metadata.
-func (a *PathArchiver) Archive(ctx context.Context, currentBackupPath string, currentTimestampUTC time.Time) error {
+func (a *PathArchiver) Archive(ctx context.Context, dirPath, currentBackupPath string, currentTimestampUTC time.Time) error {
 	metadata, err := metafile.Read(currentBackupPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -62,6 +76,7 @@ func (a *PathArchiver) Archive(ctx context.Context, currentBackupPath string, cu
 	currentBackupTimestampUTC := metadata.TimestampUTC
 
 	runState := &archiveRunState{
+		dirPath:                   dirPath,
 		interval:                  a.config.IncrementalArchivePolicy.Interval,
 		currentBackupPath:         currentBackupPath,
 		currentBackupTimestampUTC: currentBackupTimestampUTC,
@@ -95,8 +110,7 @@ func (a *PathArchiver) Archive(ctx context.Context, currentBackupPath string, cu
 	archiveDirName := a.config.Naming.Prefix + archiveTimestamp
 
 	// Archives are stored in a dedicated subdirectory for clarity.
-	archivesSubDir := filepath.Join(a.config.Paths.TargetBase, a.config.Paths.ArchivesSubDir)
-	archivePath := filepath.Join(archivesSubDir, archiveDirName)
+	archivePath := filepath.Join(runState.dirPath, archiveDirName)
 
 	// Sanity check: ensure the destination for the archive does not already exist.
 	if _, err := os.Stat(archivePath); err == nil {
@@ -113,8 +127,8 @@ func (a *PathArchiver) Archive(ctx context.Context, currentBackupPath string, cu
 		return nil
 	}
 
-	if err := os.MkdirAll(archivesSubDir, util.UserWritableDirPerms); err != nil {
-		return fmt.Errorf("failed to create archives subdirectory %s: %w", archivesSubDir, err)
+	if err := os.MkdirAll(runState.dirPath, util.UserWritableDirPerms); err != nil {
+		return fmt.Errorf("failed to create archives subdirectory %s: %w", runState.dirPath, err)
 	}
 	if err := os.Rename(runState.currentBackupPath, archivePath); err != nil {
 		return fmt.Errorf("failed to archive backup: %w", err)

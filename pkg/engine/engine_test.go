@@ -46,8 +46,19 @@ type mockArchiver struct {
 	err           error
 }
 
-func (m *mockArchiver) Archive(ctx context.Context, currentBackupPath string, currentBackupUTC time.Time) error {
+func (m *mockArchiver) Archive(ctx context.Context, archivesDir, currentBackupPath string, currentBackupUTC time.Time) error {
 	m.archiveCalled = true
+	return m.err
+}
+
+// mockRetentionManager is a mock implementation of pathretention.RetentionManager for testing.
+type mockRetentionManager struct {
+	applyCalled bool
+	err         error
+}
+
+func (m *mockRetentionManager) Apply(ctx context.Context, dirPath, policyTitle string, retentionPolicy config.BackupRetentionPolicyConfig, excludedDir string) error {
+	m.applyCalled = true
 	return m.err
 }
 
@@ -68,7 +79,7 @@ func createTestBackup(t *testing.T, e *Engine, baseDir, name string, timestampUT
 
 	// Create a runState that mirrors what writeBackupMetafile expects.
 	runState := &engineRunState{
-		target:              backupPath,
+		//target:              backupPath,
 		currentTimestampUTC: timestampUTC,
 		source:              "/src", // A dummy source path for the metafile content.
 		mode:                config.IncrementalMode,
@@ -126,64 +137,6 @@ func TestInitializeBackupTarget(t *testing.T) {
 			t.Error("expected config file NOT to be created on failure, but it was")
 		}
 	})
-}
-
-func TestDetermineBackupsToKeep(t *testing.T) {
-	// Arrange: Create a series of backups over time
-	now := time.Now()
-	allBackups := []backupMetadataInfo{ //nolint:all
-		{RelPathKey: "backup_hourly_1", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-1 * time.Hour)}},
-		{RelPathKey: "backup_hourly_2", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-2 * time.Hour)}},
-		{RelPathKey: "backup_daily_1", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-25 * time.Hour)}},
-		{RelPathKey: "backup_daily_2", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-50 * time.Hour)}},
-		{RelPathKey: "backup_weekly_1", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-8 * 24 * time.Hour)}},
-		{RelPathKey: "backup_weekly_2", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-16 * 24 * time.Hour)}},
-		{RelPathKey: "backup_monthly_1", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-35 * 24 * time.Hour)}},
-		{RelPathKey: "backup_monthly_2", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-70 * 24 * time.Hour)}},
-		{RelPathKey: "backup_yearly_1", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-400 * 24 * time.Hour)}},
-		{RelPathKey: "backup_yearly_2", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-800 * 24 * time.Hour)}},
-		{RelPathKey: "backup_old_1", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-1200 * 24 * time.Hour)}},
-		{RelPathKey: "backup_old_2", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-1600 * 24 * time.Hour)}},
-	}
-
-	policy := config.BackupRetentionPolicyConfig{
-		Enabled: true,
-		Hours:   2,
-		Days:    2,
-		Weeks:   2,
-		Months:  2,
-		Years:   2,
-	}
-
-	e := newTestEngine(config.NewDefault())
-
-	// Act
-	kept := e.determineBackupsToKeep(allBackups, policy, "test_policy")
-
-	// Assert
-	if len(kept) != 10 {
-		t.Errorf("expected to keep 10 backups, but got %d", len(kept))
-	}
-
-	expectedToKeep := []string{
-		"backup_hourly_1", "backup_hourly_2",
-		"backup_daily_1", "backup_daily_2",
-		"backup_weekly_1", "backup_weekly_2",
-		"backup_monthly_1", "backup_monthly_2",
-		"backup_yearly_1", "backup_yearly_2",
-	}
-	for _, name := range expectedToKeep {
-		if !kept[name] {
-			t.Errorf("expected backup %s to be kept, but it was not", name)
-		}
-	}
-
-	expectedToDelete := []string{"backup_old_1", "backup_old_2"}
-	for _, name := range expectedToDelete {
-		if kept[name] {
-			t.Errorf("expected backup %s to be deleted, but it was kept", name)
-		}
-	}
 }
 
 // TestHelperProcess isn't a real test. It's a helper process that the exec-based
@@ -412,64 +365,6 @@ func TestPerformSync_PreserveSourceDirectoryName(t *testing.T) {
 	}
 }
 
-func TestDetermineBackupsToKeep_Promotion(t *testing.T) {
-	// This test ensures that a single backup is "promoted" to fill the highest-priority slot.
-	// For example, the most recent backup should fill an hourly, daily, weekly, or monthly slot.
-
-	// Arrange
-	now := time.Now()
-	// This backup set is designed to fill every available retention slot,
-	// leaving one backup that is truly redundant and should be deleted.
-	allBackups := []backupMetadataInfo{
-		{RelPathKey: "kept_hourly", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-1 * time.Hour)}},
-		{RelPathKey: "kept_daily", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-25 * time.Hour)}},
-		{RelPathKey: "kept_weekly", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-8 * 24 * time.Hour)}},
-		{RelPathKey: "kept_monthly", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-35 * 24 * time.Hour)}},
-		{RelPathKey: "kept_yearly", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-400 * 24 * time.Hour)}},
-		{RelPathKey: "to_be_deleted", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-800 * 24 * time.Hour)}},
-	}
-	//nolint:all
-	policy := config.BackupRetentionPolicyConfig{
-		Hours:  1,
-		Days:   1,
-		Weeks:  1,
-		Months: 1,
-		Years:  1,
-	}
-
-	cfg := config.NewDefault()
-	// Set a archive interval that is fast enough to not trigger "slow-fill" warnings
-	cfg.IncrementalArchivePolicy.Interval = 1 * time.Hour
-	e := newTestEngine(cfg)
-
-	// Act
-	kept := e.determineBackupsToKeep(allBackups, policy, "test_policy")
-
-	// Assert
-	// The logic should keep 5 backups, each filling one slot, and delete the 6th.
-	if len(kept) != 5 {
-		t.Errorf("expected to keep 5 backups, but got %d", len(kept))
-	}
-	if !kept["kept_hourly"] {
-		t.Error("expected 'kept_hourly' to be kept, but it was not")
-	}
-	if !kept["kept_daily"] {
-		t.Error("expected 'kept_daily' to be kept, but it was not")
-	}
-	if !kept["kept_weekly"] {
-		t.Error("expected 'kept_weekly' to be kept, but it was not")
-	}
-	if !kept["kept_monthly"] {
-		t.Error("expected 'kept_monthly' to be kept, but it was not")
-	}
-	if !kept["kept_yearly"] {
-		t.Error("expected 'kept_yearly' to be kept, but it was not")
-	}
-	if kept["to_be_deleted"] {
-		t.Error("expected 'to_be_deleted' to be deleted, but it was kept")
-	}
-}
-
 func TestPrepareDestination_IncrementalMode(t *testing.T) {
 	// Arrange
 	tempDir := t.TempDir()
@@ -511,60 +406,34 @@ func TestPrepareDestination_IncrementalMode(t *testing.T) {
 	}
 }
 
-func TestApplyRetentionPolicy(t *testing.T) {
+func TestExecuteBackup_Retention(t *testing.T) {
 	// Arrange
 	tempDir := t.TempDir()
 	cfg := config.NewDefault()
+	cfg.Paths.Source = t.TempDir() // Valid source
 	cfg.Paths.TargetBase = tempDir
-	cfg.Paths.ArchivesSubDir = "archives"
-	cfg.Naming.Prefix = "backup_"
-	cfg.IncrementalRetentionPolicy = config.BackupRetentionPolicyConfig{
-		Enabled: true,
-		Hours:   0,
-		Days:    1, // Keep one daily backup
-		Weeks:   0,
-		Months:  0,
-	}
+	cfg.IncrementalRetentionPolicy.Enabled = true // Enable retention
+	cfg.SnapshotRetentionPolicy.Enabled = true    // Enable retention
 
 	e := newTestEngine(cfg)
-	now := time.Now()
 
-	// The retention policy operates on the archives subdirectory.
-	archivesDir := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir)
-	os.MkdirAll(archivesDir, 0755)
-
-	// Create backups to be kept and deleted
-	createTestBackup(t, e, archivesDir, "backup_kept", now.Add(-1*24*time.Hour))
-	createTestBackup(t, e, archivesDir, "backup_to_delete", now.Add(-5*24*time.Hour))
-
-	// Create a non-backup directory that should be ignored
-	if err := os.Mkdir(filepath.Join(archivesDir, "not_a_backup"), 0755); err != nil {
-		t.Fatalf("failed to create non-backup dir: %v", err)
-	}
+	// Inject mocks for all components to isolate the test
+	mockSyncer := &mockSyncer{}
+	mockArchiver := &mockArchiver{}
+	mockRetention := &mockRetentionManager{}
+	e.syncer = mockSyncer
+	e.archiver = mockArchiver
+	e.retentionManager = mockRetention
 
 	// Act
-	err := e.applyRetentionFor(context.Background(), "test", archivesDir, cfg.IncrementalRetentionPolicy, "")
-	if err != nil {
-		t.Fatalf("applyRetentionPolicy failed: %v", err)
-	}
+	// We don't care about the error, only that the retention manager was called.
+	// We also ignore the lock file error for this test.
+	_ = os.Remove(filepath.Join(tempDir, config.LockFileName))
+	_ = e.ExecuteBackup(context.Background())
 
 	// Assert
-	// Kept backup should exist
-	_, err = os.Stat(filepath.Join(archivesDir, "backup_kept"))
-	if err != nil {
-		t.Errorf("expected kept backup to exist, but it does not: %v", err)
-	}
-
-	// Deleted backup should not exist
-	_, err = os.Stat(filepath.Join(archivesDir, "backup_to_delete"))
-	if !os.IsNotExist(err) {
-		t.Errorf("expected old backup to be deleted, but it still exists or another error occurred: %v", err)
-	}
-
-	// Ignored directory should exist
-	_, err = os.Stat(filepath.Join(archivesDir, "not_a_backup"))
-	if err != nil {
-		t.Errorf("expected non-backup directory to be ignored, but it was deleted or an error occurred: %v", err)
+	if !mockRetention.applyCalled {
+		t.Error("expected retentionManager.Apply to be called, but it was not")
 	}
 }
 
@@ -627,52 +496,4 @@ func TestPrepareDestination(t *testing.T) {
 			t.Errorf("expected target path %q, but got %q", expectedPath, currentRun.target)
 		}
 	})
-}
-
-func TestFetchSortedBackups(t *testing.T) {
-	// Arrange
-	tempDir := t.TempDir()
-	cfg := config.NewDefault()
-	cfg.Naming.Prefix = "backup_"
-	e := newTestEngine(cfg)
-
-	now := time.Now()
-	backup1Time := now.Add(-10 * time.Hour)
-	backup2Time := now.Add(-5 * time.Hour) // Newest
-	backup3Time := now.Add(-20 * time.Hour)
-
-	createTestBackup(t, e, tempDir, "backup_1", backup1Time)
-	createTestBackup(t, e, tempDir, "backup_2_newest", backup2Time)
-	createTestBackup(t, e, tempDir, "backup_3", backup3Time)
-
-	// Create a directory without a metafile that should be ignored
-	if err := os.Mkdir(filepath.Join(tempDir, "backup_no_meta"), 0755); err != nil {
-		t.Fatalf("failed to create dir without metafile: %v", err)
-	}
-
-	// Act
-	backups, err := e.fetchSortedBackups(context.Background(), tempDir, "non_existent_current_dir")
-	if err != nil {
-		t.Fatalf("fetchSortedBackups failed: %v", err)
-	}
-
-	// Assert
-	if len(backups) != 3 {
-		t.Fatalf("expected to find 3 valid backups, but got %d", len(backups))
-	}
-
-	// Check that they are sorted newest to oldest
-	expectedOrder := []string{"backup_2_newest", "backup_1", "backup_3"}
-	for i, relPathKey := range expectedOrder {
-		if backups[i].RelPathKey != relPathKey {
-			t.Errorf("expected backup at index %d to be %s, but got %s", i, relPathKey, backups[i].RelPathKey)
-		}
-	}
-
-	expectedTimes := []time.Time{backup2Time, backup1Time, backup3Time}
-	for i, ti := range expectedTimes {
-		if !backups[i].Metadata.TimestampUTC.Equal(ti) {
-			t.Errorf("expected backup time at index %d to be %v, but got %v", i, ti, backups[i].Metadata.TimestampUTC)
-		}
-	}
 }

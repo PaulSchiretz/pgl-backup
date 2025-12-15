@@ -134,10 +134,11 @@ func TestArchive(t *testing.T) {
 		currentBackupTimestampUTC := time.Now().UTC().Add(-25 * time.Hour)
 		currentTimestampUTC := time.Now().UTC()
 		currentBackupPath := filepath.Join(tempDir, "current")
+		archivesDir := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir)
 		createTestBackup(t, tempDir, "current", currentBackupTimestampUTC)
 
 		// Act
-		err := archiver.Archive(context.Background(), currentBackupPath, currentTimestampUTC)
+		err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC)
 		if err != nil {
 			t.Fatalf("Archive failed: %v", err)
 		}
@@ -149,7 +150,7 @@ func TestArchive(t *testing.T) {
 
 		archiveTimestamp := config.FormatTimestampWithOffset(currentBackupTimestampUTC)
 		archiveDirName := cfg.Naming.Prefix + archiveTimestamp
-		expectedArchivePath := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir, archiveDirName)
+		expectedArchivePath := filepath.Join(archivesDir, archiveDirName)
 		if _, err := os.Stat(expectedArchivePath); os.IsNotExist(err) {
 			t.Errorf("expected archive directory %s to exist, but it does not", expectedArchivePath)
 		}
@@ -167,10 +168,11 @@ func TestArchive(t *testing.T) {
 		currentBackupTimestampUTC := time.Now().UTC().Add(-2 * time.Hour)
 		currentTimestampUTC := time.Now().UTC()
 		currentBackupPath := filepath.Join(tempDir, "current")
+		archivesDir := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir)
 		createTestBackup(t, tempDir, "current", currentBackupTimestampUTC)
 
 		// Act
-		err := archiver.Archive(context.Background(), currentBackupPath, currentTimestampUTC)
+		err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC)
 		if err != nil {
 			t.Fatalf("Archive failed unexpectedly: %v", err)
 		}
@@ -194,16 +196,17 @@ func TestArchive(t *testing.T) {
 		currentBackupTimestampUTC := time.Now().UTC().Add(-25 * time.Hour)
 		currentTimestampUTC := time.Now().UTC()
 		currentBackupPath := filepath.Join(tempDir, "current")
+		archivesDir := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir)
 		createTestBackup(t, tempDir, "current", currentBackupTimestampUTC)
 
 		// Manually create the destination to cause a conflict
 		archiveTimestamp := config.FormatTimestampWithOffset(currentBackupTimestampUTC)
 		archiveDirName := cfg.Naming.Prefix + archiveTimestamp
-		conflictPath := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir, archiveDirName)
+		conflictPath := filepath.Join(archivesDir, archiveDirName)
 		os.MkdirAll(conflictPath, 0755)
 
 		// Act
-		err := archiver.Archive(context.Background(), currentBackupPath, currentTimestampUTC)
+		err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC)
 
 		// Assert
 		if err == nil {
