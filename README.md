@@ -25,6 +25,7 @@
     *   **Permission Lockout Protection**: When copying files and directories, `pgl-backup` automatically ensures the backup user has write permissions on the destination, even if the source is read-only. This prevents the backup process from locking itself out on subsequent runs.
     *   **Consistent User Execution**: While `pgl-backup` includes features to prevent permission lockouts, it is still a best practice to run all backups for a specific target as the same user. This ensures consistent file ownership and avoids potential permission issues on Unix-like systems.
     *   **"Ghost Directory" Protection**: On Unix-like systems, it helps prevent accidentally backing up to a mount point when the external drive is not actually mounted.
+    *   **Cross-Platform Safety**: Detects and halts on risky backup scenarios, such as backing up a case-sensitive Linux source from a case-insensitive Windows host, which can lead to silent data loss.
 
 ## Installation
 
@@ -385,10 +386,11 @@ The best policy depends on how much data you are backing up and how much disk sp
 
 ### A Note on Cross-Platform Backups and Case-Sensitivity
 
-For maximum data integrity when backing up a case-sensitive source (like a Linux server or a WSL environment), it is **strongly recommended to run `pgl-backup` on a case-sensitive operating system** (like Linux, macOS, or from within WSL).
+`pgl-backup` includes a critical safety check to prevent data loss from filesystem case-sensitivity mismatches.
 
-Running the tool on Windows to back up a case-sensitive source may result in an incomplete backup. This is because the Windows operating system itself may not report the existence of files that differ only by case (e.g., it might see `File.txt` but not `file.txt`). Since `pgl-backup` can only back up what the host OS tells it exists, this can lead to silent data loss.
-
+*   **The Problem**: Backing up a case-sensitive source (like a Linux filesystem with both `File.txt` and `file.txt`) from a case-insensitive host (like Windows) is dangerous. The host OS may only "see" one of the files, leading to silent data loss as the other is never backed up.
+*   **The Solution**: `pgl-backup` automatically tests the case-sensitivity of both the source and the host environment. If it detects this risky combination, it will stop with a clear error message before the backup begins.
+*   **Recommendation**: For maximum data integrity when backing up a case-sensitive source (like a Linux server or a WSL environment), you should always **run `pgl-backup` on a case-sensitive operating system** (like Linux, or from within WSL on Windows).
 
 ### Error: `permission denied` when reading source or writing to target
 

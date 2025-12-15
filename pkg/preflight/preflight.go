@@ -42,6 +42,11 @@ func RunChecks(c *config.Config) error {
 		}
 	}
 
+	// 4. Perform cross-platform safety checks.
+	if err := checkCaseSensitivityMismatch(c.Paths.Source); err != nil {
+		return err // This returns a warning as an error to halt execution.
+	}
+
 	return nil
 }
 
@@ -155,5 +160,34 @@ func checkBackupTargetWritable(targetPath string) error {
 		// This is not a critical failure, but worth logging.
 		plog.Warn("Failed to remove temporary write-test file", "path", tempFile, "error", err)
 	}
+	return nil
+}
+
+// checkCaseSensitivityMismatch warns the user if they are running on a case-insensitive OS (like Windows)
+// but the source path appears to be from a case-sensitive one (like Linux, e.g., /home/user).
+// This is a high-risk scenario that can lead to silent data loss due to file collisions.
+func checkCaseSensitivityMismatch(sourcePath string) error {
+	// Determine the case-sensitivity of the filesystem where the backup tool is running.
+	// We check the temp dir as a proxy for the host's default filesystem.
+	hostIsCaseSensitive, err := util.IsPathCaseSensitive(os.TempDir())
+	if err != nil {
+		// If we can't determine host sensitivity, log a warning but don't block the backup.
+		plog.Warn("Could not determine host filesystem case-sensitivity; skipping mismatch check.", "error", err)
+		return nil
+	}
+
+	// Now, determine the case-sensitivity of the source path's filesystem.
+	sourceIsCaseSensitive, err := util.IsPathCaseSensitive(sourcePath)
+	if err != nil {
+		plog.Warn("Could not determine source filesystem case-sensitivity; skipping mismatch check.", "path", sourcePath, "error", err)
+		return nil
+	}
+
+	// The dangerous scenario: a case-insensitive host trying to back up a case-sensitive source.
+	if !hostIsCaseSensitive && sourceIsCaseSensitive {
+		plog.Warn("CRITICAL RISK: Case-sensitivity mismatch detected.")
+		return fmt.Errorf("the host filesystem is case-insensitive, but the source path '%s' is on a case-sensitive filesystem. This can cause file collisions and silent data loss (e.g., 'File.txt' overwriting 'file.txt'). It is strongly recommended to run this backup from a case-sensitive host (e.g., Linux, or from within WSL on Windows)", sourcePath)
+	}
+
 	return nil
 }

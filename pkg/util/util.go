@@ -103,3 +103,42 @@ func MergeAndDeduplicate(slices ...[]string) []string {
 	}
 	return result
 }
+
+// IsPathCaseSensitive checks if the filesystem at the given path is case-sensitive.
+// It does this by creating a temporary file and then attempting to stat a case-variant of it.
+func IsPathCaseSensitive(path string) (bool, error) {
+	// We need a directory to perform the check in. If the given path is a file, use its parent dir.
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, fmt.Errorf("cannot stat path '%s' to check case sensitivity: %w", path, err)
+	}
+	checkDir := path
+	if !info.IsDir() {
+		checkDir = filepath.Dir(path)
+	}
+
+	// Create a temporary file with a unique, lowercase name.
+	// We use a simple pattern; os.CreateTemp is not ideal here as we need to predict the case-variant name.
+	baseName := "pgl-backup-case-test-" + fmt.Sprintf("%d", os.Getpid())
+	lowerPath := filepath.Join(checkDir, baseName)
+	upperPath := filepath.Join(checkDir, strings.ToUpper(baseName))
+
+	// Clean up any potential leftovers from a previous crashed run.
+	_ = os.Remove(lowerPath)
+	_ = os.Remove(upperPath)
+
+	// Create the lowercase file.
+	if err := os.WriteFile(lowerPath, []byte("test"), 0600); err != nil {
+		return false, fmt.Errorf("failed to create temp file for case-sensitivity check in '%s': %w", checkDir, err)
+	}
+	defer os.Remove(lowerPath)
+
+	// Now, try to stat the uppercase version.
+	_, err = os.Stat(upperPath)
+	if os.IsNotExist(err) {
+		// If the uppercase path does not exist, the filesystem is case-sensitive.
+		return true, nil
+	}
+	// If we can stat it (err is nil) or any other error occurs, assume case-insensitive.
+	return false, nil
+}

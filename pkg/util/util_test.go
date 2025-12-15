@@ -277,3 +277,42 @@ func TestMergeAndDeduplicate(t *testing.T) {
 		})
 	}
 }
+
+func TestIsPathCaseSensitive(t *testing.T) {
+	// This test checks the case-sensitivity of the filesystem where the tests are running.
+	// It doesn't mock different filesystem types, but validates that the detection
+	// logic works correctly for the current environment.
+
+	// 1. Create a temporary directory to perform the check in.
+	tempDir := t.TempDir()
+
+	// 2. Run the function under test on the directory.
+	isSensitive, err := IsPathCaseSensitive(tempDir)
+	if err != nil {
+		t.Fatalf("IsPathCaseSensitive failed on directory: %v", err)
+	}
+
+	// 3. Determine the expected outcome based on the host OS.
+	// IsHostCaseInsensitiveFS() returns true for Windows/macOS.
+	// So, isSensitive should be false on those platforms, and true on Linux.
+	expectedIsSensitive := !IsHostCaseInsensitiveFS()
+
+	// 4. Assert that the detected sensitivity matches the expected sensitivity.
+	if isSensitive != expectedIsSensitive {
+		t.Errorf("detected case sensitivity (%v) does not match expected for OS %s (%v)", isSensitive, runtime.GOOS, expectedIsSensitive)
+	}
+
+	// 5. Test again, but this time passing a file path to ensure it correctly uses the parent dir.
+	tempFile := filepath.Join(tempDir, "testfile.txt")
+	if err := os.WriteFile(tempFile, []byte("data"), 0644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	isSensitiveFile, err := IsPathCaseSensitive(tempFile)
+	if err != nil {
+		t.Fatalf("IsPathCaseSensitive failed on file path: %v", err)
+	}
+	if isSensitiveFile != expectedIsSensitive {
+		t.Errorf("detected case sensitivity for file path (%v) does not match expected for OS %s (%v)", isSensitiveFile, runtime.GOOS, expectedIsSensitive)
+	}
+}
