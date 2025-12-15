@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
-	"pixelgardenlabs.io/pgl-backup/pkg/filelock"
+	"pixelgardenlabs.io/pgl-backup/pkg/lockfile"
 	"pixelgardenlabs.io/pgl-backup/pkg/patharchive"
 	"pixelgardenlabs.io/pgl-backup/pkg/pathsync"
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
@@ -105,9 +105,9 @@ func (e *Engine) acquireTargetLock(ctx context.Context) (func(), error) {
 	appID := fmt.Sprintf("pgl-backup:%s", e.config.Paths.Source)
 
 	plog.Debug("Attempting to acquire lock", "path", lockFilePath)
-	lock, err := filelock.Acquire(ctx, lockFilePath, appID)
+	lock, err := lockfile.Acquire(ctx, lockFilePath, appID)
 	if err != nil {
-		var lockErr *filelock.ErrLockActive
+		var lockErr *lockfile.ErrLockActive
 		if errors.As(err, &lockErr) {
 			plog.Warn("Operation is already running for this target, skipping run.", "details", lockErr.Error())
 			return nil, nil // Return nil error to indicate a graceful exit.
