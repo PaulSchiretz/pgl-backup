@@ -232,7 +232,7 @@ The JSON keys for these are `defaultExcludeFiles` and `defaultExcludeDirs`.
 *   **Default Excluded Files:** `*.tmp`, `*.temp`, `*.swp`, `*.lnk`, `~*`, `desktop.ini`, `.DS_Store`, `Thumbs.db`, `Icon\r`.
 *   **Default Excluded Directories:** `@tmp`, `@eadir`, `.SynologyWorkingDirectory`, `#recycle`, `$Recycle.Bin`.
 
-### Using Hooks
+### Using Pre- and Post-Backup Hooks
 
 Run a script before the backup starts. Commands with spaces must be wrapped in single or double quotes.
 
