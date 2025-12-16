@@ -89,7 +89,7 @@ func (c *PathCompressionManager) Compress(ctx context.Context, compressionPolicy
 		return nil
 	}
 
-	plog.Info("Preparing to compress backups", "policy", runState.compressionPolicyTitle, "count", len(eligibleBackups))
+	plog.Debug("Preparing to compress backups", "policy", runState.compressionPolicyTitle, "count", len(eligibleBackups))
 
 	// --- 4. Compress backups in parallel using a worker pool ---
 	// This is especially effective for network drives where latency is a factor.
