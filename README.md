@@ -90,12 +90,12 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
     "incremental": {
       "enabled": false,
       "format": "tar.gz",
-      "MaxRetries": 3
+      "maxRetries": 3
     },
     "snapshot": {
       "enabled": false,
       "format": "tar.gz",
-      "MaxRetries": 3
+      "maxRetries": 3
     }
   },
   "naming": {
