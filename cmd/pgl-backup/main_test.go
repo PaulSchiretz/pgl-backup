@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"pixelgardenlabs.io/pgl-backup/pkg/config"
 )
 
 // runTestWithFlags is a helper to safely run tests that use the global flag package.
@@ -220,6 +222,41 @@ func TestParseFlagConfig(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "invalid SyncEngine") {
 				t.Errorf("expected error to contain 'invalid SyncEngine', but got: %v", err)
+			}
+		})
+	})
+
+	t.Run("Parse Compression Flags", func(t *testing.T) {
+		args := []string{
+			"-incremental-compression",
+			"-incremental-compression-format=tar.gz",
+			"-snapshot-compression=true", // Test both -flag and -flag=value for booleans
+			"-snapshot-compression-format=zip",
+		}
+		runTestWithFlags(t, args, func() {
+			_, setFlags, err := parseFlagConfig()
+			if err != nil {
+				t.Fatalf("expected no error, but got: %v", err)
+			}
+
+			// Check incremental compression enabled
+			if val, ok := setFlags["incremental-compression"]; !ok || !val.(bool) {
+				t.Errorf("expected incremental-compression to be true, but got %v", val)
+			}
+
+			// Check incremental compression format
+			if val, ok := setFlags["incremental-compression-format"]; !ok || string(val.(config.CompressionFormat)) != "tar.gz" {
+				t.Errorf("expected incremental-compression-format to be 'tar.gz', but got %v", val.(config.CompressionFormat))
+			}
+
+			// Check snapshot compression enabled
+			if val, ok := setFlags["snapshot-compression"]; !ok || !val.(bool) {
+				t.Errorf("expected snapshot-compression to be true, but got %v", val)
+			}
+
+			// Check snapshot compression format
+			if val, ok := setFlags["snapshot-compression-format"]; !ok || string(val.(config.CompressionFormat)) != "zip" {
+				t.Errorf("expected snapshot-compression-format to be 'zip', but got %v", val.(config.CompressionFormat))
 			}
 		})
 	})

@@ -54,7 +54,7 @@ func TestDetermineBackupsToKeep(t *testing.T) {
 		{RelPathKey: "backup_old_2", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-1600 * 24 * time.Hour)}},
 	}
 
-	policy := config.BackupRetentionPolicyConfig{
+	policy := config.RetentionPolicyConfig{
 		Enabled: true,
 		Hours:   2,
 		Days:    2,
@@ -110,7 +110,7 @@ func TestDetermineBackupsToKeep_Promotion(t *testing.T) {
 		{RelPathKey: "to_be_deleted", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-800 * 24 * time.Hour)}},
 	}
 
-	policy := config.BackupRetentionPolicyConfig{
+	policy := config.RetentionPolicyConfig{
 		Hours:  1,
 		Days:   1,
 		Weeks:  1,
@@ -145,7 +145,7 @@ func TestApplyRetentionPolicy(t *testing.T) {
 	cfg := config.NewDefault()
 	cfg.Paths.TargetBase = tempDir
 	cfg.Naming.Prefix = "backup_"
-	policy := config.BackupRetentionPolicyConfig{
+	policy := config.RetentionPolicyConfig{
 		Enabled: true,
 		Days:    1, // Keep one daily backup
 	}
@@ -163,7 +163,7 @@ func TestApplyRetentionPolicy(t *testing.T) {
 	}
 
 	// Act
-	err := r.Apply(context.Background(), tempDir, "test", policy, "")
+	err := r.Apply(context.Background(), "test", tempDir, policy, "")
 	if err != nil {
 		t.Fatalf("Apply failed: %v", err)
 	}

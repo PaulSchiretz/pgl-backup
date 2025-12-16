@@ -77,7 +77,7 @@ func (a *PathArchiver) Archive(ctx context.Context, dirPath, currentBackupPath s
 
 	runState := &archiveRunState{
 		dirPath:                   dirPath,
-		interval:                  a.config.IncrementalArchivePolicy.Interval,
+		interval:                  a.config.Archive.Incremental.Interval,
 		currentBackupPath:         currentBackupPath,
 		currentBackupTimestampUTC: currentBackupTimestampUTC,
 		currentTimestampUTC:       currentTimestampUTC,
@@ -190,7 +190,7 @@ func (a *PathArchiver) shouldArchive(runState *archiveRunState) bool {
 // If the mode is 'auto', it calculates the optimal interval based on the retention policy.
 // If the mode is 'manual', it validates the user-configured interval.
 func (a *PathArchiver) prepareRun(ctx context.Context, runState *archiveRunState) error {
-	if a.config.IncrementalArchivePolicy.Mode == config.ManualInterval {
+	if a.config.Archive.Incremental.Mode == config.ManualInterval {
 		a.checkInterval(runState)
 	} else {
 		a.adjustInterval(runState)
@@ -201,7 +201,7 @@ func (a *PathArchiver) prepareRun(ctx context.Context, runState *archiveRunState
 // adjustInterval calculates the optimal archive interval based on the retention
 // policy. This is only called when the archive policy mode is 'auto'.
 func (a *PathArchiver) adjustInterval(runState *archiveRunState) {
-	policy := a.config.IncrementalRetentionPolicy
+	policy := a.config.Retention.Incremental
 	var suggestedInterval time.Duration
 
 	// If the retention policy is explicitly disabled, auto-mode should also disable archiving.
@@ -234,7 +234,7 @@ func (a *PathArchiver) adjustInterval(runState *archiveRunState) {
 
 // checkInterval validates the interval against the retention policy.
 func (a *PathArchiver) checkInterval(runState *archiveRunState) {
-	policy := a.config.IncrementalRetentionPolicy
+	policy := a.config.Retention.Incremental
 
 	if runState.interval == 0 {
 		plog.Debug("Archiving is disabled (interval = 0). Retention policy warnings for interval mismatch are suppressed.")

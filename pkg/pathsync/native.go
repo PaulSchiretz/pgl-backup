@@ -230,6 +230,8 @@ func (r *syncRun) copyFileHelper(absSrcPath, absTrgPath string, task *syncTask, 
 			}
 
 			// 7. Atomically move the temporary file to the final destination.
+			// Ensure destination doesn't exist before renaming (crucial for Windows).
+			_ = os.Remove(absTrgPath)
 			if err := os.Rename(absTempPath, absTrgPath); err != nil {
 				return err
 			}

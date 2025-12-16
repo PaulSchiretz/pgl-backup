@@ -23,6 +23,9 @@ const MetaFileName = ".pgl-backup.meta.json"
 // The '~' prefix marks it as temporary.
 const LockFileName = ".~pgl-backup.lock"
 
+// CompressedFileName is a marker that a backup is compressed
+const CompressedFileName = ".pgl-backup-compressed"
+
 // backupTimeFormat defines the standard, non-configurable time format for backup directory names.
 const backupTimeFormat = "2006-01-02-15-04-05"
 
@@ -44,6 +47,7 @@ type BackupPathConfig struct {
 	SnapshotsSubDir             string   `json:"snapshotsSubDir,omitempty"`
 	ArchivesSubDir              string   `json:"archivesSubDir,omitempty"`
 	IncrementalSubDir           string   `json:"incrementalSubDir,omitempty"`
+	ContentSubDir               string   `json:"contentSubDir,omitempty"`
 	PreserveSourceDirectoryName bool     `json:"preserveSourceDirectoryName"`
 	DefaultExcludeFiles         []string `json:"defaultExcludeFiles,omitempty"`
 	DefaultExcludeDirs          []string `json:"defaultExcludeDirs,omitempty"`
@@ -53,7 +57,7 @@ type BackupPathConfig struct {
 	UserExcludeDirs  []string `json:"userExcludeDirs"`
 }
 
-type BackupRetentionPolicyConfig struct {
+type RetentionPolicyConfig struct {
 	Enabled bool `json:"enabled"`
 	Hours   int  `json:"hours"`
 	Days    int  `json:"days"`
@@ -182,6 +186,7 @@ type BackupEnginePerformanceConfig struct {
 	SyncWorkers      int `json:"syncWorkers"`
 	MirrorWorkers    int `json:"mirrorWorkers" comment:"Number of concurrent workers for file deletions in mirror mode."`
 	DeleteWorkers    int `json:"deleteWorkers"`
+	CompressWorkers  int `json:"compressWorkers" comment:"Number of concurrent workers for compressing backups."`
 	CopyBufferSizeKB int `json:"copyBufferSizeKB" comment:"Size of the I/O buffer in kilobytes for file copies. Default is 4096 (4MB)."`
 }
 
@@ -233,7 +238,7 @@ func (rim *ArchiveIntervalMode) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-type IncrementalArchivePolicyConfig struct {
+type ArchivePolicyConfig struct {
 	// Mode determines if the interval is set manually or derived automatically from the retention policy.
 	Mode ArchiveIntervalMode `json:"mode"`
 	// Interval is the duration after which a new backup archive is created in incremental mode (e.g., "24h", "7d").
@@ -241,19 +246,85 @@ type IncrementalArchivePolicyConfig struct {
 	Interval time.Duration `json:"interval,omitempty"`
 }
 
+type BackupArchiveConfig struct {
+	// Incremental holds the archive policy specific to the incremental backup mode.
+	Incremental ArchivePolicyConfig `json:"incremental,omitempty"`
+}
+
+// CompressionFormat represents the archive format for compression.
+type CompressionFormat string
+
+const (
+	ZipFormat   CompressionFormat = "zip"
+	TarGzFormat CompressionFormat = "tar.gz"
+)
+
+var compressionFormatToString = map[CompressionFormat]string{ZipFormat: "zip", TarGzFormat: "tar.gz"}
+var stringToCompressionFormat = util.InvertMap(compressionFormatToString)
+
+// String returns the string representation of a CompressionFormat.
+func (cf CompressionFormat) String() string {
+	if str, ok := compressionFormatToString[cf]; ok {
+		return str
+	}
+	return fmt.Sprintf("unknown_compression_format(%s)", string(cf))
+}
+
+// CompressionFormatFromString parses a string and returns the corresponding CompressionFormat.
+func CompressionFormatFromString(s string) (CompressionFormat, error) {
+	if format, ok := stringToCompressionFormat[s]; ok {
+		return format, nil
+	}
+	return "", fmt.Errorf("invalid CompressionFormat: %q. Must be 'zip' or 'tar.gz'", s)
+}
+
+// MarshalJSON implements the json.Marshaler interface for CompressionFormat.
+func (cf CompressionFormat) MarshalJSON() ([]byte, error) {
+	return json.Marshal(cf.String())
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface for CompressionFormat.
+func (cf *CompressionFormat) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return fmt.Errorf("CompressionFormat should be a string, got %s", data)
+	}
+	format, err := CompressionFormatFromString(s)
+	if err != nil {
+		return err
+	}
+	*cf = format
+	return nil
+}
+
+type CompressionPolicyConfig struct {
+	Enabled bool              `json:"enabled"`
+	Format  CompressionFormat `json:"format,omitempty"`
+}
+
+type BackupCompressionConfig struct {
+	Incremental CompressionPolicyConfig `json:"incremental,omitempty"`
+	Snapshot    CompressionPolicyConfig `json:"snapshot,omitempty"`
+}
+
+type BackupRetentionConfig struct {
+	Incremental RetentionPolicyConfig `json:"incremental,omitempty"`
+	Snapshot    RetentionPolicyConfig `json:"snapshot,omitempty"`
+}
+
 type Config struct {
-	Mode                       BackupMode                     `json:"mode"`
-	Engine                     BackupEngineConfig             `json:"engine"` // Keep this for engine-specific settings
-	LogLevel                   string                         `json:"logLevel"`
-	DryRun                     bool                           `json:"dryRun"`
-	FailFast                   bool                           `json:"failFast"`
-	Metrics                    bool                           `json:"metrics,omitempty"`
-	Naming                     BackupNamingConfig             `json:"naming"`
-	Paths                      BackupPathConfig               `json:"paths"`
-	IncrementalArchivePolicy   IncrementalArchivePolicyConfig `json:"incrementalArchivePolicy,omitempty"`
-	IncrementalRetentionPolicy BackupRetentionPolicyConfig    `json:"incrementalRetentionPolicy,omitempty"`
-	SnapshotRetentionPolicy    BackupRetentionPolicyConfig    `json:"snapshotRetentionPolicy,omitempty"`
-	Hooks                      BackupHooksConfig              `json:"hooks,omitempty"`
+	Mode        BackupMode              `json:"mode"`
+	Engine      BackupEngineConfig      `json:"engine"` // Keep this for engine-specific settings
+	LogLevel    string                  `json:"logLevel"`
+	DryRun      bool                    `json:"dryRun"`
+	FailFast    bool                    `json:"failFast"`
+	Metrics     bool                    `json:"metrics,omitempty"`
+	Compression BackupCompressionConfig `json:"compression,omitempty"`
+	Naming      BackupNamingConfig      `json:"naming"`
+	Paths       BackupPathConfig        `json:"paths"`
+	Retention   BackupRetentionConfig   `json:"retention,omitempty"`
+	Archive     BackupArchiveConfig     `json:"archive,omitempty"`
+	Hooks       BackupHooksConfig       `json:"hooks,omitempty"`
 }
 
 // NewDefault creates and returns a Config struct with sensible default
@@ -268,6 +339,16 @@ func NewDefault() Config {
 		DryRun:   false,
 		FailFast: false,
 		Metrics:  true, // Default to enabled for detailed performance and file-counting metrics.
+		Compression: BackupCompressionConfig{
+			Incremental: CompressionPolicyConfig{
+				Enabled: false,
+				Format:  TarGzFormat,
+			},
+			Snapshot: CompressionPolicyConfig{
+				Enabled: false,
+				Format:  TarGzFormat,
+			},
+		},
 		Engine: BackupEngineConfig{
 			Type:                 NativeEngine,
 			RetryCount:           3, // Default retries on failure.
@@ -277,6 +358,7 @@ func NewDefault() Config {
 				SyncWorkers:      runtime.NumCPU(), // Default to the number of CPU cores for file copies.
 				MirrorWorkers:    runtime.NumCPU(), // Default to the number of CPU cores for file deletions.
 				DeleteWorkers:    4,                // A sensible default for deleting entire backup sets.
+				CompressWorkers:  4,                // A sensible default for compressing backups.
 				CopyBufferSizeKB: 256,              // Default to 256KB buffer. Keep it between 64KB-4MB
 			}},
 		Naming: BackupNamingConfig{
@@ -288,6 +370,7 @@ func NewDefault() Config {
 			SnapshotsSubDir:             "PGL_Backup_Snapshots", // Default name for the snapshots sub-directory.
 			ArchivesSubDir:              "PGL_Backup_Archives",  // Default name for the archives sub-directory.
 			IncrementalSubDir:           "PGL_Backup_Current",   // Default name for the active incremental backup directory.
+			ContentSubDir:               "PGL_Backup_Content",   // Default name for the content sub-directory.
 			PreserveSourceDirectoryName: true,                   // Default to preserving the source folder name in the destination.
 			UserExcludeFiles:            []string{},             // User-defined list of files to exclude.
 			UserExcludeDirs:             []string{},             // User-defined list of directories to exclude.
@@ -312,26 +395,30 @@ func NewDefault() Config {
 				"$Recycle.Bin",              // Windows recycle bin
 			},
 		},
-		IncrementalArchivePolicy: IncrementalArchivePolicyConfig{
-			Mode:     AutoInterval,   // Default to auto-adjusting the interval based on the retention policy.
-			Interval: 24 * time.Hour, // Interval will be calculated by the engine in 'auto' mode.
-			// If a user switches to 'manual' mode, they must specify an interval.
+		Archive: BackupArchiveConfig{
+			Incremental: ArchivePolicyConfig{
+				Mode:     AutoInterval,   // Default to auto-adjusting the interval based on the retention policy.
+				Interval: 24 * time.Hour, // Interval will be calculated by the engine in 'auto' mode.
+				// If a user switches to 'manual' mode, they must specify an interval.
+			},
 		},
-		IncrementalRetentionPolicy: BackupRetentionPolicyConfig{
-			Enabled: true, // Enabled by default for incremental mode.
-			Hours:   0,    // Default: No hourly backups.
-			Days:    7,    // Default: Keep one backup for each of the last 7 days.
-			Weeks:   4,    // Default: Keep one backup for each of the last 4 weeks.
-			Months:  3,    // Default: Keep one backup for each of the last 3 months.
-			Years:   1,    // Default: Keep one backup for each of the last 1 year.
-		},
-		SnapshotRetentionPolicy: BackupRetentionPolicyConfig{
-			Enabled: false, // Disabled by default to protect snapshots.
-			Hours:   0,
-			Days:    0,
-			Weeks:   0,
-			Months:  0,
-			Years:   0,
+		Retention: BackupRetentionConfig{
+			Incremental: RetentionPolicyConfig{
+				Enabled: true, // Enabled by default for incremental mode.
+				Hours:   0,    // Default: No hourly backups.
+				Days:    7,    // Default: Keep one backup for each of the last 7 days.
+				Weeks:   4,    // Default: Keep one backup for each of the last 4 weeks.
+				Months:  3,    // Default: Keep one backup for each of the last 3 months.
+				Years:   1,    // Default: Keep one backup for each of the last 1 year.
+			},
+			Snapshot: RetentionPolicyConfig{
+				Enabled: false, // Disabled by default to protect snapshots.
+				Hours:   0,
+				Days:    0,
+				Weeks:   0,
+				Months:  0,
+				Years:   0,
+			},
 		},
 		Hooks: BackupHooksConfig{
 			PreBackup:  []string{},
@@ -469,12 +556,22 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	// Validate ContentSubDir for all modes
+	if c.Paths.ContentSubDir == "" {
+		return fmt.Errorf("contentSubDir cannot be empty")
+	}
+	if strings.ContainsAny(c.Paths.ContentSubDir, `\/`) {
+		return fmt.Errorf("contentSubDir cannot contain path separators ('/' or '\\')")
+	}
 	// --- Validate Engine and Mode Settings ---
 	if c.Engine.Performance.SyncWorkers < 1 {
 		return fmt.Errorf("syncWorkers must be at least 1")
 	}
 	if c.Engine.Performance.MirrorWorkers < 1 {
 		return fmt.Errorf("mirrorWorkers must be at least 1")
+	}
+	if c.Engine.Performance.CompressWorkers < 1 {
+		return fmt.Errorf("compressWorkers must be at least 1")
 	}
 	if c.Engine.Performance.DeleteWorkers < 1 {
 		return fmt.Errorf("deleteWorkers must be at least 1")
@@ -492,8 +589,8 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("copyBufferSizeKB must be greater than 0")
 	}
 	if c.Mode == IncrementalMode {
-		if c.IncrementalArchivePolicy.Mode == ManualInterval && c.IncrementalArchivePolicy.Interval < 0 {
-			return fmt.Errorf("incrementalArchivePolicy.interval cannot be negative when mode is 'manual'. Use '0' to disable archive")
+		if c.Archive.Incremental.Mode == ManualInterval && c.Archive.Incremental.Interval < 0 {
+			return fmt.Errorf("archive.incremental.interval cannot be negative when mode is 'manual'. Use '0' to disable archive")
 		}
 	}
 
@@ -528,16 +625,18 @@ func (c *Config) LogSummary() {
 		"sync_workers", c.Engine.Performance.SyncWorkers,
 		"mirror_workers", c.Engine.Performance.MirrorWorkers,
 		"metrics", c.Metrics,
+		"compress_workers", c.Engine.Performance.CompressWorkers,
 		"delete_workers", c.Engine.Performance.DeleteWorkers,
 		"copy_buffer_kb", c.Engine.Performance.CopyBufferSizeKB,
+		"content_subdir", c.Paths.ContentSubDir,
 	}
 	switch c.Mode {
 	case IncrementalMode:
 		logArgs = append(logArgs, "incremental_subdir", c.Paths.IncrementalSubDir)
 		logArgs = append(logArgs, "archives_subdir", c.Paths.ArchivesSubDir)
-		logArgs = append(logArgs, "archive_mode", c.IncrementalArchivePolicy.Mode)
-		if c.IncrementalArchivePolicy.Mode == ManualInterval {
-			logArgs = append(logArgs, "archive_interval", c.IncrementalArchivePolicy.Interval)
+		logArgs = append(logArgs, "archive_mode", c.Archive.Incremental.Mode)
+		if c.Archive.Incremental.Mode == ManualInterval {
+			logArgs = append(logArgs, "archive_interval", c.Archive.Incremental.Interval)
 		}
 	case SnapshotMode:
 		logArgs = append(logArgs, "snapshots_subdir", c.Paths.SnapshotsSubDir)
@@ -560,19 +659,27 @@ func (c *Config) LogSummary() {
 	if len(c.Hooks.PostBackup) > 0 {
 		logArgs = append(logArgs, "post_backup_hooks", strings.Join(c.Hooks.PostBackup, "; "))
 	}
-	if c.IncrementalRetentionPolicy.Enabled {
+	if c.Retention.Incremental.Enabled {
 		retentionSummary := fmt.Sprintf("enabled (h:%d d:%d w:%d m:%d y:%d)",
-			c.IncrementalRetentionPolicy.Hours, c.IncrementalRetentionPolicy.Days, c.IncrementalRetentionPolicy.Weeks,
-			c.IncrementalRetentionPolicy.Months, c.IncrementalRetentionPolicy.Years)
+			c.Retention.Incremental.Hours, c.Retention.Incremental.Days, c.Retention.Incremental.Weeks,
+			c.Retention.Incremental.Months, c.Retention.Incremental.Years)
 		logArgs = append(logArgs, "incremental_retention", retentionSummary)
 	}
-	if c.SnapshotRetentionPolicy.Enabled {
+	if c.Retention.Snapshot.Enabled {
 		snapshotRetentionSummary := fmt.Sprintf("enabled (h:%d d:%d w:%d m:%d y:%d)",
-			c.SnapshotRetentionPolicy.Hours, c.SnapshotRetentionPolicy.Days, c.SnapshotRetentionPolicy.Weeks,
-			c.SnapshotRetentionPolicy.Months, c.SnapshotRetentionPolicy.Years)
+			c.Retention.Snapshot.Hours, c.Retention.Snapshot.Days, c.Retention.Snapshot.Weeks,
+			c.Retention.Snapshot.Months, c.Retention.Snapshot.Years)
 		logArgs = append(logArgs, "snapshot_retention", snapshotRetentionSummary)
 	}
 
+	if c.Compression.Incremental.Enabled {
+		logArgs = append(logArgs, "incremental_compression_enabled", c.Compression.Incremental.Enabled)
+		logArgs = append(logArgs, "incremental_compression_format", c.Compression.Incremental.Format)
+	}
+	if c.Compression.Snapshot.Enabled {
+		logArgs = append(logArgs, "snapshot_compression_enabled", c.Compression.Snapshot.Enabled)
+		logArgs = append(logArgs, "snapshot_compression_format", c.Compression.Snapshot.Format)
+	}
 	plog.Info("Backup configuration loaded", logArgs...)
 }
 
@@ -643,6 +750,8 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 			merged.Engine.Performance.MirrorWorkers = value.(int)
 		case "delete-workers":
 			merged.Engine.Performance.DeleteWorkers = value.(int)
+		case "compress-workers":
+			merged.Engine.Performance.CompressWorkers = value.(int)
 		case "retry-count":
 			merged.Engine.RetryCount = value.(int)
 		case "retry-wait":
@@ -661,6 +770,19 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 			merged.Hooks.PreBackup = value.([]string)
 		case "post-backup-hooks":
 			merged.Hooks.PostBackup = value.([]string)
+		// Note: The following flags are not exposed via CLI but are handled here for completeness.
+		case "archive-mode":
+			merged.Archive.Incremental.Mode = value.(ArchiveIntervalMode)
+		case "archive-interval":
+			merged.Archive.Incremental.Interval = value.(time.Duration)
+		case "incremental-compression":
+			merged.Compression.Incremental.Enabled = value.(bool)
+		case "incremental-compression-format":
+			merged.Compression.Incremental.Format = value.(CompressionFormat)
+		case "snapshot-compression":
+			merged.Compression.Snapshot.Enabled = value.(bool)
+		case "snapshot-compression-format":
+			merged.Compression.Snapshot.Format = value.(CompressionFormat)
 		default:
 			plog.Debug("unhandled flag in MergeConfigWithFlags", "flag", name)
 		}

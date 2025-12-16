@@ -68,6 +68,7 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	syncWorkersFlag := flag.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
 	mirrorWorkersFlag := flag.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
 	deleteWorkersFlag := flag.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
+	compressWorkersFlag := flag.Int("compress-workers", 0, "Number of worker goroutines for compressing backups.")
 	retryCountFlag := flag.Int("retry-count", 0, "Number of retries for failed file copies.")
 	retryWaitFlag := flag.Int("retry-wait", 0, "Seconds to wait between retries.")
 	copyBufferKBFlag := flag.Int("copy-buffer-kb", 0, "Size of the I/O buffer in kilobytes for file copies.")
@@ -77,6 +78,10 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	preserveSourceNameFlag := flag.Bool("preserve-source-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
 	preBackupHooksFlag := flag.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
 	postBackupHooksFlag := flag.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
+	incCompressionEnabledFlag := flag.Bool("incremental-compression", false, "Enable compression for incremental backups.")
+	incCompressionFormatFlag := flag.String("incremental-compression-format", "", "Compression format for incremental backups: 'zip' or 'tar.gz'.")
+	snapCompressionEnabledFlag := flag.Bool("snapshot-compression", false, "Enable compression for snapshot backups.")
+	snapCompressionFormatFlag := flag.String("snapshot-compression-format", "", "Compression format for snapshot backups: 'zip' or 'tar.gz'.")
 
 	flag.Parse()
 
@@ -112,10 +117,13 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	addIfUsed("sync-workers", *syncWorkersFlag)
 	addIfUsed("mirror-workers", *mirrorWorkersFlag)
 	addIfUsed("delete-workers", *deleteWorkersFlag)
+	addIfUsed("compress-workers", *compressWorkersFlag)
 	addIfUsed("retry-count", *retryCountFlag)
 	addIfUsed("retry-wait", *retryWaitFlag)
 	addIfUsed("copy-buffer-kb", *copyBufferKBFlag)
 	addIfUsed("mod-time-window", *modTimeWindowFlag)
+	addIfUsed("incremental-compression", *incCompressionEnabledFlag)
+	addIfUsed("snapshot-compression", *snapCompressionEnabledFlag)
 
 	// Handle flags that require parsing/validation.
 	addParsedIfUsed("user-exclude-files", *userExcludeFilesFlag, flagparse.ParseExcludeList)
@@ -136,6 +144,20 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 			return actionRunBackup, nil, err
 		}
 		flagMap["sync-engine"] = engineType
+	}
+	if usedFlags["incremental-compression-format"] {
+		format, err := config.CompressionFormatFromString(*incCompressionFormatFlag)
+		if err != nil {
+			return actionRunBackup, nil, err
+		}
+		flagMap["incremental-compression-format"] = format
+	}
+	if usedFlags["snapshot-compression-format"] {
+		format, err := config.CompressionFormatFromString(*snapCompressionFormatFlag)
+		if err != nil {
+			return actionRunBackup, nil, err
+		}
+		flagMap["snapshot-compression-format"] = format
 	}
 
 	// Final sanity check: if robocopy was requested on a non-windows OS, force native.

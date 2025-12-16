@@ -3,7 +3,6 @@ package patharchive
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,37 +11,25 @@ import (
 	"time"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
+	"pixelgardenlabs.io/pgl-backup/pkg/metafile"
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 )
 
-// backupMetadata is a local copy for testing purposes, mirroring engine.backupMetadata
-type backupMetadata struct {
-	Version      string    `json:"version"`
-	TimestampUTC time.Time `json:"timestampUTC"`
-	Mode         string    `json:"mode"`
-	Source       string    `json:"source"`
-}
-
-// Helper to create a temporary directory structure for a backup.
-func createTestBackup(t *testing.T, baseDir, name string, timestampUTC time.Time) {
+// createTestMetafile creates a directory and a metafile inside it for testing.
+func createTestMetafile(t *testing.T, dirPath string, timestampUTC time.Time) {
 	t.Helper()
-	backupPath := filepath.Join(baseDir, name)
-	if err := os.MkdirAll(backupPath, 0755); err != nil {
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		t.Fatalf("failed to create test backup dir: %v", err)
 	}
 
-	metaFilePath := filepath.Join(backupPath, config.MetaFileName)
-	metadata := backupMetadata{
+	metadata := metafile.MetafileContent{
 		Version:      "test",
 		TimestampUTC: timestampUTC,
 		Mode:         "incremental",
 		Source:       "/src",
 	}
-	jsonData, err := json.MarshalIndent(metadata, "", "  ")
-	if err != nil {
-		t.Fatalf("could not marshal meta data: %v", err)
-	}
-	if err := os.WriteFile(metaFilePath, jsonData, 0644); err != nil {
+
+	if err := metafile.Write(dirPath, metadata); err != nil {
 		t.Fatalf("failed to write metafile for test backup: %v", err)
 	}
 }
@@ -101,9 +88,7 @@ func TestShouldArchive(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := config.NewDefault()
-			cfg.IncrementalArchivePolicy.Interval = tc.interval
-			archiver := NewPathArchiver(cfg)
+			archiver := NewPathArchiver(config.NewDefault())
 
 			// Create a runState struct to pass to shouldArchive
 			runState := &archiveRunState{
@@ -126,8 +111,8 @@ func TestArchive(t *testing.T) {
 		tempDir := t.TempDir()
 		cfg := config.NewDefault()
 		cfg.Paths.TargetBase = tempDir
-		cfg.Paths.ArchivesSubDir = "archives"
-		cfg.IncrementalArchivePolicy.Interval = 24 * time.Hour
+		cfg.Archive.Incremental.Mode = config.ManualInterval
+		cfg.Archive.Incremental.Interval = 24 * time.Hour
 
 		archiver := NewPathArchiver(cfg)
 
@@ -135,7 +120,7 @@ func TestArchive(t *testing.T) {
 		currentTimestampUTC := time.Now().UTC()
 		currentBackupPath := filepath.Join(tempDir, "current")
 		archivesDir := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir)
-		createTestBackup(t, tempDir, "current", currentBackupTimestampUTC)
+		createTestMetafile(t, currentBackupPath, currentBackupTimestampUTC)
 
 		// Act
 		err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC)
@@ -161,7 +146,7 @@ func TestArchive(t *testing.T) {
 		tempDir := t.TempDir()
 		cfg := config.NewDefault()
 		cfg.Paths.TargetBase = tempDir
-		cfg.IncrementalArchivePolicy.Interval = 24 * time.Hour
+		cfg.Archive.Incremental.Interval = 24 * time.Hour
 
 		archiver := NewPathArchiver(cfg)
 
@@ -169,7 +154,7 @@ func TestArchive(t *testing.T) {
 		currentTimestampUTC := time.Now().UTC()
 		currentBackupPath := filepath.Join(tempDir, "current")
 		archivesDir := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir)
-		createTestBackup(t, tempDir, "current", currentBackupTimestampUTC)
+		createTestMetafile(t, currentBackupPath, currentBackupTimestampUTC)
 
 		// Act
 		err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC)
@@ -188,8 +173,8 @@ func TestArchive(t *testing.T) {
 		tempDir := t.TempDir()
 		cfg := config.NewDefault()
 		cfg.Paths.TargetBase = tempDir
-		cfg.Paths.ArchivesSubDir = "archives"
-		cfg.IncrementalArchivePolicy.Interval = 24 * time.Hour
+		cfg.Archive.Incremental.Mode = config.ManualInterval
+		cfg.Archive.Incremental.Interval = 24 * time.Hour
 
 		archiver := NewPathArchiver(cfg)
 
@@ -197,7 +182,7 @@ func TestArchive(t *testing.T) {
 		currentTimestampUTC := time.Now().UTC()
 		currentBackupPath := filepath.Join(tempDir, "current")
 		archivesDir := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir)
-		createTestBackup(t, tempDir, "current", currentBackupTimestampUTC)
+		createTestMetafile(t, currentBackupPath, currentBackupTimestampUTC)
 
 		// Manually create the destination to cause a conflict
 		archiveTimestamp := config.FormatTimestampWithOffset(currentBackupTimestampUTC)
@@ -223,24 +208,24 @@ func TestPrepareRun(t *testing.T) {
 	t.Run("Auto Mode", func(t *testing.T) {
 		testCases := []struct {
 			name            string
-			retentionPolicy config.BackupRetentionPolicyConfig
+			retentionPolicy config.RetentionPolicyConfig
 			expected        time.Duration
 		}{
-			{"Hourly retention", config.BackupRetentionPolicyConfig{Enabled: true, Hours: 1}, 1 * time.Hour},
-			{"Daily retention", config.BackupRetentionPolicyConfig{Enabled: true, Days: 1}, 24 * time.Hour},
-			{"Weekly retention", config.BackupRetentionPolicyConfig{Enabled: true, Weeks: 1}, 7 * 24 * time.Hour},
-			{"Monthly retention", config.BackupRetentionPolicyConfig{Enabled: true, Months: 1}, 30 * 24 * time.Hour},
-			{"Yearly retention", config.BackupRetentionPolicyConfig{Enabled: true, Years: 1}, 365 * 24 * time.Hour},
-			{"No retention (but enabled)", config.BackupRetentionPolicyConfig{Enabled: true}, 24 * time.Hour}, // Fallback
-			{"Mixed retention (hourly wins)", config.BackupRetentionPolicyConfig{Enabled: true, Hours: 1, Days: 7}, 1 * time.Hour},
+			{"Hourly retention", config.RetentionPolicyConfig{Enabled: true, Hours: 1}, 1 * time.Hour},
+			{"Daily retention", config.RetentionPolicyConfig{Enabled: true, Days: 1}, 24 * time.Hour},
+			{"Weekly retention", config.RetentionPolicyConfig{Enabled: true, Weeks: 1}, 7 * 24 * time.Hour},
+			{"Monthly retention", config.RetentionPolicyConfig{Enabled: true, Months: 1}, 30 * 24 * time.Hour},
+			{"Yearly retention", config.RetentionPolicyConfig{Enabled: true, Years: 1}, 365 * 24 * time.Hour},
+			{"No retention (but enabled)", config.RetentionPolicyConfig{Enabled: true}, 24 * time.Hour}, // Fallback
+			{"Mixed retention (hourly wins)", config.RetentionPolicyConfig{Enabled: true, Hours: 1, Days: 7}, 1 * time.Hour},
 		}
 
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				// Arrange
 				cfg := config.NewDefault()
-				cfg.IncrementalArchivePolicy.Mode = config.AutoInterval
-				cfg.IncrementalRetentionPolicy = tc.retentionPolicy
+				cfg.Archive.Incremental.Mode = config.AutoInterval
+				cfg.Retention.Incremental = tc.retentionPolicy
 				archiver := NewPathArchiver(cfg)
 
 				// Act
@@ -259,13 +244,13 @@ func TestPrepareRun(t *testing.T) {
 		t.Run("Returns configured value", func(t *testing.T) {
 			// Arrange
 			cfg := config.NewDefault()
-			cfg.IncrementalArchivePolicy.Mode = config.ManualInterval
-			cfg.IncrementalArchivePolicy.Interval = 12 * time.Hour
+			cfg.Archive.Incremental.Mode = config.ManualInterval
+			cfg.Archive.Incremental.Interval = 12 * time.Hour
 			archiver := NewPathArchiver(cfg)
 
 			// Act
 			runState := &archiveRunState{
-				interval: cfg.IncrementalArchivePolicy.Interval,
+				interval: cfg.Archive.Incremental.Interval,
 			}
 			archiver.prepareRun(context.Background(), runState)
 
@@ -282,15 +267,15 @@ func TestPrepareRun(t *testing.T) {
 			t.Cleanup(func() { plog.SetOutput(os.Stderr) })
 
 			cfg := config.NewDefault()
-			cfg.IncrementalArchivePolicy.Mode = config.ManualInterval
-			cfg.IncrementalArchivePolicy.Interval = 48 * time.Hour // Slower than daily
-			cfg.IncrementalRetentionPolicy.Days = 7                // Daily retention is enabled
+			cfg.Archive.Incremental.Mode = config.ManualInterval
+			cfg.Archive.Incremental.Interval = 48 * time.Hour // Slower than daily
+			cfg.Retention.Incremental.Days = 7                // Daily retention is enabled
 
 			archiver := NewPathArchiver(cfg)
 
 			// Act
 			runState := &archiveRunState{
-				interval: cfg.IncrementalArchivePolicy.Interval,
+				interval: cfg.Archive.Incremental.Interval,
 			}
 			archiver.prepareRun(context.Background(), runState)
 
@@ -311,9 +296,9 @@ func TestPrepareRun(t *testing.T) {
 			t.Cleanup(func() { plog.SetOutput(os.Stderr) })
 
 			cfg := config.NewDefault()
-			cfg.IncrementalArchivePolicy.Mode = config.ManualInterval
-			cfg.IncrementalArchivePolicy.Interval = 12 * time.Hour // Faster than daily
-			cfg.IncrementalRetentionPolicy.Days = 7                // Daily retention is enabled
+			cfg.Archive.Incremental.Mode = config.ManualInterval
+			cfg.Archive.Incremental.Interval = 12 * time.Hour // Faster than daily
+			cfg.Retention.Incremental.Days = 7                // Daily retention is enabled
 
 			archiver := NewPathArchiver(cfg)
 

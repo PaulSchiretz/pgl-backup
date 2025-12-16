@@ -57,7 +57,7 @@ type mockRetentionManager struct {
 	err         error
 }
 
-func (m *mockRetentionManager) Apply(ctx context.Context, dirPath, policyTitle string, retentionPolicy config.BackupRetentionPolicyConfig, excludedDir string) error {
+func (m *mockRetentionManager) Apply(ctx context.Context, policyTitle, dirPath string, retentionPolicy config.RetentionPolicyConfig, excludedDir string) error {
 	m.applyCalled = true
 	return m.err
 }
@@ -287,17 +287,17 @@ func TestPerformSync_PreserveSourceDirectoryName(t *testing.T) {
 		{
 			name:                        "PreserveSourceDirectoryName is true",
 			preserveSourceDirectoryName: true,
-			expectedDst:                 filepath.Join(targetBase, "test_current", filepath.Base(srcDir)),
+			expectedDst:                 filepath.Join(targetBase, "test_current", "PGL_Backup_Content", filepath.Base(srcDir)),
 		},
 		{
 			name:                        "PreserveSourceDirectoryName is false",
 			preserveSourceDirectoryName: false,
-			expectedDst:                 filepath.Join(targetBase, "test_current"),
+			expectedDst:                 filepath.Join(targetBase, "test_current", "PGL_Backup_Content"),
 		},
 		{
 			name:                        "PreserveSourceDirectoryName is true - Windows Drive Root",
 			preserveSourceDirectoryName: true,
-			expectedDst:                 filepath.Join(targetBase, "test_current", "C"),
+			expectedDst:                 filepath.Join(targetBase, "test_current", "PGL_Backup_Content", "C"),
 			// This test case will only run on Windows, otherwise it will be skipped.
 			// On non-Windows, "C:" is not a root, so filepath.Base("C:") would be "C:".
 			// The logic should handle this gracefully.
@@ -306,13 +306,13 @@ func TestPerformSync_PreserveSourceDirectoryName(t *testing.T) {
 		{
 			name:                        "PreserveSourceDirectoryName is true - Unix Root",
 			preserveSourceDirectoryName: true,
-			expectedDst:                 filepath.Join(targetBase, "test_current"), // Should not append anything for "/"
+			expectedDst:                 filepath.Join(targetBase, "test_current", "PGL_Backup_Content"), // Should not append anything for "/"
 			srcDir:                      "/",
 		},
 		{
 			name:                        "PreserveSourceDirectoryName is true - Relative Path",
 			preserveSourceDirectoryName: true,
-			expectedDst:                 filepath.Join(targetBase, "test_current", "my_relative_dir"),
+			expectedDst:                 filepath.Join(targetBase, "test_current", "PGL_Backup_Content", "my_relative_dir"),
 			srcDir:                      "./my_relative_dir",
 		},
 		// Add more cases as needed, e.g., paths ending with a separator.
@@ -412,8 +412,8 @@ func TestExecuteBackup_Retention(t *testing.T) {
 	cfg := config.NewDefault()
 	cfg.Paths.Source = t.TempDir() // Valid source
 	cfg.Paths.TargetBase = tempDir
-	cfg.IncrementalRetentionPolicy.Enabled = true // Enable retention
-	cfg.SnapshotRetentionPolicy.Enabled = true    // Enable retention
+	cfg.Retention.Incremental.Enabled = true // Enable retention
+	cfg.Retention.Snapshot.Enabled = true    // Enable retention
 
 	e := newTestEngine(cfg)
 

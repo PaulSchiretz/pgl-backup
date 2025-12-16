@@ -14,6 +14,7 @@ import (
 	"pixelgardenlabs.io/pgl-backup/pkg/lockfile"
 	"pixelgardenlabs.io/pgl-backup/pkg/metafile"
 	"pixelgardenlabs.io/pgl-backup/pkg/patharchive"
+	"pixelgardenlabs.io/pgl-backup/pkg/pathcompression"
 	"pixelgardenlabs.io/pgl-backup/pkg/pathretention"
 	"pixelgardenlabs.io/pgl-backup/pkg/pathsync"
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
@@ -55,11 +56,12 @@ type engineRunState struct {
 
 // Engine orchestrates the entire backup process.
 type Engine struct {
-	config           config.Config
-	version          string
-	syncer           pathsync.Syncer
-	archiver         patharchive.Archiver
-	retentionManager pathretention.RetentionManager
+	config             config.Config
+	version            string
+	syncer             pathsync.Syncer
+	archiver           patharchive.Archiver
+	retentionManager   pathretention.RetentionManager
+	compressionManager pathcompression.CompressionManager
 	// hookCommandExecutor allows mocking os/exec for testing hooks.
 	hookCommandExecutor func(ctx context.Context, name string, arg ...string) *exec.Cmd
 }
@@ -72,6 +74,7 @@ func New(cfg config.Config, version string) *Engine {
 		syncer:              pathsync.NewPathSyncer(cfg),
 		archiver:            patharchive.NewPathArchiver(cfg),
 		retentionManager:    pathretention.NewPathRetentionManager(cfg),
+		compressionManager:  pathcompression.NewPathCompressionManager(cfg),
 		hookCommandExecutor: exec.CommandContext, // Default to the real implementation.
 	}
 }
@@ -217,6 +220,11 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 		return fmt.Errorf("fatal backup error during retention: %w", err)
 	}
 
+	// Compress backups that are eligible
+	if err := e.performCompression(ctx); err != nil {
+		return fmt.Errorf("fatal backup error during compression: %w", err)
+	}
+
 	return nil
 }
 
@@ -264,21 +272,42 @@ func (e *Engine) runHooks(ctx context.Context, commands []string, hookType strin
 // run less frequently than another.
 func (e *Engine) performRetention(ctx context.Context) error {
 	// Apply retention for incremental archives, if enabled.
-	if e.config.IncrementalRetentionPolicy.Enabled {
+	if e.config.Retention.Incremental.Enabled {
 		archivesDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.ArchivesSubDir)
 		incrementalDirName := e.config.Paths.IncrementalSubDir
-		if err := e.retentionManager.Apply(ctx, archivesDir, "incremental", e.config.IncrementalRetentionPolicy, incrementalDirName); err != nil {
+		if err := e.retentionManager.Apply(ctx, "incremental", archivesDir, e.config.Retention.Incremental, incrementalDirName); err != nil {
 			plog.Warn("Error applying incremental retention policy", "error", err)
 			// no error is returned as our backup is still good no need to faile here
 		}
 	}
 
 	// Apply retention for snapshots, if enabled.
-	if e.config.SnapshotRetentionPolicy.Enabled {
+	if e.config.Retention.Snapshot.Enabled {
 		snapshotsDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.SnapshotsSubDir)
-		if err := e.retentionManager.Apply(ctx, snapshotsDir, "snapshot", e.config.SnapshotRetentionPolicy, ""); err != nil {
+		if err := e.retentionManager.Apply(ctx, "snapshot", snapshotsDir, e.config.Retention.Snapshot, ""); err != nil {
 			plog.Warn("Error applying snapshot retention policy", "error", err)
 			// no error is returned as  our backup is still good no need to faile here
+		}
+	}
+	return nil
+}
+
+// performCompression compresses outdated backups based on the configured policies.
+func (e *Engine) performCompression(ctx context.Context) error {
+	// Compress incremental archives, if enabled.
+	if e.config.Compression.Incremental.Enabled {
+		archivesDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.ArchivesSubDir)
+		incrementalDirName := e.config.Paths.IncrementalSubDir
+		if err := e.compressionManager.Compress(ctx, "incremental", archivesDir, incrementalDirName, e.config.Compression.Incremental.Format); err != nil {
+			plog.Warn("Error during incremental backup compression", "error", err)
+		}
+	}
+
+	// Compress snapshots, if enabled.
+	if e.config.Compression.Snapshot.Enabled {
+		snapshotsDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.SnapshotsSubDir)
+		if err := e.compressionManager.Compress(ctx, "snapshot", snapshotsDir, "", e.config.Compression.Snapshot.Format); err != nil {
+			plog.Warn("Error during snapshot backup compression", "error", err)
 		}
 	}
 	return nil
@@ -312,9 +341,11 @@ func (e *Engine) prepareRun(ctx context.Context, runState *engineRunState) error
 
 // performSync is the main entry point for synchronization.
 func (e *Engine) performSync(ctx context.Context, runState *engineRunState) error {
-	adjustedTarget := runState.target
+
 	mirror := runState.mode == config.IncrementalMode
 
+	// The actual content will be synced into a dedicated subdirectory.
+	contentTarget := filepath.Join(runState.target, e.config.Paths.ContentSubDir)
 	// If configured, append the source's base directory name to the destination path.
 	if e.config.Paths.PreserveSourceDirectoryName {
 		var nameToAppend string
@@ -335,12 +366,12 @@ func (e *Engine) performSync(ctx context.Context, runState *engineRunState) erro
 
 		// Append if valid
 		if nameToAppend != "" && nameToAppend != "." && nameToAppend != string(filepath.Separator) {
-			adjustedTarget = filepath.Join(adjustedTarget, nameToAppend)
+			contentTarget = filepath.Join(contentTarget, nameToAppend)
 		}
 	}
 
 	// Sync and check for errors after attempting the sync.
-	if syncErr := e.syncer.Sync(ctx, runState.source, adjustedTarget, mirror, e.config.Paths.ExcludeFiles(), e.config.Paths.ExcludeDirs(), e.config.Metrics); syncErr != nil {
+	if syncErr := e.syncer.Sync(ctx, runState.source, contentTarget, mirror, e.config.Paths.ExcludeFiles(), e.config.Paths.ExcludeDirs(), e.config.Metrics); syncErr != nil {
 		return fmt.Errorf("sync failed: %w", syncErr)
 	}
 

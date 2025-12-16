@@ -67,6 +67,14 @@ func TestConfig_Validate(t *testing.T) {
 		}
 	})
 
+	t.Run("Invalid CompressWorkers", func(t *testing.T) {
+		cfg := newValidConfig(t)
+		cfg.Engine.Performance.CompressWorkers = 0
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected error for zero compress workers, but got nil")
+		}
+	})
+
 	t.Run("Invalid DeleteWorkers", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Engine.Performance.DeleteWorkers = 0
@@ -96,21 +104,21 @@ func TestConfig_Validate(t *testing.T) {
 		cfg.Mode = IncrementalMode
 
 		// Test negative interval in manual mode (should error)
-		cfg.IncrementalArchivePolicy.Mode = ManualInterval
-		cfg.IncrementalArchivePolicy.Interval = -1 * time.Hour
+		cfg.Archive.Incremental.Mode = ManualInterval
+		cfg.Archive.Incremental.Interval = -1 * time.Hour
 		if err := cfg.Validate(); err == nil {
 			t.Error("expected error for negative archive interval in manual mode, but got nil")
 		}
 
 		// Test zero interval in manual mode (should NOT error, as it disables archive)
-		cfg.IncrementalArchivePolicy.Interval = 0
+		cfg.Archive.Incremental.Interval = 0
 		if err := cfg.Validate(); err != nil {
 			t.Errorf("expected no error for zero archive interval in manual mode (disables archive), but got: %v", err)
 		}
 
 		// In auto mode, the interval is calculated, so a user-set 0 should not error.
-		cfg.IncrementalArchivePolicy.Mode = AutoInterval
-		cfg.IncrementalArchivePolicy.Interval = 0
+		cfg.Archive.Incremental.Mode = AutoInterval
+		cfg.Archive.Incremental.Interval = 0
 		if err := cfg.Validate(); err != nil {
 			t.Errorf("expected no error for zero archive interval in auto mode (value is ignored), but got: %v", err)
 		}
@@ -382,8 +390,8 @@ func TestLoad(t *testing.T) {
 			t.Errorf("expected prefix to be 'custom_prefix_', but got %s", cfg.Naming.Prefix)
 		}
 		// Check that a default value not in the file is still present
-		if cfg.IncrementalArchivePolicy.Mode != AutoInterval {
-			t.Errorf("expected default archive mode to be auto, but got %v", cfg.IncrementalArchivePolicy.Mode)
+		if cfg.Archive.Incremental.Mode != AutoInterval {
+			t.Errorf("expected default archive mode to be auto, but got %v", cfg.Archive.Incremental.Mode)
 		}
 	})
 

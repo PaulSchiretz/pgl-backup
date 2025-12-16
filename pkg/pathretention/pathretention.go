@@ -28,7 +28,7 @@ const (
 type retentionRunState struct {
 	dirPath              string
 	retentionPolicyTitle string
-	retentionPolicy      config.BackupRetentionPolicyConfig
+	retentionPolicy      config.RetentionPolicyConfig
 	excludeDir           string
 	backups              []backupInfo
 }
@@ -43,9 +43,9 @@ type backupInfo struct {
 	Metadata   metafile.MetafileContent
 }
 
-// Archiver defines the interface for a component that applies a retenpolicy to backups.
+// RetentionManager defines the interface for a component that applies a retenpolicy to backups.
 type RetentionManager interface {
-	Apply(ctx context.Context, policyTitle string, dirPath string, retentionPolicy config.BackupRetentionPolicyConfig, excludeDir string) error
+	Apply(ctx context.Context, policyTitle string, dirPath string, retentionPolicy config.RetentionPolicyConfig, excludeDir string) error
 }
 
 // Statically assert that *PathRetentionManager implements the RetentionManager interface.
@@ -60,7 +60,7 @@ func NewPathRetentionManager(cfg config.Config) *PathRetentionManager {
 
 // Apply scans a given directory and deletes backups
 // that are no longer needed according to the passed retention policy.
-func (r *PathRetentionManager) Apply(ctx context.Context, dirPath string, retentionPolicyTitle string, retentionPolicy config.BackupRetentionPolicyConfig, excludeDir string) error {
+func (r *PathRetentionManager) Apply(ctx context.Context, retentionPolicyTitle string, dirPath string, retentionPolicy config.RetentionPolicyConfig, excludeDir string) error {
 
 	runState := &retentionRunState{
 		dirPath:              dirPath,
@@ -137,18 +137,18 @@ func (r *PathRetentionManager) Apply(ctx context.Context, dirPath string, retent
 		}(i + 1)
 	}
 
-	// Feed the jobs channel with all the directories to be deleted.
-	for _, dir := range dirsToDelete {
-		select {
-		case <-ctx.Done():
-			// If context is cancelled while feeding jobs, stop sending more.
-			plog.Info("Cancellation received, stopping deletion process.")
-			close(deleteDirTasksChan) // Close channel to unblock any waiting workers.
-			return ctx.Err()
-		case deleteDirTasksChan <- dir:
+	// Feed the jobs in a separate goroutine so the main function can simply wait for the workers to finish.
+	go func() {
+		defer close(deleteDirTasksChan)
+		for _, dir := range dirsToDelete {
+			select {
+			case <-ctx.Done():
+				plog.Info("Cancellation received, stopping retention job feeding.")
+				return // Stop feeding on cancel.
+			case deleteDirTasksChan <- dir:
+			}
 		}
-	}
-	close(deleteDirTasksChan) // All jobs have been sent.
+	}()
 
 	wg.Wait()
 

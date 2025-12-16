@@ -13,6 +13,7 @@
     *   **Snapshot**: Each backup run creates a new, unique, timestamped directory. This is useful for creating distinct, point-in-time copies.
 *   **Flexible Retention Policy**: Automatically cleans up outdated backups by keeping a configurable number of hourly, daily, weekly, monthly, and yearly archives. This gives you a fine-grained history without filling up your disk.
 *   **Intelligent Archiving (Incremental Mode)**: The archive interval can be set to `auto` (the default) to automatically align with your retention policy. If you keep hourly backups, it will archive hourly. This prevents configuration mismatches and ensures your retention slots are filled efficiently.
+*   **Automatic Compression**: To save disk space, you can enable automatic compression. Any backup that is kept by the retention policy will be compressed into a `.zip` or `.tar.gz` archive.
 *   **Concurrency Safe**: A robust file-locking mechanism prevents multiple backup instances from running against the same target directory simultaneously, protecting data integrity.
 *   **Pre- and Post-Backup Hooks**: Execute custom shell commands before the sync begins or after it completes, perfect for tasks like dumping a database or sending a notification.
 *   **Adjustable Configuration**: Configure backups using a simple `pgl-backup.config.json` JSON file, and override any setting with command-line flags for one-off tasks.
@@ -78,12 +79,23 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
       "mirrorWorkers": 8,
       "copyBufferSizeKB": 256,
       "syncWorkers": 8,
+      "compressWorkers": 4,
       "deleteWorkers": 4
     }
   },
   "logLevel": "info",
   "dryRun": false,
   "metrics": true,
+  "compression": {
+    "incremental": {
+      "enabled": false,
+      "format": "tar.gz"
+    },
+    "snapshot": {
+      "enabled": false,
+      "format": "tar.gz"
+    }
+  },
   "naming": {
     "prefix": "PGL_Backup_"
   },
@@ -115,25 +127,29 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
     "userExcludeFiles": [],
     "userExcludeDirs": []
   },
-  "incrementalArchivePolicy": {
-    "mode": "auto",
-    "interval": "24h0m0s"
+  "retention": {
+    "incremental": {
+      "enabled": true,
+      "hours": 0,
+      "days": 7,
+      "weeks": 4,
+      "months": 3,
+      "years": 1
+    },
+    "snapshot": {
+      "enabled": false,
+      "hours": 0,
+      "days": 0,
+      "weeks": 0,
+      "months": 0,
+      "years": 0
+    }
   },
-  "incrementalRetentionPolicy": {
-    "enabled": true,
-    "hours": 0,
-    "days": 7,
-    "weeks": 4,
-    "months": 3,
-    "years": 1
-  },
-  "snapshotRetentionPolicy": {
-    "enabled": false,
-    "hours": 0,
-    "days": 0,
-    "weeks": 0,
-    "months": 0,
-    "years": 0
+  "archive": {
+    "incremental": {
+      "mode": "auto",
+      "interval": "24h0m0s"
+    }
   },
   "hooks": {}
 }
@@ -141,13 +157,16 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
 
 ### Step 3: Run Your First Backup
 
-Now, simply point `pgl-backup` at the target directory. It will automatically load the configuration file and run the backup.
+Now, simply point `pgl-backup` at the target directory. It will automatically load the configuration file and run the backup. 
 
 ```sh
 pgl-backup -target="/media/backup-drive/MyDocumentsBackup"
 ```
 
-The first run will copy all files into a `.../PGL_Backup_Current` directory. Subsequent runs will update this directory. After 24 hours, the next run will first rename `PGL_Backup_Current` to a timestamped archive (e.g., `PGL_Backup_2023-10-27-...`) inside a new `PGL_Backup_Archives` sub-directory, and then create a new current backup.
+The first run will copy all files into a `PGL_Backup_Content` subdirectory inside the main `PGL_Backup_Current` directory.
+Subsequent runs will efficiently update the contents of `PGL_Backup_Current/PGL_Backup_Content`. After 24 hours (or your configured interval), the next run will first rename the entire PGL_Backup_Current directory to a timestamped archive (e.g., `PGL_Backup_2023-10-27-...`) inside the `PGL_Backup_Archives` sub-directory, and then create a new, clean `PGL_Backup_Current` for the next sync.
+When compression is enabled, the `PGL_Backup_Content` subdirectory within an archive is compressed, and the original subdirectory is removed, leaving the compressed file alongside the backup's metadata.
+
 Your backup target will be organized like this:
 ```
 /path/to/your/backup-target/
@@ -226,42 +245,48 @@ All command-line flags can be set in the `pgl-backup.config.json` file.
 
 | Flag / JSON Key                 | Type          | Default                               | Description                                                                                             |
 | ------------------------------- | ------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `source` / `paths.source`       | `string`      | `""`                                  | The directory to back up. **Required**.                                                                 |
-| `target` / `paths.targetBase`   | `string`      | `""`                                  | The base directory where backups are stored. **Required**.                                              |
-| `mode` / `mode`                 | `string`      | `"incremental"`                       | Backup mode: `"incremental"` or `"snapshot"`.
+| `source` / `paths.source`       | `string`      | `""`                                  | The directory to back up. **Required**. |
+| `target` / `paths.targetBase`   | `string`      | `""`                                  | The base directory where backups are stored. **Required**. |
+| `mode` / `mode`                 | `string`      | `"incremental"`                       | Backup mode: `"incremental"` or `"snapshot"`. |
 | `paths.snapshotsSubDir`          | `string`      | `"PGL_Backup_Snapshots"`               | The name of the sub-directory where snapshots are stored (snapshot mode only). |
 | `paths.archivesSubDir`          | `string`      | `"PGL_Backup_Archives"`               | The name of the sub-directory within the target where historical archives are stored (incremental mode only). |
-| `paths.incrementalSubDir`       | `string`      | `"PGL_Backup_Current"`                | The name of the directory for the active incremental backup.                                    |
-| `init`                          | `bool`        | `false`                               | If true, generates a config file and exits.                                                             |
-| `dry-run` / `dryRun`            | `bool`        | `false`                               | If true, simulates the backup without making changes.                                                   |
-| `log-level` / `logLevel`        | `string`      | `"info"`                              | Set the logging level: `"debug"`, `"info"`, `"warn"`, or `"error"`.                                     |
-| `metrics` / `metrics`           | `bool`        | `true`                                | If true, enables detailed performance and file-counting metrics.                                        |
-| `sync-engine` / `engine.type`   | `string`      | `"native"`                            | The sync engine to use: `"native"` or `"robocopy"` (Windows only).                                      |
-| `incrementalArchivePolicy.mode` | `string` | `"auto"` | Archive interval mode: `"auto"` (derives interval from retention policy) or `"manual"`. In `auto` mode, if the retention policy is disabled, archiving is also disabled. |
-| `incrementalArchivePolicy.interval` | `duration` | `"24h"` | In `manual` mode, the interval after which a new archive is created (e.g., "24h", "168h"). Use "0" to disable archiving. |
-| `incrementalRetentionPolicy.enabled`         | `bool`         | `true`                             | Enables the retention policy for incremental mode archives.
-| `incrementalRetentionPolicy.hours`         | `int`         | `0`                                   | Number of recent hourly incremental archives to keep.                                                                |
-| `incrementalRetentionPolicy.days`          | `int`         | `7`                                   | Number of recent daily incremental archives to keep.                                                                 |
-| `incrementalRetentionPolicy.weeks`         | `int`         | `4`                                   | Number of recent weekly incremental archives to keep.                                                                |
-| `incrementalRetentionPolicy.months`        | `int`         | `3`                                   | Number of recent monthly incremental archives to keep.                                                               |
-| `incrementalRetentionPolicy.years`         | `int`         | `1`                                   | Number of recent yearly incremental archives to keep.        
-| `snapshotRetentionPolicy.enabled`         | `bool`         | `false`                               | Set to true to enable the retention policy for snapshot mode backups. Disabled by default.
-| `snapshotRetentionPolicy.hours`         | `int`         | `0`                                      | Number of recent hourly snapshots to keep.                                                                |
-| `snapshotRetentionPolicy.days`          | `int`         | `0`                                      | Number of recent daily snapshots to keep.                                                                 |
-| `snapshotRetentionPolicy.weeks`         | `int`         | `0`                                      | Number of recent weekly snapshots to keep.                                                                |
-| `snapshotRetentionPolicy.months`        | `int`         | `0`                                      | Number of recent monthly snapshots to keep.                                                               |
-| `snapshotRetentionPolicy.years`         | `int`         | `0`                                      | Number of recent yearly snapshots to keep.
-| `defaultExcludeFiles`           | `[]string`    | `[*.tmp, *.temp, *.swp, *.lnk, ~*, desktop.ini, .DS_Store, Thumbs.db, Icon\r]`                     | The list of default file patterns to exclude. Can be customized.                                        |
-| `defaultExcludeDirs`            | `[]string`    | `[@tmp, @eadir, .SynologyWorkingDirectory, #recycle, $Recycle.Bin]`                     | The list of default directory patterns to exclude. Can be customized.                                                           |
-| `user-exclude-files` / `userExcludeFiles`| `[]string`    | `[]`                                  | List of file patterns to exclude.                                                                       |
-| `user-exclude-dirs` / `userExcludeDirs`  | `[]string`    | `[]`                                  | List of directory patterns to exclude.                                                                  |
-| `pre-backup-hooks` / `preBackup`| `[]string`    | `[]`                                  | List of shell commands to run before the backup.                                                        |
-| `post-backup-hooks` / `postBackup`| `[]string`    | `[]`                                  | List of shell commands to run after the backup.                                                         |
+| `paths.incrementalSubDir`       | `string`      | `"PGL_Backup_Current"`                | The name of the directory for the active incremental backup. |
+| `paths.contentSubDir`           | `string`      | `"PGL_Backup_Content"`                | The name of the sub-directory within a backup that holds the actual synced content. |
+| `init`                          | `bool`        | `false`                               | If true, generates a config file and exits. |
+| `dry-run` / `dryRun`            | `bool`        | `false`                               | If true, simulates the backup without making changes. |
+| `log-level` / `logLevel`        | `string`      | `"info"`                              | Set the logging level: `"debug"`, `"info"`, `"warn"`, or `"error"`. |
+| `metrics` / `metrics`           | `bool`        | `true`                                | If true, enables detailed performance and file-counting metrics. |
+| `sync-engine` / `engine.type`   | `string`      | `"native"`                            | The sync engine to use: `"native"` or `"robocopy"` (Windows only). |
+| `archive.incremental.mode` | `string` | `"auto"` | Archive interval mode: `"auto"` (derives interval from retention policy) or `"manual"`. In `auto` mode, if the retention policy is disabled, archiving is also disabled. |
+| `archive.incremental.interval` | `duration` | `"24h"` | In `manual` mode, the interval after which a new archive is created (e.g., "24h", "168h"). Use "0" to disable archiving. |
+| `retention.incremental.enabled`         | `bool`         | `true`                             | Enables the retention policy for incremental mode archives. |
+| `retention.incremental.hours`         | `int`         | `0`                                   | Number of recent hourly incremental archives to keep. |
+| `retention.incremental.days`          | `int`         | `7`                                   | Number of recent daily incremental archives to keep. |
+| `retention.incremental.weeks`         | `int`         | `4`                                   | Number of recent weekly incremental archives to keep. |
+| `retention.incremental.months`        | `int`         | `3`                                   | Number of recent monthly incremental archives to keep. |
+| `retention.incremental.years`         | `int`         | `1`                                   | Number of recent yearly incremental archives to keep.        
+| `retention.snapshot.enabled`         | `bool`         | `false`                               | Set to true to enable the retention policy for snapshot mode backups. Disabled by default. |
+| `retention.snapshot.hours`         | `int`         | `0`                                      | Number of recent hourly snapshots to keep. |
+| `retention.snapshot.days`          | `int`         | `0`                                      | Number of recent daily snapshots to keep. |
+| `retention.snapshot.weeks`         | `int`         | `0`                                      | Number of recent weekly snapshots to keep. |
+| `retention.snapshot.months`        | `int`         | `0`                                      | Number of recent monthly snapshots to keep. |
+| `retention.snapshot.years`         | `int`         | `0`                                      | Number of recent yearly snapshots to keep. |
+| `incremental-compression` / `compression.incremental.enabled` | `bool` | `false` | If true, enables compression for any incremental backups that are not already compressed. |
+| `incremental-compression-format` / `compression.incremental.format` | `string` | `"tar.gz"` | The archive format to use for incremental backups: `"zip"` or `"tar.gz"`. |
+| `snapshot-compression` / `compression.snapshot.enabled` | `bool` | `false` | If true, enables compression for any snapshots that are not already compressed. |
+| `snapshot-compression-format` / `compression.snapshot.format` | `string` | `"tar.gz"` | The archive format to use for snapshots: `"zip"` or `"tar.gz"`. |
+| `defaultExcludeFiles`           | `[]string`    | `[*.tmp, *.temp, *.swp, *.lnk, ~*, desktop.ini, .DS_Store, Thumbs.db, Icon\r]`                     | The list of default file patterns to exclude. Can be customized. |
+| `defaultExcludeDirs`            | `[]string`    | `[@tmp, @eadir, .SynologyWorkingDirectory, #recycle, $Recycle.Bin]`                     | The list of default directory patterns to exclude. Can be customized. |
+| `user-exclude-files` / `userExcludeFiles`| `[]string`    | `[]`                                  | List of file patterns to exclude. |
+| `user-exclude-dirs` / `userExcludeDirs`  | `[]string`    | `[]`                                  | List of directory patterns to exclude. |
+| `pre-backup-hooks` / `preBackup`| `[]string`    | `[]`                                  | List of shell commands to run before the backup. |
+| `post-backup-hooks` / `postBackup`| `[]string`    | `[]`                                  | List of shell commands to run after the backup. |
 | `preserve-source-name` / `paths.preserveSourceDirectoryName` | `bool` | `true` | If true, appends the source directory's name to the destination path. |
 | **Performance Tuning** | | | | 
 | `sync-workers` / `engine.performance.syncWorkers` | `int` | `runtime.NumCPU()` | Number of concurrent workers for file synchronization. |
 | `mirror-workers` / `engine.performance.mirrorWorkers` | `int` | `runtime.NumCPU()` | Number of concurrent workers for file deletions in mirror mode. |
 | `delete-workers` / `engine.performance.deleteWorkers` | `int` | `4` | Number of concurrent workers for deleting outdated backups. |
+| `compress-workers` / `engine.performance.compressWorkers` | `int` | `4` | Number of concurrent workers for compressing backups. |
 | `retry-count` / `engine.retryCount` | `int` | `3` | Number of retries for failed file copies. |
 | `retry-wait` / `engine.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries. |
 | `mod-time-window` / `engine.modTimeWindowSeconds` | `int` | `1` | Time window in seconds to consider file modification times equal (default 1s). |
@@ -292,13 +317,15 @@ The best policy depends on how much data you are backing up and how much disk sp
 **Auto Archive Interval Sets To**: 24 Hours
 
 ```json
-"incrementalRetentionPolicy": {
-  "enabled": true,
-  "hours": 0,
-  "days": 2,
-  "weeks": 1,
-  "months": 1,
-  "years": 0
+"retention": {
+  "incremental": {
+    "enabled": true,
+    "hours": 0,
+    "days": 2,
+    "weeks": 1,
+    "months": 1,
+    "years": 0
+  }
 }
 ```
 
@@ -309,13 +336,15 @@ The best policy depends on how much data you are backing up and how much disk sp
 **Auto Archive Interval Sets To**: 24 Hours
 
 ```json
-"incrementalRetentionPolicy": {
-  "enabled": true,
-  "hours": 0,
-  "days": 7,
-  "weeks": 4,
-  "months": 3,
-  "years": 1
+"retention": {
+  "incremental": {
+    "enabled": true,
+    "hours": 0,
+    "days": 7,
+    "weeks": 4,
+    "months": 3,
+    "years": 1
+  }
 }
 ```
 
@@ -325,13 +354,15 @@ The best policy depends on how much data you are backing up and how much disk sp
 **Auto Archive Interval Sets To**: 1 Hour
 
 ```json
-"incrementalRetentionPolicy": {
-  "enabled": true,
-  "hours": 24,
-  "days": 7,
-  "weeks": 0,
-  "months": 0,
-  "years": 0
+"retention": {
+  "incremental": {
+    "enabled": true,
+    "hours": 24,
+    "days": 7,
+    "weeks": 0,
+    "months": 0,
+    "years": 0
+  }
 }
 ```
 #### The "Standard GFS" (Balanced)
@@ -340,13 +371,15 @@ The best policy depends on how much data you are backing up and how much disk sp
 **Auto Archive Interval Sets To**: 24 Hours
 
 ```json
-"incrementalRetentionPolicy": {
-  "enabled": true,
-  "hours": 0,
-  "days": 7,
-  "weeks": 4,
-  "months": 12,
-  "years": 0
+"retention": {
+  "incremental": {
+    "enabled": true,
+    "hours": 0,
+    "days": 7,
+    "weeks": 4,
+    "months": 12,
+    "years": 0
+  }
 }
 ```
 
@@ -356,13 +389,15 @@ The best policy depends on how much data you are backing up and how much disk sp
 **Auto Archive Interval Sets To**: 24 Hours
 
 ```json
-"incrementalRetentionPolicy": {
-  "enabled": true,
-  "hours": 0,
-  "days": 30,
-  "weeks": 0,
-  "months": 12,
-  "years": 7
+"retention": {
+  "incremental": {
+    "enabled": true,
+    "hours": 0,
+    "days": 30,
+    "weeks": 0,
+    "months": 12,
+    "years": 7
+  }
 }
 ```
 
@@ -372,13 +407,15 @@ The best policy depends on how much data you are backing up and how much disk sp
 **Auto Archive Interval Sets To**: 24 Hours
 
 ```json
-"incrementalRetentionPolicy": {
-  "enabled": true,
-  "hours": 0,
-  "days": 2,
-  "weeks": 2,
-  "months": 2,
-  "years": 1
+"retention": {
+  "incremental": {
+    "enabled": true,
+    "hours": 0,
+    "days": 2,
+    "weeks": 2,
+    "months": 2,
+    "years": 1
+  }
 }
 ```
 
