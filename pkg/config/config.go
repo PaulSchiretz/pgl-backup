@@ -23,9 +23,6 @@ const MetaFileName = ".pgl-backup.meta.json"
 // The '~' prefix marks it as temporary.
 const LockFileName = ".~pgl-backup.lock"
 
-// CompressedFileName is a marker that a backup is compressed
-const CompressedFileName = ".pgl-backup-compressed"
-
 // backupTimeFormat defines the standard, non-configurable time format for backup directory names.
 const backupTimeFormat = "2006-01-02-15-04-05"
 
@@ -298,8 +295,9 @@ func (cf *CompressionFormat) UnmarshalJSON(data []byte) error {
 }
 
 type CompressionPolicyConfig struct {
-	Enabled bool              `json:"enabled"`
-	Format  CompressionFormat `json:"format,omitempty"`
+	Enabled    bool              `json:"enabled"`
+	Format     CompressionFormat `json:"format,omitempty"`
+	MaxRetries int               `json:"maxRetries,omitempty" comment:"Maximum number of times to retry compressing a backup before giving up. Default is 3. 0 means no retries."`
 }
 
 type BackupCompressionConfig struct {
@@ -341,12 +339,14 @@ func NewDefault() Config {
 		Metrics:  true, // Default to enabled for detailed performance and file-counting metrics.
 		Compression: BackupCompressionConfig{
 			Incremental: CompressionPolicyConfig{
-				Enabled: false,
-				Format:  TarGzFormat,
+				Enabled:    false,
+				Format:     TarGzFormat,
+				MaxRetries: 3,
 			},
 			Snapshot: CompressionPolicyConfig{
-				Enabled: false,
-				Format:  TarGzFormat,
+				Enabled:    false,
+				Format:     TarGzFormat,
+				MaxRetries: 3,
 			},
 		},
 		Engine: BackupEngineConfig{
@@ -594,6 +594,14 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	// --- Validate Compression Settings ---
+	if c.Compression.Incremental.MaxRetries < 0 {
+		return fmt.Errorf("compression.incremental.maxRetries cannot be negative")
+	}
+	if c.Compression.Snapshot.MaxRetries < 0 {
+		return fmt.Errorf("compression.snapshot.maxRetries cannot be negative")
+	}
+
 	if err := validateGlobPatterns("defaultExcludeFiles", c.Paths.DefaultExcludeFiles); err != nil {
 		return err
 	}
@@ -675,10 +683,12 @@ func (c *Config) LogSummary() {
 	if c.Compression.Incremental.Enabled {
 		logArgs = append(logArgs, "incremental_compression_enabled", c.Compression.Incremental.Enabled)
 		logArgs = append(logArgs, "incremental_compression_format", c.Compression.Incremental.Format)
+		logArgs = append(logArgs, "incremental_compression_max_retries", c.Compression.Incremental.MaxRetries)
 	}
 	if c.Compression.Snapshot.Enabled {
 		logArgs = append(logArgs, "snapshot_compression_enabled", c.Compression.Snapshot.Enabled)
 		logArgs = append(logArgs, "snapshot_compression_format", c.Compression.Snapshot.Format)
+		logArgs = append(logArgs, "snapshot_compression_max_retries", c.Compression.Snapshot.MaxRetries)
 	}
 	plog.Info("Backup configuration loaded", logArgs...)
 }
@@ -777,12 +787,16 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 			merged.Archive.Incremental.Interval = value.(time.Duration)
 		case "incremental-compression":
 			merged.Compression.Incremental.Enabled = value.(bool)
+		case "incremental-compression-max-retries":
+			merged.Compression.Incremental.MaxRetries = value.(int)
 		case "incremental-compression-format":
 			merged.Compression.Incremental.Format = value.(CompressionFormat)
 		case "snapshot-compression":
 			merged.Compression.Snapshot.Enabled = value.(bool)
 		case "snapshot-compression-format":
 			merged.Compression.Snapshot.Format = value.(CompressionFormat)
+		case "snapshot-compression-max-retries":
+			merged.Compression.Snapshot.MaxRetries = value.(int)
 		default:
 			plog.Debug("unhandled flag in MergeConfigWithFlags", "flag", name)
 		}

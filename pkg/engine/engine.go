@@ -298,7 +298,7 @@ func (e *Engine) performCompression(ctx context.Context) error {
 	if e.config.Compression.Incremental.Enabled {
 		archivesDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.ArchivesSubDir)
 		incrementalDirName := e.config.Paths.IncrementalSubDir
-		if err := e.compressionManager.Compress(ctx, "incremental", archivesDir, incrementalDirName, e.config.Compression.Incremental.Format); err != nil {
+		if err := e.compressionManager.Compress(ctx, "incremental", archivesDir, incrementalDirName, e.config.Compression.Incremental); err != nil {
 			plog.Warn("Error during incremental backup compression", "error", err)
 		}
 	}
@@ -306,7 +306,7 @@ func (e *Engine) performCompression(ctx context.Context) error {
 	// Compress snapshots, if enabled.
 	if e.config.Compression.Snapshot.Enabled {
 		snapshotsDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.SnapshotsSubDir)
-		if err := e.compressionManager.Compress(ctx, "snapshot", snapshotsDir, "", e.config.Compression.Snapshot.Format); err != nil {
+		if err := e.compressionManager.Compress(ctx, "snapshot", snapshotsDir, "", e.config.Compression.Snapshot); err != nil {
 			plog.Warn("Error during snapshot backup compression", "error", err)
 		}
 	}

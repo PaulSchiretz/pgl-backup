@@ -80,8 +80,10 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	postBackupHooksFlag := flag.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
 	incCompressionEnabledFlag := flag.Bool("incremental-compression", false, "Enable compression for incremental backups.")
 	incCompressionFormatFlag := flag.String("incremental-compression-format", "", "Compression format for incremental backups: 'zip' or 'tar.gz'.")
+	incCompressionMaxRetriesFlag := flag.Int("incremental-compression-max-retries", 0, "Maximum number of times to retry compressing a backup before giving up.")
 	snapCompressionEnabledFlag := flag.Bool("snapshot-compression", false, "Enable compression for snapshot backups.")
 	snapCompressionFormatFlag := flag.String("snapshot-compression-format", "", "Compression format for snapshot backups: 'zip' or 'tar.gz'.")
+	snapCompressionMaxRetriesFlag := flag.Int("snapshot-compression-max-retries", 0, "Maximum number of times to retry compressing a backup before giving up.")
 
 	flag.Parse()
 
@@ -123,7 +125,9 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	addIfUsed("copy-buffer-kb", *copyBufferKBFlag)
 	addIfUsed("mod-time-window", *modTimeWindowFlag)
 	addIfUsed("incremental-compression", *incCompressionEnabledFlag)
+	addIfUsed("incremental-compression-max-retries", *incCompressionMaxRetriesFlag)
 	addIfUsed("snapshot-compression", *snapCompressionEnabledFlag)
+	addIfUsed("snapshot-compression-max-retries", *snapCompressionMaxRetriesFlag)
 
 	// Handle flags that require parsing/validation.
 	addParsedIfUsed("user-exclude-files", *userExcludeFilesFlag, flagparse.ParseExcludeList)

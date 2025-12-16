@@ -13,7 +13,7 @@
     *   **Snapshot**: Each backup run creates a new, unique, timestamped directory. This is useful for creating distinct, point-in-time copies.
 *   **Flexible Retention Policy**: Automatically cleans up outdated backups by keeping a configurable number of hourly, daily, weekly, monthly, and yearly archives. This gives you a fine-grained history without filling up your disk.
 *   **Intelligent Archiving (Incremental Mode)**: The archive interval can be set to `auto` (the default) to automatically align with your retention policy. If you keep hourly backups, it will archive hourly. This prevents configuration mismatches and ensures your retention slots are filled efficiently.
-*   **Automatic Compression**: To save disk space, you can enable automatic compression. Any backup that is kept by the retention policy will be compressed into a `.zip` or `.tar.gz` archive.
+*   **Automatic and Resilient Compression**: To save disk space, you can enable automatic compression of backups into `.zip` or `.tar.gz` archives. If compression fails (e.g., due to a corrupt file), the original backup is left untouched, and the system will retry up to a configurable `maxRetries` limit on subsequent runs before giving up.
 *   **Concurrency Safe**: A robust file-locking mechanism prevents multiple backup instances from running against the same target directory simultaneously, protecting data integrity.
 *   **Pre- and Post-Backup Hooks**: Execute custom shell commands before the sync begins or after it completes, perfect for tasks like dumping a database or sending a notification.
 *   **Adjustable Configuration**: Configure backups using a simple `pgl-backup.config.json` JSON file, and override any setting with command-line flags for one-off tasks.
@@ -89,11 +89,13 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
   "compression": {
     "incremental": {
       "enabled": false,
-      "format": "tar.gz"
+      "format": "tar.gz",
+      "MaxRetries": 3
     },
     "snapshot": {
       "enabled": false,
-      "format": "tar.gz"
+      "format": "tar.gz",
+      "MaxRetries": 3
     }
   },
   "naming": {
@@ -273,8 +275,10 @@ All command-line flags can be set in the `pgl-backup.config.json` file.
 | `retention.snapshot.years`         | `int`         | `0`                                      | Number of recent yearly snapshots to keep. |
 | `incremental-compression` / `compression.incremental.enabled` | `bool` | `false` | If true, enables compression for any incremental backups that are not already compressed. |
 | `incremental-compression-format` / `compression.incremental.format` | `string` | `"tar.gz"` | The archive format to use for incremental backups: `"zip"` or `"tar.gz"`. |
+| `incremental-compression-max-retries` / `compression.incremental.maxRetries` | `int` | `3` | Maximum number of times to retry compressing a backup before giving up. |
 | `snapshot-compression` / `compression.snapshot.enabled` | `bool` | `false` | If true, enables compression for any snapshots that are not already compressed. |
 | `snapshot-compression-format` / `compression.snapshot.format` | `string` | `"tar.gz"` | The archive format to use for snapshots: `"zip"` or `"tar.gz"`. |
+| `snapshot-compression-max-retries` / `compression.snapshot.maxRetries` | `int` | `3` | Maximum number of times to retry compressing a backup before giving up. |
 | `defaultExcludeFiles`           | `[]string`    | `[*.tmp, *.temp, *.swp, *.lnk, ~*, desktop.ini, .DS_Store, Thumbs.db, Icon\r]`                     | The list of default file patterns to exclude. Can be customized. |
 | `defaultExcludeDirs`            | `[]string`    | `[@tmp, @eadir, .SynologyWorkingDirectory, #recycle, $Recycle.Bin]`                     | The list of default directory patterns to exclude. Can be customized. |
 | `user-exclude-files` / `userExcludeFiles`| `[]string`    | `[]`                                  | List of file patterns to exclude. |
