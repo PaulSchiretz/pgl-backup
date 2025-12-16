@@ -162,12 +162,22 @@ foreach ($platform in $platforms) {
         $readmePath = Join-Path -Path $ProjectRoot -ChildPath "README.md"
         $archivePath = Join-Path -Path $ReleaseDir -ChildPath "$archiveName"
 
+        # Create and populate a temporary staging directory for robust path handling.
+        $stagingDirName = "staging_${GOOS}_${GOARCH}"
+        $stagingDir = New-Item -Path (Join-Path $ReleaseDir $stagingDirName) -ItemType Directory
+        Copy-Item -Path $binaryPath -Destination $stagingDir.FullName
+        Copy-Item -Path $licensePath -Destination $stagingDir.FullName
+        Copy-Item -Path $readmePath -Destination $stagingDir.FullName
+
+        # Archive the contents of the staging directory.
         if ($GOOS -eq "windows") {
-            Compress-Archive -Path $binaryPath, $licensePath, $readmePath -DestinationPath "$archivePath.zip" -Force
+            Compress-Archive -Path $stagingDir.FullName\* -DestinationPath "$archivePath.zip" -Force
         } else {
-            tar -czf "$archivePath.tar.gz" -C $ReleaseDir $outputName -C $ProjectRoot "LICENSE" "README.md"
+            tar -czf "$archivePath.tar.gz" -C $stagingDir.FullName .
         }
-        Remove-Item $binaryPath # Clean up the raw binary after archiving
+        # Clean up the staging directory and the original binary.
+        Remove-Item -Path $stagingDir.FullName -Recurse -Force
+        Remove-Item -Path $binaryPath
     }
 }
 

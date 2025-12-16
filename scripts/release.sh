@@ -137,16 +137,23 @@ for platform in "${PLATFORMS[@]}"; do
 
     # Create an archive for the binary
     ARCHIVE_PATH="$RELEASE_DIR/${BINARY_NAME}_${VERSION}_${GOOS}_${GOARCH}"
+
+    # Create and populate a temporary staging directory for robust path handling.
+    STAGING_DIR="$RELEASE_DIR/staging_${GOOS}_${GOARCH}"
+    mkdir -p "$STAGING_DIR"
+    cp "$RELEASE_DIR/$OUTPUT_NAME" "$STAGING_DIR/"
+    cp "$PROJECT_ROOT/LICENSE" "$STAGING_DIR/"
+    cp "$PROJECT_ROOT/README.md" "$STAGING_DIR/"
+
+    # Archive the contents of the staging directory.
     if [ "$GOOS" = "windows" ]; then
-      # On non-Windows systems, we might not have `zip`. `tar` is more universal.
-      # On Windows (via Git Bash/WSL), `zip` might be available.
-      # For consistency, we could use `tar` for all non-zip archives, but zip is standard for Windows.
-      zip "${ARCHIVE_PATH}.zip" -j "$RELEASE_DIR/$OUTPUT_NAME" "$PROJECT_ROOT/LICENSE" "$PROJECT_ROOT/README.md" > /dev/null
+      (cd "$STAGING_DIR" && zip "${ARCHIVE_PATH}.zip" ./* > /dev/null)
     else
-      # Use -C to change directory for each input, preventing nested paths in the archive.
-      tar -czf "${ARCHIVE_PATH}.tar.gz" -C "$RELEASE_DIR" "$OUTPUT_NAME" -C "$PROJECT_ROOT" "LICENSE" "README.md"
+      tar -czf "${ARCHIVE_PATH}.tar.gz" -C "$STAGING_DIR" .
     fi
-    rm "$RELEASE_DIR/$OUTPUT_NAME" # Clean up the raw binary after archiving
+    # Clean up the staging directory and the original binary.
+    rm -rf "$STAGING_DIR"
+    rm "$RELEASE_DIR/$OUTPUT_NAME"
   fi
 done
 

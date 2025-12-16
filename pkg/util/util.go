@@ -131,7 +131,10 @@ func IsPathCaseSensitive(path string) (bool, error) {
 	if err := os.WriteFile(lowerPath, []byte("test"), 0600); err != nil {
 		return false, fmt.Errorf("failed to create temp file for case-sensitivity check in '%s': %w", checkDir, err)
 	}
-	defer os.Remove(lowerPath)
+	defer func() {
+		_ = os.Remove(lowerPath)
+		_ = os.Remove(upperPath) // On case-insensitive FS, this is the same file. On sensitive, it cleans up a potential stray.
+	}()
 
 	// Now, try to stat the uppercase version.
 	_, err = os.Stat(upperPath)
