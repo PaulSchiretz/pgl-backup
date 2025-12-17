@@ -58,7 +58,7 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	srcFlag := flag.String("source", "", "Source directory to copy from")
 	targetFlag := flag.String("target", "", "Base destination directory for backups")
 	modeFlag := flag.String("mode", "incremental", "Backup mode: 'incremental' or 'snapshot'.")
-	logLevelFlag := flag.String("log-level", "info", "Set the logging level: 'debug', 'info', 'warn', 'error'.")
+	logLevelFlag := flag.String("log-level", "info", "Set the logging level: 'debug', 'notice', 'info', 'warn', 'error'.")
 	failFastFlag := flag.Bool("fail-fast", false, "Stop the backup immediately on the first file sync error.")
 	dryRunFlag := flag.Bool("dry-run", false, "Show what would be done without making any changes.")
 	metricsFlag := flag.Bool("metrics", false, "Enable detailed performance and file-counting metrics.")

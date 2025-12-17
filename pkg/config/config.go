@@ -442,7 +442,7 @@ func Load(targetBase string) (Config, error) {
 	}
 	defer file.Close()
 
-	plog.Info("Loading configuration from", "path", configPath)
+	plog.Info("Loading configuration", "path", configPath)
 	// Start with default values, then overwrite with the file's content.
 	// This makes the config loading resilient to missing fields in the JSON file.
 	config := NewDefault()

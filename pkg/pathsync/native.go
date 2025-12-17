@@ -429,7 +429,7 @@ func (r *syncRun) isExcluded(relPathKey, relPathBasename string, isDir bool) boo
 // and triggers the copy operation if needed.
 func (r *syncRun) processFileSync(task *syncTask) error {
 	if r.dryRun {
-		plog.Info("[DRY RUN] COPY", "path", task.RelPathKey)
+		plog.Notice("[DRY RUN] COPY", "path", task.RelPathKey)
 		return nil
 	}
 
@@ -471,7 +471,7 @@ func (r *syncRun) processFileSync(task *syncTask) error {
 		return fmt.Errorf("failed to copy file to %s: %w", absTrgPath, err)
 	}
 
-	plog.Info("COPY", "path", task.RelPathKey)
+	plog.Notice("COPY", "path", task.RelPathKey)
 	r.metrics.AddFilesCopied(1)
 	return nil // File was actually copied/updated
 }
@@ -481,7 +481,7 @@ func (r *syncRun) processFileSync(task *syncTask) error {
 func (r *syncRun) processDirectorySync(task *syncTask) error {
 
 	if r.dryRun {
-		plog.Info("[DRY RUN] DIR", "path", task.RelPathKey)
+		plog.Notice("[DRY RUN] DIR", "path", task.RelPathKey)
 		return nil
 	}
 
@@ -520,7 +520,7 @@ func (r *syncRun) processDirectorySync(task *syncTask) error {
 		return nil
 	}
 
-	plog.Info("DIR", "path", task.RelPathKey)
+	plog.Notice("DIR", "path", task.RelPathKey)
 	r.metrics.AddDirsCreated(1)
 	return nil
 }
@@ -562,6 +562,11 @@ func (r *syncRun) syncWalker() {
 
 	err := filepath.WalkDir(r.src, func(absSrcPath string, d os.DirEntry, err error) error {
 		if err != nil {
+			// Check if the error is due to context cancellation.
+			if err == context.Canceled || err == context.DeadlineExceeded {
+				plog.Debug("Sync walker cancelled", "path", absSrcPath)
+				return err // Propagate cancellation.
+			}
 			// If we can't access a path, log the error but keep walking
 			plog.Warn("SKIP", "reason", "error accessing path", "path", absSrcPath, "error", err)
 			if d != nil && d.IsDir() {
@@ -585,7 +590,7 @@ func (r *syncRun) syncWalker() {
 		// `relPathKey` is already normalized, but `d.Name()` is the raw basename from the filesystem
 		// and must be normalized before being passed to `isExcluded` for basename matching.
 		if r.isExcluded(relPathKey, util.NormalizePath(d.Name()), d.IsDir()) {
-			plog.Info("EXCL", "reason", "excluded by pattern", "path", relPathKey)
+			plog.Notice("EXCL", "reason", "excluded by pattern", "path", relPathKey)
 			if d.IsDir() {
 				r.metrics.AddDirsExcluded(1) // Track excluded directory
 				return filepath.SkipDir      // Don't descend into this directory.
@@ -617,7 +622,7 @@ func (r *syncRun) syncWalker() {
 		isDir := info.Mode().IsDir()
 		if !isDir && !info.Mode().IsRegular() {
 			// Symlinks, Named Pipes, etc. are discovered for mirror mode but not synced.
-			plog.Info("SKIP", "type", info.Mode().String(), "path", relPathKey)
+			plog.Notice("SKIP", "type", info.Mode().String(), "path", relPathKey)
 			return nil
 		}
 
@@ -745,7 +750,7 @@ func (r *syncRun) syncWorker() {
 // handleSync coordinates the concurrent synchronization pipeline.
 // It uses a Producer-Consumer pattern.
 func (r *syncRun) handleSync() error {
-	plog.Info("SYN", "from", r.src, "to", r.trg)
+	plog.Notice("SYN", "from", r.src, "to", r.trg)
 	// 1. Start syncWorkers (Consumers).
 	// They read from 'syncTasks' and store results in a concurrent map.
 	for i := 0; i < r.numSyncWorkers; i++ {
@@ -823,7 +828,7 @@ func (r *syncRun) mirrorWalker() []string {
 		// `relPathKey` is already normalized, but `d.Name()` is the raw basename from the filesystem
 		// and must be normalized before being passed to `isExcluded` for basename matching.
 		if r.isExcluded(relPathKey, util.NormalizePath(d.Name()), d.IsDir()) {
-			if d.IsDir() {
+			if d.IsDir() { // Do not log excluded directories during mirror, as they are not actioned upon.
 				return filepath.SkipDir // Excluded dir, leave it and its contents.
 			}
 			return nil // Excluded file, leave it.
@@ -876,11 +881,11 @@ func (r *syncRun) mirrorWorker() {
 				absPathToDelete := r.denormalizedAbsPath(r.trg, task.RelPathKey)
 
 				if r.dryRun {
-					plog.Info("[DRY RUN] DELETE", "path", task.RelPathKey)
+					plog.Notice("[DRY RUN] DELETE", "path", task.RelPathKey)
 					return
 				}
 
-				plog.Info("DELETE", "path", task.RelPathKey)
+				plog.Notice("DELETE", "path", task.RelPathKey)
 
 				if err := os.RemoveAll(absPathToDelete); err != nil {
 					if r.failFast {
@@ -905,7 +910,7 @@ func (r *syncRun) mirrorWorker() {
 // handleMirror performs a sequential walk on the destination to remove files
 // and directories that do not exist in the source. This is only active in mirror mode.
 func (r *syncRun) handleMirror() error {
-	plog.Info("MIR", "from", r.src, "to", r.trg)
+	plog.Notice("MIR", "from", r.src, "to", r.trg)
 	// --- Phase 2A: Concurrent Deletion of Files ---
 	// Start mirror workers.
 	for i := 0; i < r.numMirrorWorkers; i++ {
@@ -934,10 +939,10 @@ func (r *syncRun) handleMirror() error {
 		relPathKey := relPathKeyDirsToDelete[i]
 		absPathToDelete := r.denormalizedAbsPath(r.trg, relPathKey)
 		if r.dryRun {
-			plog.Info("[DRY RUN] DELETE", "path", relPathKey)
+			plog.Notice("[DRY RUN] DELETE", "path", relPathKey)
 			continue
 		}
-		plog.Info("DELETE", "path", relPathKey)
+		plog.Notice("DELETE", "path", relPathKey)
 
 		// Use os.Remove first, as we expect the directory to be empty of files, which is faster.
 		if err := os.Remove(absPathToDelete); err == nil {

@@ -80,32 +80,29 @@ func (r *PathRetentionManager) Apply(ctx context.Context, retentionPolicyTitle s
 	}
 
 	if len(runState.backups) == 0 {
-		plog.Debug(fmt.Sprintf("No %s backups found to apply retention to", runState.retentionPolicyTitle))
+		plog.Debug("No backups to delete", "policy", runState.retentionPolicyTitle)
 		return nil
 	}
 
-	plog.Info(fmt.Sprintf("Cleaning outdated %s backups", runState.retentionPolicyTitle))
-	plog.Debug("Applying retention policy", "policy", runState.retentionPolicyTitle, "directory", runState.dirPath)
-
 	// Filter the list of all backups to get only those that should be deleted.
-	backupsToDelete := r.filterBackupsToDelete(runState)
+	eligibleBackups := r.filterBackupsToDelete(runState)
 
-	if len(backupsToDelete) == 0 {
+	if len(eligibleBackups) == 0 {
 		if r.config.DryRun {
-			plog.Debug("[DRY RUN] No outdated backups would be deleted", "policy", runState.retentionPolicyTitle)
+			plog.Debug("[DRY RUN] No backups need deletion", "policy", runState.retentionPolicyTitle)
 		} else {
-			plog.Debug("No outdated backups to delete", "policy", runState.retentionPolicyTitle)
+			plog.Debug("No backups need deletion", "policy", runState.retentionPolicyTitle)
 		}
 		return nil
 	}
 
-	plog.Info("Preparing to delete outdated backups", "policy", runState.retentionPolicyTitle, "count", len(backupsToDelete))
+	plog.Info("Deleting outdated backups", "policy", runState.retentionPolicyTitle, "count", len(eligibleBackups))
 
 	// --- 4. Delete backups in parallel using a worker pool ---
 	// This is especially effective for network drives where latency is a factor.
 	numWorkers := r.config.Engine.Performance.DeleteWorkers // Use the configured number of workers.
 	var wg sync.WaitGroup
-	deleteDirTasksChan := make(chan backupInfo, len(backupsToDelete))
+	deleteDirTasksChan := make(chan backupInfo, len(eligibleBackups))
 
 	// Start workers
 	for i := 0; i < numWorkers; i++ {
@@ -123,14 +120,15 @@ func (r *PathRetentionManager) Apply(ctx context.Context, retentionPolicyTitle s
 
 				dirToDelete := filepath.Join(runState.dirPath, util.DenormalizePath(b.RelPathKey))
 
-				plog.Debug("Deleting outdated backup", "policy", runState.retentionPolicyTitle, "path", dirToDelete, "worker", workerID)
 				if r.config.DryRun {
-					plog.Info("[DRY RUN] Would delete directory", "policy", runState.retentionPolicyTitle, "path", dirToDelete)
+					plog.Notice("[DRY RUN] DELETE", "policy", runState.retentionPolicyTitle, "path", dirToDelete)
 					continue
 				}
+				plog.Notice("DELETE", "policy", runState.retentionPolicyTitle, "path", dirToDelete, "worker", workerID)
 				if err := os.RemoveAll(dirToDelete); err != nil {
 					plog.Warn("Failed to delete outdated backup directory", "policy", runState.retentionPolicyTitle, "path", dirToDelete, "error", err)
 				}
+				plog.Notice("DELETED", "policy", runState.retentionPolicyTitle, "path", dirToDelete)
 			}
 		}(i + 1)
 	}
@@ -138,10 +136,10 @@ func (r *PathRetentionManager) Apply(ctx context.Context, retentionPolicyTitle s
 	// Feed the jobs in a separate goroutine so the main function can simply wait for the workers to finish.
 	go func() {
 		defer close(deleteDirTasksChan)
-		for _, b := range backupsToDelete {
+		for _, b := range eligibleBackups {
 			select {
 			case <-ctx.Done():
-				plog.Info("Cancellation received, stopping retention job feeding.")
+				plog.Debug("Cancellation received, stopping retention job feeding.")
 				return // Stop feeding on cancel.
 			case deleteDirTasksChan <- b:
 			}
@@ -197,7 +195,7 @@ func (r *PathRetentionManager) fetchSortedBackups(ctx context.Context, runState 
 		backupPath := filepath.Join(runState.dirPath, dirName)
 		metadata, err := metafile.Read(backupPath)
 		if err != nil {
-			plog.Warn("Skipping directory for retention check", "directory", dirName, "reason", err)
+			plog.Warn("Skipping retention check for directory; cannot read metadata", "policy", runState.retentionPolicyTitle, "directory", dirName, "reason", err)
 			continue
 		}
 

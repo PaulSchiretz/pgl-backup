@@ -112,6 +112,13 @@ func (a *PathArchiver) Archive(ctx context.Context, dirPath, currentBackupPath s
 	// Archives are stored in a dedicated subdirectory for clarity.
 	archivePath := filepath.Join(runState.dirPath, archiveDirName)
 
+	if a.config.DryRun {
+		plog.Notice("[DRY RUN] ARCHIVE", "from", runState.currentBackupPath, "to", archivePath)
+		return nil
+	}
+
+	plog.Notice("ARCHIVE", "from", runState.currentBackupPath, "to", archivePath)
+
 	// Sanity check: ensure the destination for the archive does not already exist.
 	if _, err := os.Stat(archivePath); err == nil {
 		return fmt.Errorf("archive destination %s already exists", archivePath)
@@ -121,18 +128,13 @@ func (a *PathArchiver) Archive(ctx context.Context, dirPath, currentBackupPath s
 		return fmt.Errorf("could not check archive destination %s: %w", archivePath, err)
 	}
 
-	plog.Info("Archiving previous day's backup", "destination", archivePath)
-	if a.config.DryRun {
-		plog.Info("[DRY RUN] Would archive (rename)", "from", runState.currentBackupPath, "to", archivePath)
-		return nil
-	}
-
 	if err := os.MkdirAll(runState.dirPath, util.UserWritableDirPerms); err != nil {
 		return fmt.Errorf("failed to create archives subdirectory %s: %w", runState.dirPath, err)
 	}
 	if err := os.Rename(runState.currentBackupPath, archivePath); err != nil {
 		return fmt.Errorf("failed to archive backup: %w", err)
 	}
+	plog.Notice("ARCHIVED", "from", runState.currentBackupPath, "to", archivePath)
 	return nil
 }
 
@@ -261,7 +263,7 @@ func (a *PathArchiver) checkInterval(runState *archiveRunState) {
 	}
 
 	if len(mismatchedPeriods) > 0 {
-		plog.Warn("Configuration Mismatch: The manual archive interval is slower than the enabled retention period(s).",
+		plog.Warn("Configuration Mismatch: The 'manual' archive interval is slower than the enabled retention period(s).",
 			"mismatched_periods", strings.Join(mismatchedPeriods, ", "),
 			"archive_interval", runState.interval,
 			"impact", "Retention slots for these periods will fill at the rate of the archive interval, not the retention period.")

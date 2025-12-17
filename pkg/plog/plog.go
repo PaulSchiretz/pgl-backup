@@ -52,10 +52,11 @@ type Level slog.Level
 
 // Log level constants, mirroring slog's levels.
 const (
-	LevelDebug Level = Level(slog.LevelDebug)
-	LevelInfo  Level = Level(slog.LevelInfo)
-	LevelWarn  Level = Level(slog.LevelWarn)
-	LevelError Level = Level(slog.LevelError)
+	LevelDebug  Level = Level(slog.LevelDebug)
+	LevelNotice Level = Level(slog.LevelInfo - 2) // Between Debug (-4) and Info (0)
+	LevelInfo   Level = Level(slog.LevelInfo)
+	LevelWarn   Level = Level(slog.LevelWarn)
+	LevelError  Level = Level(slog.LevelError)
 )
 
 // LevelFromString parses a string and returns the corresponding slog.Level.
@@ -64,6 +65,8 @@ func LevelFromString(levelStr string) Level {
 	switch levelStr {
 	case "debug":
 		return LevelDebug
+	case "notice":
+		return LevelNotice
 	case "info":
 		return LevelInfo
 	case "warn":
@@ -120,6 +123,11 @@ func init() {
 // Info logs an informational message.
 func Info(msg string, args ...any) {
 	defaultLogger.Info(msg, args...)
+}
+
+// Notice logs a notice-level message.
+func Notice(msg string, args ...any) {
+	defaultLogger.Log(context.Background(), slog.Level(LevelNotice), msg, args...)
 }
 
 // Debug logs a debug message. It is suppressed when quiet mode is active.
