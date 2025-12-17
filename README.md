@@ -425,6 +425,16 @@ The best policy depends on how much data you are backing up and how much disk sp
 
 ## Troubleshooting
 
+### Understanding Log Levels
+
+`pgl-backup` uses a structured logging system with several levels of verbosity, allowing you to control how much detail you see. You can set the level using the `-log-level` flag or the `logLevel` key in your configuration file.
+
+*   **`error`**: Only shows critical errors that cause the backup process to halt. Use this if you only want to be alerted to complete failures.
+*   **`warn`**: Shows errors and warnings. Warnings are non-critical issues that the application has recovered from but that you should be aware of (e.g., a single file failed to copy, a configuration mismatch).
+*   **`info` (Default)**: Provides a high-level summary of the backup process. It shows the start and end of major phases like synchronization, compression, and retention cleanup. This is the recommended level for daily use and cron jobs, as it provides a clean, readable overview.
+*   **`notice`**: Shows everything from `info` plus detailed, per-item operational messages. Use this level to see a log of every file being copied, deleted, archived, or compressed. It's useful for verifying that specific files are being handled correctly without the full verbosity of `debug`.
+*   **`debug`**: The most verbose level. Includes everything from `notice` plus detailed developer-oriented information for tracing execution flow and diagnosing complex issues.
+
 ### A Note on Cross-Platform Backups and Case-Sensitivity
 
 `pgl-backup` includes a critical safety check to prevent data loss from filesystem case-sensitivity mismatches.

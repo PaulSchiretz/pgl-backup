@@ -291,8 +291,8 @@ func (c *PathCompressionManager) compressDirectory(ctx context.Context, dirPath 
 // archiveWriter defines an interface for a generic archive creation utility.
 // This allows the main compression logic to be format-agnostic.
 type archiveWriter interface {
-	// AddFile adds a file from the filesystem to the archive.
-	AddFile(path string, info os.FileInfo, sourceDir string) error
+	// AddFile adds a file from the filesystem to the archive using a pre-calculated relative path.
+	AddFile(absPath, relPath string, info os.FileInfo) error
 	// Close finalizes and closes the archive writer.
 	Close() error
 }
@@ -302,28 +302,23 @@ type zipArchiveWriter struct {
 	zipWriter *zip.Writer
 }
 
-func (zw *zipArchiveWriter) AddFile(path string, info os.FileInfo, sourceDir string) error {
-	relPath, err := filepath.Rel(sourceDir, path)
-	if err != nil {
-		return fmt.Errorf("failed to get relative path for %s: %w", path, err)
-	}
-	// Archive formats (zip, tar) expect forward slashes for path separators.
-	relPath = util.NormalizePath(relPath)
-
+func (zw *zipArchiveWriter) AddFile(absSrcPath, relPath string, info os.FileInfo) error {
 	writer, err := zw.zipWriter.Create(relPath)
 	if err != nil {
 		return fmt.Errorf("failed to create entry for %s in zip: %w", relPath, err)
 	}
 
-	fileToZip, err := os.Open(path)
+	// The file header is created, now open the file on disk to copy its contents.
+	fileToZip, err := os.Open(absSrcPath)
 	if err != nil {
-		return fmt.Errorf("failed to open file %s for zipping: %w", path, err)
+		return fmt.Errorf("failed to open file %s for zipping: %w", absSrcPath, err)
 	}
 	defer fileToZip.Close()
 
+	// Copy the file content into the archive writer.
 	_, err = io.Copy(writer, fileToZip)
 	if err != nil {
-		return fmt.Errorf("failed to copy file %s to zip: %w", path, err)
+		return fmt.Errorf("failed to copy file %s to zip: %w", absSrcPath, err)
 	}
 	return nil
 }
@@ -342,33 +337,30 @@ type tarGzArchiveWriter struct {
 	gzipWriter *gzip.Writer
 }
 
-func (tw *tarGzArchiveWriter) AddFile(path string, info os.FileInfo, sourceDir string) error {
-	relPath, err := filepath.Rel(sourceDir, path)
-	if err != nil {
-		return fmt.Errorf("failed to get relative path for %s: %w", path, err)
-	}
-	// Archive formats (zip, tar) expect forward slashes for path separators.
-	relPath = util.NormalizePath(relPath)
-
+func (tw *tarGzArchiveWriter) AddFile(absSrcPath, relPath string, info os.FileInfo) error {
+	// Create a tar header from the file's info.
 	header, err := tar.FileInfoHeader(info, relPath)
 	if err != nil {
-		return fmt.Errorf("failed to create tar header for %s: %w", path, err)
+		return fmt.Errorf("failed to create tar header for %s: %w", absSrcPath, err)
 	}
+	// The FileInfoHeader uses the second argument for the link name.
+	// We must explicitly set the Name field to the normalized relative path.
 	header.Name = relPath
 
 	if err := tw.tarWriter.WriteHeader(header); err != nil {
 		return fmt.Errorf("failed to write tar header for %s: %w", relPath, err)
 	}
 
-	fileToTar, err := os.Open(path)
+	fileToTar, err := os.Open(absSrcPath)
 	if err != nil {
-		return fmt.Errorf("failed to open file %s for taring: %w", path, err)
+		return fmt.Errorf("failed to open file %s for taring: %w", absSrcPath, err)
 	}
 	defer fileToTar.Close()
 
+	// Copy the file content into the tar writer.
 	_, err = io.Copy(tw.tarWriter, fileToTar)
 	if err != nil {
-		return fmt.Errorf("failed to copy file %s to tar: %w", path, err)
+		return fmt.Errorf("failed to copy file %s to tar: %w", absSrcPath, err)
 	}
 	return nil
 }
@@ -441,7 +433,7 @@ func (c *PathCompressionManager) createArchive(ctx context.Context, sourceDir st
 	}(&err)
 
 	// Walk the directory and add files to the archive.
-	walkErr := filepath.Walk(sourceDir, func(path string, info os.FileInfo, walkErr error) error {
+	walkErr := filepath.Walk(sourceDir, func(absSrcPath string, info os.FileInfo, walkErr error) error {
 		select {
 		case <-ctx.Done():
 			return context.Canceled
@@ -451,11 +443,20 @@ func (c *PathCompressionManager) createArchive(ctx context.Context, sourceDir st
 		if walkErr != nil {
 			return walkErr
 		}
-		if info.IsDir() || path == tempPath || (info.Mode()&os.ModeSymlink != 0) {
+		if info.IsDir() || absSrcPath == tempPath || (info.Mode()&os.ModeSymlink != 0) {
 			return nil
 		}
 
-		return archiver.AddFile(path, info, sourceDir)
+		// Calculate the relative path for the archive entry.
+		relPath, err := filepath.Rel(sourceDir, absSrcPath)
+		if err != nil {
+			return fmt.Errorf("failed to get relative path for %s: %w", absSrcPath, err)
+		}
+		// Normalize to forward slashes for archive compatibility.
+		relPath = util.NormalizePath(relPath)
+
+		plog.Notice("ADD", "source", sourceDir, "file", relPath)
+		return archiver.AddFile(absSrcPath, relPath, info)
 	})
 
 	if walkErr != nil {

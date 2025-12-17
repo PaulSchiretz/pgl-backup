@@ -78,12 +78,30 @@ func LevelFromString(levelStr string) Level {
 	}
 }
 
+// newHandlerOptions creates a slog.HandlerOptions with a custom ReplaceAttr
+// function to handle the custom "Notice" log level.
+func newHandlerOptions(level slog.Leveler) *slog.HandlerOptions {
+	return &slog.HandlerOptions{
+		Level: level,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			// If the attribute is the log level, check if it's our custom level.
+			if a.Key == slog.LevelKey {
+				level := a.Value.Any().(slog.Level)
+				if level == slog.Level(LevelNotice) {
+					a.Value = slog.StringValue("NOTICE")
+				}
+			}
+			return a
+		},
+	}
+}
+
 // SetOutput allows redirecting the logger's output, primarily for testing.
 func SetOutput(w io.Writer) {
 	// Recreate the dual-handler setup, but point both to the test writer.
 	// This ensures the test captures all output (stdout/stderr) and respects all log levels.
 	// Crucially, we use the global 'level' variable here so that tests can change it.
-	testHandler := slog.NewTextHandler(w, &slog.HandlerOptions{Level: level})
+	testHandler := slog.NewTextHandler(w, newHandlerOptions(level))
 	// Default to Debug level for tests to capture all potential output unless overridden.
 	level.Set(slog.LevelDebug)
 	defaultLogger = slog.New(&LevelDispatchHandler{
@@ -105,14 +123,10 @@ func Default() *slog.Logger {
 func init() {
 	level.Set(slog.LevelInfo) // Default log level.
 	// Handler for info-level logs (and below) to stdout
-	stdoutHandler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: level,
-	})
+	stdoutHandler := slog.NewTextHandler(os.Stdout, newHandlerOptions(level))
 
 	// Handler for warning/error-level logs to stderr
-	stderrHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelWarn,
-	})
+	stderrHandler := slog.NewTextHandler(os.Stderr, newHandlerOptions(slog.LevelWarn))
 
 	defaultLogger = slog.New(&LevelDispatchHandler{
 		stdoutHandler: stdoutHandler,
