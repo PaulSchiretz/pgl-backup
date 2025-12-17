@@ -985,7 +985,7 @@ func (r *syncRun) execute() error {
 	// We defer the cancel to ensure resources are cleaned up on exit.
 	r.ctx, r.cancel = context.WithCancel(r.ctx)
 	defer func() {
-		r.metrics.Log()
+		r.metrics.LogSummary("Syncing filepaths summary")
 		r.cancel()
 	}()
 

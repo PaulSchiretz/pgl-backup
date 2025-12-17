@@ -195,8 +195,15 @@ func runInit(ctx context.Context, flagMap map[string]interface{}, version string
 	// Create a config from defaults merged with user flags.
 	runConfig := config.MergeConfigWithFlags(config.NewDefault(), flagMap)
 
+	startTime := time.Now()
 	initEngine := engine.New(runConfig, version)
-	return initEngine.InitializeBackupTarget(ctx)
+	err := initEngine.InitializeBackupTarget(ctx)
+	duration := time.Since(startTime).Round(time.Millisecond)
+	if err != nil {
+		return err // The error will be logged with full details by main()
+	}
+	plog.Info(appName+" target successfully initialized.", "duration", duration)
+	return nil
 }
 
 // runBackup handles the logic for the main backup action.
@@ -226,10 +233,9 @@ func runBackup(ctx context.Context, flagMap map[string]interface{}, version stri
 	err = backupEngine.ExecuteBackup(ctx)
 	duration := time.Since(startTime).Round(time.Millisecond)
 	if err != nil {
-		plog.Info("Backup process finished with an error.", "duration", duration)
 		return err // The error will be logged with full details by main()
 	}
-	plog.Info("Backup process finished successfully.", "duration", duration)
+	plog.Info(appName+" finished successfully.", "duration", duration)
 	return nil
 }
 
@@ -270,7 +276,7 @@ func main() {
 	}()
 
 	if err := run(ctx); err != nil {
-		plog.Error("Application exited with error", "error", err)
+		plog.Error(appName+" exited with error", "error", err)
 		os.Exit(1)
 	}
 }

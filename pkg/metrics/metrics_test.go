@@ -57,14 +57,14 @@ func TestSyncMetrics_Log(t *testing.T) {
 		m := &SyncMetrics{}
 		m.AddFilesCopied(10)
 		m.AddFilesUpToDate(20)
-		m.Log()
+		m.LogSummary("Test Summary")
 
 		// --- Assert ---
 		output := logBuf.String()
 
 		// --- Assert ---
-		if !strings.Contains(output, "SUM") {
-			t.Errorf("expected log output to contain 'SUM', but it didn't. Got: %s", output)
+		if !strings.Contains(output, "msg=\"Test Summary\"") {
+			t.Errorf("expected log output to contain 'msg=\"Test Summary\"', but it didn't. Got: %s", output)
 		}
 		if !strings.Contains(output, "filesCopied=10") {
 			t.Errorf("expected log output to contain 'filesCopied=10', but it didn't. Got: %s", output)
@@ -100,6 +100,6 @@ func TestNoopMetrics(t *testing.T) {
 		m.AddDirsCreated(1)
 		m.AddDirsDeleted(1)
 		m.AddDirsExcluded(1)
-		m.Log()
+		m.LogSummary("noop test")
 	})
 }

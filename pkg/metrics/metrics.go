@@ -15,7 +15,7 @@ type Metrics interface {
 	AddDirsCreated(n int64)
 	AddDirsDeleted(n int64)
 	AddDirsExcluded(n int64)
-	Log()
+	LogSummary(msg string)
 }
 
 // SyncMetrics holds the atomic counters for tracking the sync operation's progress.
@@ -38,9 +38,9 @@ func (m *SyncMetrics) AddDirsCreated(n int64)   { m.DirsCreated.Add(n) }
 func (m *SyncMetrics) AddDirsDeleted(n int64)   { m.DirsDeleted.Add(n) }
 func (m *SyncMetrics) AddDirsExcluded(n int64)  { m.DirsExcluded.Add(n) }
 
-// Log prints a summary of the sync operation.
-func (m *SyncMetrics) Log() {
-	plog.Info("SUM",
+// Log prints a summary of the sync operation with a custom message.
+func (m *SyncMetrics) LogSummary(msg string) {
+	plog.Info(msg,
 		"filesCopied", m.FilesCopied.Load(),
 		"filesUpToDate", m.FilesUpToDate.Load(),
 		"filesDeleted", m.FilesDeleted.Load(),
@@ -62,7 +62,7 @@ func (m *NoopMetrics) AddFilesUpToDate(n int64) {}
 func (m *NoopMetrics) AddDirsCreated(n int64)   {}
 func (m *NoopMetrics) AddDirsDeleted(n int64)   {}
 func (m *NoopMetrics) AddDirsExcluded(n int64)  {}
-func (m *NoopMetrics) Log()                     {}
+func (m *NoopMetrics) LogSummary(msg string)    {}
 
 // Statically assert that our types implement the interface.
 var _ Metrics = (*SyncMetrics)(nil)

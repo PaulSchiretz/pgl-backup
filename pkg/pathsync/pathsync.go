@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
+	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 	"pixelgardenlabs.io/pgl-backup/pkg/util"
 )
 
@@ -37,13 +38,15 @@ func NewPathSyncer(cfg config.Config) *PathSyncer {
 }
 
 // Sync is the main entry point for synchronization. It dispatches to the configured sync engine.
-func (s *PathSyncer) Sync(ctx context.Context, src, dst string, mirror bool, excludeFiles, excludeDirs []string, enableMetrics bool) error {
+func (s *PathSyncer) Sync(ctx context.Context, src, trg string, mirror bool, excludeFiles, excludeDirs []string, enableMetrics bool) error {
 	// Check for cancellation after validation but before starting the heavy work.
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
 	}
+
+	plog.Info("Syncing filepaths", "source", src, "target", trg)
 
 	// Before dispatching to a specific sync engine, we prepare the destination directory.
 	// This centralizes the logic, ensuring that the target directory exists with appropriate
@@ -56,17 +59,27 @@ func (s *PathSyncer) Sync(ctx context.Context, src, dst string, mirror bool, exc
 	// We use the source directory's permissions as a template for the destination.
 	// Crucially, `withBackupWritePermission` is applied to ensure the backup user
 	// can always write to the destination on subsequent runs, preventing permission lockouts.
-	if !s.dryRun && dst != "" {
-		if err := os.MkdirAll(dst, util.WithUserWritePermission(srcInfo.Mode().Perm())); err != nil {
-			return fmt.Errorf("failed to create destination directory %s: %w", dst, err)
+	if !s.dryRun && trg != "" {
+		if err := os.MkdirAll(trg, util.WithUserWritePermission(srcInfo.Mode().Perm())); err != nil {
+			return fmt.Errorf("failed to create target directory %s: %w", trg, err)
 		}
 	}
 
 	switch s.engine.Type {
 	case config.RobocopyEngine:
-		return s.handleRobocopy(ctx, src, dst, mirror, excludeFiles, excludeDirs, enableMetrics)
+		err := s.handleRobocopy(ctx, src, trg, mirror, excludeFiles, excludeDirs, enableMetrics)
+		if err != nil {
+			return err
+		}
+		plog.Notice("SYNCED", "source", src, "target", trg)
+		return nil
 	case config.NativeEngine:
-		return s.handleNative(ctx, src, dst, mirror, excludeFiles, excludeDirs, enableMetrics)
+		err := s.handleNative(ctx, src, trg, mirror, excludeFiles, excludeDirs, enableMetrics)
+		if err != nil {
+			return err
+		}
+		plog.Notice("SYNCED", "source", src, "target", trg)
+		return nil
 	default:
 		return fmt.Errorf("unknown sync engine configured: %v", s.engine.Type)
 	}

@@ -690,7 +690,7 @@ func (c *Config) LogSummary() {
 		logArgs = append(logArgs, "snapshot_compression_format", c.Compression.Snapshot.Format)
 		logArgs = append(logArgs, "snapshot_compression_max_retries", c.Compression.Snapshot.MaxRetries)
 	}
-	plog.Info("Backup configuration loaded", logArgs...)
+	plog.Info("Configuration loaded", logArgs...)
 }
 
 // validateGlobPatterns checks if a list of strings are valid glob patterns.

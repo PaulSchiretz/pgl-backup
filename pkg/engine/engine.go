@@ -198,9 +198,9 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 	}
 
 	// Log a single, comprehensive message about the upcoming backup process.
-	logMsg := "Starting backup process"
+	logMsg := "Starting backup"
 	if e.config.DryRun {
-		logMsg = "Starting backup process (DRY RUN)"
+		logMsg = "Starting backup (DRY RUN)"
 	}
 	plog.Info(logMsg,
 		"source", runState.source,
@@ -213,8 +213,6 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 		return fmt.Errorf("fatal backup error during sync: %w", err)
 	}
 
-	plog.Info("Backup operation completed.")
-
 	// Clean up outdated backups (archives and snapshots)
 	if err := e.performRetention(ctx); err != nil {
 		return fmt.Errorf("fatal backup error during retention: %w", err)
@@ -225,6 +223,7 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 		return fmt.Errorf("fatal backup error during compression: %w", err)
 	}
 
+	plog.Info("Backup completed")
 	return nil
 }
 
