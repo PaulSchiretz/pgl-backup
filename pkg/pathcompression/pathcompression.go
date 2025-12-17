@@ -127,7 +127,7 @@ func (c *PathCompressionManager) Compress(ctx context.Context, compressionPolicy
 
 					b.Metadata.CompressionAttempts++ // Increment the attempt count on the in-memory copy
 					if writeErr := metafile.Write(fullPathToCompress, b.Metadata); writeErr != nil {
-						plog.Error("CRITICAL: Failed to write updated metafile after compression failure. Attempt count not saved.", "path", fullPathToCompress, "error", writeErr)
+						plog.Error("Failed to write updated metafile after compression failure. Attempt count not saved.", "path", fullPathToCompress, "error", writeErr)
 					}
 				}
 			}

@@ -340,12 +340,12 @@ func NewDefault() Config {
 		Compression: BackupCompressionConfig{
 			Incremental: CompressionPolicyConfig{
 				Enabled:    false,
-				Format:     TarGzFormat,
+				Format:     ZipFormat,
 				MaxRetries: 3,
 			},
 			Snapshot: CompressionPolicyConfig{
 				Enabled:    false,
-				Format:     TarGzFormat,
+				Format:     ZipFormat,
 				MaxRetries: 3,
 			},
 		},
