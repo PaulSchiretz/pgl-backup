@@ -252,11 +252,12 @@ type BackupArchiveConfig struct {
 type CompressionFormat string
 
 const (
-	ZipFormat   CompressionFormat = "zip"
-	TarGzFormat CompressionFormat = "tar.gz"
+	ZipFormat    CompressionFormat = "zip"
+	TarGzFormat  CompressionFormat = "tar.gz"
+	TarZstFormat CompressionFormat = "tar.zst"
 )
 
-var compressionFormatToString = map[CompressionFormat]string{ZipFormat: "zip", TarGzFormat: "tar.gz"}
+var compressionFormatToString = map[CompressionFormat]string{ZipFormat: "zip", TarGzFormat: "tar.gz", TarZstFormat: "tar.zst"}
 var stringToCompressionFormat = util.InvertMap(compressionFormatToString)
 
 // String returns the string representation of a CompressionFormat.
@@ -340,12 +341,12 @@ func NewDefault() Config {
 		Compression: BackupCompressionConfig{
 			Incremental: CompressionPolicyConfig{
 				Enabled:    false,
-				Format:     ZipFormat,
+				Format:     TarZstFormat,
 				MaxRetries: 3,
 			},
 			Snapshot: CompressionPolicyConfig{
 				Enabled:    false,
-				Format:     ZipFormat,
+				Format:     TarZstFormat,
 				MaxRetries: 3,
 			},
 		},

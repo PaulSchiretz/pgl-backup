@@ -79,10 +79,10 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	preBackupHooksFlag := flag.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
 	postBackupHooksFlag := flag.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
 	incCompressionEnabledFlag := flag.Bool("incremental-compression", false, "Enable compression for incremental backups.")
-	incCompressionFormatFlag := flag.String("incremental-compression-format", "", "Compression format for incremental backups: 'zip' or 'tar.gz'.")
+	incCompressionFormatFlag := flag.String("incremental-compression-format", "", "Compression format for incremental backups: 'zip', 'tar.gz or 'tar.zst'.")
 	incCompressionMaxRetriesFlag := flag.Int("incremental-compression-max-retries", 0, "Maximum number of times to retry compressing a backup before giving up.")
 	snapCompressionEnabledFlag := flag.Bool("snapshot-compression", false, "Enable compression for snapshot backups.")
-	snapCompressionFormatFlag := flag.String("snapshot-compression-format", "", "Compression format for snapshot backups: 'zip' or 'tar.gz'.")
+	snapCompressionFormatFlag := flag.String("snapshot-compression-format", "", "Compression format for snapshot backups: 'zip', 'tar.gz or 'tar.zst'.")
 	snapCompressionMaxRetriesFlag := flag.Int("snapshot-compression-max-retries", 0, "Maximum number of times to retry compressing a backup before giving up.")
 
 	flag.Parse()

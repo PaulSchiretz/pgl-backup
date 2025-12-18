@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
 	"pixelgardenlabs.io/pgl-backup/pkg/metafile"
 	"pixelgardenlabs.io/pgl-backup/pkg/util"
@@ -61,6 +62,7 @@ func TestCompress(t *testing.T) {
 	}{
 		{"Zip", config.ZipFormat},
 		{"TarGz", config.TarGzFormat},
+		{"TarZst", config.TarZstFormat},
 	}
 
 	for _, tc := range testCases {
@@ -374,6 +376,28 @@ func AssertArchiveContains(t *testing.T, archivePath string, format config.Compr
 		}
 		defer gzr.Close()
 		tr := tar.NewReader(gzr)
+		for {
+			header, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if _, ok := foundFiles[header.Name]; ok {
+				foundFiles[header.Name] = true
+			}
+		}
+
+	case config.TarZstFormat:
+		file, err := os.Open(archivePath)
+		if err != nil {
+			t.Fatalf("failed to open created tar.zst file %s: %v", archivePath, err)
+		}
+		defer file.Close()
+		zstdr, err := zstd.NewReader(file)
+		if err != nil {
+			t.Fatalf("failed to create zstd reader for %s: %v", archivePath, err)
+		}
+		defer zstdr.Close()
+		tr := tar.NewReader(zstdr)
 		for {
 			header, err := tr.Next()
 			if err == io.EOF {

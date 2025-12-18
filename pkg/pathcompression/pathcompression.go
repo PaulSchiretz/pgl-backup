@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/klauspost/compress/zstd"
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
 	"pixelgardenlabs.io/pgl-backup/pkg/metafile"
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
@@ -365,6 +366,40 @@ func (tw *tarGzArchiveWriter) AddFile(absSrcPath, relPath string, info os.FileIn
 	return nil
 }
 
+// tarZstdArchiveWriter implements archiveWriter for .tar.zst files.
+type tarZstdArchiveWriter struct {
+	tarWriter  *tar.Writer
+	zstdWriter *zstd.Encoder
+}
+
+func (tw *tarZstdArchiveWriter) AddFile(absSrcPath, relPath string, info os.FileInfo) error {
+	// Create a tar header from the file's info.
+	header, err := tar.FileInfoHeader(info, relPath)
+	if err != nil {
+		return fmt.Errorf("failed to create tar header for %s: %w", absSrcPath, err)
+	}
+	// The FileInfoHeader uses the second argument for the link name.
+	// We must explicitly set the Name field to the normalized relative path.
+	header.Name = relPath
+
+	if err := tw.tarWriter.WriteHeader(header); err != nil {
+		return fmt.Errorf("failed to write tar header for %s: %w", relPath, err)
+	}
+
+	fileToTar, err := os.Open(absSrcPath)
+	if err != nil {
+		return fmt.Errorf("failed to open file %s for taring: %w", absSrcPath, err)
+	}
+	defer fileToTar.Close()
+
+	// Copy the file content into the tar writer.
+	_, err = io.Copy(tw.tarWriter, fileToTar)
+	if err != nil {
+		return fmt.Errorf("failed to copy file %s to tar: %w", absSrcPath, err)
+	}
+	return nil
+}
+
 func (tw *tarGzArchiveWriter) Close() error {
 	// Writers must be closed in the correct order: tar first, then gzip.
 	// This ensures all data is written to the underlying gzip stream before it's closed.
@@ -376,6 +411,21 @@ func (tw *tarGzArchiveWriter) Close() error {
 	}
 	if errGzip != nil {
 		return fmt.Errorf("failed to close gzip writer: %w", errGzip)
+	}
+	return nil
+}
+
+// Close finalizes and closes the tar and zstd writers in the correct order.
+func (tw *tarZstdArchiveWriter) Close() error {
+	// Writers must be closed in the correct order: tar first, then zstd.
+	errTar := tw.tarWriter.Close()
+	errZstd := tw.zstdWriter.Close()
+
+	if errTar != nil {
+		return fmt.Errorf("failed to close tar writer: %w", errTar)
+	}
+	if errZstd != nil {
+		return fmt.Errorf("failed to close zstd writer: %w", errZstd)
 	}
 	return nil
 }
@@ -400,6 +450,13 @@ func (c *PathCompressionManager) createArchive(ctx context.Context, sourceDir st
 		gzipWriter := gzip.NewWriter(tempFile)
 		tarWriter := tar.NewWriter(gzipWriter)
 		archiver = &tarGzArchiveWriter{tarWriter: tarWriter, gzipWriter: gzipWriter}
+	case config.TarZstFormat:
+		zstdWriter, err := zstd.NewWriter(tempFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to create zstd writer: %w", err)
+		}
+		tarWriter := tar.NewWriter(zstdWriter)
+		archiver = &tarZstdArchiveWriter{tarWriter: tarWriter, zstdWriter: zstdWriter}
 	default:
 		// This should be caught earlier, but we handle it here for safety.
 		tempFile.Close()

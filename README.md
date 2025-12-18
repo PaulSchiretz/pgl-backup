@@ -89,12 +89,12 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
   "compression": {
     "incremental": {
       "enabled": false,
-      "format": "zip",
+      "format": "tar.zst",
       "maxRetries": 3
     },
     "snapshot": {
       "enabled": false,
-      "format": "zip",
+      "format": "tar.zst",
       "maxRetries": 3
     }
   },
@@ -274,10 +274,10 @@ All command-line flags can be set in the `pgl-backup.config.json` file.
 | `retention.snapshot.months`        | `int`         | `0`                                      | Number of recent monthly snapshots to keep. |
 | `retention.snapshot.years`         | `int`         | `0`                                      | Number of recent yearly snapshots to keep. |
 | `incremental-compression` / `compression.incremental.enabled` | `bool` | `false` | If true, enables compression for any incremental backups that are not already compressed. |
-| `incremental-compression-format` / `compression.incremental.format` | `string` | `"zip"` | The archive format to use for incremental backups: `"zip"` or `"tar.gz"`. |
+| `incremental-compression-format` / `compression.incremental.format` | `string` | `"tar.zst"` | The archive format to use for incremental backups: `"zip"`, `"tar.gz"` or `"tar.zst"`. |
 | `incremental-compression-max-retries` / `compression.incremental.maxRetries` | `int` | `3` | Maximum number of times to retry compressing a backup before giving up. |
 | `snapshot-compression` / `compression.snapshot.enabled` | `bool` | `false` | If true, enables compression for any snapshots that are not already compressed. |
-| `snapshot-compression-format` / `compression.snapshot.format` | `string` | `"zip"` | The archive format to use for snapshots: `"zip"` or `"tar.gz"`. |
+| `snapshot-compression-format` / `compression.snapshot.format` | `string` | `"tar.zst"` | The archive format to use for snapshots: `"zip"`, `"tar.gz"` or `"tar.zst"`. |
 | `snapshot-compression-max-retries` / `compression.snapshot.maxRetries` | `int` | `3` | Maximum number of times to retry compressing a backup before giving up. |
 | `defaultExcludeFiles`           | `[]string`    | `[*.tmp, *.temp, *.swp, *.lnk, ~*, desktop.ini, .DS_Store, Thumbs.db, Icon\r]`                     | The list of default file patterns to exclude. Can be customized. |
 | `defaultExcludeDirs`            | `[]string`    | `[@tmp, @eadir, .SynologyWorkingDirectory, #recycle, $Recycle.Bin]`                     | The list of default directory patterns to exclude. Can be customized. |
