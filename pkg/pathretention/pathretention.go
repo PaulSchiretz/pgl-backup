@@ -102,7 +102,8 @@ func (r *PathRetentionManager) Apply(ctx context.Context, retentionPolicyTitle s
 	// This is especially effective for network drives where latency is a factor.
 	numWorkers := r.config.Engine.Performance.DeleteWorkers // Use the configured number of workers.
 	var wg sync.WaitGroup
-	deleteDirTasksChan := make(chan backupInfo, len(eligibleBackups))
+	// Buffer it to 2x the workers to keep the pipeline full without wasting memory
+	deleteDirTasksChan := make(chan backupInfo, numWorkers*2)
 
 	// Start workers
 	for i := 0; i < numWorkers; i++ {

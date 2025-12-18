@@ -180,11 +180,11 @@ type BackupEngineConfig struct {
 }
 
 type BackupEnginePerformanceConfig struct {
-	SyncWorkers      int `json:"syncWorkers"`
-	MirrorWorkers    int `json:"mirrorWorkers" comment:"Number of concurrent workers for file deletions in mirror mode."`
-	DeleteWorkers    int `json:"deleteWorkers"`
-	CompressWorkers  int `json:"compressWorkers" comment:"Number of concurrent workers for compressing backups."`
-	CopyBufferSizeKB int `json:"copyBufferSizeKB" comment:"Size of the I/O buffer in kilobytes for file copies. Default is 4096 (4MB)."`
+	SyncWorkers     int `json:"syncWorkers"`
+	MirrorWorkers   int `json:"mirrorWorkers"`
+	DeleteWorkers   int `json:"deleteWorkers"`
+	CompressWorkers int `json:"compressWorkers"`
+	BufferSizeKB    int `json:"bufferSizeKB" comment:"Size of the I/O buffer in kilobytes for file copies and compression. Default is 256 (256KB)."`
 }
 
 // ArchiveIntervalMode represents how the archive interval is determined.
@@ -356,11 +356,11 @@ func NewDefault() Config {
 			RetryWaitSeconds:     5, // Default wait time between retries.
 			ModTimeWindowSeconds: 1, // Set the default to 1 second
 			Performance: BackupEnginePerformanceConfig{ // Initialize performance settings here
-				SyncWorkers:      runtime.NumCPU(), // Default to the number of CPU cores for file copies.
-				MirrorWorkers:    runtime.NumCPU(), // Default to the number of CPU cores for file deletions.
-				DeleteWorkers:    4,                // A sensible default for deleting entire backup sets.
-				CompressWorkers:  4,                // A sensible default for compressing backups.
-				CopyBufferSizeKB: 256,              // Default to 256KB buffer. Keep it between 64KB-4MB
+				SyncWorkers:     runtime.NumCPU(), // Default to the number of CPU cores for file copies.
+				MirrorWorkers:   runtime.NumCPU(), // Default to the number of CPU cores for file deletions.
+				DeleteWorkers:   4,                // A sensible default for deleting entire backup sets.
+				CompressWorkers: 4,                // A sensible default for compressing backups.
+				BufferSizeKB:    256,              // Default to 256KB buffer. Keep it between 64KB-4MB
 			}},
 		Naming: BackupNamingConfig{
 			Prefix: "PGL_Backup_",
@@ -586,8 +586,8 @@ func (c *Config) Validate() error {
 	if c.Engine.ModTimeWindowSeconds < 0 {
 		return fmt.Errorf("modTimeWindowSeconds cannot be negative")
 	}
-	if c.Engine.Performance.CopyBufferSizeKB <= 0 {
-		return fmt.Errorf("copyBufferSizeKB must be greater than 0")
+	if c.Engine.Performance.BufferSizeKB <= 0 {
+		return fmt.Errorf("bufferSizeKB must be greater than 0")
 	}
 	if c.Mode == IncrementalMode {
 		if c.Archive.Incremental.Mode == ManualInterval && c.Archive.Incremental.Interval < 0 {
@@ -636,7 +636,7 @@ func (c *Config) LogSummary() {
 		"metrics", c.Metrics,
 		"compress_workers", c.Engine.Performance.CompressWorkers,
 		"delete_workers", c.Engine.Performance.DeleteWorkers,
-		"copy_buffer_kb", c.Engine.Performance.CopyBufferSizeKB,
+		"buffer_size_kb", c.Engine.Performance.BufferSizeKB,
 		"content_subdir", c.Paths.ContentSubDir,
 	}
 	switch c.Mode {
@@ -767,8 +767,8 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 			merged.Engine.RetryCount = value.(int)
 		case "retry-wait":
 			merged.Engine.RetryWaitSeconds = value.(int)
-		case "copy-buffer-kb":
-			merged.Engine.Performance.CopyBufferSizeKB = value.(int)
+		case "buffer-size-kb":
+			merged.Engine.Performance.BufferSizeKB = value.(int)
 		case "mod-time-window":
 			merged.Engine.ModTimeWindowSeconds = value.(int)
 		case "user-exclude-files":

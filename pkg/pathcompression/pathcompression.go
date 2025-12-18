@@ -3,6 +3,7 @@ package pathcompression
 import (
 	"archive/tar"
 	"archive/zip"
+	"bufio"
 	"compress/gzip"
 	"context"
 	"fmt"
@@ -94,7 +95,8 @@ func (c *PathCompressionManager) Compress(ctx context.Context, compressionPolicy
 	// This is especially effective for network drives where latency is a factor.
 	numWorkers := c.config.Engine.Performance.CompressWorkers
 	var wg sync.WaitGroup
-	compressDirTasksChan := make(chan backupInfo, len(eligibleBackups))
+	// Buffer it to 2x the workers to keep the pipeline full without wasting memory
+	compressDirTasksChan := make(chan backupInfo, numWorkers*2)
 
 	// Start workers
 	for i := 0; i < numWorkers; i++ {
@@ -119,6 +121,12 @@ func (c *PathCompressionManager) Compress(ctx context.Context, compressionPolicy
 
 				plog.Notice("COMPRESS", "policy", runState.compressionPolicyTitle, "path", fullPathToCompress, "worker", workerID)
 				if err := c.compressDirectory(ctx, fullPathToCompress, runState.format); err != nil {
+					// If the error is a cancellation, we should not treat it as a failure.
+					// We just stop processing this item.
+					if err == context.Canceled {
+						return
+					}
+
 					// A failure to compress a single backup is logged as a warning but does not
 					// stop the overall process. The original uncompressed backup is left untouched.
 					// We now update the metafile to track the failure.
@@ -127,7 +135,22 @@ func (c *PathCompressionManager) Compress(ctx context.Context, compressionPolicy
 					b.Metadata.CompressionAttempts++ // Increment the attempt count on the in-memory copy
 					if writeErr := metafile.Write(fullPathToCompress, b.Metadata); writeErr != nil {
 						// This should stay an error, as we'll try to compress over and over again on subsequent runs and this needs attention
-						plog.Error("Failed to write updated metafile after compression failure. Attempt count not saved.", "path", fullPathToCompress, "error", writeErr)
+						plog.Error("Failed to write updated metafile after compression failure. Attempt count not saved. Manual intervention may be required.", "path", fullPathToCompress, "error", writeErr)
+					}
+				} else {
+					// On successful archive creation, we first update the metafile.
+					b.Metadata.IsCompressed = true
+					if writeErr := metafile.Write(fullPathToCompress, b.Metadata); writeErr != nil {
+						// If we fail to mark it as compressed, we must not delete the original content.
+						// The next run will find the archive and repair the metadata.
+						plog.Error("Failed to write updated metafile after compression success. Original content has been preserved.", "path", fullPathToCompress, "error", writeErr)
+					} else {
+						// Only after the metafile is successfully updated do we remove the original content.
+						// This makes the operation more atomic.
+						contentDir := filepath.Join(fullPathToCompress, c.config.Paths.ContentSubDir)
+						if err := os.RemoveAll(contentDir); err != nil {
+							plog.Error("Failed to remove original content directory after successful compression and metadata update. The compressed archive is safe, but the original content remains. Manual cleanup may be required.", "path", contentDir, "error", err)
+						}
 					}
 				}
 				plog.Notice("COMPRESSED", "policy", runState.compressionPolicyTitle, "path", fullPathToCompress)
@@ -242,7 +265,7 @@ func (c *PathCompressionManager) filterBackupsToCompress(runState *compressionRu
 
 // compressDirectory creates an archive of the directory's contents,
 // then deletes the original files, leaving only the archive and essential metadata.
-// The final structure will be the original directory containing the updated .meta.json file and the compressed archive.
+// It does NOT modify metadata or delete the original content, leaving that to the caller.
 func (c *PathCompressionManager) compressDirectory(ctx context.Context, dirPath string, format config.CompressionFormat) error {
 	contentDir := filepath.Join(dirPath, c.config.Paths.ContentSubDir)
 	// The archive is named after its parent backup directory (e.g., "PGL_Backup_2023-10-27...zip").
@@ -250,6 +273,22 @@ func (c *PathCompressionManager) compressDirectory(ctx context.Context, dirPath 
 	// moved out of its original context.
 	archiveFileName := filepath.Base(dirPath) + "." + format.String()
 	finalArchivePath := filepath.Join(dirPath, archiveFileName)
+
+	// Cleanup stale tmp files from previous crashed runs
+	// We do this first to ensure we aren't wasting disk space or
+	// potentially confusing os.CreateTemp.
+	c.cleanupStaleTempFiles(dirPath)
+
+	// Safety check: Handle the "Half-Finished" state
+	// If the content directory is gone but the archive exists, just update metadata.
+	if _, err := os.Stat(contentDir); os.IsNotExist(err) {
+		// If archive exists but contentDir doesn't, maybe we crashed last time?
+		if _, errArch := os.Stat(finalArchivePath); errArch == nil {
+			plog.Warn("Content directory missing but archive exists. Repairing metadata.", "path", dirPath)
+			// Return nil to signal to the worker that the file operation is "complete" and it can proceed to update the metafile.
+			return nil
+		}
+	}
 
 	// 1. Create the archive in a temporary file.
 	tempArchivePath, err := c.createArchive(ctx, contentDir, format)
@@ -267,24 +306,6 @@ func (c *PathCompressionManager) compressDirectory(ctx context.Context, dirPath 
 	_ = os.Remove(finalArchivePath)
 	if err := os.Rename(tempArchivePath, finalArchivePath); err != nil {
 		return fmt.Errorf("failed to rename temporary archive to final destination: %w", err)
-	}
-
-	// 3. Remove the original content directory now that the archive is in place.
-	if err := os.RemoveAll(contentDir); err != nil {
-		return fmt.Errorf("failed to remove original content directory %s: %w", contentDir, err)
-	}
-
-	// 4. Update the metafile to mark this backup as compressed.
-	metadata, err := metafile.Read(dirPath)
-	if err != nil {
-		// This is a significant problem. The backup is compressed, but we can't mark it as such.
-		// We should log this clearly. The next run will likely try to re-compress.
-		return fmt.Errorf("failed to read metafile to update compression status: %w", err)
-	}
-	metadata.IsCompressed = true
-	if err := metafile.Write(dirPath, metadata); err != nil {
-		os.Remove(finalArchivePath)
-		return fmt.Errorf("failed to write updated metafile to mark as compressed: %w", err)
 	}
 	return nil
 }
@@ -332,13 +353,13 @@ func (zw *zipArchiveWriter) Close() error {
 	return nil
 }
 
-// tarGzArchiveWriter implements archiveWriter for .tar.gz files.
-type tarGzArchiveWriter struct {
-	tarWriter  *tar.Writer
-	gzipWriter *gzip.Writer
+// tarArchiveWriter implements archiveWriter for .tar.gz or .tar.zst files.
+type tarArchiveWriter struct {
+	tarWriter        *tar.Writer
+	compressedWriter io.WriteCloser
 }
 
-func (tw *tarGzArchiveWriter) AddFile(absSrcPath, relPath string, info os.FileInfo) error {
+func (tw *tarArchiveWriter) AddFile(absSrcPath, relPath string, info os.FileInfo) error {
 	// Create a tar header from the file's info.
 	header, err := tar.FileInfoHeader(info, relPath)
 	if err != nil {
@@ -366,68 +387,13 @@ func (tw *tarGzArchiveWriter) AddFile(absSrcPath, relPath string, info os.FileIn
 	return nil
 }
 
-// tarZstdArchiveWriter implements archiveWriter for .tar.zst files.
-type tarZstdArchiveWriter struct {
-	tarWriter  *tar.Writer
-	zstdWriter *zstd.Encoder
-}
-
-func (tw *tarZstdArchiveWriter) AddFile(absSrcPath, relPath string, info os.FileInfo) error {
-	// Create a tar header from the file's info.
-	header, err := tar.FileInfoHeader(info, relPath)
-	if err != nil {
-		return fmt.Errorf("failed to create tar header for %s: %w", absSrcPath, err)
+// Close finalizes and closes the tar and underlying compressors in the correct order.
+func (tw *tarArchiveWriter) Close() error {
+	// Writers must be closed in the correct order: tar first, then compressor.
+	if err := tw.tarWriter.Close(); err != nil {
+		return err
 	}
-	// The FileInfoHeader uses the second argument for the link name.
-	// We must explicitly set the Name field to the normalized relative path.
-	header.Name = relPath
-
-	if err := tw.tarWriter.WriteHeader(header); err != nil {
-		return fmt.Errorf("failed to write tar header for %s: %w", relPath, err)
-	}
-
-	fileToTar, err := os.Open(absSrcPath)
-	if err != nil {
-		return fmt.Errorf("failed to open file %s for taring: %w", absSrcPath, err)
-	}
-	defer fileToTar.Close()
-
-	// Copy the file content into the tar writer.
-	_, err = io.Copy(tw.tarWriter, fileToTar)
-	if err != nil {
-		return fmt.Errorf("failed to copy file %s to tar: %w", absSrcPath, err)
-	}
-	return nil
-}
-
-func (tw *tarGzArchiveWriter) Close() error {
-	// Writers must be closed in the correct order: tar first, then gzip.
-	// This ensures all data is written to the underlying gzip stream before it's closed.
-	// The error check is combined to ensure both are attempted.
-	errTar := tw.tarWriter.Close()
-	errGzip := tw.gzipWriter.Close()
-	if errTar != nil {
-		return fmt.Errorf("failed to close tar writer: %w", errTar)
-	}
-	if errGzip != nil {
-		return fmt.Errorf("failed to close gzip writer: %w", errGzip)
-	}
-	return nil
-}
-
-// Close finalizes and closes the tar and zstd writers in the correct order.
-func (tw *tarZstdArchiveWriter) Close() error {
-	// Writers must be closed in the correct order: tar first, then zstd.
-	errTar := tw.tarWriter.Close()
-	errZstd := tw.zstdWriter.Close()
-
-	if errTar != nil {
-		return fmt.Errorf("failed to close tar writer: %w", errTar)
-	}
-	if errZstd != nil {
-		return fmt.Errorf("failed to close zstd writer: %w", errZstd)
-	}
-	return nil
+	return tw.compressedWriter.Close()
 }
 
 // createArchive provides a generic, robust, and atomic way to compress a directory.
@@ -440,23 +406,28 @@ func (c *PathCompressionManager) createArchive(ctx context.Context, sourceDir st
 	}
 	tempPath = tempFile.Name()
 
+	// 1. Initialize the Buffer (The "Middleman")
+	// This sits between the compressor and the disk.
+	// Buffer size is configured in KB, so multiply by 1024.
+	bufWriter := bufio.NewWriterSize(tempFile, c.config.Engine.Performance.BufferSizeKB*1024)
+
 	// 2. Set up the appropriate archive writer based on the format.
 	var archiver archiveWriter
 	switch format {
 	case config.ZipFormat:
-		zipWriter := zip.NewWriter(tempFile)
+		zipWriter := zip.NewWriter(bufWriter)
 		archiver = &zipArchiveWriter{zipWriter: zipWriter}
 	case config.TarGzFormat:
-		gzipWriter := gzip.NewWriter(tempFile)
+		gzipWriter := gzip.NewWriter(bufWriter)
 		tarWriter := tar.NewWriter(gzipWriter)
-		archiver = &tarGzArchiveWriter{tarWriter: tarWriter, gzipWriter: gzipWriter}
+		archiver = &tarArchiveWriter{tarWriter: tarWriter, compressedWriter: gzipWriter}
 	case config.TarZstFormat:
-		zstdWriter, err := zstd.NewWriter(tempFile)
+		zstdWriter, err := zstd.NewWriter(bufWriter)
 		if err != nil {
 			return "", fmt.Errorf("failed to create zstd writer: %w", err)
 		}
 		tarWriter := tar.NewWriter(zstdWriter)
-		archiver = &tarZstdArchiveWriter{tarWriter: tarWriter, zstdWriter: zstdWriter}
+		archiver = &tarArchiveWriter{tarWriter: tarWriter, compressedWriter: zstdWriter}
 	default:
 		// This should be caught earlier, but we handle it here for safety.
 		tempFile.Close()
@@ -464,30 +435,29 @@ func (c *PathCompressionManager) createArchive(ctx context.Context, sourceDir st
 		return "", fmt.Errorf("unsupported compression format: %s", format)
 	}
 
-	// Defer the core cleanup logic. This function will be executed when compressWith returns.
-	// It checks the named return variable 'err' to decide its course of action.
-	// We use a separate function for the defer to capture the original error `err`
-	// and handle any new errors during cleanup without overwriting the original, more important error.
-	defer func(originalErr *error) {
-		// If the main operation has already failed (e.g., a read error during walk),
-		// we just need to clean up. We don't care about any new errors from closing,
-		// as the original error is the root cause and more important.
-		if *originalErr != nil {
-			archiver.Close() // Attempt to close, but ignore errors.
-			tempFile.Close() // Attempt to close, but ignore errors.
+	// Defer a function to handle cleanup. It checks the named return `err`.
+	// If an error has occurred at any point, it cleans up the temp file.
+	defer func() {
+		// 1. Close archiver first (flushes its internal state to the buffer)
+		if closeErr := archiver.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("archiver close failed: %w", closeErr)
+		}
+
+		// 2. Flush the buffer (ensures everything is in the OS file buffer)
+		if flushErr := bufWriter.Flush(); flushErr != nil && err == nil {
+			err = fmt.Errorf("buffer flush failed: %w", flushErr)
+		}
+
+		// 3. Close the underlying file (actually writes to disk)
+		if fileErr := tempFile.Close(); fileErr != nil && err == nil {
+			err = fmt.Errorf("temp file close failed: %w", fileErr)
+		}
+
+		// 4. Cleanup on failure
+		if err != nil {
 			os.Remove(tempPath)
-			return
 		}
-		// If the main operation was successful, we must handle close errors properly,
-		// as an error on close means the archive is corrupt.
-		if err := archiver.Close(); err != nil {
-			*originalErr = err // This error is critical, as the archive is corrupt.
-		}
-		// Only assign file close error if archiver close was successful.
-		if err := tempFile.Close(); err != nil && *originalErr == nil {
-			*originalErr = err // Report this error if closing the archiver was successful.
-		}
-	}(&err)
+	}()
 
 	// Walk the directory and add files to the archive.
 	walkErr := filepath.Walk(sourceDir, func(absSrcPath string, info os.FileInfo, walkErr error) error {
@@ -521,6 +491,20 @@ func (c *PathCompressionManager) createArchive(ctx context.Context, sourceDir st
 		return "", err
 	}
 
-	// On success, return the path to the completed temporary file. The deferred cleanup will not remove it.
+	// On success, return the path to the completed temporary file. The defer will not remove it because `err` is nil.
 	return tempPath, nil
+}
+
+func (c *PathCompressionManager) cleanupStaleTempFiles(dirPath string) {
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		// Look for our specific temp pattern: pgl-backup-*.tmp
+		if !entry.IsDir() && strings.HasPrefix(entry.Name(), "pgl-backup-") && strings.HasSuffix(entry.Name(), ".tmp") {
+			plog.Debug("Removing stale temporary archive", "file", entry.Name())
+			os.Remove(filepath.Join(dirPath, entry.Name()))
+		}
+	}
 }

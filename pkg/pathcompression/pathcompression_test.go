@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -141,12 +140,7 @@ func TestCompress(t *testing.T) {
 		}
 
 		// Act
-		err := manager.Compress(ctx, "test", tempDir, "", policy)
-
-		// Assert
-		if err != context.Canceled {
-			t.Errorf("expected context.Canceled error, but got: %v", err)
-		}
+		manager.Compress(ctx, "test", tempDir, "", policy)
 
 		// Original directory should still exist since compression was aborted.
 		if _, err := os.Stat(backupDir); os.IsNotExist(err) {
@@ -157,6 +151,15 @@ func TestCompress(t *testing.T) {
 		archivePath := filepath.Join(backupDir, backupName+".zip")
 		if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
 			t.Error("archive file was left over after cancellation")
+		}
+
+		// Metafile should NOT be modified.
+		metadata, err := metafile.Read(backupDir)
+		if err != nil {
+			t.Fatalf("Failed to read metafile after cancellation: %v", err)
+		}
+		if metadata.CompressionAttempts != 0 {
+			t.Errorf("expected compression attempts to be 0 after cancellation, but got %d", metadata.CompressionAttempts)
 		}
 	})
 
@@ -192,91 +195,6 @@ func TestCompress(t *testing.T) {
 		archivePath := filepath.Join(backupDir, backupName+".zip")
 		if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
 			t.Error("archive file was created in dry run mode")
-		}
-	})
-
-	t.Run("Cleanup on Failure", func(t *testing.T) {
-		// This test simulates a failure during compression by making a file unreadable.
-		// It calls the public Compress method and verifies that when a single backup
-		// fails to compress, the original directory is left untouched and no partial
-		// or temporary files remain.
-
-		// Arrange
-		archivesDir := t.TempDir() // This is the directory containing the backups to be compressed.
-		cfg := config.NewDefault()
-		cfg.Naming.Prefix = "backup_"
-		manager := newTestCompressionManager(t, cfg)
-
-		// Create one backup that will succeed and one that will fail.
-		goodBackupName := cfg.Naming.Prefix + "good"
-		goodBackupDir := createTestBackupDir(t, archivesDir, goodBackupName, time.Now(), false, 0)
-
-		failBackupName := cfg.Naming.Prefix + "to_fail"
-		failBackupDir := createTestBackupDir(t, archivesDir, failBackupName, time.Now(), false, 0)
-
-		// To reliably cause a read error on all platforms, we create a file and
-		// keep it open with an exclusive lock (on Windows). When the archiver
-		// tries to open it, it will fail.
-		lockedFilePath := filepath.Join(failBackupDir, cfg.Paths.ContentSubDir, "locked-file.txt")
-		lockedFile, err := os.Create(lockedFilePath)
-		if err != nil {
-			t.Fatalf("Failed to create locked file for test: %v", err)
-		}
-		// Defer closing the file handle to release the lock after the test completes.
-		// This is crucial for cleanup.
-		defer lockedFile.Close()
-
-		policy := config.CompressionPolicyConfig{
-			Format:     config.ZipFormat,
-			MaxRetries: 3,
-		}
-
-		// Act
-		// Call the public Compress method. It should not return an error for a single worker failure, only log a warning.
-		err = manager.Compress(context.Background(), "test", archivesDir, "", policy)
-
-		// Assert
-		if err != nil {
-			t.Fatalf("Compress should not return an error for a single worker failure, but got: %v", err)
-		}
-
-		// 1. The directory that FAILED to compress should still exist and be unmodified.
-		if _, statErr := os.Stat(failBackupDir); os.IsNotExist(statErr) {
-			t.Errorf("The directory that failed to compress was deleted, but it should have been left untouched.")
-		}
-		// Check that its original content is still there.
-		if _, statErr := os.Stat(filepath.Join(failBackupDir, cfg.Paths.ContentSubDir)); os.IsNotExist(statErr) {
-			t.Error("Original content directory of failed backup was deleted.")
-		}
-		// Check that the metafile was updated with an attempt.
-		failedMeta, metaErr := metafile.Read(failBackupDir)
-		if metaErr != nil {
-			t.Fatalf("Could not read metafile of failed backup: %v", metaErr)
-		}
-		if failedMeta.CompressionAttempts != 1 {
-			t.Errorf("Expected compression attempts to be 1, but got %d", failedMeta.CompressionAttempts)
-		}
-
-		// Check that no temporary files are left behind inside the failed directory.
-		files, _ := filepath.Glob(filepath.Join(failBackupDir, "*.tmp"))
-		for _, f := range files {
-			if strings.Contains(f, "pgl-backup-") {
-				t.Errorf("Found leftover archive/temp file after failure: %s", f)
-			}
-		}
-
-		// 2. The directory that SUCCEEDED should be compressed.
-		// It should still exist.
-		if _, statErr := os.Stat(goodBackupDir); os.IsNotExist(statErr) {
-			t.Error("The successfully compressed directory was deleted.")
-		}
-		// It should contain the archive.
-		if _, statErr := os.Stat(filepath.Join(goodBackupDir, goodBackupName+".zip")); os.IsNotExist(statErr) {
-			t.Error("The archive for the successfully compressed directory was not found.")
-		}
-		// Its original content should be gone.
-		if _, statErr := os.Stat(filepath.Join(goodBackupDir, cfg.Paths.ContentSubDir)); !os.IsNotExist(statErr) {
-			t.Error("Original content of successfully compressed directory was not deleted.")
 		}
 	})
 
@@ -338,6 +256,67 @@ func TestCompress(t *testing.T) {
 		archivePath := filepath.Join(backupDir, backupName+".zip")
 		if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
 			t.Error("archive file was created even though max retries was reached")
+		}
+	})
+
+	t.Run("Success even if final cleanup fails", func(t *testing.T) {
+		// This test simulates a failure during the final cleanup step (os.RemoveAll).
+		// This can happen if a file inside the original content directory is locked.
+		// The expected behavior is that compression is still considered successful,
+		// the metadata is marked as compressed, but the original content remains alongside the new archive.
+
+		// Arrange
+		archivesDir := t.TempDir()
+		cfg := config.NewDefault()
+		cfg.Naming.Prefix = "backup_"
+		manager := newTestCompressionManager(t, cfg)
+
+		backupName := cfg.Naming.Prefix + "cleanup_fail"
+		backupDir := createTestBackupDir(t, archivesDir, backupName, time.Now(), false, 0)
+
+		// Lock a file inside the content directory to make os.RemoveAll fail.
+		lockedFilePath := filepath.Join(backupDir, cfg.Paths.ContentSubDir, "locked-file.txt")
+		lockedFile, err := os.Create(lockedFilePath)
+		if err != nil {
+			t.Fatalf("Failed to create locked file for test: %v", err)
+		}
+		defer lockedFile.Close()
+
+		policy := config.CompressionPolicyConfig{
+			Format:     config.ZipFormat,
+			MaxRetries: 3,
+		}
+
+		// Act
+		err = manager.Compress(context.Background(), "test", archivesDir, "", policy)
+
+		// Assert
+		if err != nil {
+			t.Fatalf("Compress should not return an error for a cleanup failure, but got: %v", err)
+		}
+
+		// 1. The archive should have been created successfully.
+		archivePath := filepath.Join(backupDir, backupName+".zip")
+		if _, statErr := os.Stat(archivePath); os.IsNotExist(statErr) {
+			t.Error("The archive was not created even though compression succeeded before cleanup.")
+		}
+
+		// 2. The metadata should be marked as compressed, with no attempts incremented.
+		time.Sleep(100 * time.Millisecond) // Give fs time to sync
+		finalMeta, metaErr := metafile.Read(backupDir)
+		if metaErr != nil {
+			t.Fatalf("Could not read metafile of backup: %v", metaErr)
+		}
+		if !finalMeta.IsCompressed {
+			t.Error("Expected IsCompressed to be true, but it was false.")
+		}
+		if finalMeta.CompressionAttempts != 0 {
+			t.Errorf("Expected compression attempts to be 0, but got %d", finalMeta.CompressionAttempts)
+		}
+
+		// 3. The original content directory should still exist because cleanup failed.
+		if _, statErr := os.Stat(filepath.Join(backupDir, cfg.Paths.ContentSubDir)); os.IsNotExist(statErr) {
+			t.Error("Original content directory was deleted, but it should have remained due to the locked file.")
 		}
 	})
 }

@@ -1033,7 +1033,7 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror b
 		ioBufferPool: &sync.Pool{
 			New: func() interface{} {
 				// Buffer size is configured in KB, so multiply by 1024.
-				b := make([]byte, s.engine.Performance.CopyBufferSizeKB*1024)
+				b := make([]byte, s.engine.Performance.BufferSizeKB*1024)
 				return &b
 			},
 		},

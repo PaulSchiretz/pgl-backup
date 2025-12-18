@@ -275,6 +275,18 @@ func TestMergeConfigWithFlags(t *testing.T) {
 			t.Errorf("expected flag 'mod-time-window=%d' to override base '%d', but got '%d'", expectedWindow, 1, merged.Engine.ModTimeWindowSeconds)
 		}
 	})
+
+	t.Run("Buffer size flag overrides base", func(t *testing.T) {
+		base := NewDefault()
+		base.Engine.Performance.BufferSizeKB = 256 // Default base value
+		setFlags := map[string]interface{}{"buffer-size-kb": 1024}
+
+		merged := MergeConfigWithFlags(base, setFlags)
+		expectedSize := 1024
+		if merged.Engine.Performance.BufferSizeKB != expectedSize {
+			t.Errorf("expected flag 'buffer-size-kb=%d' to override base '%d', but got '%d'", expectedSize, 256, merged.Engine.Performance.BufferSizeKB)
+		}
+	})
 }
 
 func TestGenerate(t *testing.T) {

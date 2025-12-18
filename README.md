@@ -77,7 +77,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
     "modTimeWindowSeconds": 1,
     "performance": {
       "mirrorWorkers": 8,
-      "copyBufferSizeKB": 256,
+      "bufferSizeKB": 256,
       "syncWorkers": 8,
       "compressWorkers": 4,
       "deleteWorkers": 4
@@ -294,7 +294,7 @@ All command-line flags can be set in the `pgl-backup.config.json` file.
 | `retry-count` / `engine.retryCount` | `int` | `3` | Number of retries for failed file copies. |
 | `retry-wait` / `engine.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries. |
 | `mod-time-window` / `engine.modTimeWindowSeconds` | `int` | `1` | Time window in seconds to consider file modification times equal (default 1s). |
-| `copy-buffer-kb` / `engine.performance.copyBufferSizeKB` | `int` | `256` | Size of the I/O buffer in kilobytes for file copies. |
+| `buffer-size-kb` / `engine.performance.bufferSizeKB` | `int` | `256` | Size of the I/O buffer in kilobytes for file copies and compression. |
 
 ## Understanding the Retention Policy
 
@@ -470,7 +470,7 @@ The best policy depends on how much data you are backing up and how much disk sp
 
 *   **Cause**: The default number of concurrent workers may not be optimal for your specific hardware (e.g., slow spinning disks vs. fast SSDs, network latency).
 *   **Solution**:
-    *   Adjust the `sync-workers` and `copy-buffer-kb` settings in your `pgl-backup.config.json` file.
+    *   Adjust the `sync-workers` and `buffer-size-kb` settings in your `pgl-backup.config.json` file.
     *   For systems with slow I/O (like a single spinning disk or a high-latency network share), *decreasing* the number of `sync-workers` (e.g., to `2` or `4`) can sometimes improve performance by reducing disk head thrashing.
     *   For systems with very fast I/O (like a local NVMe SSD), increasing `sync-workers` might yield better results.
 
