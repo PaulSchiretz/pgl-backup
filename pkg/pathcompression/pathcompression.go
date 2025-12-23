@@ -1,5 +1,22 @@
 package pathcompression
 
+// --- ARCHITECTURAL OVERVIEW: Compression Strategy ---
+//
+// The compression logic follows a "Compress Once / Fail-Forward" strategy.
+//
+// Instead of scanning the entire history for uncompressed backups on every run,
+// the engine only attempts to compress the specific backup created during the
+// current run (the new incremental archive or the new snapshot).
+//
+// Rationale:
+//  1. Robustness: If a specific backup contains corrupt data that causes the
+//     compression process to crash or hang, retrying it on every subsequent run
+//     would permanently break the backup job ("poison pill"). By only trying once,
+//     a bad backup is left behind uncompressed, but future runs continue to succeed.
+//  2. Performance: Avoids the I/O overhead of scanning and checking metadata for
+//     potentially thousands of historical archives.
+//  3. Simplicity: Removes complex state tracking for retries and failure counts.
+
 import (
 	"archive/tar"
 	"archive/zip"
@@ -10,7 +27,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 
@@ -21,29 +37,20 @@ import (
 	"pixelgardenlabs.io/pgl-backup/pkg/util"
 )
 
-// retentionRunState holds the state specific to a single apply operation.
+// compressionRunState holds the mutable state for a single execution of the compression manager.
+// This makes the CompressionEngine itself stateless and safe for concurrent use if needed.
 type compressionRunState struct {
-	compressionPolicyTitle string
-	dirPath                string
-	excludeDir             string
-	format                 config.CompressionFormat
-	maxRetries             int
-	backups                []backupInfo
+	format          config.CompressionFormat
+	eligibleBackups []metafile.MetafileInfo
 }
 
 type PathCompressionManager struct {
 	config config.Config
 }
 
-// backupInfo holds the parsed metadata and rel directory path of a backup found on disk.
-type backupInfo struct {
-	RelPathKey string // Normalized, forward-slash and maybe otherwise modified key. NOT for direct FS access.
-	Metadata   metafile.MetafileContent
-}
-
 // CompressionManager defines the interface for a component that applies a compression policy to backups.
 type CompressionManager interface {
-	Compress(ctx context.Context, compressionPolicyTitle string, dirPath string, excludeDir string, policy config.CompressionPolicyConfig) error
+	Compress(ctx context.Context, backups []string, policy config.CompressionPolicyConfig) error
 }
 
 // Statically assert that *PathCompressionManager implements the CompressionManager interface.
@@ -56,47 +63,45 @@ func NewPathCompressionManager(cfg config.Config) *PathCompressionManager {
 	}
 }
 
-// Compress scans a given directory and compresses backups if needed
-func (c *PathCompressionManager) Compress(ctx context.Context, compressionPolicyTitle string, dirPath string, excludeDir string, policy config.CompressionPolicyConfig) error {
+// Compress processes the specific list of backups provided by the engine.
+func (c *PathCompressionManager) Compress(ctx context.Context, backups []string, policy config.CompressionPolicyConfig) error {
 
 	runState := &compressionRunState{
-		compressionPolicyTitle: compressionPolicyTitle,
-		dirPath:                dirPath,
-		excludeDir:             excludeDir,
-		format:                 policy.Format,
-		maxRetries:             policy.MaxRetries,
+		format: policy.Format,
 	}
 
-	// Prepare for the compression run
-	if err := c.prepareRun(ctx, runState); err != nil {
-		return err
+	// Populate runState.backups from input backups
+	for _, backupPath := range backups {
+		// Read metadata
+		metadata, err := metafile.Read(backupPath)
+		if err != nil {
+			plog.Warn("Skipping compression check; cannot read metadata", "path", backupPath, "reason", err)
+			continue
+		}
+
+		if !metadata.IsCompressed {
+			// Store full path in RelPathKey
+			runState.eligibleBackups = append(runState.eligibleBackups, metafile.MetafileInfo{RelPathKey: backupPath, Metadata: metadata})
+		}
 	}
 
-	if len(runState.backups) == 0 {
-		plog.Debug("No backups to compress", "policy", runState.compressionPolicyTitle)
-		return nil
-	}
-
-	// Determine which backups to compress
-	eligibleBackups := c.filterBackupsToCompress(runState)
-
-	if len(eligibleBackups) == 0 {
+	if len(runState.eligibleBackups) == 0 {
 		if c.config.DryRun {
-			plog.Debug("[DRY RUN] No backups need compressing", "policy", runState.compressionPolicyTitle)
+			plog.Debug("[DRY RUN] No backups need compressing")
 		} else {
-			plog.Debug("No backups need compressing", "policy", runState.compressionPolicyTitle)
+			plog.Debug("No backups need compressing")
 		}
 		return nil
 	}
 
-	plog.Info("Compressing backups", "policy", runState.compressionPolicyTitle, "count", len(eligibleBackups))
+	plog.Info("Compressing backups", "count", len(runState.eligibleBackups))
 
 	// --- 4. Compress backups in parallel using a worker pool ---
 	// This is especially effective for network drives where latency is a factor.
 	numWorkers := c.config.Engine.Performance.CompressWorkers
 	var wg sync.WaitGroup
 	// Buffer it to 2x the workers to keep the pipeline full without wasting memory
-	compressDirTasksChan := make(chan backupInfo, numWorkers*2)
+	compressDirTasksChan := make(chan metafile.MetafileInfo, numWorkers*2)
 
 	// Start workers
 	for i := 0; i < numWorkers; i++ {
@@ -112,14 +117,14 @@ func (c *PathCompressionManager) Compress(ctx context.Context, compressionPolicy
 				default:
 				}
 
-				fullPathToCompress := filepath.Join(runState.dirPath, util.DenormalizePath(b.RelPathKey))
+				fullPathToCompress := b.RelPathKey
 
 				if c.config.DryRun {
-					plog.Notice("[DRY RUN] COMPRESS", "policy", runState.compressionPolicyTitle, "path", fullPathToCompress)
+					plog.Notice("[DRY RUN] COMPRESS", "path", fullPathToCompress)
 					continue
 				}
 
-				plog.Notice("COMPRESS", "policy", runState.compressionPolicyTitle, "path", fullPathToCompress, "worker", workerID)
+				plog.Notice("COMPRESS", "path", fullPathToCompress, "worker", workerID)
 				if err := c.compressDirectory(ctx, fullPathToCompress, runState.format); err != nil {
 					// If the error is a cancellation, we should not treat it as a failure.
 					// We just stop processing this item.
@@ -130,13 +135,7 @@ func (c *PathCompressionManager) Compress(ctx context.Context, compressionPolicy
 					// A failure to compress a single backup is logged as a warning but does not
 					// stop the overall process. The original uncompressed backup is left untouched.
 					// We now update the metafile to track the failure.
-					plog.Warn("Failed to compress directory, incrementing attempt count", "policy", runState.compressionPolicyTitle, "path", fullPathToCompress, "error", err, "current_attempts", b.Metadata.CompressionAttempts)
-
-					b.Metadata.CompressionAttempts++ // Increment the attempt count on the in-memory copy
-					if writeErr := metafile.Write(fullPathToCompress, b.Metadata); writeErr != nil {
-						// This should stay an error, as we'll try to compress over and over again on subsequent runs and this needs attention
-						plog.Error("Failed to write updated metafile after compression failure. Attempt count not saved. Manual intervention may be required.", "path", fullPathToCompress, "error", writeErr)
-					}
+					plog.Warn("Failed to compress directory", "path", fullPathToCompress, "error", err)
 				} else {
 					// On successful archive creation, we first update the metafile.
 					b.Metadata.IsCompressed = true
@@ -153,7 +152,7 @@ func (c *PathCompressionManager) Compress(ctx context.Context, compressionPolicy
 						}
 					}
 				}
-				plog.Notice("COMPRESSED", "policy", runState.compressionPolicyTitle, "path", fullPathToCompress)
+				plog.Notice("COMPRESSED", "path", fullPathToCompress)
 			}
 		}(i + 1)
 	}
@@ -161,7 +160,7 @@ func (c *PathCompressionManager) Compress(ctx context.Context, compressionPolicy
 	// Feed the jobs in a separate goroutine so the main function can simply wait for the workers to finish.
 	go func() {
 		defer close(compressDirTasksChan)
-		for _, b := range eligibleBackups {
+		for _, b := range runState.eligibleBackups {
 			select {
 			case <-ctx.Done():
 				plog.Debug("Cancellation received, stopping compression job feeding.")
@@ -174,93 +173,6 @@ func (c *PathCompressionManager) Compress(ctx context.Context, compressionPolicy
 	wg.Wait()
 
 	return nil
-}
-
-// prepareRun prepares the runState for an retention operation.
-func (c *PathCompressionManager) prepareRun(ctx context.Context, runState *compressionRunState) error {
-
-	// Get a sorted list of all valid backups
-	err := c.fetchSortedBackups(ctx, runState)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// fetchSortedBackups scans a directory for valid backup folders, parses their
-// metadata to get an accurate timestamp, and returns them sorted from newest to oldest.
-// It relies exclusively on the `.pgl-backup.meta.json` file; directories without a
-// readable metafile are ignored for retention purposes.
-func (c *PathCompressionManager) fetchSortedBackups(ctx context.Context, runState *compressionRunState) error {
-	prefix := c.config.Naming.Prefix
-
-	entries, err := os.ReadDir(runState.dirPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			plog.Debug("Directory does not exist, no backups to compress.", "policy", runState.compressionPolicyTitle, "path", runState.dirPath)
-			return nil // Not an error, just means no archives exist yet.
-		}
-		return fmt.Errorf("failed to read backup directory %s: %w", runState.dirPath, err)
-	}
-
-	var foundBackups []backupInfo
-	for _, entry := range entries {
-		// Check for cancellation during the directory scan.
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		dirName := entry.Name()
-		if !entry.IsDir() || !strings.HasPrefix(dirName, prefix) || dirName == runState.excludeDir {
-			continue
-		}
-
-		backupPath := filepath.Join(runState.dirPath, dirName)
-		metadata, err := metafile.Read(backupPath)
-		if err != nil {
-			plog.Warn("Skipping compression check; cannot read metadata", "policy", runState.compressionPolicyTitle, "directory", dirName, "reason", err)
-			continue
-		}
-
-		// The metafile is the sole source of truth for the backup time.
-		foundBackups = append(foundBackups, backupInfo{RelPathKey: util.NormalizePath(dirName), Metadata: metadata})
-	}
-
-	// Sort all backups from newest to oldest for consistent processing.
-	sort.Slice(foundBackups, func(i, j int) bool {
-		return foundBackups[i].Metadata.TimestampUTC.After(foundBackups[j].Metadata.TimestampUTC)
-	})
-
-	// fill the runstate
-	runState.backups = foundBackups
-	return nil
-}
-
-// filterBackupsToCompress filters a list of backups to find those eligible for compression.
-func (c *PathCompressionManager) filterBackupsToCompress(runState *compressionRunState) []backupInfo {
-	var eligibleBackups []backupInfo
-
-	for _, b := range runState.backups {
-		// Skip if already compressed.
-		if b.Metadata.IsCompressed {
-			continue
-		}
-
-		// Skip if we have exceeded the max number of retries.
-		if b.Metadata.CompressionAttempts >= runState.maxRetries {
-			plog.Debug("Skipping compression; reached max retries", "policy", runState.compressionPolicyTitle, "path", b.RelPathKey, "attempts", b.Metadata.CompressionAttempts)
-			continue
-		}
-
-		// If not compressed and not over the retry limit, mark it for compression.
-		eligibleBackups = append(eligibleBackups, b)
-	}
-
-	plog.Debug("Total backups to compress", "policy", runState.compressionPolicyTitle, "count", len(eligibleBackups))
-
-	return eligibleBackups
 }
 
 // compressDirectory creates an archive of the directory's contents,

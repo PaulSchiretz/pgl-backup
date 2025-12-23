@@ -1,3 +1,13 @@
+// --- ARCHITECTURAL OVERVIEW: Archive Time Handling ---
+//
+// 1. Retention (Snapshot Deletion) - Consistent History
+//    - Goal: To organize the backup history into intuitive, calendar-based slots for cleanup.
+//    - Logic: The `determineBackupsToKeep` function uses fixed calendar concepts (e.g.,
+//      `time.ISOWeek()`, `time.Format("2006-01-02")`) by examining the **UTC time** stored in
+//      the backup's metadata (`TimestampUTC`). This ensures that "keep one backup from last week"
+//      always refers to a standard calendar week as defined in the UTC timezone, providing a
+//      clean, portable history.
+
 package pathretention
 
 import (
@@ -24,23 +34,18 @@ const (
 	yearFormat  = "2006"          // YYYY
 )
 
-// retentionRunState holds the state specific to a single apply operation.
+// retentionRunState holds the mutable state for a single execution of the retention manager.
+// This makes the RetentionEngine itself stateless and safe for concurrent use if needed.
 type retentionRunState struct {
 	dirPath              string
 	retentionPolicyTitle string
 	retentionPolicy      config.RetentionPolicyConfig
 	excludeDir           string
-	backups              []backupInfo
+	backups              []metafile.MetafileInfo
 }
 
 type PathRetentionManager struct {
 	config config.Config
-}
-
-// backupInfo holds the parsed metadata and rel directory path of a backup found on disk.
-type backupInfo struct {
-	RelPathKey string // Normalized, forward-slash and maybe otherwise modified key. NOT for direct FS access.
-	Metadata   metafile.MetafileContent
 }
 
 // RetentionManager defines the interface for a component that applies a retenpolicy to backups.
@@ -103,7 +108,7 @@ func (r *PathRetentionManager) Apply(ctx context.Context, retentionPolicyTitle s
 	numWorkers := r.config.Engine.Performance.DeleteWorkers // Use the configured number of workers.
 	var wg sync.WaitGroup
 	// Buffer it to 2x the workers to keep the pipeline full without wasting memory
-	deleteDirTasksChan := make(chan backupInfo, numWorkers*2)
+	deleteDirTasksChan := make(chan metafile.MetafileInfo, numWorkers*2)
 
 	// Start workers
 	for i := 0; i < numWorkers; i++ {
@@ -179,7 +184,7 @@ func (r *PathRetentionManager) fetchSortedBackups(ctx context.Context, runState 
 		return fmt.Errorf("failed to read backup directory %s: %w", runState.dirPath, err)
 	}
 
-	var foundBackups []backupInfo
+	var foundBackups []metafile.MetafileInfo
 	for _, entry := range entries {
 		// Check for cancellation during the directory scan.
 		select {
@@ -201,7 +206,7 @@ func (r *PathRetentionManager) fetchSortedBackups(ctx context.Context, runState 
 		}
 
 		// The metafile is the sole source of truth for the backup time.
-		foundBackups = append(foundBackups, backupInfo{RelPathKey: util.NormalizePath(dirName), Metadata: metadata})
+		foundBackups = append(foundBackups, metafile.MetafileInfo{RelPathKey: util.NormalizePath(dirName), Metadata: metadata})
 	}
 
 	// Sort all backups from newest to oldest for consistent processing.
@@ -215,10 +220,10 @@ func (r *PathRetentionManager) fetchSortedBackups(ctx context.Context, runState 
 }
 
 // filterBackupsToDelete identifies which backups should be deleted based on the retention policy.
-func (r *PathRetentionManager) filterBackupsToDelete(runState *retentionRunState) []backupInfo {
+func (r *PathRetentionManager) filterBackupsToDelete(runState *retentionRunState) []metafile.MetafileInfo {
 	backupsToKeep := r.determineBackupsToKeep(runState)
 
-	var backupsToDelete []backupInfo
+	var backupsToDelete []metafile.MetafileInfo
 	for _, backup := range runState.backups {
 		if _, shouldKeep := backupsToKeep[backup.RelPathKey]; !shouldKeep {
 			backupsToDelete = append(backupsToDelete, backup)

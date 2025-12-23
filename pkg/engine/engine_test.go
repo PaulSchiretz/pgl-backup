@@ -46,9 +46,9 @@ type mockArchiver struct {
 	err           error
 }
 
-func (m *mockArchiver) Archive(ctx context.Context, archivesDir, currentBackupPath string, currentBackupUTC time.Time) error {
+func (m *mockArchiver) Archive(ctx context.Context, archivesDir, currentBackupPath string, currentBackupUTC time.Time) (string, error) {
 	m.archiveCalled = true
-	return m.err
+	return "", m.err
 }
 
 // mockRetentionManager is a mock implementation of pathretention.RetentionManager for testing.
@@ -59,6 +59,17 @@ type mockRetentionManager struct {
 
 func (m *mockRetentionManager) Apply(ctx context.Context, policyTitle, dirPath string, retentionPolicy config.RetentionPolicyConfig, excludedDir string) error {
 	m.applyCalled = true
+	return m.err
+}
+
+// mockCompressionManager is a mock implementation of pathcompression.CompressionManager for testing.
+type mockCompressionManager struct {
+	compressCalled bool
+	err            error
+}
+
+func (m *mockCompressionManager) Compress(ctx context.Context, backups []string, policy config.CompressionPolicyConfig) error {
+	m.compressCalled = true
 	return m.err
 }
 
@@ -135,6 +146,50 @@ func TestInitializeBackupTarget(t *testing.T) {
 		configPath := filepath.Join(targetDir, config.ConfigFileName)
 		if _, err := os.Stat(configPath); !os.IsNotExist(err) {
 			t.Error("expected config file NOT to be created on failure, but it was")
+		}
+	})
+}
+
+func TestPerformCompression(t *testing.T) {
+	t.Run("Empty List", func(t *testing.T) {
+		// Arrange
+		cfg := config.NewDefault()
+		e := newTestEngine(cfg)
+		mock := &mockCompressionManager{}
+		e.compressionManager = mock
+
+		// Act
+		err := e.performCompression(context.Background(), []string{})
+
+		// Assert
+		if err != nil {
+			t.Errorf("expected no error, but got: %v", err)
+		}
+		if mock.compressCalled {
+			t.Error("expected compressionManager.Compress NOT to be called for empty list, but it was")
+		}
+	})
+
+	t.Run("Non-Empty List with Policy Enabled", func(t *testing.T) {
+		// Arrange
+		cfg := config.NewDefault()
+		cfg.Mode = config.IncrementalMode
+		cfg.Compression.Enabled = true
+		e := newTestEngine(cfg)
+		mock := &mockCompressionManager{}
+		e.compressionManager = mock
+
+		backups := []string{"/path/to/backup1", "/path/to/backup2"}
+
+		// Act
+		err := e.performCompression(context.Background(), backups)
+
+		// Assert
+		if err != nil {
+			t.Errorf("expected no error, but got: %v", err)
+		}
+		if !mock.compressCalled {
+			t.Error("expected compressionManager.Compress to be called, but it was not")
 		}
 	})
 }
@@ -388,7 +443,7 @@ func TestPrepareDestination_IncrementalMode(t *testing.T) {
 	e.archiver = mock
 
 	// Act
-	err := e.prepareRun(context.Background(), currentRun)
+	err := e.prepareRun(currentRun)
 	if err != nil {
 		t.Fatalf("prepareDestination failed: %v", err)
 	}
@@ -456,7 +511,7 @@ func TestPrepareDestination(t *testing.T) {
 		}
 
 		// Act
-		err := e.prepareRun(context.Background(), currentRun)
+		err := e.prepareRun(currentRun)
 		if err != nil {
 			t.Fatalf("prepareDestination failed: %v", err)
 		}
@@ -485,7 +540,7 @@ func TestPrepareDestination(t *testing.T) {
 		}
 
 		// Act
-		err := e.prepareRun(context.Background(), currentRun)
+		err := e.prepareRun(currentRun)
 		if err != nil {
 			t.Fatalf("prepareDestination failed: %v", err)
 		}

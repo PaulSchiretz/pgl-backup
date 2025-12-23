@@ -296,14 +296,8 @@ func (cf *CompressionFormat) UnmarshalJSON(data []byte) error {
 }
 
 type CompressionPolicyConfig struct {
-	Enabled    bool              `json:"enabled"`
-	Format     CompressionFormat `json:"format,omitempty"`
-	MaxRetries int               `json:"maxRetries,omitempty" comment:"Maximum number of times to retry compressing a backup before giving up. Default is 3. 0 means no retries."`
-}
-
-type BackupCompressionConfig struct {
-	Incremental CompressionPolicyConfig `json:"incremental,omitempty"`
-	Snapshot    CompressionPolicyConfig `json:"snapshot,omitempty"`
+	Enabled bool              `json:"enabled"`
+	Format  CompressionFormat `json:"format,omitempty"`
 }
 
 type BackupRetentionConfig struct {
@@ -318,7 +312,7 @@ type Config struct {
 	DryRun      bool                    `json:"dryRun"`
 	FailFast    bool                    `json:"failFast"`
 	Metrics     bool                    `json:"metrics,omitempty"`
-	Compression BackupCompressionConfig `json:"compression,omitempty"`
+	Compression CompressionPolicyConfig `json:"compression,omitempty"`
 	Naming      BackupNamingConfig      `json:"naming"`
 	Paths       BackupPathConfig        `json:"paths"`
 	Retention   BackupRetentionConfig   `json:"retention,omitempty"`
@@ -338,17 +332,9 @@ func NewDefault() Config {
 		DryRun:   false,
 		FailFast: false,
 		Metrics:  true, // Default to enabled for detailed performance and file-counting metrics.
-		Compression: BackupCompressionConfig{
-			Incremental: CompressionPolicyConfig{
-				Enabled:    false,
-				Format:     TarZstFormat,
-				MaxRetries: 3,
-			},
-			Snapshot: CompressionPolicyConfig{
-				Enabled:    false,
-				Format:     TarZstFormat,
-				MaxRetries: 3,
-			},
+		Compression: CompressionPolicyConfig{
+			Enabled: false,
+			Format:  TarZstFormat,
 		},
 		Engine: BackupEngineConfig{
 			Type:                 NativeEngine,
@@ -596,13 +582,6 @@ func (c *Config) Validate() error {
 	}
 
 	// --- Validate Compression Settings ---
-	if c.Compression.Incremental.MaxRetries < 0 {
-		return fmt.Errorf("compression.incremental.maxRetries cannot be negative")
-	}
-	if c.Compression.Snapshot.MaxRetries < 0 {
-		return fmt.Errorf("compression.snapshot.maxRetries cannot be negative")
-	}
-
 	if err := validateGlobPatterns("defaultExcludeFiles", c.Paths.DefaultExcludeFiles); err != nil {
 		return err
 	}
@@ -681,15 +660,9 @@ func (c *Config) LogSummary() {
 		logArgs = append(logArgs, "snapshot_retention", snapshotRetentionSummary)
 	}
 
-	if c.Compression.Incremental.Enabled {
-		logArgs = append(logArgs, "incremental_compression_enabled", c.Compression.Incremental.Enabled)
-		logArgs = append(logArgs, "incremental_compression_format", c.Compression.Incremental.Format)
-		logArgs = append(logArgs, "incremental_compression_max_retries", c.Compression.Incremental.MaxRetries)
-	}
-	if c.Compression.Snapshot.Enabled {
-		logArgs = append(logArgs, "snapshot_compression_enabled", c.Compression.Snapshot.Enabled)
-		logArgs = append(logArgs, "snapshot_compression_format", c.Compression.Snapshot.Format)
-		logArgs = append(logArgs, "snapshot_compression_max_retries", c.Compression.Snapshot.MaxRetries)
+	if c.Compression.Enabled {
+		logArgs = append(logArgs, "compression_enabled", c.Compression.Enabled)
+		logArgs = append(logArgs, "compression_format", c.Compression.Format)
 	}
 	plog.Info("Configuration loaded", logArgs...)
 }
@@ -786,18 +759,10 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 			merged.Archive.Incremental.Mode = value.(ArchiveIntervalMode)
 		case "archive-interval":
 			merged.Archive.Incremental.Interval = value.(time.Duration)
-		case "incremental-compression":
-			merged.Compression.Incremental.Enabled = value.(bool)
-		case "incremental-compression-max-retries":
-			merged.Compression.Incremental.MaxRetries = value.(int)
-		case "incremental-compression-format":
-			merged.Compression.Incremental.Format = value.(CompressionFormat)
-		case "snapshot-compression":
-			merged.Compression.Snapshot.Enabled = value.(bool)
-		case "snapshot-compression-format":
-			merged.Compression.Snapshot.Format = value.(CompressionFormat)
-		case "snapshot-compression-max-retries":
-			merged.Compression.Snapshot.MaxRetries = value.(int)
+		case "compression":
+			merged.Compression.Enabled = value.(bool)
+		case "compression-format":
+			merged.Compression.Format = value.(CompressionFormat)
 		default:
 			plog.Debug("unhandled flag in MergeConfigWithFlags", "flag", name)
 		}

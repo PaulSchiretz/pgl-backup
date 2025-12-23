@@ -123,7 +123,7 @@ func TestArchive(t *testing.T) {
 		createTestMetafile(t, currentBackupPath, currentBackupTimestampUTC)
 
 		// Act
-		err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC)
+		archivePath, err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC)
 		if err != nil {
 			t.Fatalf("Archive failed: %v", err)
 		}
@@ -136,6 +136,9 @@ func TestArchive(t *testing.T) {
 		archiveTimestamp := config.FormatTimestampWithOffset(currentBackupTimestampUTC)
 		archiveDirName := cfg.Naming.Prefix + archiveTimestamp
 		expectedArchivePath := filepath.Join(archivesDir, archiveDirName)
+		if archivePath != expectedArchivePath {
+			t.Errorf("expected archive path %s, but got %s", expectedArchivePath, archivePath)
+		}
 		if _, err := os.Stat(expectedArchivePath); os.IsNotExist(err) {
 			t.Errorf("expected archive directory %s to exist, but it does not", expectedArchivePath)
 		}
@@ -157,7 +160,7 @@ func TestArchive(t *testing.T) {
 		createTestMetafile(t, currentBackupPath, currentBackupTimestampUTC)
 
 		// Act
-		err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC)
+		_, err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC)
 		if err != nil {
 			t.Fatalf("Archive failed unexpectedly: %v", err)
 		}
@@ -191,7 +194,7 @@ func TestArchive(t *testing.T) {
 		os.MkdirAll(conflictPath, 0755)
 
 		// Act
-		err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC)
+		_, err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC)
 
 		// Assert
 		if err == nil {
@@ -230,7 +233,7 @@ func TestPrepareRun(t *testing.T) {
 
 				// Act
 				runState := &archiveRunState{}
-				archiver.prepareRun(context.Background(), runState)
+				archiver.prepareRun(runState)
 
 				// Assert
 				if runState.interval != tc.expected {
@@ -252,7 +255,7 @@ func TestPrepareRun(t *testing.T) {
 			runState := &archiveRunState{
 				interval: cfg.Archive.Incremental.Interval,
 			}
-			archiver.prepareRun(context.Background(), runState)
+			archiver.prepareRun(runState)
 
 			// Assert
 			if runState.interval != 12*time.Hour {
@@ -277,7 +280,7 @@ func TestPrepareRun(t *testing.T) {
 			runState := &archiveRunState{
 				interval: cfg.Archive.Incremental.Interval,
 			}
-			archiver.prepareRun(context.Background(), runState)
+			archiver.prepareRun(runState)
 
 			// Assert
 			logOutput := logBuf.String()
@@ -304,7 +307,7 @@ func TestPrepareRun(t *testing.T) {
 
 			// Act
 			runState := &archiveRunState{}
-			archiver.prepareRun(context.Background(), runState)
+			archiver.prepareRun(runState)
 
 			// Assert
 			logOutput := logBuf.String()

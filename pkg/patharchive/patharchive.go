@@ -29,7 +29,8 @@ import (
 	"pixelgardenlabs.io/pgl-backup/pkg/util"
 )
 
-// archiveRunState holds the state specific to a single archive operation.
+// archiveRunState holds the mutable state for a single execution of the archiver.
+// This makes the ArchiveEngine itself stateless and safe for concurrent use if needed.
 type archiveRunState struct {
 	dirPath                   string        // path of the archive
 	interval                  time.Duration // interval holds the final interval for the current run.
@@ -45,7 +46,7 @@ type PathArchiver struct {
 // Archiver defines the interface for a component that archives a backup, turning the
 // 'current' state into a permanent historical record.
 type Archiver interface {
-	Archive(ctx context.Context, dirPath, currentBackupPath string, currentTimestampUTC time.Time) error
+	Archive(ctx context.Context, dirPath, currentBackupPath string, currentTimestampUTC time.Time) (string, error)
 }
 
 // Statically assert that *PathArchiver implements the Archiver interface.
@@ -61,15 +62,15 @@ func NewPathArchiver(cfg config.Config) *PathArchiver {
 // Archive checks if the time since the last backup has crossed the configured interval.
 // If it has, it renames the current backup directory to a permanent, timestamped archive directory. It also
 // prepares the archive interval before checking. It is now responsible for reading its own metadata.
-func (a *PathArchiver) Archive(ctx context.Context, dirPath, currentBackupPath string, currentTimestampUTC time.Time) error {
+func (a *PathArchiver) Archive(ctx context.Context, dirPath, currentBackupPath string, currentTimestampUTC time.Time) (string, error) {
 	metadata, err := metafile.Read(currentBackupPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// This is a normal condition on the first run; no previous backup to archive.
-			return nil
+			return "", nil
 		}
 		// Any other error (e.g., corrupt file, permissions) is a problem.
-		return fmt.Errorf("could not read previous backup metadata for archive check: %w", err)
+		return "", fmt.Errorf("could not read previous backup metadata for archive check: %w", err)
 	}
 
 	// A valid metafile was found, so we can proceed with archiving.
@@ -84,12 +85,12 @@ func (a *PathArchiver) Archive(ctx context.Context, dirPath, currentBackupPath s
 	}
 	// Calculate and set the effective interval for this run, and log warnings.
 	// Prepare for the archive run
-	if err := a.prepareRun(ctx, runState); err != nil {
-		return err
+	if err := a.prepareRun(runState); err != nil {
+		return "", err
 	}
 
 	if !a.shouldArchive(runState) {
-		return nil
+		return "", nil
 	}
 
 	plog.Info("Archive interval crossed, creating new archive.",
@@ -100,7 +101,7 @@ func (a *PathArchiver) Archive(ctx context.Context, dirPath, currentBackupPath s
 	// Check for cancellation before performing the rename.
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return "", ctx.Err()
 	default:
 	}
 
@@ -114,28 +115,28 @@ func (a *PathArchiver) Archive(ctx context.Context, dirPath, currentBackupPath s
 
 	if a.config.DryRun {
 		plog.Notice("[DRY RUN] ARCHIVE", "from", runState.currentBackupPath, "to", archivePath)
-		return nil
+		return "", nil
 	}
 
 	plog.Notice("ARCHIVE", "from", runState.currentBackupPath, "to", archivePath)
 
 	// Sanity check: ensure the destination for the archive does not already exist.
 	if _, err := os.Stat(archivePath); err == nil {
-		return fmt.Errorf("archive destination %s already exists", archivePath)
+		return "", fmt.Errorf("archive destination %s already exists", archivePath)
 	} else if !os.IsNotExist(err) {
 		// The error is not "file does not exist", so it might be a permissions issue
 		// or the archives subdir doesn't exist. Let's try to create it.
-		return fmt.Errorf("could not check archive destination %s: %w", archivePath, err)
+		return "", fmt.Errorf("could not check archive destination %s: %w", archivePath, err)
 	}
 
 	if err := os.MkdirAll(runState.dirPath, util.UserWritableDirPerms); err != nil {
-		return fmt.Errorf("failed to create archives subdirectory %s: %w", runState.dirPath, err)
+		return "", fmt.Errorf("failed to create archives subdirectory %s: %w", runState.dirPath, err)
 	}
 	if err := os.Rename(runState.currentBackupPath, archivePath); err != nil {
-		return fmt.Errorf("failed to archive backup: %w", err)
+		return "", fmt.Errorf("failed to archive backup: %w", err)
 	}
 	plog.Notice("ARCHIVED", "from", runState.currentBackupPath, "to", archivePath)
-	return nil
+	return archivePath, nil
 }
 
 // shouldArchive determines if a new backup archive should be created based on the state of the current run.
@@ -191,7 +192,7 @@ func (a *PathArchiver) shouldArchive(runState *archiveRunState) bool {
 // prepareRun prepares the runState for an archive operation.
 // If the mode is 'auto', it calculates the optimal interval based on the retention policy.
 // If the mode is 'manual', it validates the user-configured interval.
-func (a *PathArchiver) prepareRun(ctx context.Context, runState *archiveRunState) error {
+func (a *PathArchiver) prepareRun(runState *archiveRunState) error {
 	if a.config.Archive.Incremental.Mode == config.ManualInterval {
 		a.checkInterval(runState)
 	} else {
