@@ -15,6 +15,8 @@
 //     potentially thousands of historical archives.
 //  3. Simplicity: Removes complex state tracking for retries and failure counts.
 
+// Package pathcompression implements the logic for compressing backup directories
+// into archive files (zip, tar.gz, etc.) to save space and consolidate files.
 package pathcompression
 
 import (

@@ -22,40 +22,33 @@ import (
 	"pixelgardenlabs.io/pgl-backup/pkg/util"
 )
 
-// --- ARCHITECTURAL OVERVIEW: Archive vs. Retention Time Handling ---
+// --- ARCHITECTURAL OVERVIEW: Core Strategies ---
 //
-// This engine employs two distinct time-handling strategies for creating and deleting backups,
-// each designed to address a separate user concern and a robust compression strategy:
+// The engine orchestrates three distinct strategies to handle the lifecycle of backups,
+// balancing user predictability, historical consistency, and system robustness.
 //
-// 1. Archive (Snapshot Creation) - Predictable Creation
-//    - Goal: To honor the user's configured `ArchiveInterval` as literally as possible.
-//    - Logic: The `shouldArchive` function calculates time-based "bucketing" based on the
-//      **local system's midnight** for day-or-longer intervals. This gives the user direct,
-//      predictable control over the *frequency* of new archives, anchored to their local day.
+// 1. Archive (Snapshot Creation) - "Predictable Creation"
+//    - Goal:  To honor the user's configured `ArchiveInterval` as literally as possible.
+//    - Logic: Calculates time-based "bucketing" based on the **local system's midnight**
+//             for day-or-longer intervals. This gives the user direct, predictable control
+//             over the *frequency* of new archives, anchored to their local day.
 //
-// 2. Retention (Snapshot Deletion) - Consistent History
-//    - Goal: To organize the backup history into intuitive, calendar-based slots for cleanup.
-//    - Logic: The `determineBackupsToKeep` function uses fixed calendar concepts (e.g.,
-//      `time.ISOWeek()`, `time.Format("2006-01-02")`) by examining the **UTC time** stored in
-//      the backup's metadata (`TimestampUTC`). This ensures that "keep one backup from last week"
-//      always refers to a standard calendar week as defined in the UTC timezone, providing a
-//      clean, portable history.
+// 2. Retention (Snapshot Deletion) - "Consistent History"
+//    - Goal:  To organize the backup history into intuitive, calendar-based slots for cleanup.
+//    - Logic: Applies fixed calendar concepts (like ISO weeks and YYYY-MM-DD dates) to the
+//             **UTC timestamp** stored in each backup's metadata. This ensures retention rules
+//             always refer to standard calendar periods defined in UTC, providing a clean
+//             and portable history.
 //
-// 3. Compression "Compress Once / Fail-Forward"
-//    - Logic: Instead of scanning the entire history for uncompressed backups on every run,
-//    the engine only attempts to compress the specific backup created during the
-//    current run (the new incremental archive or the new snapshot).
-//    - Rationale: If a specific backup contains corrupt data that causes the
-//      compression process to crash or hang, retrying it on every subsequent run
-//      would permanently break the backup job ("poison pill"). By only trying once,
-//      a bad backup is left behind uncompressed, but future runs continue to succeed.
-//      Avoids the I/O overhead of scanning and checking metadata for
-//      potentially thousands of historical archives.
-//      Removes complex state tracking for retries and failure counts.
+// 3. Compression - "Compress Once / Fail-Forward"
+//    - Goal:  To ensure robustness and performance by avoiding "poison pill" scenarios.
+//    - Logic: Only attempts to compress the specific backup created during the current run.
+//             If compression fails (e.g., due to corrupt data), the backup is left uncompressed,
+//             but future runs continue to succeed. This avoids the overhead and risk of
+//             scanning/retrying historical failures on every run.
 //
-// By decoupling these three concepts, the system provides the best of both worlds: a predictable
-// creation schedule based on local time duration, and a clean, consistent historical view
-// based on standard UTC calendar periods and robust compression of backups.
+// By decoupling these concepts, the system provides a predictable creation schedule,
+// a consistent historical view, and a resilient compression pipeline.
 
 // engineRunState holds the mutable state for a single execution of the backup engine.
 // This makes the Engine itself stateless and safe for concurrent use if needed.
