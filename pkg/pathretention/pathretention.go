@@ -1,13 +1,16 @@
-// --- ARCHITECTURAL OVERVIEW: Archive Time Handling ---
+// --- ARCHITECTURAL OVERVIEW: Retention Strategy ---
 //
-// 1. Retention (Snapshot Deletion) - Consistent History
-//    - Goal: To organize the backup history into intuitive, calendar-based slots for cleanup.
-//    - Logic: The `determineBackupsToKeep` function uses fixed calendar concepts (e.g.,
-//      `time.ISOWeek()`, `time.Format("2006-01-02")`) by examining the **UTC time** stored in
-//      the backup's metadata (`TimestampUTC`). This ensures that "keep one backup from last week"
-//      always refers to a standard calendar week as defined in the UTC timezone, providing a
-//      clean, portable history.
+// The retention logic implements a "Consistent History" strategy to organize backups
+// into intuitive, calendar-based slots for cleanup.
+//
+// Goal:  To ensure that retention rules (e.g., "keep one backup from last week") always refer
+//        to standard calendar periods defined in UTC, providing a clean and portable history.
+//
+// Logic: The `determineBackupsToKeep` function applies fixed calendar concepts (like ISO weeks
+//        and YYYY-MM-DD dates) to the **UTC timestamp** stored in each backup's metadata.
 
+// Package pathretention implements the logic for cleaning up outdated backups
+// based on configurable retention policies (hourly, daily, weekly, etc.).
 package pathretention
 
 import (

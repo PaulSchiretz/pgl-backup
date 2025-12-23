@@ -1,5 +1,3 @@
-package pathcompression
-
 // --- ARCHITECTURAL OVERVIEW: Compression Strategy ---
 //
 // The compression logic follows a "Compress Once / Fail-Forward" strategy.
@@ -16,6 +14,8 @@ package pathcompression
 //  2. Performance: Avoids the I/O overhead of scanning and checking metadata for
 //     potentially thousands of historical archives.
 //  3. Simplicity: Removes complex state tracking for retries and failure counts.
+
+package pathcompression
 
 import (
 	"archive/tar"
