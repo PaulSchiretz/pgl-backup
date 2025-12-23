@@ -181,20 +181,6 @@ func TestConfig_Validate(t *testing.T) {
 		}
 	})
 
-	t.Run("Invalid Compression MaxRetries", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.Compression.Incremental.MaxRetries = -1
-		if err := cfg.Validate(); err == nil {
-			t.Error("expected error for negative incremental compression max retries, but got nil")
-		}
-
-		cfg = newValidConfig(t) // reset
-		cfg.Compression.Snapshot.MaxRetries = -1
-		if err := cfg.Validate(); err == nil {
-			t.Error("expected error for negative snapshot compression max retries, but got nil")
-		}
-	})
-
 	t.Run("Invalid Glob Pattern", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Paths.UserExcludeFiles = []string{"["} // Invalid glob pattern

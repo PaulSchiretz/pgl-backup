@@ -25,7 +25,7 @@ import (
 // --- ARCHITECTURAL OVERVIEW: Archive vs. Retention Time Handling ---
 //
 // This engine employs two distinct time-handling strategies for creating and deleting backups,
-// each designed to address a separate user concern:
+// each designed to address a separate user concern and a robust compression strategy:
 //
 // 1. Archive (Snapshot Creation) - Predictable Creation
 //    - Goal: To honor the user's configured `ArchiveInterval` as literally as possible.
@@ -41,9 +41,21 @@ import (
 //      always refers to a standard calendar week as defined in the UTC timezone, providing a
 //      clean, portable history.
 //
-// By decoupling these two concepts, the system provides the best of both worlds: a predictable
+// 3. Compression "Compress Once / Fail-Forward"
+//    - Logic: Instead of scanning the entire history for uncompressed backups on every run,
+//    the engine only attempts to compress the specific backup created during the
+//    current run (the new incremental archive or the new snapshot).
+//    - Rationale: If a specific backup contains corrupt data that causes the
+//      compression process to crash or hang, retrying it on every subsequent run
+//      would permanently break the backup job ("poison pill"). By only trying once,
+//      a bad backup is left behind uncompressed, but future runs continue to succeed.
+//      Avoids the I/O overhead of scanning and checking metadata for
+//      potentially thousands of historical archives.
+//      Removes complex state tracking for retries and failure counts.
+//
+// By decoupling these three concepts, the system provides the best of both worlds: a predictable
 // creation schedule based on local time duration, and a clean, consistent historical view
-// based on standard UTC calendar periods.
+// based on standard UTC calendar periods and robust compression of backups.
 
 // engineRunState holds the mutable state for a single execution of the backup engine.
 // This makes the Engine itself stateless and safe for concurrent use if needed.
@@ -193,7 +205,7 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 	}
 
 	// Prepare for the backup run
-	if err := e.prepareRun(ctx, runState); err != nil {
+	if err := e.prepareRun(runState); err != nil {
 		return err
 	}
 
@@ -208,10 +220,16 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 		"mode", runState.mode,
 	)
 
+	var backupsToCompress []string
+
 	// Perform incremental Archiving
 	if runState.mode == config.IncrementalMode {
-		if err := e.performArchiving(ctx, runState); err != nil {
+		archivePath, err := e.performArchiving(ctx, runState)
+		if err != nil {
 			return fmt.Errorf("error during backup archiving: %w", err)
+		}
+		if archivePath != "" {
+			backupsToCompress = append(backupsToCompress, archivePath)
 		}
 	}
 
@@ -220,13 +238,18 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 		return fmt.Errorf("fatal backup error during sync: %w", err)
 	}
 
+	// Add snapshot to compression list if in snapshot mode
+	if runState.mode == config.SnapshotMode {
+		backupsToCompress = append(backupsToCompress, runState.target)
+	}
+
 	// Clean up outdated backups (archives and snapshots)
 	if err := e.performRetention(ctx); err != nil {
 		return fmt.Errorf("fatal backup error during retention: %w", err)
 	}
 
 	// Compress backups that are eligible
-	if err := e.performCompression(ctx); err != nil {
+	if err := e.performCompression(ctx, backupsToCompress); err != nil {
 		return fmt.Errorf("fatal backup error during compression: %w", err)
 	}
 
@@ -299,28 +322,17 @@ func (e *Engine) performRetention(ctx context.Context) error {
 }
 
 // performCompression compresses outdated backups based on the configured policies.
-func (e *Engine) performCompression(ctx context.Context) error {
-	// Compress incremental archives, if enabled.
-	if e.config.Compression.Incremental.Enabled {
-		archivesDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.ArchivesSubDir)
-		incrementalDirName := e.config.Paths.IncrementalSubDir
-		if err := e.compressionManager.Compress(ctx, "incremental", archivesDir, incrementalDirName, e.config.Compression.Incremental); err != nil {
-			plog.Warn("Error during incremental backup compression", "error", err)
-		}
-	}
-
-	// Compress snapshots, if enabled.
-	if e.config.Compression.Snapshot.Enabled {
-		snapshotsDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.SnapshotsSubDir)
-		if err := e.compressionManager.Compress(ctx, "snapshot", snapshotsDir, "", e.config.Compression.Snapshot); err != nil {
-			plog.Warn("Error during snapshot backup compression", "error", err)
+func (e *Engine) performCompression(ctx context.Context, backupsToCompress []string) error {
+	if e.config.Compression.Enabled && len(backupsToCompress) > 0 {
+		if err := e.compressionManager.Compress(ctx, backupsToCompress, e.config.Compression); err != nil {
+			plog.Warn("Error during backup compression", "error", err)
 		}
 	}
 	return nil
 }
 
 // prepareRun calculates the target directory for the backup.
-func (e *Engine) prepareRun(ctx context.Context, runState *engineRunState) error {
+func (e *Engine) prepareRun(runState *engineRunState) error {
 	if runState.mode == config.SnapshotMode {
 		// SNAPSHOT MODE
 		//
@@ -392,15 +404,12 @@ func (e *Engine) performSync(ctx context.Context, runState *engineRunState) erro
 }
 
 // performArchiving is the main entry point for archive updates.
-func (e *Engine) performArchiving(ctx context.Context, runState *engineRunState) error {
+func (e *Engine) performArchiving(ctx context.Context, runState *engineRunState) (string, error) {
 	incrementalDirName := e.config.Paths.IncrementalSubDir
 	currentBackupPath := filepath.Join(e.config.Paths.TargetBase, incrementalDirName)
 	archivesDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.ArchivesSubDir)
 
 	// The archiver responsible for reading the metadata file and determining
 	// if an archive is necessary.
-	if err := e.archiver.Archive(ctx, archivesDir, currentBackupPath, runState.currentTimestampUTC); err != nil {
-		return fmt.Errorf("error during backup archiving: %w", err)
-	}
-	return nil
+	return e.archiver.Archive(ctx, archivesDir, currentBackupPath, runState.currentTimestampUTC)
 }

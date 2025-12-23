@@ -228,10 +228,8 @@ func TestParseFlagConfig(t *testing.T) {
 
 	t.Run("Parse Compression Flags", func(t *testing.T) {
 		args := []string{
-			"-incremental-compression",
-			"-incremental-compression-format=tar.gz",
-			"-snapshot-compression=true", // Test both -flag and -flag=value for booleans
-			"-snapshot-compression-format=zip",
+			"-compression",
+			"-compression-format=tar.gz",
 		}
 		runTestWithFlags(t, args, func() {
 			_, setFlags, err := parseFlagConfig()
@@ -239,24 +237,14 @@ func TestParseFlagConfig(t *testing.T) {
 				t.Fatalf("expected no error, but got: %v", err)
 			}
 
-			// Check incremental compression enabled
-			if val, ok := setFlags["incremental-compression"]; !ok || !val.(bool) {
+			// Check compression enabled
+			if val, ok := setFlags["compression"]; !ok || !val.(bool) {
 				t.Errorf("expected incremental-compression to be true, but got %v", val)
 			}
 
-			// Check incremental compression format
-			if val, ok := setFlags["incremental-compression-format"]; !ok || string(val.(config.CompressionFormat)) != "tar.gz" {
-				t.Errorf("expected incremental-compression-format to be 'tar.gz', but got %v", val.(config.CompressionFormat))
-			}
-
-			// Check snapshot compression enabled
-			if val, ok := setFlags["snapshot-compression"]; !ok || !val.(bool) {
-				t.Errorf("expected snapshot-compression to be true, but got %v", val)
-			}
-
-			// Check snapshot compression format
-			if val, ok := setFlags["snapshot-compression-format"]; !ok || string(val.(config.CompressionFormat)) != "zip" {
-				t.Errorf("expected snapshot-compression-format to be 'zip', but got %v", val.(config.CompressionFormat))
+			// Check compression format
+			if val, ok := setFlags["compression-format"]; !ok || string(val.(config.CompressionFormat)) != "tar.gz" {
+				t.Errorf("expected compression-format to be 'tar.gz', but got %v", val.(config.CompressionFormat))
 			}
 		})
 	})

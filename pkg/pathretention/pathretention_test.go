@@ -39,7 +39,7 @@ func createTestBackup(t *testing.T, baseDir, name string, timestampUTC time.Time
 func TestDetermineBackupsToKeep(t *testing.T) {
 	// Arrange: Create a series of backups over time
 	now := time.Now()
-	allBackups := []backupInfo{
+	allBackups := []metafile.MetafileInfo{
 		{RelPathKey: "backup_hourly_1", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-1 * time.Hour)}},
 		{RelPathKey: "backup_hourly_2", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-2 * time.Hour)}},
 		{RelPathKey: "backup_daily_1", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-25 * time.Hour)}},
@@ -101,7 +101,7 @@ func TestDetermineBackupsToKeep(t *testing.T) {
 func TestDetermineBackupsToKeep_Promotion(t *testing.T) {
 	// This test ensures that a single backup is "promoted" to fill the highest-priority slot.
 	now := time.Now()
-	allBackups := []backupInfo{
+	allBackups := []metafile.MetafileInfo{
 		{RelPathKey: "kept_hourly", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-1 * time.Hour)}},
 		{RelPathKey: "kept_daily", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-25 * time.Hour)}},
 		{RelPathKey: "kept_weekly", Metadata: metafile.MetafileContent{TimestampUTC: now.Add(-8 * 24 * time.Hour)}},

@@ -78,12 +78,8 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	preserveSourceNameFlag := flag.Bool("preserve-source-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
 	preBackupHooksFlag := flag.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
 	postBackupHooksFlag := flag.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
-	incCompressionEnabledFlag := flag.Bool("incremental-compression", false, "Enable compression for incremental backups.")
-	incCompressionFormatFlag := flag.String("incremental-compression-format", "", "Compression format for incremental backups: 'zip', 'tar.gz or 'tar.zst'.")
-	incCompressionMaxRetriesFlag := flag.Int("incremental-compression-max-retries", 0, "Maximum number of times to retry compressing a backup before giving up.")
-	snapCompressionEnabledFlag := flag.Bool("snapshot-compression", false, "Enable compression for snapshot backups.")
-	snapCompressionFormatFlag := flag.String("snapshot-compression-format", "", "Compression format for snapshot backups: 'zip', 'tar.gz or 'tar.zst'.")
-	snapCompressionMaxRetriesFlag := flag.Int("snapshot-compression-max-retries", 0, "Maximum number of times to retry compressing a backup before giving up.")
+	compressionEnabledFlag := flag.Bool("compression", false, "Enable compression for backups.")
+	compressionFormatFlag := flag.String("compression-format", "", "Compression format for backups: 'zip', 'tar.gz or 'tar.zst'.")
 
 	flag.Parse()
 
@@ -124,10 +120,7 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	addIfUsed("retry-wait", *retryWaitFlag)
 	addIfUsed("buffer-size-kb", *bufferSizeKBFlag)
 	addIfUsed("mod-time-window", *modTimeWindowFlag)
-	addIfUsed("incremental-compression", *incCompressionEnabledFlag)
-	addIfUsed("incremental-compression-max-retries", *incCompressionMaxRetriesFlag)
-	addIfUsed("snapshot-compression", *snapCompressionEnabledFlag)
-	addIfUsed("snapshot-compression-max-retries", *snapCompressionMaxRetriesFlag)
+	addIfUsed("compression", *compressionEnabledFlag)
 
 	// Handle flags that require parsing/validation.
 	addParsedIfUsed("user-exclude-files", *userExcludeFilesFlag, flagparse.ParseExcludeList)
@@ -149,19 +142,12 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 		}
 		flagMap["sync-engine"] = engineType
 	}
-	if usedFlags["incremental-compression-format"] {
-		format, err := config.CompressionFormatFromString(*incCompressionFormatFlag)
+	if usedFlags["compression-format"] {
+		format, err := config.CompressionFormatFromString(*compressionFormatFlag)
 		if err != nil {
 			return actionRunBackup, nil, err
 		}
-		flagMap["incremental-compression-format"] = format
-	}
-	if usedFlags["snapshot-compression-format"] {
-		format, err := config.CompressionFormatFromString(*snapCompressionFormatFlag)
-		if err != nil {
-			return actionRunBackup, nil, err
-		}
-		flagMap["snapshot-compression-format"] = format
+		flagMap["compression-format"] = format
 	}
 
 	// Final sanity check: if robocopy was requested on a non-windows OS, force native.

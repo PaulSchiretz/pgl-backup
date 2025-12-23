@@ -24,7 +24,7 @@ func newTestCompressionManager(t *testing.T, cfg config.Config) *PathCompression
 }
 
 // createTestBackupDir creates a directory with a metafile and some content files.
-func createTestBackupDir(t *testing.T, baseDir, name string, timestampUTC time.Time, isCompressed bool, attempts int) string {
+func createTestBackupDir(t *testing.T, baseDir, name string, timestampUTC time.Time, isCompressed bool) string {
 	t.Helper()
 	backupPath := filepath.Join(baseDir, name)
 	if err := os.MkdirAll(backupPath, util.UserWritableDirPerms); err != nil {
@@ -33,9 +33,8 @@ func createTestBackupDir(t *testing.T, baseDir, name string, timestampUTC time.T
 
 	// Create a metafile
 	metadata := metafile.MetafileContent{
-		TimestampUTC:        timestampUTC,
-		IsCompressed:        isCompressed,
-		CompressionAttempts: attempts,
+		TimestampUTC: timestampUTC,
+		IsCompressed: isCompressed,
 	}
 	if err := metafile.Write(backupPath, metadata); err != nil {
 		t.Fatalf("failed to write metafile: %v", err)
@@ -73,15 +72,14 @@ func TestCompress(t *testing.T) {
 			manager := newTestCompressionManager(t, cfg)
 
 			backupName := "backup_to_compress"
-			backupDir := createTestBackupDir(t, tempDir, backupName, time.Now(), false, 0)
+			backupDir := createTestBackupDir(t, tempDir, backupName, time.Now(), false)
 
 			policy := config.CompressionPolicyConfig{
-				Format:     tc.format,
-				MaxRetries: 3,
+				Format: tc.format,
 			}
 
 			// Act
-			err := manager.Compress(context.Background(), "test", tempDir, "", policy)
+			err := manager.Compress(context.Background(), []string{backupDir}, policy)
 			if err != nil {
 				t.Fatalf("Compress failed: %v", err)
 			}
@@ -129,18 +127,17 @@ func TestCompress(t *testing.T) {
 		manager := newTestCompressionManager(t, cfg)
 
 		backupName := "backup_to_cancel"
-		backupDir := createTestBackupDir(t, tempDir, backupName, time.Now(), false, 0)
+		backupDir := createTestBackupDir(t, tempDir, backupName, time.Now(), false)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel() // Cancel immediately
 
 		policy := config.CompressionPolicyConfig{
-			Format:     config.ZipFormat,
-			MaxRetries: 3,
+			Format: config.ZipFormat,
 		}
 
 		// Act
-		manager.Compress(ctx, "test", tempDir, "", policy)
+		manager.Compress(ctx, []string{backupDir}, policy)
 
 		// Original directory should still exist since compression was aborted.
 		if _, err := os.Stat(backupDir); os.IsNotExist(err) {
@@ -151,15 +148,6 @@ func TestCompress(t *testing.T) {
 		archivePath := filepath.Join(backupDir, backupName+".zip")
 		if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
 			t.Error("archive file was left over after cancellation")
-		}
-
-		// Metafile should NOT be modified.
-		metadata, err := metafile.Read(backupDir)
-		if err != nil {
-			t.Fatalf("Failed to read metafile after cancellation: %v", err)
-		}
-		if metadata.CompressionAttempts != 0 {
-			t.Errorf("expected compression attempts to be 0 after cancellation, but got %d", metadata.CompressionAttempts)
 		}
 	})
 
@@ -172,15 +160,14 @@ func TestCompress(t *testing.T) {
 		manager := newTestCompressionManager(t, cfg)
 
 		backupName := "backup_dry_run"
-		backupDir := createTestBackupDir(t, tempDir, backupName, time.Now(), false, 0)
+		backupDir := createTestBackupDir(t, tempDir, backupName, time.Now(), false)
 
 		policy := config.CompressionPolicyConfig{
-			Format:     config.ZipFormat,
-			MaxRetries: 3,
+			Format: config.ZipFormat,
 		}
 
 		// Act
-		err := manager.Compress(context.Background(), "test", tempDir, "", policy)
+		err := manager.Compress(context.Background(), []string{backupDir}, policy)
 		if err != nil {
 			t.Fatalf("Compress in dry run mode failed: %v", err)
 		}
@@ -205,15 +192,14 @@ func TestCompress(t *testing.T) {
 		cfg.Naming.Prefix = "backup_"
 		manager := newTestCompressionManager(t, cfg)
 
-		backupDir := createTestBackupDir(t, tempDir, "backup_already_compressed", time.Now(), true, 0)
+		backupDir := createTestBackupDir(t, tempDir, "backup_already_compressed", time.Now(), true)
 
 		policy := config.CompressionPolicyConfig{
-			Format:     config.ZipFormat,
-			MaxRetries: 3,
+			Format: config.ZipFormat,
 		}
 
 		// Act
-		err := manager.Compress(context.Background(), "test", tempDir, "", policy)
+		err := manager.Compress(context.Background(), []string{backupDir}, policy)
 		if err != nil {
 			t.Fatalf("Compress failed: %v", err)
 		}
@@ -221,41 +207,6 @@ func TestCompress(t *testing.T) {
 		// Assert: The original directory should still be there, untouched.
 		if _, err := os.Stat(backupDir); os.IsNotExist(err) {
 			t.Error("backup directory was deleted even though it was already compressed")
-		}
-	})
-
-	t.Run("Skips backup after max retries", func(t *testing.T) {
-		// Arrange
-		tempDir := t.TempDir()
-		cfg := config.NewDefault()
-		cfg.Naming.Prefix = "backup_"
-		manager := newTestCompressionManager(t, cfg)
-
-		// Create a backup that has already failed 3 times.
-		backupName := "backup_max_retries"
-		backupDir := createTestBackupDir(t, tempDir, backupName, time.Now(), false, 3)
-
-		policy := config.CompressionPolicyConfig{
-			Format:     config.ZipFormat,
-			MaxRetries: 3, // The policy has max 3 retries.
-		}
-
-		// Act
-		err := manager.Compress(context.Background(), "test", tempDir, "", policy)
-		if err != nil {
-			t.Fatalf("Compress failed: %v", err)
-		}
-
-		// Assert
-		// The backup should be untouched because its attempt count (3) is >= maxRetries (3).
-		// 1. Content directory should still exist.
-		if _, err := os.Stat(filepath.Join(backupDir, cfg.Paths.ContentSubDir)); os.IsNotExist(err) {
-			t.Error("content directory was deleted even though max retries was reached")
-		}
-		// 2. No archive should have been created.
-		archivePath := filepath.Join(backupDir, backupName+".zip")
-		if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
-			t.Error("archive file was created even though max retries was reached")
 		}
 	})
 
@@ -272,7 +223,7 @@ func TestCompress(t *testing.T) {
 		manager := newTestCompressionManager(t, cfg)
 
 		backupName := cfg.Naming.Prefix + "cleanup_fail"
-		backupDir := createTestBackupDir(t, archivesDir, backupName, time.Now(), false, 0)
+		backupDir := createTestBackupDir(t, archivesDir, backupName, time.Now(), false)
 
 		// Lock a file inside the content directory to make os.RemoveAll fail.
 		lockedFilePath := filepath.Join(backupDir, cfg.Paths.ContentSubDir, "locked-file.txt")
@@ -283,12 +234,11 @@ func TestCompress(t *testing.T) {
 		defer lockedFile.Close()
 
 		policy := config.CompressionPolicyConfig{
-			Format:     config.ZipFormat,
-			MaxRetries: 3,
+			Format: config.ZipFormat,
 		}
 
 		// Act
-		err = manager.Compress(context.Background(), "test", archivesDir, "", policy)
+		err = manager.Compress(context.Background(), []string{backupDir}, policy)
 
 		// Assert
 		if err != nil {
@@ -309,9 +259,6 @@ func TestCompress(t *testing.T) {
 		}
 		if !finalMeta.IsCompressed {
 			t.Error("Expected IsCompressed to be true, but it was false.")
-		}
-		if finalMeta.CompressionAttempts != 0 {
-			t.Errorf("Expected compression attempts to be 0, but got %d", finalMeta.CompressionAttempts)
 		}
 
 		// 3. The original content directory should still exist because cleanup failed.

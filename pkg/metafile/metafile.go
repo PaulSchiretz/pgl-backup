@@ -11,14 +11,19 @@ import (
 	"pixelgardenlabs.io/pgl-backup/pkg/util"
 )
 
+// MetafileInfo holds the parsed metadata and rel directory path of a backup found on disk.
+type MetafileInfo struct {
+	RelPathKey string // Normalized, forward-slash and maybe otherwise modified key. NOT for direct FS access.
+	Metadata   MetafileContent
+}
+
 // MetafileContent holds the contents of the metadatafile.
 type MetafileContent struct {
-	Version             string    `json:"version"`
-	TimestampUTC        time.Time `json:"timestampUTC"`
-	Mode                string    `json:"mode"`
-	Source              string    `json:"source"`
-	IsCompressed        bool      `json:"isCompressed,omitempty"`
-	CompressionAttempts int       `json:"compressionAttempts,omitempty"`
+	Version      string    `json:"version"`
+	TimestampUTC time.Time `json:"timestampUTC"`
+	Mode         string    `json:"mode"`
+	Source       string    `json:"source"`
+	IsCompressed bool      `json:"isCompressed,omitempty"`
 }
 
 // Write creates and writes the .pgl-backup.meta.json file into a given directory.
