@@ -394,9 +394,9 @@ func TestPrepareDestination_IncrementalMode(t *testing.T) {
 	}
 
 	// Assert
-	// 1. The archiver should have been called because a "current" backup existed.
-	if !mock.archiveCalled {
-		t.Error("expected archiver.Archive to be called, but it was not")
+	// 1. The archiver should NOT be called in prepareRun anymore.
+	if mock.archiveCalled {
+		t.Error("expected archiver.Archive NOT to be called in prepareRun, but it was")
 	}
 
 	// 2. The target for the new sync should be the incremental directory.

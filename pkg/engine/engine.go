@@ -208,6 +208,13 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 		"mode", runState.mode,
 	)
 
+	// Perform incremental Archiving
+	if runState.mode == config.IncrementalMode {
+		if err := e.performArchiving(ctx, runState); err != nil {
+			return fmt.Errorf("error during backup archiving: %w", err)
+		}
+	}
+
 	// Perform the backup
 	if err := e.performSync(ctx, runState); err != nil {
 		return fmt.Errorf("fatal backup error during sync: %w", err)
@@ -312,8 +319,7 @@ func (e *Engine) performCompression(ctx context.Context) error {
 	return nil
 }
 
-// prepareRun calculates the target directory for the backup, performing
-// an archive if necessary for incremental backups.
+// prepareRun calculates the target directory for the backup.
 func (e *Engine) prepareRun(ctx context.Context, runState *engineRunState) error {
 	if runState.mode == config.SnapshotMode {
 		// SNAPSHOT MODE
@@ -329,9 +335,6 @@ func (e *Engine) prepareRun(ctx context.Context, runState *engineRunState) error
 		runState.target = filepath.Join(snapshotsSubDir, backupDirName)
 	} else {
 		// INCREMENTAL MODE
-		if err := e.performArchiving(ctx, runState); err != nil {
-			return fmt.Errorf("error during backup archiving: %w", err)
-		}
 		incrementalDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.IncrementalSubDir)
 		runState.target = incrementalDir
 	}
