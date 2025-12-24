@@ -13,7 +13,7 @@
     *   **Snapshot**: Each backup run creates a new, unique, timestamped directory. This is useful for creating distinct, point-in-time copies.
 *   **Flexible Retention Policy**: Automatically cleans up outdated backups by keeping a configurable number of hourly, daily, weekly, monthly, and yearly archives. This gives you a fine-grained history without filling up your disk.
 *   **Intelligent Archiving (Incremental Mode)**: The archive interval can be set to `auto` (the default) to automatically align with your retention policy. If you keep hourly backups, it will archive hourly. This prevents configuration mismatches and ensures your retention slots are filled efficiently.
-*   **Automatic and Resilient Compression**: To save disk space, you can enable automatic compression of backups into `.zip` or `.tar.gz` archives. If compression fails (e.g., due to a corrupt file), the original backup is left untouched.
+*   **Automatic and Resilient Compression**: To save disk space, you can enable automatic compression of backups into `.tar.zst`, `.zip` or `.tar.gz` archives. If compression fails (e.g., due to a corrupt file), the original backup is left untouched.
 *   **Concurrency Safe**: A robust file-locking mechanism prevents multiple backup instances from running against the same target directory simultaneously, protecting data integrity.
 *   **Pre- and Post-Backup Hooks**: Execute custom shell commands before the sync begins or after it completes, perfect for tasks like dumping a database or sending a notification.
 *   **Adjustable Configuration**: Configure backups using a simple `pgl-backup.config.json` JSON file, and override any setting with command-line flags for one-off tasks.
@@ -87,7 +87,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
   "dryRun": false,
   "metrics": true,
   "compression": {
-    "enabled": false,
+    "enabled": true,
     "format": "tar.zst",
   },
   "naming": {

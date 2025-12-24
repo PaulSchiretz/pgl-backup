@@ -333,7 +333,7 @@ func NewDefault() Config {
 		FailFast: false,
 		Metrics:  true, // Default to enabled for detailed performance and file-counting metrics.
 		Compression: CompressionPolicyConfig{
-			Enabled: false,
+			Enabled: true,
 			Format:  TarZstFormat,
 		},
 		Engine: BackupEngineConfig{

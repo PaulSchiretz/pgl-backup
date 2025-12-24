@@ -78,7 +78,7 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	preserveSourceNameFlag := flag.Bool("preserve-source-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
 	preBackupHooksFlag := flag.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
 	postBackupHooksFlag := flag.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
-	compressionEnabledFlag := flag.Bool("compression", false, "Enable compression for backups.")
+	compressionEnabledFlag := flag.Bool("compression", true, "Enable compression for backups.")
 	compressionFormatFlag := flag.String("compression-format", "", "Compression format for backups: 'zip', 'tar.gz or 'tar.zst'.")
 
 	flag.Parse()
