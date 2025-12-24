@@ -39,6 +39,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -230,8 +231,10 @@ func (r *syncRun) copyFileHelper(absSrcPath, absTrgPath string, task *syncTask, 
 			}
 
 			// 7. Atomically move the temporary file to the final destination.
-			// Ensure destination doesn't exist before renaming (crucial for Windows).
-			_ = os.Remove(absTrgPath)
+			// Ensure destination doesn't exist before renaming (crucial for Windows but redundant on Linux/macOS (where Rename is an atomic replacement).
+			if runtime.GOOS == "windows" {
+				_ = os.Remove(absTrgPath)
+			}
 			if err := os.Rename(absTempPath, absTrgPath); err != nil {
 				return err
 			}
