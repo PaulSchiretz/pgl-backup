@@ -6,7 +6,7 @@ set -e
 # --- Configuration ---
 # The path to your main package
 PROJECT_ROOT=$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")
-MAIN_PACKAGE_PATH="pixelgardenlabs.io/pgl-backup/cmd/pgl-backup"
+MAIN_PACKAGE_PATH="github.com/paulschiretz/pgl-backup/cmd/pgl-backup"
 # The name of your application binary
 BINARY_NAME="pgl-backup"
 # The directory to output release artifacts

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/config"
-	"pixelgardenlabs.io/pgl-backup/pkg/pathsyncmetrics"
-	"pixelgardenlabs.io/pgl-backup/pkg/util"
+	"github.com/paulschiretz/pgl-backup/pkg/config"
+	"github.com/paulschiretz/pgl-backup/pkg/pathsyncmetrics"
+	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 // helper to create a file with specific content and mod time.

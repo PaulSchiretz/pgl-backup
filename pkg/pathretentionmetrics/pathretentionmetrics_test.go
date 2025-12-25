@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
 func TestRetentionMetrics_Adders(t *testing.T) {

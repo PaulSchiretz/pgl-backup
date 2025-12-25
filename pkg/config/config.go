@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/plog"
-	"pixelgardenlabs.io/pgl-backup/pkg/util"
+	"github.com/paulschiretz/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 // ConfigFileName is the name of the configuration file.

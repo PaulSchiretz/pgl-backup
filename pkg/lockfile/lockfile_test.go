@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/util"
+	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 // TestAcquireAndRelease verifies the basic functionality of acquiring and releasing a lock.

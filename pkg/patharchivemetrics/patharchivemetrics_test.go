@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
 func TestArchiveMetrics_Adders(t *testing.T) {

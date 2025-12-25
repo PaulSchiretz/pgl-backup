@@ -10,16 +10,16 @@ import (
 	"strings"
 	"time"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/config"
-	"pixelgardenlabs.io/pgl-backup/pkg/lockfile"
-	"pixelgardenlabs.io/pgl-backup/pkg/metafile"
-	"pixelgardenlabs.io/pgl-backup/pkg/patharchive"
-	"pixelgardenlabs.io/pgl-backup/pkg/pathcompression"
-	"pixelgardenlabs.io/pgl-backup/pkg/pathretention"
-	"pixelgardenlabs.io/pgl-backup/pkg/pathsync"
-	"pixelgardenlabs.io/pgl-backup/pkg/plog"
-	"pixelgardenlabs.io/pgl-backup/pkg/preflight"
-	"pixelgardenlabs.io/pgl-backup/pkg/util"
+	"github.com/paulschiretz/pgl-backup/pkg/config"
+	"github.com/paulschiretz/pgl-backup/pkg/lockfile"
+	"github.com/paulschiretz/pgl-backup/pkg/metafile"
+	"github.com/paulschiretz/pgl-backup/pkg/patharchive"
+	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
+	"github.com/paulschiretz/pgl-backup/pkg/pathretention"
+	"github.com/paulschiretz/pgl-backup/pkg/pathsync"
+	"github.com/paulschiretz/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/preflight"
+	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 // --- ARCHITECTURAL OVERVIEW: Core Strategies ---

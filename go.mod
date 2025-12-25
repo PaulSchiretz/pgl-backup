@@ -1,4 +1,4 @@
-module pixelgardenlabs.io/pgl-backup
+module github.com/paulschiretz/pgl-backup
 
 go 1.25
 

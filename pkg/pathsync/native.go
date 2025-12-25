@@ -44,10 +44,10 @@ import (
 	"sync"
 	"time"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/pathsyncmetrics"
-	"pixelgardenlabs.io/pgl-backup/pkg/plog"
-	"pixelgardenlabs.io/pgl-backup/pkg/sharded"
-	"pixelgardenlabs.io/pgl-backup/pkg/util"
+	"github.com/paulschiretz/pgl-backup/pkg/pathsyncmetrics"
+	"github.com/paulschiretz/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/sharded"
+	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 // compactPathInfo holds the essential, primitive data from an os.FileInfo.

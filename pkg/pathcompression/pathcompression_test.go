@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
-	"pixelgardenlabs.io/pgl-backup/pkg/config"
-	"pixelgardenlabs.io/pgl-backup/pkg/metafile"
-	"pixelgardenlabs.io/pgl-backup/pkg/util"
+	"github.com/paulschiretz/pgl-backup/pkg/config"
+	"github.com/paulschiretz/pgl-backup/pkg/metafile"
+	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 // newTestCompressionManager creates a manager with a default config for testing.

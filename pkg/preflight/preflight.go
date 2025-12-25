@@ -9,10 +9,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/config"
-	"pixelgardenlabs.io/pgl-backup/pkg/util"
+	"github.com/paulschiretz/pgl-backup/pkg/config"
+	"github.com/paulschiretz/pgl-backup/pkg/util"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
 // RunChecks performs all necessary validations and setup before a backup operation.

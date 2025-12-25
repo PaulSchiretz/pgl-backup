@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/config"
-	"pixelgardenlabs.io/pgl-backup/pkg/metafile"
-	"pixelgardenlabs.io/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/config"
+	"github.com/paulschiretz/pgl-backup/pkg/metafile"
+	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
 // createTestMetafile creates a directory and a metafile inside it for testing.

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/config"
+	"github.com/paulschiretz/pgl-backup/pkg/config"
 )
 
 func TestWriteAndReadMetafile(t *testing.T) {

@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/plog"
-	"pixelgardenlabs.io/pgl-backup/pkg/util"
+	"github.com/paulschiretz/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 // LockContent defines the structure of the data written to the lock file.

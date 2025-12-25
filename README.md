@@ -1,6 +1,6 @@
 # pgl-backup
 
-[![Go Report Card](https://goreportcard.com/badge/pixelgardenlabs.io/pgl-backup)](https://goreportcard.com/report/pixelgardenlabs.io/pgl-backup) [![Latest Release](https://img.shields.io/github/v/release/pgl-backup/pgl-backup)](https://github.com/pgl-backup/pgl-backup/releases) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![Go Report Card](https://goreportcard.com/badge/github.com/paulschiretz/pgl-backup)](https://goreportcard.com/report/github.com/paulschiretz/pgl-backup) [![Latest Release](https://img.shields.io/github/v/release/pgl-backup/pgl-backup)](https://github.com/pgl-backup/pgl-backup/releases) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 > This project was born from the desire to create a hassle-free backup tool that is fast, reliable, and as simple as possible. It is built in a robust, best-practice way, avoiding fancy features that could compromise solidity. The goal is to provide everything you need for solid, performant, cross-platform backups—no more, no less.
 
@@ -32,10 +32,11 @@
 
 ### From Source
 
+Ensure you have [Go](https://go.dev/dl/) installed (version 1.25+ recommended).
 If you have a Go environment set up, you can install `pgl-backup` directly:
 
 ```sh
-go install pixelgardenlabs.io/pgl-backup/cmd/pgl-backup@latest
+go install github.com/paulschiretz/pgl-backup/cmd/pgl-backup@latest
 ```
 
 ### From Pre-compiled Binaries

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/config"
-	"pixelgardenlabs.io/pgl-backup/pkg/plog"
-	"pixelgardenlabs.io/pgl-backup/pkg/util"
+	"github.com/paulschiretz/pgl-backup/pkg/config"
+	"github.com/paulschiretz/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 // Syncer defines the interface for a file synchronization implementation.

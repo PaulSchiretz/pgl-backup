@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/config"
-	"pixelgardenlabs.io/pgl-backup/pkg/metafile"
+	"github.com/paulschiretz/pgl-backup/pkg/config"
+	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 )
 
 // Helper to create a dummy PathRetentionManager for testing.

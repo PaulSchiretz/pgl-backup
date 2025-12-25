@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/config"
-	"pixelgardenlabs.io/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/config"
+	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
 // createExitError is a helper to generate an exec.ExitError with a specific exit code.

@@ -4,7 +4,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
 // Metrics defines the interface for collecting and reporting retention statistics.

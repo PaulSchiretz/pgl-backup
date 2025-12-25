@@ -51,7 +51,7 @@ $ErrorActionPreference = 'Stop'
 # --- Configuration ---
 # Get the project root directory (the parent of the script's directory)
 $ProjectRoot = Split-Path -Path $PSScriptRoot -Parent
-$MainPackagePath = "pixelgardenlabs.io/pgl-backup/cmd/pgl-backup"
+$MainPackagePath = "github.com/paulschiretz/pgl-backup/cmd/pgl-backup"
 $BinaryName = "pgl-backup"
 $ReleaseDir = Join-Path -Path $ProjectRoot -ChildPath "releases\$Version"
 

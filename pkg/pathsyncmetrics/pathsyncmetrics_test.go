@@ -7,7 +7,7 @@ import (
 
 	"bytes"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
 func TestSyncMetrics_Adders(t *testing.T) {

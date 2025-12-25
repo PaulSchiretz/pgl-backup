@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/config"
+	"github.com/paulschiretz/pgl-backup/pkg/config"
 )
 
 func TestCheckBackupTargetAccessible(t *testing.T) {

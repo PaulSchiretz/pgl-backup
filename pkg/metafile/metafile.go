@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/config"
-	"pixelgardenlabs.io/pgl-backup/pkg/util"
+	"github.com/paulschiretz/pgl-backup/pkg/config"
+	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 // MetafileInfo holds the parsed metadata and rel directory path of a backup found on disk.

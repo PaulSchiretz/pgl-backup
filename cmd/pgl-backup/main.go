@@ -9,10 +9,10 @@ import (
 	"runtime"
 	"time"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/config"
-	"pixelgardenlabs.io/pgl-backup/pkg/engine"
-	"pixelgardenlabs.io/pgl-backup/pkg/flagparse"
-	"pixelgardenlabs.io/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/config"
+	"github.com/paulschiretz/pgl-backup/pkg/engine"
+	"github.com/paulschiretz/pgl-backup/pkg/flagparse"
+	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
 // appName is the canonical name of the application used for logging.
