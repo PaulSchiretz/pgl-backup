@@ -22,7 +22,7 @@ SOFTWARE.
 
 --------------------------------------------------------------------------------
 
-This software includes components from github.com/klauspost/compress, which is licensed as follows:
+This software includes components from github.com/klauspost/compress, which are licensed as follows:
 
 Copyright (c) 2012 The Go Authors. All rights reserved.
 Copyright (c) 2019 Klaus Post. All rights reserved.
