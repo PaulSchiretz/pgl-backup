@@ -199,6 +199,11 @@ func (r *syncRun) copyFileHelper(absSrcPath, absTrgPath string, task *syncTask, 
 				}
 			}()
 
+			// Optimization: Pre-allocate file size to reduce fragmentation.
+			if task.PathInfo.Size > 0 {
+				_ = out.Truncate(task.PathInfo.Size)
+			}
+
 			// Get a buffer from the pool for the copy operation.
 			bufPtr := r.ioBufferPool.Get().(*[]byte)
 			defer r.ioBufferPool.Put(bufPtr)
