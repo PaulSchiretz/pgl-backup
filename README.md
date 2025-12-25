@@ -474,6 +474,6 @@ Please see our [Contributing Guidelines](./CONTRIBUTING.md) for details on how t
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License. See the [LICENSE](./LICENSE) file for full license text.
 
-This software includes components from third-party projects and the Go standard library. See the [LICENSE](./LICENSE) file for full license text and attributions.
+This software includes components from third-party projects and the Go standard library. See the [NOTICE](./NOTICE) file for third-party attributions and full license texts.
