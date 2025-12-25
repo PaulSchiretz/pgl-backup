@@ -46,7 +46,7 @@ func (s *PathSyncer) Sync(ctx context.Context, src, trg string, mirror bool, exc
 	default:
 	}
 
-	plog.Info("Syncing filepaths", "source", src, "target", trg)
+	plog.Info("Syncing backups", "source", src, "target", trg)
 
 	// Before dispatching to a specific sync engine, we prepare the destination directory.
 	// This centralizes the logic, ensuring that the target directory exists with appropriate

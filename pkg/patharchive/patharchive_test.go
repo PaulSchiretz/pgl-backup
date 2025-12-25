@@ -88,15 +88,13 @@ func TestShouldArchive(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			archiver := NewPathArchiver(config.NewDefault())
-
-			// Create a runState struct to pass to shouldArchive
-			runState := &archiveRunState{
+			// Create a run struct to pass to shouldArchive
+			run := &archiveRun{
 				currentBackupTimestampUTC: tc.currentBackupTimestampUTC,
 				currentTimestampUTC:       tc.currentTimestampUTC,
 				interval:                  tc.interval,
 			}
-			result := archiver.shouldArchive(runState)
+			result := run.shouldArchive()
 
 			if tc.shouldArchive != result {
 				t.Errorf("expected shouldArchive to be %v, but got %v", tc.shouldArchive, result)
@@ -205,9 +203,70 @@ func TestArchive(t *testing.T) {
 			t.Errorf("expected error message '%s', but got '%s'", expectedErr, err.Error())
 		}
 	})
+
+	t.Run("Disabled - Interval 0 does not create archives dir", func(t *testing.T) {
+		// Arrange
+		tempDir := t.TempDir()
+		cfg := config.NewDefault()
+		cfg.Paths.TargetBase = tempDir
+		// Explicitly disable archiving by setting interval to 0 in manual mode
+		cfg.Archive.Incremental.Mode = config.ManualInterval
+		cfg.Archive.Incremental.Interval = 0
+
+		archiver := NewPathArchiver(cfg)
+
+		currentBackupTimestampUTC := time.Now().UTC().Add(-25 * time.Hour)
+		currentTimestampUTC := time.Now().UTC()
+		currentBackupPath := filepath.Join(tempDir, "current")
+		archivesDir := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir)
+		createTestMetafile(t, currentBackupPath, currentBackupTimestampUTC)
+
+		// Act
+		_, err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC)
+		if err != nil {
+			t.Fatalf("Archive failed unexpectedly: %v", err)
+		}
+
+		// Assert
+		if _, err := os.Stat(archivesDir); !os.IsNotExist(err) {
+			t.Errorf("expected archives directory %s NOT to exist when interval is 0, but it does", archivesDir)
+		}
+	})
+
+	t.Run("Dry Run - Does not rename directory", func(t *testing.T) {
+		// Arrange
+		tempDir := t.TempDir()
+		cfg := config.NewDefault()
+		cfg.Paths.TargetBase = tempDir
+		cfg.Archive.Incremental.Mode = config.ManualInterval
+		cfg.Archive.Incremental.Interval = 24 * time.Hour
+		cfg.DryRun = true // Enable Dry Run
+
+		archiver := NewPathArchiver(cfg)
+
+		currentBackupTimestampUTC := time.Now().UTC().Add(-25 * time.Hour)
+		currentTimestampUTC := time.Now().UTC()
+		currentBackupPath := filepath.Join(tempDir, "current")
+		archivesDir := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir)
+		createTestMetafile(t, currentBackupPath, currentBackupTimestampUTC)
+
+		// Act
+		_, err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC)
+		if err != nil {
+			t.Fatalf("Archive failed unexpectedly in dry run: %v", err)
+		}
+
+		// Assert
+		if _, err := os.Stat(currentBackupPath); os.IsNotExist(err) {
+			t.Error("expected current directory to exist in dry run, but it was renamed/deleted")
+		}
+		if _, err := os.Stat(archivesDir); !os.IsNotExist(err) {
+			t.Errorf("expected archives directory %s NOT to exist in dry run, but it does", archivesDir)
+		}
+	})
 }
 
-func TestPrepareRun(t *testing.T) {
+func TestDetermineInterval(t *testing.T) {
 	t.Run("Auto Mode", func(t *testing.T) {
 		testCases := []struct {
 			name            string
@@ -229,15 +288,14 @@ func TestPrepareRun(t *testing.T) {
 				cfg := config.NewDefault()
 				cfg.Archive.Incremental.Mode = config.AutoInterval
 				cfg.Retention.Incremental = tc.retentionPolicy
-				archiver := NewPathArchiver(cfg)
 
 				// Act
-				runState := &archiveRunState{}
-				archiver.prepareRun(runState)
+				archiver := NewPathArchiver(cfg)
+				interval := archiver.determineInterval()
 
 				// Assert
-				if runState.interval != tc.expected {
-					t.Errorf("expected interval %v, but got %v", tc.expected, runState.interval)
+				if interval != tc.expected {
+					t.Errorf("expected interval %v, but got %v", tc.expected, interval)
 				}
 			})
 		}
@@ -249,17 +307,14 @@ func TestPrepareRun(t *testing.T) {
 			cfg := config.NewDefault()
 			cfg.Archive.Incremental.Mode = config.ManualInterval
 			cfg.Archive.Incremental.Interval = 12 * time.Hour
-			archiver := NewPathArchiver(cfg)
 
 			// Act
-			runState := &archiveRunState{
-				interval: cfg.Archive.Incremental.Interval,
-			}
-			archiver.prepareRun(runState)
+			archiver := NewPathArchiver(cfg)
+			interval := archiver.determineInterval()
 
 			// Assert
-			if runState.interval != 12*time.Hour {
-				t.Errorf("expected interval to be 12h, but got %v", runState.interval)
+			if interval != 12*time.Hour {
+				t.Errorf("expected interval to be 12h, but got %v", interval)
 			}
 		})
 
@@ -274,13 +329,9 @@ func TestPrepareRun(t *testing.T) {
 			cfg.Archive.Incremental.Interval = 48 * time.Hour // Slower than daily
 			cfg.Retention.Incremental.Days = 7                // Daily retention is enabled
 
-			archiver := NewPathArchiver(cfg)
-
 			// Act
-			runState := &archiveRunState{
-				interval: cfg.Archive.Incremental.Interval,
-			}
-			archiver.prepareRun(runState)
+			archiver := NewPathArchiver(cfg)
+			archiver.determineInterval()
 
 			// Assert
 			logOutput := logBuf.String()
@@ -303,11 +354,9 @@ func TestPrepareRun(t *testing.T) {
 			cfg.Archive.Incremental.Interval = 12 * time.Hour // Faster than daily
 			cfg.Retention.Incremental.Days = 7                // Daily retention is enabled
 
-			archiver := NewPathArchiver(cfg)
-
 			// Act
-			runState := &archiveRunState{}
-			archiver.prepareRun(runState)
+			archiver := NewPathArchiver(cfg)
+			archiver.determineInterval()
 
 			// Assert
 			logOutput := logBuf.String()

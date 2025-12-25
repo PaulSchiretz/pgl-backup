@@ -268,6 +268,47 @@ func TestCompress(t *testing.T) {
 	})
 }
 
+func TestIdentifyEligibleBackups(t *testing.T) {
+	// Arrange
+	tempDir := t.TempDir()
+	cfg := config.NewDefault()
+	manager := newTestCompressionManager(t, cfg)
+
+	// 1. Compressed Backup (Should be ignored)
+	compressedDir := createTestBackupDir(t, tempDir, "backup_compressed", time.Now(), true)
+
+	// 2. Uncompressed Backup (Should be selected)
+	uncompressedDir := createTestBackupDir(t, tempDir, "backup_uncompressed", time.Now(), false)
+
+	// 3. Backup with missing metafile (Should be ignored/logged)
+	missingMetaDir := filepath.Join(tempDir, "backup_missing_meta")
+	if err := os.MkdirAll(missingMetaDir, util.UserWritableDirPerms); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+
+	// 4. Backup with corrupt metafile (Should be ignored/logged)
+	corruptMetaDir := filepath.Join(tempDir, "backup_corrupt_meta")
+	if err := os.MkdirAll(corruptMetaDir, util.UserWritableDirPerms); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+	// Write invalid JSON
+	if err := os.WriteFile(filepath.Join(corruptMetaDir, config.MetaFileName), []byte("{ invalid json"), util.UserWritableFilePerms); err != nil {
+		t.Fatalf("failed to write corrupt metafile: %v", err)
+	}
+
+	inputBackups := []string{compressedDir, uncompressedDir, missingMetaDir, corruptMetaDir}
+
+	// Act
+	eligible := manager.identifyEligibleBackups(inputBackups)
+
+	// Assert
+	if len(eligible) != 1 {
+		t.Errorf("expected 1 eligible backup, got %d", len(eligible))
+	} else if eligible[0].RelPathKey != uncompressedDir {
+		t.Errorf("expected eligible backup to be %s, got %s", uncompressedDir, eligible[0].RelPathKey)
+	}
+}
+
 // AssertArchiveContains checks if a given archive file contains all the expected file names.
 func AssertArchiveContains(t *testing.T, archivePath string, format config.CompressionFormat, expectedFiles []string) {
 	t.Helper()

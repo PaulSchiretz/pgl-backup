@@ -25,18 +25,23 @@ import (
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
 	"pixelgardenlabs.io/pgl-backup/pkg/metafile"
+	"pixelgardenlabs.io/pgl-backup/pkg/patharchivemetrics"
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 	"pixelgardenlabs.io/pgl-backup/pkg/util"
 )
 
-// archiveRunState holds the mutable state for a single execution of the archiver.
+// archiveRun holds the mutable state for a single execution of the archiver.
 // This makes the ArchiveEngine itself stateless and safe for concurrent use if needed.
-type archiveRunState struct {
-	dirPath                   string        // path of the archive
+type archiveRun struct {
+	ctx                       context.Context
+	dirPath                   string // path of the archive
+	archiveBackupPath         string
 	interval                  time.Duration // interval holds the final interval for the current run.
 	currentBackupPath         string
 	currentBackupTimestampUTC time.Time
 	currentTimestampUTC       time.Time
+	dryRun                    bool
+	metrics                   patharchivemetrics.Metrics
 }
 
 type PathArchiver struct {
@@ -76,67 +81,90 @@ func (a *PathArchiver) Archive(ctx context.Context, dirPath, currentBackupPath s
 	// A valid metafile was found, so we can proceed with archiving.
 	currentBackupTimestampUTC := metadata.TimestampUTC
 
-	runState := &archiveRunState{
-		dirPath:                   dirPath,
-		interval:                  a.config.Archive.Incremental.Interval,
-		currentBackupPath:         currentBackupPath,
-		currentBackupTimestampUTC: currentBackupTimestampUTC,
-		currentTimestampUTC:       currentTimestampUTC,
-	}
-	// Calculate and set the effective interval for this run, and log warnings.
-	// Prepare for the archive run
-	if err := a.prepareRun(runState); err != nil {
-		return "", err
-	}
-
-	if !a.shouldArchive(runState) {
-		return "", nil
-	}
-
-	plog.Info("Archive interval crossed, creating new archive.",
-		"backup_time", runState.currentBackupTimestampUTC,
-		"current_time", runState.currentTimestampUTC,
-		"archive_interval", runState.interval)
-
-	// Check for cancellation before performing the rename.
-	select {
-	case <-ctx.Done():
-		return "", ctx.Err()
-	default:
-	}
+	// Determine the archiving interval
+	interval := a.determineInterval()
 
 	// The directory name must remain uniquely based on UTC time to avoid DST conflicts,
 	// but we add the user's local offset to make the timezone clear to the user.
-	archiveTimestamp := config.FormatTimestampWithOffset(runState.currentBackupTimestampUTC)
+	archiveTimestamp := config.FormatTimestampWithOffset(currentBackupTimestampUTC)
 	archiveDirName := a.config.Naming.Prefix + archiveTimestamp
+	archiveBackupPath := filepath.Join(dirPath, archiveDirName)
 
-	// Archives are stored in a dedicated subdirectory for clarity.
-	archivePath := filepath.Join(runState.dirPath, archiveDirName)
+	// Ensure the archives directory exists.
+	if interval > 0 && !a.config.DryRun {
+		if err := os.MkdirAll(dirPath, util.UserWritableDirPerms); err != nil {
+			return "", fmt.Errorf("failed to create archives subdirectory %s: %w", dirPath, err)
+		}
+	}
 
-	if a.config.DryRun {
-		plog.Notice("[DRY RUN] ARCHIVE", "from", runState.currentBackupPath, "to", archivePath)
+	var m patharchivemetrics.Metrics
+	if a.config.Metrics {
+		m = &patharchivemetrics.ArchiveMetrics{}
+	} else {
+		m = &patharchivemetrics.NoopMetrics{}
+	}
+
+	run := &archiveRun{
+		ctx:                       ctx,
+		archiveBackupPath:         archiveBackupPath,
+		interval:                  interval,
+		currentBackupPath:         currentBackupPath,
+		currentBackupTimestampUTC: currentBackupTimestampUTC,
+		currentTimestampUTC:       currentTimestampUTC,
+		dryRun:                    a.config.DryRun,
+		metrics:                   m,
+	}
+
+	return run.execute()
+}
+
+// execute runs the archive logic.
+func (r *archiveRun) execute() (string, error) {
+
+	if !r.shouldArchive() {
 		return "", nil
 	}
 
-	plog.Notice("ARCHIVE", "from", runState.currentBackupPath, "to", archivePath)
+	plog.Info("Archiving backup",
+		"backup_time", r.currentBackupTimestampUTC,
+		"current_time", r.currentTimestampUTC,
+		"archive_interval", r.interval)
+
+	r.metrics.StartProgress("Archive progress", 10*time.Second)
+	defer func() {
+		r.metrics.StopProgress()
+		r.metrics.LogSummary("Archive finished")
+	}()
+
+	// Check for cancellation before performing the rename.
+	select {
+	case <-r.ctx.Done():
+		return "", r.ctx.Err()
+	default:
+	}
+
+	if r.dryRun {
+		plog.Notice("[DRY RUN] ARCHIVE", "from", r.currentBackupPath, "to", r.archiveBackupPath)
+		return "", nil
+	}
+
+	plog.Notice("ARCHIVE", "from", r.currentBackupPath, "to", r.archiveBackupPath)
 
 	// Sanity check: ensure the destination for the archive does not already exist.
-	if _, err := os.Stat(archivePath); err == nil {
-		return "", fmt.Errorf("archive destination %s already exists", archivePath)
+	if _, err := os.Stat(r.archiveBackupPath); err == nil {
+		return "", fmt.Errorf("archive destination %s already exists", r.archiveBackupPath)
 	} else if !os.IsNotExist(err) {
 		// The error is not "file does not exist", so it might be a permissions issue
 		// or the archives subdir doesn't exist. Let's try to create it.
-		return "", fmt.Errorf("could not check archive destination %s: %w", archivePath, err)
+		return "", fmt.Errorf("could not check archive destination %s: %w", r.archiveBackupPath, err)
 	}
 
-	if err := os.MkdirAll(runState.dirPath, util.UserWritableDirPerms); err != nil {
-		return "", fmt.Errorf("failed to create archives subdirectory %s: %w", runState.dirPath, err)
-	}
-	if err := os.Rename(runState.currentBackupPath, archivePath); err != nil {
+	if err := os.Rename(r.currentBackupPath, r.archiveBackupPath); err != nil {
 		return "", fmt.Errorf("failed to archive backup: %w", err)
 	}
-	plog.Notice("ARCHIVED", "from", runState.currentBackupPath, "to", archivePath)
-	return archivePath, nil
+	r.metrics.AddArchivesCreated(1)
+	plog.Notice("ARCHIVED", "from", r.currentBackupPath, "to", r.archiveBackupPath)
+	return r.archiveBackupPath, nil
 }
 
 // shouldArchive determines if a new backup archive should be created based on the state of the current run.
@@ -148,22 +176,22 @@ func (a *PathArchiver) Archive(ctx context.Context, dirPath, currentBackupPath s
 // weekly backup on Sunday night"), even though all stored timestamps are UTC.
 // The conversion handles Daylight Saving Time (DST) shifts correctly by checking
 // for midnight-to-midnight boundary crossings (epoch day counting).
-func (a *PathArchiver) shouldArchive(runState *archiveRunState) bool {
-	if runState.interval == 0 {
+func (r *archiveRun) shouldArchive() bool {
+	if r.interval == 0 {
 		return false // Archive is explicitly disabled.
 	}
 
 	// For intervals of 24 hours or longer, this function intentionally calculates
 	// archive boundaries based on the local system's midnight to align with a
 	// user's calendar day, even though all stored timestamps are UTC.
-	if runState.interval >= 24*time.Hour {
+	if r.interval >= 24*time.Hour {
 		loc := time.Local
 
 		// Normalize both times to the system's local midnight.
-		y1, m1, d1 := runState.currentBackupTimestampUTC.In(loc).Date()
+		y1, m1, d1 := r.currentBackupTimestampUTC.In(loc).Date()
 		lastDayMidnight := time.Date(y1, m1, d1, 0, 0, 0, 0, loc)
 
-		y2, m2, d2 := runState.currentTimestampUTC.In(loc).Date()
+		y2, m2, d2 := r.currentTimestampUTC.In(loc).Date()
 		currentDayMidnight := time.Date(y2, m2, d2, 0, 0, 0, 0, loc)
 
 		// Calculate days since a fixed anchor (Unix Epoch Local).
@@ -172,7 +200,7 @@ func (a *PathArchiver) shouldArchive(runState *archiveRunState) bool {
 		currentDayNum := int64(currentDayMidnight.Sub(anchor).Hours() / 24)
 
 		// Calculate the Bucket Size in Days
-		daysInBucket := int64(runState.interval / (24 * time.Hour))
+		daysInBucket := int64(r.interval / (24 * time.Hour))
 
 		// Check if we have crossed a bucket boundary
 		// Example: Interval = 7 days.
@@ -183,35 +211,34 @@ func (a *PathArchiver) shouldArchive(runState *archiveRunState) bool {
 
 	// Sub-Daily Intervals (Hourly, 6-Hourly)
 	// Use standard truncation for clean UTC time buckets.
-	lastBackupBoundary := runState.currentBackupTimestampUTC.Truncate(runState.interval)
-	currentBackupBoundary := runState.currentTimestampUTC.Truncate(runState.interval)
+	lastBackupBoundary := r.currentBackupTimestampUTC.Truncate(r.interval)
+	currentBackupBoundary := r.currentTimestampUTC.Truncate(r.interval)
 
 	return !currentBackupBoundary.Equal(lastBackupBoundary)
 }
 
-// prepareRun prepares the runState for an archive operation.
+// determineInterval calculates the effective archive interval based on configuration.
 // If the mode is 'auto', it calculates the optimal interval based on the retention policy.
 // If the mode is 'manual', it validates the user-configured interval.
-func (a *PathArchiver) prepareRun(runState *archiveRunState) error {
+func (a *PathArchiver) determineInterval() time.Duration {
 	if a.config.Archive.Incremental.Mode == config.ManualInterval {
-		a.checkInterval(runState)
-	} else {
-		a.adjustInterval(runState)
+		interval := a.config.Archive.Incremental.Interval
+		a.checkInterval(interval)
+		return interval
 	}
-	return nil
+	return a.adjustInterval()
 }
 
 // adjustInterval calculates the optimal archive interval based on the retention
 // policy. This is only called when the archive policy mode is 'auto'.
-func (a *PathArchiver) adjustInterval(runState *archiveRunState) {
+func (a *PathArchiver) adjustInterval() time.Duration {
 	policy := a.config.Retention.Incremental
 	var suggestedInterval time.Duration
 
 	// If the retention policy is explicitly disabled, auto-mode should also disable archiving.
 	if !policy.Enabled {
 		plog.Debug("Retention policy is disabled; auto-disabling archiving for this run.")
-		runState.interval = 0 //disables the interval
-		return
+		return 0 // disables the interval
 	}
 
 	// Pick the shortest duration required to satisfy the configured retention slots.
@@ -232,41 +259,41 @@ func (a *PathArchiver) adjustInterval(runState *archiveRunState) {
 	}
 
 	plog.Debug("Auto-determined archive interval", "interval", suggestedInterval)
-	runState.interval = suggestedInterval
+	return suggestedInterval
 }
 
 // checkInterval validates the interval against the retention policy.
-func (a *PathArchiver) checkInterval(runState *archiveRunState) {
+func (a *PathArchiver) checkInterval(interval time.Duration) {
 	policy := a.config.Retention.Incremental
 
-	if runState.interval == 0 {
+	if interval == 0 {
 		plog.Debug("Archiving is disabled (interval = 0). Retention policy warnings for interval mismatch are suppressed.")
 		return
 	}
 
 	var mismatchedPeriods []string
-	if policy.Hours > 0 && runState.interval > 1*time.Hour {
+	if policy.Hours > 0 && interval > 1*time.Hour {
 		mismatchedPeriods = append(mismatchedPeriods, "Hourly")
 	}
-	if policy.Days > 0 && runState.interval > 24*time.Hour {
+	if policy.Days > 0 && interval > 24*time.Hour {
 		mismatchedPeriods = append(mismatchedPeriods, "Daily")
 	}
-	if policy.Weeks > 0 && runState.interval > 168*time.Hour {
+	if policy.Weeks > 0 && interval > 168*time.Hour {
 		mismatchedPeriods = append(mismatchedPeriods, "Weekly")
 	}
 	avgMonth := 30 * 24 * time.Hour
-	if policy.Months > 0 && runState.interval > avgMonth {
+	if policy.Months > 0 && interval > avgMonth {
 		mismatchedPeriods = append(mismatchedPeriods, "Monthly")
 	}
 	avgYear := 365 * 24 * time.Hour
-	if policy.Years > 0 && runState.interval > avgYear {
+	if policy.Years > 0 && interval > avgYear {
 		mismatchedPeriods = append(mismatchedPeriods, "Yearly")
 	}
 
 	if len(mismatchedPeriods) > 0 {
 		plog.Warn("Configuration Mismatch: The 'manual' archive interval is slower than the enabled retention period(s).",
 			"mismatched_periods", strings.Join(mismatchedPeriods, ", "),
-			"archive_interval", runState.interval,
+			"archive_interval", interval,
 			"impact", "Retention slots for these periods will fill at the rate of the archive interval, not the retention period.")
 	}
 }

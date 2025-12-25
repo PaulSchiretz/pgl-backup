@@ -44,7 +44,7 @@ import (
 	"sync"
 	"time"
 
-	"pixelgardenlabs.io/pgl-backup/pkg/metrics"
+	"pixelgardenlabs.io/pgl-backup/pkg/pathsyncmetrics"
 	"pixelgardenlabs.io/pgl-backup/pkg/plog"
 	"pixelgardenlabs.io/pgl-backup/pkg/sharded"
 	"pixelgardenlabs.io/pgl-backup/pkg/util"
@@ -160,7 +160,64 @@ type syncRun struct {
 	cancel context.CancelFunc
 
 	// metrics holds the counters for the sync operation.
-	metrics metrics.Metrics
+	metrics pathsyncmetrics.Metrics
+}
+
+// handleNative initializes the sync run structure and kicks off the execution.
+func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror bool, excludeFiles, excludeDirs []string, enableMetrics bool) error {
+	var m pathsyncmetrics.Metrics
+	if enableMetrics {
+		m = &pathsyncmetrics.SyncMetrics{}
+	} else {
+		// Use the No-op implementation if metrics are disabled.
+		m = &pathsyncmetrics.NoopMetrics{}
+	}
+
+	run := &syncRun{
+		src:              src,
+		trg:              trg,
+		mirror:           mirror,
+		dryRun:           s.dryRun,
+		failFast:         s.failFast,
+		fileExcludes:     preProcessExclusions(excludeFiles),
+		dirExcludes:      preProcessExclusions(excludeDirs),
+		numSyncWorkers:   s.engine.Performance.SyncWorkers,
+		numMirrorWorkers: s.engine.Performance.MirrorWorkers,
+		retryCount:       s.engine.RetryCount,
+		retryWait:        time.Duration(s.engine.RetryWaitSeconds) * time.Second,
+		modTimeWindow:    time.Duration(s.engine.ModTimeWindowSeconds) * time.Second,
+		ioBufferPool: &sync.Pool{
+			New: func() interface{} {
+				// Buffer size is configured in KB, so multiply by 1024.
+				b := make([]byte, s.engine.Performance.BufferSizeKB*1024)
+				return &b
+			},
+		},
+		syncTaskPool: &sync.Pool{
+			New: func() interface{} {
+				return new(syncTask)
+			},
+		},
+		mirrorTaskPool: &sync.Pool{
+			New: func() interface{} {
+				return new(mirrorTask)
+			},
+		},
+		discoveredPaths:   sharded.NewShardedSet(),
+		discoveredDirInfo: sharded.NewShardedMap(),
+		syncedDirCache:    sharded.NewShardedSet(),
+		// Buffer 'syncTasksChan' to absorb bursts of small files discovered by the walker.
+		syncTasksChan:          make(chan *syncTask, s.engine.Performance.SyncWorkers*100),
+		mirrorTasksChan:        make(chan *mirrorTask, s.engine.Performance.MirrorWorkers*100),
+		criticalSyncErrsChan:   make(chan error, 1),
+		syncErrs:               sharded.NewShardedMap(),
+		criticalMirrorErrsChan: make(chan error, 1),
+		mirrorErrs:             sharded.NewShardedMap(),
+		ctx:                    ctx,
+		metrics:                m, // Use the selected metrics implementation.
+	}
+	s.lastRun = run // Store the run instance for testing.
+	return run.execute()
 }
 
 // --- Helpers ---
@@ -481,6 +538,7 @@ func (r *syncRun) processFileSync(task *syncTask) error {
 
 	plog.Notice("COPY", "path", task.RelPathKey)
 	r.metrics.AddFilesCopied(1)
+	r.metrics.AddBytesCopied(task.PathInfo.Size)
 	return nil // File was actually copied/updated
 }
 
@@ -593,6 +651,8 @@ func (r *syncRun) syncWalker() {
 		if relPathKey == "." {
 			return nil
 		}
+
+		r.metrics.AddEntriesProcessed(1)
 
 		// Check for exclusions.
 		// `relPathKey` is already normalized, but `d.Name()` is the raw basename from the filesystem
@@ -828,6 +888,8 @@ func (r *syncRun) mirrorWalker() []string {
 			return nil
 		}
 
+		r.metrics.AddEntriesProcessed(1)
+
 		if r.discoveredPaths.Has(relPathKey) {
 			return nil // Path exists in source, keep it.
 		}
@@ -992,8 +1054,12 @@ func (r *syncRun) execute() error {
 	// run can use to signal a stop to all its goroutines.
 	// We defer the cancel to ensure resources are cleaned up on exit.
 	r.ctx, r.cancel = context.WithCancel(r.ctx)
+
+	// Start progress reporting
+	r.metrics.StartProgress("Sync progress", 10*time.Second)
 	defer func() {
-		r.metrics.LogSummary("Syncing filepaths summary")
+		r.metrics.StopProgress()
+		r.metrics.LogSummary("Sync finished")
 		r.cancel()
 	}()
 
@@ -1013,61 +1079,4 @@ func (r *syncRun) execute() error {
 		return nil
 	}
 	return r.handleMirror()
-}
-
-// handleNative initializes the sync run structure and kicks off the execution.
-func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror bool, excludeFiles, excludeDirs []string, enableMetrics bool) error {
-	var m metrics.Metrics
-	if enableMetrics {
-		m = &metrics.SyncMetrics{}
-	} else {
-		// Use the No-op implementation if metrics are disabled.
-		m = &metrics.NoopMetrics{}
-	}
-
-	run := &syncRun{
-		src:              src,
-		trg:              trg,
-		mirror:           mirror,
-		dryRun:           s.dryRun,
-		failFast:         s.failFast,
-		fileExcludes:     preProcessExclusions(excludeFiles),
-		dirExcludes:      preProcessExclusions(excludeDirs),
-		numSyncWorkers:   s.engine.Performance.SyncWorkers,
-		numMirrorWorkers: s.engine.Performance.MirrorWorkers,
-		retryCount:       s.engine.RetryCount,
-		retryWait:        time.Duration(s.engine.RetryWaitSeconds) * time.Second,
-		modTimeWindow:    time.Duration(s.engine.ModTimeWindowSeconds) * time.Second,
-		ioBufferPool: &sync.Pool{
-			New: func() interface{} {
-				// Buffer size is configured in KB, so multiply by 1024.
-				b := make([]byte, s.engine.Performance.BufferSizeKB*1024)
-				return &b
-			},
-		},
-		syncTaskPool: &sync.Pool{
-			New: func() interface{} {
-				return new(syncTask)
-			},
-		},
-		mirrorTaskPool: &sync.Pool{
-			New: func() interface{} {
-				return new(mirrorTask)
-			},
-		},
-		discoveredPaths:   sharded.NewShardedSet(),
-		discoveredDirInfo: sharded.NewShardedMap(),
-		syncedDirCache:    sharded.NewShardedSet(),
-		// Buffer 'syncTasksChan' to absorb bursts of small files discovered by the walker.
-		syncTasksChan:          make(chan *syncTask, s.engine.Performance.SyncWorkers*100),
-		mirrorTasksChan:        make(chan *mirrorTask, s.engine.Performance.MirrorWorkers*100),
-		criticalSyncErrsChan:   make(chan error, 1),
-		syncErrs:               sharded.NewShardedMap(),
-		criticalMirrorErrsChan: make(chan error, 1),
-		mirrorErrs:             sharded.NewShardedMap(),
-		ctx:                    ctx,
-		metrics:                m, // Use the selected metrics implementation.
-	}
-	s.lastRun = run // Store the run instance for testing.
-	return run.execute()
 }

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"pixelgardenlabs.io/pgl-backup/pkg/config"
-	"pixelgardenlabs.io/pgl-backup/pkg/metrics"
+	"pixelgardenlabs.io/pgl-backup/pkg/pathsyncmetrics"
 	"pixelgardenlabs.io/pgl-backup/pkg/util"
 )
 
@@ -171,13 +171,15 @@ func (r *nativeSyncTestRunner) setup() {
 }
 
 type expectedMetrics struct {
-	copied       int64
-	deleted      int64 // filesDeleted
-	excluded     int64 // filesExcluded
-	upToDate     int64
-	dirsCreated  int64
-	dirsDeleted  int64
-	dirsExcluded int64
+	copied           int64
+	deleted          int64 // filesDeleted
+	excluded         int64 // filesExcluded
+	upToDate         int64
+	bytesCopied      int64
+	dirsCreated      int64
+	dirsDeleted      int64
+	dirsExcluded     int64
+	entriesProcessed int64
 }
 
 func TestNativeSync_EndToEnd(t *testing.T) {
@@ -588,13 +590,15 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 			expectedMissingDstFiles: []string{"obsolete.txt", "obsolete_dir", "app.log", "config.json", "ignored_dir"},
 			expectedMetrics: &expectedMetrics{
-				copied:       2, // dir1/new_file.txt, updated.txt
-				deleted:      1, // obsolete.txt
-				excluded:     2, // app.log, config.json
-				upToDate:     1, // uptodate.txt
-				dirsCreated:  1, // dir1
-				dirsDeleted:  1, // obsolete_dir
-				dirsExcluded: 1, // ignored_dir
+				copied:           2,  // dir1/new_file.txt, updated.txt
+				deleted:          1,  // obsolete.txt
+				excluded:         2,  // app.log, config.json
+				upToDate:         1,  // uptodate.txt
+				bytesCopied:      14, // "new" (3) + "new content" (11)
+				dirsCreated:      1,  // dir1
+				dirsDeleted:      1,  // obsolete_dir
+				dirsExcluded:     1,  // ignored_dir
+				entriesProcessed: 13, // 7 from sync + 6 from mirror
 			},
 		},
 		{
@@ -620,7 +624,9 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			// Expect all metrics to be zero because NoopMetrics was used.
 			expectedMetrics: &expectedMetrics{
 				copied: 0, deleted: 0, excluded: 0, upToDate: 0,
+				bytesCopied: 0,
 				dirsCreated: 0, dirsDeleted: 0, dirsExcluded: 0,
+				entriesProcessed: 0,
 			},
 		},
 	}
@@ -719,33 +725,38 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 
 				// If metrics were disabled, assert we got the NoopMetrics type.
 				if !tc.enableMetrics {
-					if _, ok := lastRunMetrics.(*metrics.NoopMetrics); !ok {
+					if _, ok := lastRunMetrics.(*pathsyncmetrics.NoopMetrics); !ok {
 						t.Fatalf("expected metrics to be *metrics.NoopMetrics when disabled, but got %T", lastRunMetrics)
 					}
 				}
 
 				// To check the values, we must have a *SyncMetrics instance.
 				// This will be nil if metrics were disabled, and the checks will correctly fail.
-				m, _ := lastRunMetrics.(*metrics.SyncMetrics)
+				m, _ := lastRunMetrics.(*pathsyncmetrics.SyncMetrics)
 				if m == nil && tc.enableMetrics {
 					t.Fatalf("metrics were not of expected type *metrics.SyncMetrics, but %T", lastRunMetrics)
 				}
 
 				// If m is nil (because metrics were disabled), all .Load() calls will panic.
 				// We need to handle this case.
-				var copied, deleted, excluded, upToDate, dirsCreated, dirsDeleted, dirsExcluded int64
+				var copied, deleted, excluded, upToDate, bytesCopied, dirsCreated, dirsDeleted, dirsExcluded, entriesProcessed int64
 				if m != nil {
 					copied = m.FilesCopied.Load()
 					deleted = m.FilesDeleted.Load()
 					excluded = m.FilesExcluded.Load()
 					upToDate = m.FilesUpToDate.Load()
+					bytesCopied = m.BytesCopied.Load()
 					dirsCreated = m.DirsCreated.Load()
 					dirsDeleted = m.DirsDeleted.Load()
 					dirsExcluded = m.DirsExcluded.Load()
+					entriesProcessed = m.EntriesProcessed.Load()
 				}
 
 				if got := copied; got != tc.expectedMetrics.copied {
 					t.Errorf("metric 'copied': expected %d, got %d", tc.expectedMetrics.copied, got)
+				}
+				if got := bytesCopied; got != tc.expectedMetrics.bytesCopied {
+					t.Errorf("metric 'bytesCopied': expected %d, got %d", tc.expectedMetrics.bytesCopied, got)
 				}
 				if got := deleted; got != tc.expectedMetrics.deleted {
 					t.Errorf("metric 'deleted': expected %d, got %d", tc.expectedMetrics.deleted, got)
@@ -764,6 +775,9 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				}
 				if got := dirsExcluded; got != tc.expectedMetrics.dirsExcluded {
 					t.Errorf("metric 'dirsExcluded': expected %d, got %d", tc.expectedMetrics.dirsExcluded, got)
+				}
+				if got := entriesProcessed; got != tc.expectedMetrics.entriesProcessed {
+					t.Errorf("metric 'entriesProcessed': expected %d, got %d", tc.expectedMetrics.entriesProcessed, got)
 				}
 			}
 		})

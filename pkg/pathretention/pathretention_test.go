@@ -63,14 +63,13 @@ func TestDetermineBackupsToKeep(t *testing.T) {
 		Years:   2,
 	}
 
-	r := newTestRetentionManager(config.NewDefault())
-	runState := &retentionRunState{
+	run := &retentionRun{
 		backups:         allBackups,
 		retentionPolicy: policy,
 	}
 
 	// Act
-	kept := r.determineBackupsToKeep(runState)
+	kept := run.determineBackupsToKeep()
 
 	// Assert
 	if len(kept) != 10 {
@@ -118,14 +117,13 @@ func TestDetermineBackupsToKeep_Promotion(t *testing.T) {
 		Years:  1,
 	}
 
-	r := newTestRetentionManager(config.NewDefault())
-	runState := &retentionRunState{
+	run := &retentionRun{
 		backups:         allBackups,
 		retentionPolicy: policy,
 	}
 
 	// Act
-	kept := r.determineBackupsToKeep(runState)
+	kept := run.determineBackupsToKeep()
 
 	// Assert
 	if len(kept) != 5 {
@@ -180,12 +178,70 @@ func TestApplyRetentionPolicy(t *testing.T) {
 	}
 }
 
+func TestApplyRetentionPolicy_DryRun(t *testing.T) {
+	// Arrange
+	tempDir := t.TempDir()
+	cfg := config.NewDefault()
+	cfg.Paths.TargetBase = tempDir
+	cfg.Naming.Prefix = "backup_"
+	cfg.DryRun = true // Enable Dry Run
+	policy := config.RetentionPolicyConfig{
+		Enabled: true,
+		Days:    1, // Keep one daily backup
+	}
+
+	r := newTestRetentionManager(cfg)
+	now := time.Now()
+
+	// Create backups to be kept and deleted
+	createTestBackup(t, tempDir, "backup_kept", now.Add(-1*24*time.Hour))
+	createTestBackup(t, tempDir, "backup_to_delete", now.Add(-5*24*time.Hour))
+
+	// Act
+	err := r.Apply(context.Background(), "test", tempDir, policy, "")
+	if err != nil {
+		t.Fatalf("Apply failed: %v", err)
+	}
+
+	// Assert
+	if _, err := os.Stat(filepath.Join(tempDir, "backup_kept")); err != nil {
+		t.Errorf("expected kept backup to exist, but it does not: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tempDir, "backup_to_delete")); os.IsNotExist(err) {
+		t.Errorf("expected backup_to_delete to still exist in dry run mode, but it was deleted")
+	}
+}
+
+func TestApplyRetentionPolicy_DisabledOptimization(t *testing.T) {
+	// Arrange
+	tempDir := t.TempDir()
+	// Create a file where a directory is expected.
+	// If the manager tries to scan this, it will fail.
+	filePath := filepath.Join(tempDir, "not_a_dir")
+	if err := os.WriteFile(filePath, []byte("content"), 0644); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
+
+	cfg := config.NewDefault()
+	r := newTestRetentionManager(cfg)
+
+	// Disabled policy (all zeros)
+	policy := config.RetentionPolicyConfig{}
+
+	// Act
+	err := r.Apply(context.Background(), "test", filePath, policy, "")
+
+	// Assert
+	if err != nil {
+		t.Errorf("expected no error due to disabled policy skipping scan, but got: %v", err)
+	}
+}
+
 func TestFetchSortedBackups(t *testing.T) {
 	// Arrange
 	tempDir := t.TempDir()
 	cfg := config.NewDefault()
 	cfg.Naming.Prefix = "backup_"
-	r := newTestRetentionManager(cfg)
 
 	now := time.Now()
 	backup1Time := now.Add(-10 * time.Hour)
@@ -201,19 +257,15 @@ func TestFetchSortedBackups(t *testing.T) {
 		t.Fatalf("failed to create dir without metafile: %v", err)
 	}
 
-	runState := &retentionRunState{
-		dirPath:    tempDir,
-		excludeDir: "non_existent_current_dir",
-	}
+	r := newTestRetentionManager(cfg)
 
 	// Act
-	err := r.fetchSortedBackups(context.Background(), runState)
+	backups, err := r.fetchSortedBackups(context.Background(), tempDir, "non_existent_current_dir", "test_policy")
 	if err != nil {
 		t.Fatalf("fetchSortedBackups failed: %v", err)
 	}
 
 	// Assert
-	backups := runState.backups
 	if len(backups) != 3 {
 		t.Fatalf("expected to find 3 valid backups, but got %d", len(backups))
 	}
