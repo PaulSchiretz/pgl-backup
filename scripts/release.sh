@@ -144,6 +144,7 @@ for platform in "${PLATFORMS[@]}"; do
     cp "$RELEASE_DIR/$OUTPUT_NAME" "$STAGING_DIR/"
     cp "$PROJECT_ROOT/LICENSE" "$STAGING_DIR/"
     cp "$PROJECT_ROOT/README.md" "$STAGING_DIR/"
+    cp "$PROJECT_ROOT/NOTICE" "$STAGING_DIR/"
 
     # Archive the contents of the staging directory.
     if [ "$GOOS" = "windows" ]; then

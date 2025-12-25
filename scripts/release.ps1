@@ -161,6 +161,7 @@ foreach ($platform in $platforms) {
         $binaryPath = Join-Path -Path $ReleaseDir -ChildPath $outputName
         $licensePath = Join-Path -Path $ProjectRoot -ChildPath "LICENSE"
         $readmePath = Join-Path -Path $ProjectRoot -ChildPath "README.md"
+        $noticePath = Join-Path -Path $ProjectRoot -ChildPath "NOTICE"
         $archivePath = Join-Path -Path $ReleaseDir -ChildPath "$archiveName"
 
         # Create and populate a temporary staging directory for robust path handling.
@@ -169,6 +170,7 @@ foreach ($platform in $platforms) {
         Copy-Item -Path $binaryPath -Destination $stagingDir.FullName
         Copy-Item -Path $licensePath -Destination $stagingDir.FullName
         Copy-Item -Path $readmePath -Destination $stagingDir.FullName
+        Copy-Item -Path $noticePath -Destination $stagingDir.FullName
 
         # Archive the contents of the staging directory.
         if ($GOOS -eq "windows") {
