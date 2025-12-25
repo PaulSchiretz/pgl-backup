@@ -2,12 +2,7 @@
 
 ## Supported Versions
 
-We currently support the latest release of `pgl-backup`.
-
-| Version | Supported          |
-| ------- | ------------------ |
-| Latest  | :white_check_mark: |
-| Older   | :x:                |
+Security updates are applied only to the latest release of `pgl-backup`.
 
 ## Reporting a Vulnerability
 
