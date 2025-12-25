@@ -56,7 +56,7 @@ $BinaryName = "pgl-backup"
 $ReleaseDir = Join-Path -Path $ProjectRoot -ChildPath "releases\$Version"
 
 # --- Helper Functions ---
-function Print-Header {
+function Write-Header {
     param([string]$Message)
     Write-Host "---" -ForegroundColor Cyan
     Write-Host "🚀 $($Message.ToUpper())" -ForegroundColor Cyan
@@ -65,10 +65,10 @@ function Print-Header {
 
 # --- Script Start ---
 
-Print-Header "Starting release process for pgl-backup version $Version"
+Write-Header "Starting release process for pgl-backup version $Version"
 
 # 1. Pre-flight checks
-Print-Header "Running pre-flight checks"
+Write-Header "Running pre-flight checks"
 
 # Check for required tools
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
@@ -101,7 +101,7 @@ if ($currentBranch -ne "main" -and $currentBranch -ne "master") {
 Write-Host "✅ Pre-flight checks passed." -ForegroundColor Green
 
 # 2. Clean and prepare release directory
-Print-Header "Preparing release directory"
+Write-Header "Preparing release directory"
 if (Test-Path $ReleaseDir) {
     if ($DryRun) {
         Write-Host "[DRY RUN] Would remove directory: $ReleaseDir"
@@ -114,7 +114,7 @@ else { New-Item -Path $ReleaseDir -ItemType Directory | Out-Null }
 Write-Host "✅ Cleaned and created '$ReleaseDir' directory." -ForegroundColor Green
 
 # 3. Cross-compile for target platforms
-Print-Header "Cross-compiling binaries"
+Write-Header "Cross-compiling binaries"
 
 # Define target platforms: GOOS/GOARCH
 $platforms = @(
@@ -185,7 +185,7 @@ foreach ($platform in $platforms) {
 Write-Host "✅ All platforms built and archived successfully." -ForegroundColor Green
 
 # 4. Generate Checksums
-Print-Header "Generating checksums"
+Write-Header "Generating checksums"
 if ($DryRun) {
     Write-Host "[DRY RUN] Would generate checksums file: $ReleaseDir\checksums.txt"
 } else {
@@ -194,7 +194,7 @@ if ($DryRun) {
 }
 
 # 5. Create and push git tag
-Print-Header "Tagging release in git"
+Write-Header "Tagging release in git"
 if ($DryRun) {
     Write-Host "[DRY RUN] Would create git tag: $Version"
     Write-Host "[DRY RUN] Would push tag to remote with: git push origin $Version"
@@ -206,4 +206,4 @@ if ($DryRun) {
 }
 Write-Host "✅ Git tag '$Version' created and pushed." -ForegroundColor Green
 
-Print-Header "Release $Version is complete! Artifacts are in the '$ReleaseDir' directory."
+Write-Header "Release $Version is complete! Artifacts are in the '$ReleaseDir' directory."

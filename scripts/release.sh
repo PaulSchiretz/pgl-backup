@@ -13,14 +13,14 @@ BINARY_NAME="pgl-backup"
 RELEASE_DIR="$PROJECT_ROOT/releases/$VERSION"
 
 # --- Helper Functions ---
-function print_usage() {
+function write_usage() {
   echo "Usage: ./release.sh <version> [--dry-run]"
   echo "Example: ./release.sh v1.0.0"
   echo "  --dry-run: Performs the build and packaging but skips the final git tag push."
   exit 1
 }
 
-function print_header() {
+function write_header() {
   echo "---"
   echo "🚀 $1"
   echo "---"
@@ -35,13 +35,13 @@ DRY_RUN=false
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=true ;;
-    -h|--help) print_usage; exit 0 ;;
-    -*) echo "Unknown option: $1"; print_usage; exit 1 ;;
+    -h|--help) write_usage; exit 0 ;;
+    -*) echo "Unknown option: $1"; write_usage; exit 1 ;;
     *)
       if [ -z "$VERSION" ]; then
         VERSION=$1
       else
-        echo "Unknown argument: $1"; print_usage; exit 1
+        echo "Unknown argument: $1"; write_usage; exit 1
       fi ;;
   esac
   shift # Consume the argument for the next iteration
@@ -49,7 +49,7 @@ done
 
 if [ -z "$VERSION" ]; then
   echo "Error: Version argument is required."
-  print_usage
+  write_usage
 fi
 
 # Now that we have the version, we can define the release directory.
@@ -59,13 +59,13 @@ RELEASE_DIR="$PROJECT_ROOT/releases/$VERSION"
 # Regex to validate semantic versioning with a 'v' prefix (e.g., v1.2.3)
 if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "Error: Invalid version format. Expected format: vX.Y.Z"
-  print_usage
+  write_usage
 fi
 
-print_header "Starting release process for pgl-backup version $VERSION"
+write_header "Starting release process for pgl-backup version $VERSION"
 
 # 2. Pre-flight checks
-print_header "Running pre-flight checks"
+write_header "Running pre-flight checks"
 
 # Check for required tools
 if ! command -v git &> /dev/null; then
@@ -98,7 +98,7 @@ fi
 echo "✅ Pre-flight checks passed."
 
 # 3. Clean and prepare release directory
-print_header "Preparing release directory"
+write_header "Preparing release directory"
 if [ "$DRY_RUN" = true ]; then
     echo "[DRY RUN] Would remove and recreate the '$RELEASE_DIR' directory."
 else
@@ -108,7 +108,7 @@ fi
 echo "✅ Cleaned and created '$RELEASE_DIR' directory."
 
 # 4. Cross-compile for target platforms
-print_header "Cross-compiling binaries"
+write_header "Cross-compiling binaries"
 
 # Define target platforms: GOOS/GOARCH
 PLATFORMS=("windows/amd64" "linux/amd64" "linux/arm64" "darwin/amd64" "darwin/arm64")
@@ -160,7 +160,7 @@ done
 echo "✅ All platforms built and archived successfully."
 
 # 5. Generate Checksums
-print_header "Generating checksums"
+write_header "Generating checksums"
 pushd "$RELEASE_DIR" > /dev/null
 
 # Use the appropriate command for the OS (sha256sum on Linux, shasum on macOS)
@@ -177,7 +177,7 @@ echo "✅ Checksums generated in '$RELEASE_DIR/checksums.txt'."
 popd > /dev/null
 
 # 6. Create and push git tag
-print_header "Tagging release in git"
+write_header "Tagging release in git"
 if [ "$DRY_RUN" = true ]; then
     echo "✅ [DRY RUN] Skipping git tag creation and push."
     # Ensure local tag doesn't exist from a previous dry run
@@ -189,4 +189,4 @@ else
     git push origin "$VERSION"
     echo "✅ Git tag '$VERSION' created and pushed."
 fi
-print_header "Release $VERSION is complete! Artifacts are in the '$RELEASE_DIR' directory."
+write_header "Release $VERSION is complete! Artifacts are in the '$RELEASE_DIR' directory."
