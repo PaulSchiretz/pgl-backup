@@ -143,12 +143,13 @@ foreach ($platform in $platforms) {
 
     # Execute the build command with temporary environment variables
     if ($DryRun) {
-        Write-Host "[DRY RUN] Would build for $GOOS/$GOARCH with command: go build -ldflags=`"$ldflags`" -o `"$ReleaseDir/$outputName`" `"$MainPackagePath`""
+        Write-Host "[DRY RUN] Would build for $GOOS/$GOARCH with command: go build -trimpath -ldflags=`"$ldflags`" -o `"$ReleaseDir/$outputName`" `"$MainPackagePath`""
     } else {
         & {
             $env:GOOS = $GOOS
             $env:GOARCH = $GOARCH
-            go build -ldflags="$ldflags" -o "$ReleaseDir/$outputName" "$MainPackagePath"
+            $env:CGO_ENABLED = "0"
+            go build -trimpath -ldflags="$ldflags" -o "$ReleaseDir/$outputName" "$MainPackagePath"
         }
     }
 

@@ -467,6 +467,13 @@ The best policy depends on how much data you are backing up and how much disk sp
 
 Please see our [Contributing Guidelines](./CONTRIBUTING.md) for details on how to contribute to the project.
 
+## Acknowledgments
+
+*   Special thanks to [Klaus Post](https://github.com/klauspost) for his excellent compression libraries (`github.com/klauspost/compress`), which enable the high-performance compression features in `pgl-backup`.
+*   The Go Authors for the Go programming language and standard library.
+
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE file](./LICENSE) for details.
+This project is licensed under the MIT License.
+
+This software includes components from third-party projects and the Go standard library. See the [LICENSE](./LICENSE) file for full license text and attributions.

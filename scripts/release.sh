@@ -133,7 +133,7 @@ for platform in "${PLATFORMS[@]}"; do
     echo "[DRY RUN] Would build and archive for $GOOS/$GOARCH."
   else
     # Execute the build command
-    env GOOS=$GOOS GOARCH=$GOARCH go build -ldflags="$LDFLAGS" -o "$RELEASE_DIR/$OUTPUT_NAME" "$MAIN_PACKAGE_PATH"
+    env CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build -trimpath -ldflags="$LDFLAGS" -o "$RELEASE_DIR/$OUTPUT_NAME" "$MAIN_PACKAGE_PATH"
 
     # Create an archive for the binary
     ARCHIVE_PATH="$RELEASE_DIR/${BINARY_NAME}_${VERSION}_${GOOS}_${GOARCH}"
