@@ -31,7 +31,7 @@
      Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
   3. Navigate to the root of your project and run the script with a version number:
-     .\tools\release.ps1 -Version v1.0.0
+     .\scripts\release.ps1 -Version v1.0.0
 
   The script will then run natively on Windows, producing the release artifacts.
 #>

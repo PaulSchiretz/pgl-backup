@@ -24,3 +24,18 @@ pgl-backup
 
 # Secrete Enviroment Vars
 .env.local
+
+# OS Specific
+.DS_Store
+Thumbs.db
+
+# Go Test Artifacts and Workspace
+*.test
+*.out
+go.work
+go.work.sum
+
+# Local Runtime Configuration & Locks
+pgl-backup.config.json
+.~pgl-backup.lock
+.pgl-backup.meta.json
