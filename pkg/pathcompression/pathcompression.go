@@ -287,6 +287,8 @@ func (r *compressionRun) compressDirectory(dirPath string) error {
 type archiveWriter interface {
 	// AddFile adds a file from the filesystem to the archive using a pre-calculated relative path.
 	AddFile(absPath, relPath string, info os.FileInfo, buf []byte) error
+	// AddSymlink adds a symbolic link to the archive.
+	AddSymlink(absPath, relPath string, info os.FileInfo) error
 	// Close finalizes and closes the archive writer.
 	Close() error
 }
@@ -297,7 +299,17 @@ type zipArchiveWriter struct {
 }
 
 func (zw *zipArchiveWriter) AddFile(absSrcPath, relPath string, info os.FileInfo, buf []byte) error {
-	writer, err := zw.zipWriter.Create(relPath)
+	// Create a zip header from the file info.
+	// This is crucial: zip.Create() uses default permissions and the current time.
+	// By using FileInfoHeader, we preserve the original file's permissions (Mode) and modification time.
+	header, err := zip.FileInfoHeader(info)
+	if err != nil {
+		return fmt.Errorf("failed to create zip header for %s: %w", relPath, err)
+	}
+	header.Name = relPath
+	header.Method = zip.Deflate
+
+	writer, err := zw.zipWriter.CreateHeader(header)
 	if err != nil {
 		return fmt.Errorf("failed to create entry for %s in zip: %w", relPath, err)
 	}
@@ -317,6 +329,27 @@ func (zw *zipArchiveWriter) AddFile(absSrcPath, relPath string, info os.FileInfo
 	return nil
 }
 
+func (zw *zipArchiveWriter) AddSymlink(absSrcPath, relPath string, info os.FileInfo) error {
+	target, err := os.Readlink(absSrcPath)
+	if err != nil {
+		return fmt.Errorf("failed to read link target for %s: %w", absSrcPath, err)
+	}
+
+	header, err := zip.FileInfoHeader(info)
+	if err != nil {
+		return fmt.Errorf("failed to create zip header for %s: %w", relPath, err)
+	}
+	header.Name = relPath
+	header.Method = zip.Store
+
+	writer, err := zw.zipWriter.CreateHeader(header)
+	if err != nil {
+		return fmt.Errorf("failed to create entry for %s in zip: %w", relPath, err)
+	}
+	_, err = writer.Write([]byte(target))
+	return err
+}
+
 func (zw *zipArchiveWriter) Close() error {
 	if err := zw.zipWriter.Close(); err != nil {
 		return fmt.Errorf("failed to close zip writer: %w", err)
@@ -333,6 +366,7 @@ type tarArchiveWriter struct {
 
 func (tw *tarArchiveWriter) AddFile(absSrcPath, relPath string, info os.FileInfo, buf []byte) error {
 	// Create a tar header from the file's info.
+	// FileInfoHeader automatically preserves file permissions (Mode) and modification time.
 	header, err := tar.FileInfoHeader(info, relPath)
 	if err != nil {
 		return fmt.Errorf("failed to create tar header for %s: %w", absSrcPath, err)
@@ -355,6 +389,24 @@ func (tw *tarArchiveWriter) AddFile(absSrcPath, relPath string, info os.FileInfo
 	_, err = io.CopyBuffer(tw.tarWriter, fileToTar, buf)
 	if err != nil {
 		return fmt.Errorf("failed to copy file %s to tar: %w", absSrcPath, err)
+	}
+	return nil
+}
+
+func (tw *tarArchiveWriter) AddSymlink(absSrcPath, relPath string, info os.FileInfo) error {
+	target, err := os.Readlink(absSrcPath)
+	if err != nil {
+		return fmt.Errorf("failed to read link target for %s: %w", absSrcPath, err)
+	}
+
+	header, err := tar.FileInfoHeader(info, target)
+	if err != nil {
+		return fmt.Errorf("failed to create tar header for %s: %w", absSrcPath, err)
+	}
+	header.Name = relPath
+
+	if err := tw.tarWriter.WriteHeader(header); err != nil {
+		return fmt.Errorf("failed to write tar header for %s: %w", relPath, err)
 	}
 	return nil
 }
@@ -447,7 +499,7 @@ func (r *compressionRun) createArchive(sourceDir string) (tempPath string, err e
 		if walkErr != nil {
 			return walkErr
 		}
-		if info.IsDir() || absSrcPath == tempPath || (info.Mode()&os.ModeSymlink != 0) {
+		if info.IsDir() || absSrcPath == tempPath {
 			return nil
 		}
 
@@ -463,6 +515,12 @@ func (r *compressionRun) createArchive(sourceDir string) (tempPath string, err e
 		r.metrics.AddEntriesProcessed(1)
 		r.metrics.AddOriginalBytes(info.Size())
 
+		// Handle Symlinks
+		if info.Mode()&os.ModeSymlink != 0 {
+			return archiver.AddSymlink(absSrcPath, relPath, info)
+		}
+
+		// Handle Regular Files
 		// Get a buffer from the pool for the copy operation.
 		bufPtr := r.ioBufferPool.Get().(*[]byte)
 		defer r.ioBufferPool.Put(bufPtr)
