@@ -15,6 +15,7 @@
 *   **Intelligent Archiving (Incremental Mode)**: The archive interval can be set to `auto` (the default) to automatically align with your retention policy. If you keep hourly backups, it will archive hourly. This prevents configuration mismatches and ensures your retention slots are filled efficiently.
 *   **Automatic and Resilient Compression**: To save disk space, you can enable automatic compression of backups into `.tar.zst`, `.zip` or `.tar.gz` archives. If compression fails (e.g., due to a corrupt file), the original backup is left untouched.
 *   **Concurrency Safe**: A robust file-locking mechanism prevents multiple backup instances from running against the same target directory simultaneously, protecting data integrity.
+*   **Symbolic Link Support**: Preserves symbolic links in the destination. On Windows, creating symlinks requires the user to have the appropriate privileges (Run as Administrator) or Developer Mode enabled.
 *   **Pre- and Post-Backup Hooks**: Execute custom shell commands before the sync begins or after it completes, perfect for tasks like dumping a database or sending a notification.
 *   **Adjustable Configuration**: Configure backups using a simple `pgl-backup.config.json` JSON file, and override any setting with command-line flags for one-off tasks.
 *   **Multiple Sync Engines**:
@@ -462,6 +463,13 @@ The best policy depends on how much data you are backing up and how much disk sp
     *   Adjust the `sync-workers` and `buffer-size-kb` settings in your `pgl-backup.config.json` file.
     *   For systems with slow I/O (like a single spinning disk or a high-latency network share), *decreasing* the number of `sync-workers` (e.g., to `2` or `4`) can sometimes improve performance by reducing disk head thrashing.
     *   For systems with very fast I/O (like a local NVMe SSD), increasing `sync-workers` might yield better results.
+
+### Error: `failed to create symlink (requires Admin or Developer Mode)`
+
+*   **Cause**: The backup source contains symbolic links, but the user running `pgl-backup` on Windows does not have permission to create them in the destination.
+*   **Solution**:
+    *   Run the command prompt or PowerShell as **Administrator**.
+    *   Enable **Developer Mode** in Windows settings, which allows non-admins to create symlinks.
 
 ## Contributing
 

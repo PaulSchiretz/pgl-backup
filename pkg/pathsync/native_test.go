@@ -81,7 +81,7 @@ func getFileModTime(t *testing.T, path string) time.Time {
 // helper to get file/dir info.
 func getPathInfo(t *testing.T, path string) os.FileInfo {
 	t.Helper()
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		t.Fatalf("failed to get stat for %s: %v", path, err)
 	}
@@ -149,7 +149,11 @@ func (r *nativeSyncTestRunner) setup() {
 	}
 
 	for _, f := range r.srcFiles {
-		createFile(r.t, filepath.Join(r.srcDir, f.path), f.content, f.modTime)
+		if f.symlinkTarget != "" {
+			createSymlink(r.t, f.symlinkTarget, filepath.Join(r.srcDir, f.path))
+		} else {
+			createFile(r.t, filepath.Join(r.srcDir, f.path), f.content, f.modTime)
+		}
 	}
 	for _, d := range r.srcDirs {
 		createDir(r.t, filepath.Join(r.srcDir, d.path), d.perm, d.modTime)
@@ -258,6 +262,18 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			expectedDstFiles: map[string]testFile{
 				// With a 0s window, the times are not equal, so the file MUST be copied.
 				"file.txt": {path: "file.txt", content: "content", modTime: baseTime.Add(500 * time.Millisecond)},
+			},
+		},
+		{
+			name:   "Sync Symlink",
+			mirror: false,
+			srcFiles: []testFile{
+				{path: "target.txt", content: "target content", modTime: baseTime},
+				{path: "link.txt", symlinkTarget: "target.txt", modTime: baseTime},
+			},
+			expectedDstFiles: map[string]testFile{
+				"target.txt": {path: "target.txt", content: "target content", modTime: baseTime},
+				"link.txt":   {path: "link.txt", symlinkTarget: "target.txt", modTime: baseTime},
 			},
 		},
 		{
@@ -504,6 +520,32 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
+			name:   "Overwrite Destination File with Symlink",
+			mirror: false,
+			srcFiles: []testFile{
+				{path: "link_to_create.txt", symlinkTarget: "target.txt", modTime: baseTime},
+				{path: "target.txt", content: "target content", modTime: baseTime},
+			},
+			dstFiles: []testFile{
+				// Pre-create a regular file in the destination.
+				{path: "link_to_create.txt", content: "I am a regular file", modTime: baseTime},
+			},
+			expectedDstFiles: map[string]testFile{
+				"link_to_create.txt": {path: "link_to_create.txt", symlinkTarget: "target.txt", modTime: baseTime},
+				"target.txt":         {path: "target.txt", content: "target content", modTime: baseTime},
+			},
+			verify: func(t *testing.T, src, dst string) {
+				// Verify that the destination item is now a symlink.
+				info, err := os.Lstat(filepath.Join(dst, "link_to_create.txt"))
+				if err != nil {
+					t.Fatalf("failed to lstat destination item: %v", err)
+				}
+				if info.Mode()&os.ModeSymlink == 0 {
+					t.Errorf("expected destination item to be a symlink, but it is %v", info.Mode())
+				}
+			},
+		},
+		{
 			name: "Error Aggregation for Multiple Failures",
 			srcFiles: []testFile{
 				{path: "unwritable_dir/file1.txt", content: "content1", modTime: baseTime},
@@ -687,6 +729,30 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			// Assert
 			for relPathKey, expectedFile := range tc.expectedDstFiles {
 				fullPath := filepath.Join(runner.dstDir, expectedFile.path)
+
+				if expectedFile.symlinkTarget != "" {
+					info, err := os.Lstat(fullPath)
+					if err != nil {
+						if os.IsNotExist(err) {
+							t.Errorf("expected symlink to exist in destination: %s", expectedFile.path)
+						} else {
+							t.Fatalf("failed to lstat destination link: %v", err)
+						}
+						continue
+					}
+					if info.Mode()&os.ModeSymlink == 0 {
+						t.Errorf("expected %s to be a symlink", relPathKey)
+					}
+					target, err := os.Readlink(fullPath)
+					if err != nil {
+						t.Fatalf("failed to read link target: %v", err)
+					}
+					if target != expectedFile.symlinkTarget {
+						t.Errorf("expected link target %q, got %q", expectedFile.symlinkTarget, target)
+					}
+					continue
+				}
+
 				if !pathExists(t, fullPath) {
 					t.Errorf("expected file to exist in destination: %s", expectedFile.path)
 					continue

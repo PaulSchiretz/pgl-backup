@@ -39,6 +39,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -53,10 +54,11 @@ import (
 // Storing this directly instead of the os.FileInfo interface avoids a pointer
 // lookup and reduces GC pressure, as the data is inlined in the parent struct.
 type compactPathInfo struct {
-	ModTime int64       // Unix Nano. Stored as int64 to avoid GC overhead of time.Time's internal pointer.
-	Size    int64       // Size in bytes.
-	Mode    os.FileMode // File mode bits.
-	IsDir   bool        // True if the path is a directory.
+	ModTime   int64       // Unix Nano. Stored as int64 to avoid GC overhead of time.Time's internal pointer.
+	Size      int64       // Size in bytes.
+	Mode      os.FileMode // File mode bits.
+	IsDir     bool        // True if the path is a directory.
+	IsSymlink bool        // True if the path is a symlink.
 }
 
 // syncTask holds all the necessary metadata for a worker to process a file
@@ -309,6 +311,59 @@ func (r *syncRun) copyFileHelper(absSrcPath, absTrgPath string, task *syncTask, 
 	return fmt.Errorf("failed to copy file from '%s' to '%s' after %d attempts: %w", absSrcPath, absTrgPath, retryCount, lastErr)
 }
 
+// copySymlinkHelper handles the low-level details of creating a symlink.
+// It ensures atomicity by creating a temporary link first and then renaming it.
+func (r *syncRun) copySymlinkHelper(target, absTrgPath string, retryCount int, retryWait time.Duration) error {
+	var lastErr error
+	for i := 0; i <= retryCount; i++ {
+		if i > 0 {
+			plog.Warn("Retrying symlink creation", "file", absTrgPath, "attempt", fmt.Sprintf("%d/%d", i, retryCount), "after", retryWait)
+			time.Sleep(retryWait)
+		}
+
+		lastErr = func() error {
+			absTrgDir := filepath.Dir(absTrgPath)
+
+			// Generate a temp name.
+			f, err := os.CreateTemp(absTrgDir, "pgl-backup-symlink-*.tmp")
+			if err != nil {
+				return fmt.Errorf("failed to generate temp name for symlink: %w", err)
+			}
+			tempName := f.Name()
+			f.Close()
+			// os.CreateTemp creates a regular file. We only need the unique name.
+			// We must remove the file so os.Symlink can create the link in its place.
+			os.Remove(tempName)
+
+			// Defer the removal of the temp file.
+			defer func() {
+				if tempName != "" {
+					os.Remove(tempName)
+				}
+			}()
+
+			if err := os.Symlink(target, tempName); err != nil {
+				if runtime.GOOS == "windows" && strings.Contains(err.Error(), "privilege") {
+					return fmt.Errorf("failed to create symlink (requires Admin or Developer Mode): %w", err)
+				}
+				return fmt.Errorf("failed to create symlink %s -> %s: %w", tempName, target, err)
+			}
+
+			if err := os.Rename(tempName, absTrgPath); err != nil {
+				return fmt.Errorf("failed to rename temp symlink to %s: %w", absTrgPath, err)
+			}
+
+			tempName = "" // Prevent deferred removal
+			return nil
+		}()
+
+		if lastErr == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("failed to create symlink at '%s' after %d attempts: %w", absTrgPath, retryCount, lastErr)
+}
+
 // normalizeExclusionPattern converts a path or pattern into a standardized,
 // case-insensitive key format (forward slashes, lowercase).
 func normalizeExclusionPattern(p string) string {
@@ -514,14 +569,15 @@ func (r *syncRun) processFileSync(task *syncTask) error {
 				r.metrics.AddFilesUpToDate(1)
 				return nil // Not changed
 			}
-		} else {
-			// The destination exists but is not a regular file (e.g., it's a directory, symlink, or other special file).
-			// To ensure a consistent state, we must remove it before copying the source file.
-			plog.Warn("Destination is not a regular file, removing before copy", "path", task.RelPathKey, "type", trgInfo.Mode().String())
+		} else if trgInfo.IsDir() {
+			// Destination is a directory. Rename cannot overwrite it, so we must remove it explicitly.
+			plog.Warn("Destination is a directory, removing before copy", "path", task.RelPathKey)
 			if err := os.RemoveAll(absTrgPath); err != nil {
-				return fmt.Errorf("failed to remove non-regular file at destination %s: %w", absTrgPath, err)
+				return fmt.Errorf("failed to remove directory at destination %s: %w", absTrgPath, err)
 			}
-			// After removal, proceed to copy the file.
+		} else {
+			// Destination is a symlink or special file. os.Rename will overwrite it atomically.
+			plog.Warn("Destination is not a regular file, overwriting", "path", task.RelPathKey, "type", trgInfo.Mode().String())
 		}
 	} else if !os.IsNotExist(err) {
 		// An unexpected error occurred while Lstat-ing the destination.
@@ -536,6 +592,57 @@ func (r *syncRun) processFileSync(task *syncTask) error {
 	r.metrics.AddFilesCopied(1)
 	r.metrics.AddBytesCopied(task.PathInfo.Size)
 	return nil // File was actually copied/updated
+}
+
+// processSymlinkSync handles the creation or update of a symlink in the destination.
+func (r *syncRun) processSymlinkSync(task *syncTask) error {
+	if r.dryRun {
+		plog.Notice("[DRY RUN] SYMLINK", "path", task.RelPathKey)
+		return nil
+	}
+
+	absSrcPath := r.denormalizedAbsPath(r.src, task.RelPathKey)
+	absTrgPath := r.denormalizedAbsPath(r.trg, task.RelPathKey)
+
+	// Read the link target from the source.
+	target, err := os.Readlink(absSrcPath)
+	if err != nil {
+		return fmt.Errorf("failed to read source symlink %s: %w", absSrcPath, err)
+	}
+
+	// Check if the destination exists and matches.
+	dstInfo, err := os.Lstat(absTrgPath)
+	if err == nil {
+		// Destination exists.
+		if dstInfo.Mode()&os.ModeSymlink != 0 {
+			// It's a symlink. Check if targets match.
+			dstTarget, err := os.Readlink(absTrgPath)
+			if err == nil && dstTarget == target {
+				r.metrics.AddFilesUpToDate(1)
+				return nil // Up to date
+			}
+		} else if dstInfo.IsDir() {
+			// Destination is a directory. Rename cannot overwrite it, so we must remove it explicitly.
+			plog.Warn("Destination is a directory, removing before symlink creation", "path", task.RelPathKey)
+			if err := os.RemoveAll(absTrgPath); err != nil {
+				return fmt.Errorf("failed to remove existing destination directory %s: %w", absTrgPath, err)
+			}
+		} else {
+			// Destination is a regular file. os.Rename will overwrite it atomically.
+			plog.Warn("Destination is not a symlink, overwriting", "path", task.RelPathKey, "type", dstInfo.Mode().String())
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to lstat destination %s: %w", absTrgPath, err)
+	}
+
+	// Create the symlink atomically using a temporary name and rename.
+	if err := r.copySymlinkHelper(target, absTrgPath, r.retryCount, r.retryWait); err != nil {
+		return err
+	}
+
+	plog.Notice("SYMLINK", "path", task.RelPathKey, "target", target)
+	r.metrics.AddFilesCopied(1)
+	return nil
 }
 
 // processDirectorySync handles the creation and permission setting for a directory in the destination.
@@ -684,8 +791,9 @@ func (r *syncRun) syncWalker() {
 		// ----------------------------------------------------------------
 
 		isDir := info.Mode().IsDir()
-		if !isDir && !info.Mode().IsRegular() {
-			// Symlinks, Named Pipes, etc. are discovered for mirror mode but not synced.
+		isSymlink := info.Mode()&os.ModeSymlink != 0
+		if !isDir && !info.Mode().IsRegular() && !isSymlink {
+			// Named Pipes, Sockets, etc. are discovered for mirror mode but not synced.
 			plog.Notice("SKIP", "type", info.Mode().String(), "path", relPathKey)
 			return nil
 		}
@@ -697,6 +805,7 @@ func (r *syncRun) syncWalker() {
 		task.PathInfo.Size = info.Size()
 		task.PathInfo.Mode = info.Mode()
 		task.PathInfo.IsDir = isDir
+		task.PathInfo.IsSymlink = isSymlink
 
 		// If it's a directory, cache its PathInfo for workers to use later.
 		if task.PathInfo.IsDir {
@@ -753,7 +862,7 @@ func (r *syncRun) syncWorker() {
 					}
 					return // dir created
 				}
-				// This is a file task.
+				// This is a file or symlink task.
 				// 1. Ensure Parent Directory Exists (still required for files whose parent directory's
 				// task hasn't been processed yet, ensuring order)
 				parentRelPathKey := r.normalizedParentRelPathKey(task.RelPathKey)
@@ -778,8 +887,15 @@ func (r *syncRun) syncWorker() {
 						return // no dir no filecopy
 					}
 				}
-				// 2. Process the file sync
-				if err := r.processFileSync(task); err != nil {
+				// 2. Process the sync (file or symlink)
+				var err error
+				if task.PathInfo.IsSymlink {
+					err = r.processSymlinkSync(task)
+				} else {
+					err = r.processFileSync(task)
+				}
+
+				if err != nil {
 					if r.failFast {
 						// Fail-fast mode: treat this as a critical error.
 						// Use a non-blocking send in case another worker has already sent a critical error.

@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,6 +50,22 @@ func createTestBackupDir(t *testing.T, baseDir, name string, timestampUTC time.T
 	// Create some content
 	if err := os.WriteFile(filepath.Join(contentPath, "file1.txt"), []byte("hello"), util.UserWritableFilePerms); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	// Create a symlink
+	err := os.Symlink("file1.txt", filepath.Join(contentPath, "link1.txt"))
+	if err != nil {
+		if runtime.GOOS == "windows" && strings.Contains(err.Error(), "A required privilege is not held by the client") {
+			t.Skip("Skipping test: creating symlinks on Windows requires administrator privileges or Developer Mode.")
+		}
+		// For other errors, fail the test.
+		t.Fatalf("failed to create symlink: %v", err)
+	}
+
+	// Create a broken symlink
+	err = os.Symlink("missing_target.txt", filepath.Join(contentPath, "broken_link.txt"))
+	if err != nil {
+		t.Fatalf("failed to create broken symlink: %v", err)
 	}
 
 	return backupPath
@@ -115,7 +133,7 @@ func TestCompress(t *testing.T) {
 			}
 
 			// 5. Verify archive content (simple check for zip)
-			AssertArchiveContains(t, archivePath, tc.format, []string{"file1.txt"})
+			AssertArchiveContains(t, archivePath, tc.format, []string{"file1.txt", "link1.txt", "broken_link.txt"})
 		})
 	}
 
@@ -328,6 +346,40 @@ func AssertArchiveContains(t *testing.T, archivePath string, format config.Compr
 		for _, f := range r.File {
 			if _, ok := foundFiles[f.Name]; ok {
 				foundFiles[f.Name] = true
+				if f.Name == "link1.txt" {
+					if f.Mode()&os.ModeSymlink == 0 {
+						t.Errorf("expected link1.txt to be a symlink in zip")
+					}
+					rc, err := f.Open()
+					if err != nil {
+						t.Fatalf("failed to open zip entry link1.txt: %v", err)
+					}
+					content, err := io.ReadAll(rc)
+					rc.Close()
+					if err != nil {
+						t.Fatalf("failed to read zip entry link1.txt: %v", err)
+					}
+					if string(content) != "file1.txt" {
+						t.Errorf("expected link1.txt to point to 'file1.txt', got %q", string(content))
+					}
+				}
+				if f.Name == "broken_link.txt" {
+					if f.Mode()&os.ModeSymlink == 0 {
+						t.Errorf("expected broken_link.txt to be a symlink in zip")
+					}
+					rc, err := f.Open()
+					if err != nil {
+						t.Fatalf("failed to open zip entry broken_link.txt: %v", err)
+					}
+					content, err := io.ReadAll(rc)
+					rc.Close()
+					if err != nil {
+						t.Fatalf("failed to read zip entry broken_link.txt: %v", err)
+					}
+					if string(content) != "missing_target.txt" {
+						t.Errorf("expected broken_link.txt to point to 'missing_target.txt', got %q", string(content))
+					}
+				}
 			}
 		}
 
@@ -350,6 +402,22 @@ func AssertArchiveContains(t *testing.T, archivePath string, format config.Compr
 			}
 			if _, ok := foundFiles[header.Name]; ok {
 				foundFiles[header.Name] = true
+				if header.Name == "link1.txt" {
+					if header.Typeflag != tar.TypeSymlink {
+						t.Errorf("expected link1.txt to be a symlink in tar.gz")
+					}
+					if header.Linkname != "file1.txt" {
+						t.Errorf("expected link1.txt to point to 'file1.txt', got %q", header.Linkname)
+					}
+				}
+				if header.Name == "broken_link.txt" {
+					if header.Typeflag != tar.TypeSymlink {
+						t.Errorf("expected broken_link.txt to be a symlink in tar.gz")
+					}
+					if header.Linkname != "missing_target.txt" {
+						t.Errorf("expected broken_link.txt to point to 'missing_target.txt', got %q", header.Linkname)
+					}
+				}
 			}
 		}
 
@@ -372,6 +440,22 @@ func AssertArchiveContains(t *testing.T, archivePath string, format config.Compr
 			}
 			if _, ok := foundFiles[header.Name]; ok {
 				foundFiles[header.Name] = true
+				if header.Name == "link1.txt" {
+					if header.Typeflag != tar.TypeSymlink {
+						t.Errorf("expected link1.txt to be a symlink in tar.zst")
+					}
+					if header.Linkname != "file1.txt" {
+						t.Errorf("expected link1.txt to point to 'file1.txt', got %q", header.Linkname)
+					}
+				}
+				if header.Name == "broken_link.txt" {
+					if header.Typeflag != tar.TypeSymlink {
+						t.Errorf("expected broken_link.txt to be a symlink in tar.zst")
+					}
+					if header.Linkname != "missing_target.txt" {
+						t.Errorf("expected broken_link.txt to point to 'missing_target.txt', got %q", header.Linkname)
+					}
+				}
 			}
 		}
 	}
