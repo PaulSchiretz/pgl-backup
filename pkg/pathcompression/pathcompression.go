@@ -29,7 +29,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -276,10 +275,7 @@ func (r *compressionRun) compressDirectory(dirPath string) error {
 
 	// 2. Move the completed temporary archive into the parent backup directory.
 
-	// Ensure destination doesn't exist before renaming (crucial for Windows but redundant on Linux/macOS (where Rename is an atomic replacement).
-	if runtime.GOOS == "windows" {
-		_ = os.Remove(finalArchivePath)
-	}
+	// os.Rename is atomic on POSIX and uses MoveFileEx with MOVEFILE_REPLACE_EXISTING on Windows.
 	if err := os.Rename(tempArchivePath, finalArchivePath); err != nil {
 		return fmt.Errorf("failed to rename temporary archive to final destination: %w", err)
 	}
