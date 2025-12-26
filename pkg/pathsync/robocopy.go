@@ -38,7 +38,9 @@ func (s *PathSyncer) handleRobocopy(ctx context.Context, src, dst string, mirror
 	// /NP :: No Progress - don't display % copied.
 	// /NJH :: No Job Header.
 	// /NJS :: No Job Summary.
-	args := []string{src, dst, "/V", "/TEE", "/NP", "/NJH"}
+	// /SL :: Copy symbolic links instead of the target (matches native engine behavior).
+	// /A-:R :: Remove Read-Only attribute from copied files (matches native engine's WithUserWritePermission).
+	args := []string{src, dst, "/V", "/TEE", "/NP", "/NJH", "/SL", "/A-:R"}
 	args = append(args, "/R:"+strconv.Itoa(s.engine.RetryCount))
 	args = append(args, "/W:"+strconv.Itoa(s.engine.RetryWaitSeconds))
 
