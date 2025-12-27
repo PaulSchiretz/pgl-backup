@@ -6,6 +6,35 @@
 
 `pgl-backup` is a simple, powerful, and robust file backup utility written in Go. It is designed for creating versioned backups of local directories to another local or network-attached drive. It supports periodic snapshots, an efficient incremental mode with a flexible retention policy, and automatic compression.
 
+## Table of Contents
+
+*   [Key Features](#key-features)
+*   [Installation](#installation)
+    *   [From Source](#from-source)
+    *   [From Pre-compiled Binaries](#from-pre-compiled-binaries)
+*   [Security and Binary Verification](#security-and-binary-verification)
+    *   [Running on macOS (Gatekeeper)](#running-on-macos-gatekeeper)
+    *   [Running on Windows (SmartScreen)](#running-on-windows-smartscreen)
+    *   [Verifying Checksums](#verifying-checksums)
+*   [Getting Started: A 3-Step Guide](#getting-started-a-3-step-guide)
+    *   [Step 1: Initialize Configuration](#step-1-initialize-configuration)
+    *   [Step 2: Review Configuration (Optional)](#step-2-review-configuration-optional)
+    *   [Step 3: Run Your First Backup](#step-3-run-your-first-backup)
+*   [Usage and Examples](#usage-and-examples)
+    *   [Basic Backup](#basic-backup)
+    *   [Dry Run](#dry-run)
+    *   [One-Off Snapshot Backup](#one-off-snapshot-backup)
+    *   [Excluding Files and Directories](#excluding-files-and-directories)
+    *   [Default and System Exclusions](#default-and-system-exclusions)
+    *   [Using Pre- and Post-Backup Hooks](#using-pre--and-post-backup-hooks)
+*   [Configuration Details](#configuration-details)
+*   [Understanding the Retention Policy](#understanding-the-retention-policy)
+    *   [Retention Policy Examples](#retention-policy-examples)
+*   [Troubleshooting](#troubleshooting)
+*   [Contributing](#contributing)
+*   [Acknowledgments](#acknowledgments)
+*   [License](#license)
+
 ## Key Features
 
 *   **Backup Modes**:
@@ -43,6 +72,55 @@ go install github.com/paulschiretz/pgl-backup/cmd/pgl-backup@latest
 ### From Pre-compiled Binaries
 
 You can download the latest pre-compiled binaries for your operating system from the Releases page.
+
+## Security and Binary Verification
+
+As an open-source project, the pre-compiled binaries provided in the Releases section are currently **unsigned**. This means that operating systems like macOS and Windows may flag them as "unrecognized" or "untrusted" when you try to run them for the first time.
+
+This is expected behavior for unsigned software. You can verify the integrity of the downloaded files using the provided `checksums.txt` file, or build the project from source if you prefer.
+
+**Note:** At the current stage, binaries are unsigned to avoid the high costs of code signing certificates for a free open-source tool. If this is a significant issue for you, please open an issue on GitHub. I am willing to sign binaries in the future if there is sufficient demand to justify the cost.
+
+### Running on macOS (Gatekeeper)
+
+When you first run `pgl-backup` on macOS, you may see a popup saying it "cannot be opened because the developer cannot be verified."
+
+1.  Locate the `pgl-backup` binary in Finder.
+2.  **Right-click** (or Control-click) the file and select **Open**.
+3.  Click **Open** in the dialog box that appears.
+4.  You only need to do this once.
+
+Alternatively, you can remove the quarantine attribute via the terminal:
+```sh
+xattr -d com.apple.quarantine pgl-backup
+```
+
+### Running on Windows (SmartScreen)
+
+Windows Defender SmartScreen may prevent the application from starting.
+
+1.  Click **More info** in the popup window.
+2.  Click the **Run anyway** button.
+
+### Verifying Checksums
+
+Every release includes a `checksums.txt` file containing the SHA256 hashes of the artifacts. You can verify that your download has not been tampered with or corrupted.
+
+**Linux / macOS:**
+```sh
+# Download the checksums.txt and the archive to the same directory
+shasum -a 256 -c checksums.txt
+
+# Or manually check a specific file:
+shasum -a 256 pgl-backup_v1.0.0_darwin_arm64.tar.gz
+# Compare output with the content of checksums.txt
+```
+
+**Windows (PowerShell):**
+```powershell
+Get-FileHash .\pgl-backup_v1.0.0_windows_amd64.zip -Algorithm SHA256
+# Compare the hash with the content of checksums.txt
+```
 
 ## Getting Started: A 3-Step Guide
 
@@ -433,6 +511,10 @@ The best policy depends on how much data you are backing up and how much disk sp
 *   **The Solution**: `pgl-backup` automatically tests the case-sensitivity of both the source and the host environment. If it detects this risky combination, it will stop with a clear error message before the backup begins.
 *   **Recommendation**: For maximum data integrity when backing up a case-sensitive source (like a Linux server or a WSL environment), you should always **run `pgl-backup` on a case-sensitive operating system** (like Linux, or from within WSL on Windows).
 
+### Error: "Unrecognized Developer" or "Untrusted" warning on startup
+
+This occurs because the binaries are currently unsigned. Please refer to the Security and Binary Verification section for instructions on how to verify and run the application on macOS and Windows.
+
 ### Error: `permission denied` when reading source or writing to target
 
 *   **Cause**: The user running `pgl-backup` does not have the necessary read permissions for the source directory or write permissions for the target directory.
@@ -470,6 +552,26 @@ The best policy depends on how much data you are backing up and how much disk sp
 *   **Solution**:
     *   Run the command prompt or PowerShell as **Administrator**.
     *   Enable **Developer Mode** in Windows settings, which allows non-admins to create symlinks.
+
+### Error: `invalid character` or `cannot unmarshal` when loading configuration
+
+*   **Cause**: The `pgl-backup.config.json` file contains invalid JSON syntax (e.g., a missing comma, a trailing comma after the last item in a list, or unescaped backslashes in paths).
+*   **Solution**:
+    *   Validate your JSON content using an online JSON validator.
+    *   Ensure backslashes in Windows paths are escaped (e.g., `"C:\\Users\\Name"` instead of `"C:\Users\Name"`) or use forward slashes (`"C:/Users/Name"`), which work on all platforms.
+
+### Error: `The process cannot access the file...` (Windows)
+
+*   **Cause**: The file is currently open and locked by another application (e.g., an open Word document, Outlook .pst file, or running database). `pgl-backup` does not currently support Volume Shadow Copy Service (VSS) to back up locked files.
+*   **Solution**:
+    *   Close the application using the file before running the backup.
+    *   Use the `pre-backup-hooks` feature to stop the relevant service/application before the backup and `post-backup-hooks` to restart it.
+
+### Issue: Files are being re-copied every time, even if unchanged
+
+*   **Cause**: This often happens when backing up to a file system with lower timestamp precision (like FAT32/exFAT) or a network share (SMB/CIFS) where the server time drifts from the client time.
+*   **Solution**:
+    *   Increase the `modTimeWindowSeconds` setting in your configuration (e.g., to `2` or `5` seconds). This tells `pgl-backup` to treat timestamps as identical if they are within that window.
 
 ## Contributing
 
