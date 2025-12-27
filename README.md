@@ -25,11 +25,11 @@
     *   [Dry Run](#dry-run)
     *   [One-Off Snapshot Backup](#one-off-snapshot-backup)
     *   [Excluding Files and Directories](#excluding-files-and-directories)
-    *   [Default and System Exclusions](#default-and-system-exclusions)
     *   [Using Pre- and Post-Backup Hooks](#using-pre--and-post-backup-hooks)
 *   [Cross-Platform Backups and Case-Sensitivity](#cross-platform-backups-and-case-sensitivity)
-*   [Understanding Log Levels](#understanding-log-levels)
-*   [Understanding the Retention Policy](#understanding-the-retention-policy)
+*   [Exclusion Rules](#exclusion-rules)
+*   [Log Levels](#log-levels)
+*   [Retention Policy](#retention-policy)
     *   [Retention Policy Examples](#retention-policy-examples)
 *   [Configuration Details](#configuration-details)
 *   [Troubleshooting](#troubleshooting)
@@ -170,7 +170,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
   "metrics": true,
   "compression": {
     "enabled": true,
-    "format": "tar.zst",
+    "format": "tar.zst"
   },
   "naming": {
     "prefix": "PGL_Backup_"
@@ -285,8 +285,32 @@ Exclude temporary files and `node_modules` directories. Patterns support standar
 ```sh
 pgl-backup -target="..." -user-exclude-files="*.tmp,*.log" -user-exclude-dirs="node_modules,.cache"
 ```
-
 > **Note on Matching**: All exclusion patterns are case-insensitive on all operating systems. A pattern like *.jpeg will match photo.jpeg, photo.JPEG, and photo.JpEg. This ensures your configuration is portable and behaves predictably across Windows, macOS, and Linux.
+
+### Using Pre- and Post-Backup Hooks
+
+Run a script before the backup starts. Commands with spaces must be wrapped in single or double quotes.
+
+```sh
+pgl-backup -target="..." -pre-backup-hooks="'/usr/local/bin/dump_database.sh', 'echo Backup starting...'"
+```
+>**Security Note:** Hooks execute arbitrary shell commands. Ensure that any commands in your configuration are from a trusted source and have the correct permissions to prevent unintended side effects.
+
+## Cross-Platform Backups and Case-Sensitivity
+
+`pgl-backup` includes a critical safety check to prevent data loss from filesystem case-sensitivity mismatches.
+
+*   **The Problem**: Backing up a case-sensitive source (like a Linux filesystem with both `File.txt` and `file.txt`) from a case-insensitive host (like Windows) is dangerous. The host OS may only "see" one of the files, leading to silent data loss as the other is never backed up.
+*   **The Solution**: `pgl-backup` automatically tests the case-sensitivity of both the source and the host environment. If it detects this risky combination, it will stop with a clear error message before the backup begins.
+*   **Recommendation**: For maximum data integrity when backing up a case-sensitive source (like a Linux server or a WSL environment), you should always **run `pgl-backup` on a case-sensitive operating system** (like Linux, or from within WSL on Windows).
+
+## Exclusion Rules
+
+`pgl-backup` provides a flexible exclusion system to keep your backups clean and efficient.
+
+### Case-Insensitive Matching
+
+All exclusion patterns are case-insensitive on all operating systems. A pattern like *.jpeg will match photo.jpeg, photo.JPEG, and photo.JpEg. This ensures your configuration is portable and behaves predictably across Windows, macOS, and Linux.
 
 ### Default and System Exclusions
 
@@ -306,24 +330,10 @@ The JSON keys for these are `defaultExcludeFiles` and `defaultExcludeDirs`.
 *   **Default Excluded Files:** `*.tmp`, `*.temp`, `*.swp`, `*.lnk`, `~*`, `desktop.ini`, `.DS_Store`, `Thumbs.db`, `Icon\r`.
 *   **Default Excluded Directories:** `@tmp`, `@eadir`, `.SynologyWorkingDirectory`, `#recycle`, `$Recycle.Bin`.
 
-### Using Pre- and Post-Backup Hooks
+#### 3. User Exclusions (Customizable)
+You can define your own list of files and directories to exclude using the `userExcludeFiles` and `userExcludeDirs` keys in the configuration file, or via the command-line flags `-user-exclude-files` and `-user-exclude-dirs`. These are combined with the system and default exclusions.
 
-Run a script before the backup starts. Commands with spaces must be wrapped in single or double quotes.
-
-```sh
-pgl-backup -target="..." -pre-backup-hooks="'/usr/local/bin/dump_database.sh', 'echo Backup starting...'"
-```
->**Security Note:** Hooks execute arbitrary shell commands. Ensure that any commands in your configuration are from a trusted source and have the correct permissions to prevent unintended side effects.
-
-## Cross-Platform Backups and Case-Sensitivity
-
-`pgl-backup` includes a critical safety check to prevent data loss from filesystem case-sensitivity mismatches.
-
-*   **The Problem**: Backing up a case-sensitive source (like a Linux filesystem with both `File.txt` and `file.txt`) from a case-insensitive host (like Windows) is dangerous. The host OS may only "see" one of the files, leading to silent data loss as the other is never backed up.
-*   **The Solution**: `pgl-backup` automatically tests the case-sensitivity of both the source and the host environment. If it detects this risky combination, it will stop with a clear error message before the backup begins.
-*   **Recommendation**: For maximum data integrity when backing up a case-sensitive source (like a Linux server or a WSL environment), you should always **run `pgl-backup` on a case-sensitive operating system** (like Linux, or from within WSL on Windows).
-
-## Understanding Log Levels
+## Log Levels
 
 `pgl-backup` uses a structured logging system with several levels of verbosity, allowing you to control how much detail you see. You can set the level using the `-log-level` flag or the `logLevel` key in your configuration file.
 
@@ -333,7 +343,7 @@ pgl-backup -target="..." -pre-backup-hooks="'/usr/local/bin/dump_database.sh', '
 *   **`notice`**: Shows everything from `info` plus detailed, per-item operational messages. Use this level to see a log of every file being copied, deleted, archived, or compressed. It's useful for verifying that specific files are being handled correctly without the full verbosity of `debug`.
 *   **`debug`**: The most verbose level. Includes everything from `notice` plus detailed developer-oriented information for tracing execution flow and diagnosing complex issues.
 
-## Understanding the Retention Policy
+## Retention Policy
 
 The retention policy is designed to give you a detailed short-term history and a space-efficient long-term history. It works using a "promotion" system. When cleaning up old backups, `pgl-backup` scans all your archives from newest to oldest and decides which ones to keep.
 
@@ -485,7 +495,7 @@ All command-line flags can be set in the `pgl-backup.config.json` file.
 | `retention.incremental.days`          | `int`         | `7`                                   | Number of recent daily incremental archives to keep. |
 | `retention.incremental.weeks`         | `int`         | `4`                                   | Number of recent weekly incremental archives to keep. |
 | `retention.incremental.months`        | `int`         | `3`                                   | Number of recent monthly incremental archives to keep. |
-| `retention.incremental.years`         | `int`         | `1`                                   | Number of recent yearly incremental archives to keep.        
+| `retention.incremental.years`         | `int`         | `1`                                   | Number of recent yearly incremental archives to keep. |
 | `retention.snapshot.enabled`         | `bool`         | `false`                               | Set to true to enable the retention policy for snapshot mode backups. Disabled by default. |
 | `retention.snapshot.hours`         | `int`         | `0`                                      | Number of recent hourly snapshots to keep. |
 | `retention.snapshot.days`          | `int`         | `0`                                      | Number of recent daily snapshots to keep. |
