@@ -81,7 +81,7 @@ As an open-source project, the pre-compiled binaries provided in the Releases se
 
 This is expected behavior for unsigned software. You can verify the integrity of the downloaded files using the provided `checksums.txt` file, or build the project from source if you prefer.
 
-**Note:** At the current stage, binaries are unsigned to avoid the high costs of code signing certificates for a free open-source tool. If this is a significant issue for you, please open an issue on GitHub. I am willing to sign binaries in the future if there is sufficient demand to justify the cost.
+> **Note:** At the current stage, binaries are unsigned to avoid the high costs of code signing certificates for a free open-source tool. If this is a significant issue for you, please open an issue on GitHub. I am willing to sign binaries in the future if there is sufficient demand to justify the cost.
 
 ### Running on macOS (Gatekeeper)
 
