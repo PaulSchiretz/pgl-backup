@@ -330,7 +330,7 @@ The JSON keys for these are `defaultExcludeFiles` and `defaultExcludeDirs`.
 *   **Default Excluded Files:** `*.tmp`, `*.temp`, `*.swp`, `*.lnk`, `~*`, `desktop.ini`, `.DS_Store`, `Thumbs.db`, `Icon\r`.
 *   **Default Excluded Directories:** `@tmp`, `@eadir`, `.SynologyWorkingDirectory`, `#recycle`, `$Recycle.Bin`.
 
-#### 3. User Exclusions (Customizable)
+### User defined Exclusions (Customizable)
 You can define your own list of files and directories to exclude using the `userExcludeFiles` and `userExcludeDirs` keys in the configuration file, or via the command-line flags `-user-exclude-files` and `-user-exclude-dirs`. These are combined with the system and default exclusions.
 
 ## Log Levels
