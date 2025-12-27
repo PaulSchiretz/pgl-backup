@@ -27,9 +27,11 @@
     *   [Excluding Files and Directories](#excluding-files-and-directories)
     *   [Default and System Exclusions](#default-and-system-exclusions)
     *   [Using Pre- and Post-Backup Hooks](#using-pre--and-post-backup-hooks)
-*   [Configuration Details](#configuration-details)
+*   [Cross-Platform Backups and Case-Sensitivity](#cross-platform-backups-and-case-sensitivity)
+*   [Understanding Log Levels](#understanding-log-levels)
 *   [Understanding the Retention Policy](#understanding-the-retention-policy)
     *   [Retention Policy Examples](#retention-policy-examples)
+*   [Configuration Details](#configuration-details)
 *   [Troubleshooting](#troubleshooting)
 *   [Contributing](#contributing)
 *   [Acknowledgments](#acknowledgments)
@@ -313,56 +315,23 @@ pgl-backup -target="..." -pre-backup-hooks="'/usr/local/bin/dump_database.sh', '
 ```
 >**Security Note:** Hooks execute arbitrary shell commands. Ensure that any commands in your configuration are from a trusted source and have the correct permissions to prevent unintended side effects.
 
-## Configuration Details
+## Cross-Platform Backups and Case-Sensitivity
 
-All command-line flags can be set in the `pgl-backup.config.json` file.
+`pgl-backup` includes a critical safety check to prevent data loss from filesystem case-sensitivity mismatches.
 
-| Flag / JSON Key                 | Type          | Default                               | Description                                                                                             |
-| ------------------------------- | ------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `source` / `paths.source`       | `string`      | `""`                                  | The directory to back up. **Required**. |
-| `target` / `paths.targetBase`   | `string`      | `""`                                  | The base directory where backups are stored. **Required**. |
-| `mode` / `mode`                 | `string`      | `"incremental"`                       | Backup mode: `"incremental"` or `"snapshot"`. |
-| `paths.snapshotsSubDir`          | `string`      | `"PGL_Backup_Snapshots"`               | The name of the sub-directory where snapshots are stored (snapshot mode only). |
-| `paths.archivesSubDir`          | `string`      | `"PGL_Backup_Archives"`               | The name of the sub-directory within the target where historical archives are stored (incremental mode only). |
-| `paths.incrementalSubDir`       | `string`      | `"PGL_Backup_Current"`                | The name of the directory for the active incremental backup. |
-| `paths.contentSubDir`           | `string`      | `"PGL_Backup_Content"`                | The name of the sub-directory within a backup that holds the actual synced content. |
-| `init`                          | `bool`        | `false`                               | If true, generates a config file and exits. |
-| `dry-run` / `dryRun`            | `bool`        | `false`                               | If true, simulates the backup without making changes. |
-| `log-level` / `logLevel`        | `string`      | `"info"`                              | Set the logging level: `"debug"`, `"notice"`, `"info"`, `"warn"`, or `"error"`. |
-| `metrics` / `metrics`           | `bool`        | `true`                                | If true, enables detailed performance and file-counting metrics. |
-| `sync-engine` / `engine.type`   | `string`      | `"native"`                            | The sync engine to use: `"native"` or `"robocopy"` (Windows only). |
-| `archive.incremental.mode` | `string` | `"auto"` | Archive interval mode: `"auto"` (derives interval from retention policy) or `"manual"`. In `auto` mode, if the retention policy is disabled, archiving is also disabled. |
-| `archive.incremental.interval` | `duration` | `"24h"` | In `manual` mode, the interval after which a new archive is created (e.g., "24h", "168h"). Use "0" to disable archiving. |
-| `retention.incremental.enabled`         | `bool`         | `true`                             | Enables the retention policy for incremental mode archives. |
-| `retention.incremental.hours`         | `int`         | `0`                                   | Number of recent hourly incremental archives to keep. |
-| `retention.incremental.days`          | `int`         | `7`                                   | Number of recent daily incremental archives to keep. |
-| `retention.incremental.weeks`         | `int`         | `4`                                   | Number of recent weekly incremental archives to keep. |
-| `retention.incremental.months`        | `int`         | `3`                                   | Number of recent monthly incremental archives to keep. |
-| `retention.incremental.years`         | `int`         | `1`                                   | Number of recent yearly incremental archives to keep.        
-| `retention.snapshot.enabled`         | `bool`         | `false`                               | Set to true to enable the retention policy for snapshot mode backups. Disabled by default. |
-| `retention.snapshot.hours`         | `int`         | `0`                                      | Number of recent hourly snapshots to keep. |
-| `retention.snapshot.days`          | `int`         | `0`                                      | Number of recent daily snapshots to keep. |
-| `retention.snapshot.weeks`         | `int`         | `0`                                      | Number of recent weekly snapshots to keep. |
-| `retention.snapshot.months`        | `int`         | `0`                                      | Number of recent monthly snapshots to keep. |
-| `retention.snapshot.years`         | `int`         | `0`                                      | Number of recent yearly snapshots to keep. |
-| `compression` / `compression.enabled` | `bool` | `false` | If true, enables compression for any backups (incremental archives or snapshots) that are not already compressed. |
-| `compression-format` / `compression.format` | `string` | `"tar.zst"` | The archive format to use: `"zip"`, `"tar.gz"` or `"tar.zst"`. |
-| `defaultExcludeFiles`           | `[]string`    | `[*.tmp, *.temp, *.swp, *.lnk, ~*, desktop.ini, .DS_Store, Thumbs.db, Icon\r]`                     | The list of default file patterns to exclude. Can be customized. |
-| `defaultExcludeDirs`            | `[]string`    | `[@tmp, @eadir, .SynologyWorkingDirectory, #recycle, $Recycle.Bin]`                     | The list of default directory patterns to exclude. Can be customized. |
-| `user-exclude-files` / `userExcludeFiles`| `[]string`    | `[]`                                  | List of file patterns to exclude. |
-| `user-exclude-dirs` / `userExcludeDirs`  | `[]string`    | `[]`                                  | List of directory patterns to exclude. |
-| `pre-backup-hooks` / `preBackup`| `[]string`    | `[]`                                  | List of shell commands to run before the backup. |
-| `post-backup-hooks` / `postBackup`| `[]string`    | `[]`                                  | List of shell commands to run after the backup. |
-| `preserve-source-name` / `paths.preserveSourceDirectoryName` | `bool` | `true` | If true, appends the source directory's name to the destination path. |
-| **Performance Tuning** | | | | 
-| `sync-workers` / `engine.performance.syncWorkers` | `int` | `runtime.NumCPU()` | Number of concurrent workers for file synchronization. |
-| `mirror-workers` / `engine.performance.mirrorWorkers` | `int` | `runtime.NumCPU()` | Number of concurrent workers for file deletions in mirror mode. |
-| `delete-workers` / `engine.performance.deleteWorkers` | `int` | `4` | Number of concurrent workers for deleting outdated backups. |
-| `compress-workers` / `engine.performance.compressWorkers` | `int` | `4` | Number of concurrent workers for compressing backups. |
-| `retry-count` / `engine.retryCount` | `int` | `3` | Number of retries for failed file copies. |
-| `retry-wait` / `engine.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries. |
-| `mod-time-window` / `engine.modTimeWindowSeconds` | `int` | `1` | Time window in seconds to consider file modification times equal (default 1s). |
-| `buffer-size-kb` / `engine.performance.bufferSizeKB` | `int` | `256` | Size of the I/O buffer in kilobytes for file copies and compression. |
+*   **The Problem**: Backing up a case-sensitive source (like a Linux filesystem with both `File.txt` and `file.txt`) from a case-insensitive host (like Windows) is dangerous. The host OS may only "see" one of the files, leading to silent data loss as the other is never backed up.
+*   **The Solution**: `pgl-backup` automatically tests the case-sensitivity of both the source and the host environment. If it detects this risky combination, it will stop with a clear error message before the backup begins.
+*   **Recommendation**: For maximum data integrity when backing up a case-sensitive source (like a Linux server or a WSL environment), you should always **run `pgl-backup` on a case-sensitive operating system** (like Linux, or from within WSL on Windows).
+
+## Understanding Log Levels
+
+`pgl-backup` uses a structured logging system with several levels of verbosity, allowing you to control how much detail you see. You can set the level using the `-log-level` flag or the `logLevel` key in your configuration file.
+
+*   **`error`**: Only shows critical errors that cause the backup process to halt. Use this if you only want to be alerted to complete failures.
+*   **`warn`**: Shows errors and warnings. Warnings are non-critical issues that the application has recovered from but that you should be aware of (e.g., a single file failed to copy, a configuration mismatch).
+*   **`info` (Default)**: Provides a high-level summary of the backup process. It shows the start and end of major phases like synchronization, compression, and retention cleanup. This is the recommended level for daily use and cron jobs, as it provides a clean, readable overview.
+*   **`notice`**: Shows everything from `info` plus detailed, per-item operational messages. Use this level to see a log of every file being copied, deleted, archived, or compressed. It's useful for verifying that specific files are being handled correctly without the full verbosity of `debug`.
+*   **`debug`**: The most verbose level. Includes everything from `notice` plus detailed developer-oriented information for tracing execution flow and diagnosing complex issues.
 
 ## Understanding the Retention Policy
 
@@ -491,25 +460,58 @@ The best policy depends on how much data you are backing up and how much disk sp
 }
 ```
 
+## Configuration Details
+
+All command-line flags can be set in the `pgl-backup.config.json` file.
+
+| Flag / JSON Key                 | Type          | Default                               | Description                                                                                             |
+| ------------------------------- | ------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `source` / `paths.source`       | `string`      | `""`                                  | The directory to back up. **Required**. |
+| `target` / `paths.targetBase`   | `string`      | `""`                                  | The base directory where backups are stored. **Required**. |
+| `mode` / `mode`                 | `string`      | `"incremental"`                       | Backup mode: `"incremental"` or `"snapshot"`. |
+| `paths.snapshotsSubDir`          | `string`      | `"PGL_Backup_Snapshots"`               | The name of the sub-directory where snapshots are stored (snapshot mode only). |
+| `paths.archivesSubDir`          | `string`      | `"PGL_Backup_Archives"`               | The name of the sub-directory within the target where historical archives are stored (incremental mode only). |
+| `paths.incrementalSubDir`       | `string`      | `"PGL_Backup_Current"`                | The name of the directory for the active incremental backup. |
+| `paths.contentSubDir`           | `string`      | `"PGL_Backup_Content"`                | The name of the sub-directory within a backup that holds the actual synced content. |
+| `init`                          | `bool`        | `false`                               | If true, generates a config file and exits. |
+| `dry-run` / `dryRun`            | `bool`        | `false`                               | If true, simulates the backup without making changes. |
+| `log-level` / `logLevel`        | `string`      | `"info"`                              | Set the logging level: `"debug"`, `"notice"`, `"info"`, `"warn"`, or `"error"`. |
+| `metrics` / `metrics`           | `bool`        | `true`                                | If true, enables detailed performance and file-counting metrics. |
+| `sync-engine` / `engine.type`   | `string`      | `"native"`                            | The sync engine to use: `"native"` or `"robocopy"` (Windows only). |
+| `archive.incremental.mode` | `string` | `"auto"` | Archive interval mode: `"auto"` (derives interval from retention policy) or `"manual"`. In `auto` mode, if the retention policy is disabled, archiving is also disabled. |
+| `archive.incremental.interval` | `duration` | `"24h"` | In `manual` mode, the interval after which a new archive is created (e.g., "24h", "168h"). Use "0" to disable archiving. |
+| `retention.incremental.enabled`         | `bool`         | `true`                             | Enables the retention policy for incremental mode archives. |
+| `retention.incremental.hours`         | `int`         | `0`                                   | Number of recent hourly incremental archives to keep. |
+| `retention.incremental.days`          | `int`         | `7`                                   | Number of recent daily incremental archives to keep. |
+| `retention.incremental.weeks`         | `int`         | `4`                                   | Number of recent weekly incremental archives to keep. |
+| `retention.incremental.months`        | `int`         | `3`                                   | Number of recent monthly incremental archives to keep. |
+| `retention.incremental.years`         | `int`         | `1`                                   | Number of recent yearly incremental archives to keep.        
+| `retention.snapshot.enabled`         | `bool`         | `false`                               | Set to true to enable the retention policy for snapshot mode backups. Disabled by default. |
+| `retention.snapshot.hours`         | `int`         | `0`                                      | Number of recent hourly snapshots to keep. |
+| `retention.snapshot.days`          | `int`         | `0`                                      | Number of recent daily snapshots to keep. |
+| `retention.snapshot.weeks`         | `int`         | `0`                                      | Number of recent weekly snapshots to keep. |
+| `retention.snapshot.months`        | `int`         | `0`                                      | Number of recent monthly snapshots to keep. |
+| `retention.snapshot.years`         | `int`         | `0`                                      | Number of recent yearly snapshots to keep. |
+| `compression` / `compression.enabled` | `bool` | `false` | If true, enables compression for any backups (incremental archives or snapshots) that are not already compressed. |
+| `compression-format` / `compression.format` | `string` | `"tar.zst"` | The archive format to use: `"zip"`, `"tar.gz"` or `"tar.zst"`. |
+| `defaultExcludeFiles`           | `[]string`    | `[*.tmp, *.temp, *.swp, *.lnk, ~*, desktop.ini, .DS_Store, Thumbs.db, Icon\r]`                     | The list of default file patterns to exclude. Can be customized. |
+| `defaultExcludeDirs`            | `[]string`    | `[@tmp, @eadir, .SynologyWorkingDirectory, #recycle, $Recycle.Bin]`                     | The list of default directory patterns to exclude. Can be customized. |
+| `user-exclude-files` / `userExcludeFiles`| `[]string`    | `[]`                                  | List of file patterns to exclude. |
+| `user-exclude-dirs` / `userExcludeDirs`  | `[]string`    | `[]`                                  | List of directory patterns to exclude. |
+| `pre-backup-hooks` / `preBackup`| `[]string`    | `[]`                                  | List of shell commands to run before the backup. |
+| `post-backup-hooks` / `postBackup`| `[]string`    | `[]`                                  | List of shell commands to run after the backup. |
+| `preserve-source-name` / `paths.preserveSourceDirectoryName` | `bool` | `true` | If true, appends the source directory's name to the destination path. |
+| **Performance Tuning** | | | | 
+| `sync-workers` / `engine.performance.syncWorkers` | `int` | `runtime.NumCPU()` | Number of concurrent workers for file synchronization. |
+| `mirror-workers` / `engine.performance.mirrorWorkers` | `int` | `runtime.NumCPU()` | Number of concurrent workers for file deletions in mirror mode. |
+| `delete-workers` / `engine.performance.deleteWorkers` | `int` | `4` | Number of concurrent workers for deleting outdated backups. |
+| `compress-workers` / `engine.performance.compressWorkers` | `int` | `4` | Number of concurrent workers for compressing backups. |
+| `retry-count` / `engine.retryCount` | `int` | `3` | Number of retries for failed file copies. |
+| `retry-wait` / `engine.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries. |
+| `mod-time-window` / `engine.modTimeWindowSeconds` | `int` | `1` | Time window in seconds to consider file modification times equal (default 1s). |
+| `buffer-size-kb` / `engine.performance.bufferSizeKB` | `int` | `256` | Size of the I/O buffer in kilobytes for file copies and compression. |
+
 ## Troubleshooting
-
-### Understanding Log Levels
-
-`pgl-backup` uses a structured logging system with several levels of verbosity, allowing you to control how much detail you see. You can set the level using the `-log-level` flag or the `logLevel` key in your configuration file.
-
-*   **`error`**: Only shows critical errors that cause the backup process to halt. Use this if you only want to be alerted to complete failures.
-*   **`warn`**: Shows errors and warnings. Warnings are non-critical issues that the application has recovered from but that you should be aware of (e.g., a single file failed to copy, a configuration mismatch).
-*   **`info` (Default)**: Provides a high-level summary of the backup process. It shows the start and end of major phases like synchronization, compression, and retention cleanup. This is the recommended level for daily use and cron jobs, as it provides a clean, readable overview.
-*   **`notice`**: Shows everything from `info` plus detailed, per-item operational messages. Use this level to see a log of every file being copied, deleted, archived, or compressed. It's useful for verifying that specific files are being handled correctly without the full verbosity of `debug`.
-*   **`debug`**: The most verbose level. Includes everything from `notice` plus detailed developer-oriented information for tracing execution flow and diagnosing complex issues.
-
-### A Note on Cross-Platform Backups and Case-Sensitivity
-
-`pgl-backup` includes a critical safety check to prevent data loss from filesystem case-sensitivity mismatches.
-
-*   **The Problem**: Backing up a case-sensitive source (like a Linux filesystem with both `File.txt` and `file.txt`) from a case-insensitive host (like Windows) is dangerous. The host OS may only "see" one of the files, leading to silent data loss as the other is never backed up.
-*   **The Solution**: `pgl-backup` automatically tests the case-sensitivity of both the source and the host environment. If it detects this risky combination, it will stop with a clear error message before the backup begins.
-*   **Recommendation**: For maximum data integrity when backing up a case-sensitive source (like a Linux server or a WSL environment), you should always **run `pgl-backup` on a case-sensitive operating system** (like Linux, or from within WSL on Windows).
 
 ### Error: "Unrecognized Developer" or "Untrusted" warning on startup
 
