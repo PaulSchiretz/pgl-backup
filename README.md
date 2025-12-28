@@ -530,7 +530,7 @@ All command-line flags can be set in the `pgl-backup.config.json` file.
 
 ### Error: "Unrecognized Developer" or "Untrusted" warning on startup
 
-This occurs because the binaries are currently unsigned. Please refer to the Security and Binary Verification section for instructions on how to verify and run the application on macOS and Windows.
+This occurs because the binaries are currently unsigned. Please refer to the [Security and Binary Verification](#security-and-binary-verification) section for instructions on how to verify and run the application on macOS and Windows.
 
 ### Error: `permission denied` when reading source or writing to target
 
