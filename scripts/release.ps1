@@ -7,7 +7,7 @@
   1. Validates the version string.
   2. Performs pre-flight checks (clean git state, correct branch).
   3. Cleans and creates a 'release' directory.
-  4. Cross-compiles the Go application for Windows, Linux, and macOS.
+  4. Cross-compiles the Go application for Windows, Linux, macOS, and FreeBSD.
   5. Archives the binaries into .zip (for Windows) and .tar.gz (for others) files.
   6. Generates a SHA256 checksums.txt file for all artifacts.
   7. Creates and pushes a git tag for the release.
@@ -122,7 +122,8 @@ $platforms = @(
     "linux/amd64",
     "linux/arm64",
     "darwin/amd64",
-    "darwin/arm64"
+    "darwin/arm64",
+    "freebsd/amd64"
 )
 
 # The ldflags variable for injecting the version

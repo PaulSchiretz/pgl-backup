@@ -111,7 +111,7 @@ echo "✅ Cleaned and created '$RELEASE_DIR' directory."
 write_header "Cross-compiling binaries"
 
 # Define target platforms: GOOS/GOARCH
-PLATFORMS=("windows/amd64" "linux/amd64" "linux/arm64" "darwin/amd64" "darwin/arm64")
+PLATFORMS=("windows/amd64" "linux/amd64" "linux/arm64" "darwin/amd64" "darwin/arm64" "freebsd/amd64")
 
 # The ldflags variable for injecting the version
 LDFLAGS="-s -w -X main.version=$VERSION"
