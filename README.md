@@ -26,6 +26,9 @@
     *   [One-Off Snapshot Backup](#one-off-snapshot-backup)
     *   [Excluding Files and Directories](#excluding-files-and-directories)
     *   [Using Pre- and Post-Backup Hooks](#using-pre--and-post-backup-hooks)
+*   [How to Restore a Backup](#how-to-restore-a-backup)
+    *   [1. Locate Your Backup](#1-locate-your-backup)
+    *   [2. Extract Files from Archives](#2-extract-files-from-archives)
 *   [Cross-Platform Backups and Case-Sensitivity](#cross-platform-backups-and-case-sensitivity)
 *   [Exclusion Rules](#exclusion-rules)
 *   [Log Levels](#log-levels)
@@ -295,6 +298,49 @@ Run a script before the backup starts. Commands with spaces must be wrapped in s
 pgl-backup -target="..." -pre-backup-hooks="'/usr/local/bin/dump_database.sh', 'echo Backup starting...'"
 ```
 >**Security Note:** Hooks execute arbitrary shell commands. Ensure that any commands in your configuration are from a trusted source and have the correct permissions to prevent unintended side effects.
+
+## How to Restore a Backup
+
+`pgl-backup` stores your data in standard, open formats, ensuring you can always access your files without needing this tool installed.
+
+### 1. Locate Your Backup
+
+Navigate to your backup target directory. You will see the following structure:
+
+*   **`PGL_Backup_Current/`**: Contains the most recent version of your files. You can browse this directory directly and copy files out using your file explorer.
+*   **`PGL_Backup_Archives/`**: Contains compressed historical backups (e.g., `PGL_Backup_2023-10-27-14-00-00...tar.zst`).
+*   **`PGL_Backup_Snapshots/`**: Contains point-in-time snapshots if you use snapshot mode.
+
+### 2. Extract Files from Archives
+
+If you need to restore files from a compressed archive in `PGL_Backup_Archives` or `PGL_Backup_Snapshots`, use the standard tools for your operating system.
+
+#### Windows (`.zip`)
+1.  Right-click the `.zip` file.
+2.  Select **Extract All...**.
+3.  Choose a destination and click **Extract**.
+
+#### macOS / Linux (`.tar.gz`)
+You can double-click the file to extract it, or use the terminal:
+
+```sh
+# Extract the entire archive
+tar -xvf PGL_Backup_2023-10-27.tar.gz
+
+# Extract a specific file
+tar -xvf PGL_Backup_2023-10-27.tar.gz "path/to/file.txt"
+```
+
+#### macOS / Linux (`.tar.zst`)
+The `.tar.zst` format uses Zstandard compression for high speed and ratio. You may need to install `zstd` (e.g., `brew install zstd` or `apt install zstd`).
+
+```sh
+# Extract the entire archive
+tar --zstd -xvf PGL_Backup_2023-10-27.tar.zst
+
+# Extract a specific file
+tar --zstd -xvf PGL_Backup_2023-10-27.tar.zst "path/to/file.txt"
+```
 
 ## Cross-Platform Backups and Case-Sensitivity
 
