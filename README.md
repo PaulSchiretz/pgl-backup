@@ -4,7 +4,7 @@
 
 > This project was born from the desire to create a hassle-free backup tool that is fast, reliable, and as simple as possible. It is built in a robust, best-practice way, avoiding fancy features that could compromise solidity. The goal is to provide everything you need for solid, performant, cross-platform backups—no more, no less.
 
-`pgl-backup` is a simple, powerful, and robust file backup utility written in Go. It is designed for creating versioned backups of local directories to another local or network-attached drive. It supports periodic snapshots, an efficient incremental mode with a flexible retention policy, and automatic compression.
+`pgl-backup` is a simple, powerful, and robust file backup utility written in Go. It is designed for creating versioned backups of local directories to another local or network-attached drive. It supports periodic snapshots, an efficient incremental mode with a flexible retention policy, and automatic compression. A core design goal is ensuring backups can be restored no matter what; by relying on standard file structures and open archive formats, your data remains fully accessible via native OS tools without needing `pgl-backup` installed.
 
 ## Table of Contents
 
@@ -45,6 +45,7 @@
 *   **Backup Modes**:
     *   **Incremental (default)**: Maintains a single "current" backup directory that is efficiently updated. At a configurable interval (e.g., daily), the "current" backup is rolled over into a timestamped archive. This is ideal for frequent, low-overhead backups.
     *   **Snapshot**: Each backup run creates a new, unique, timestamped directory. This is useful for creating distinct, point-in-time copies.
+*   **Zero Vendor Lock-in**: Your data is stored in standard directories and open archive formats (`.zip`, `.tar.gz`, `.tar.zst`). You can always access and restore your files using native operating system tools, even without `pgl-backup` installed.
 *   **Flexible Retention Policy**: Automatically cleans up outdated backups by keeping a configurable number of hourly, daily, weekly, monthly, and yearly archives. This gives you a fine-grained history without filling up your disk.
 *   **Intelligent Archiving (Incremental Mode)**: The archive interval can be set to `auto` (the default) to automatically align with your retention policy. If you keep hourly backups, it will archive hourly. This prevents configuration mismatches and ensures your retention slots are filled efficiently.
 *   **Automatic and Resilient Compression**: To save disk space, you can enable automatic compression of backups into `.tar.zst`, `.zip` or `.tar.gz` archives. If compression fails (e.g., due to a corrupt file), the original backup is left untouched.
@@ -301,7 +302,7 @@ pgl-backup -target="..." -pre-backup-hooks="'/usr/local/bin/dump_database.sh', '
 
 ## How to Restore a Backup
 
-`pgl-backup` stores your data in standard, open formats, ensuring you can always access your files without needing this tool installed.
+`pgl-backup` is intentionally designed to store your data in standard, open formats. This philosophy ensures that you retain full ownership and access to your files at all times, using native operating system tools, without ever needing to install or rely on `pgl-backup` itself for restoration.
 
 ### 1. Locate Your Backup
 
@@ -314,6 +315,8 @@ Navigate to your backup target directory. You will see the following structure:
 ### 2. Extract Files from Archives
 
 If you need to restore files from a compressed archive in `PGL_Backup_Archives` or `PGL_Backup_Snapshots`, use the standard tools for your operating system.
+
+> **Tip:** For a consistent graphical experience across platforms, or if you prefer not to use the command line, tools like 7-Zip (Windows) or PeaZip (Windows, Linux, macOS) can handle `.zip`, `.tar.gz`, and `.tar.zst` archives effortlessly.
 
 #### Windows (`.zip`)
 1.  Right-click the `.zip` file.
