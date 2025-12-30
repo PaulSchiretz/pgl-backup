@@ -10,6 +10,9 @@
 # Built Visual Studio Code Extensions
 *.vsix
 
+# Dev files
+todos.txt
+
 # Logs
 logs/*
 *.log

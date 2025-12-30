@@ -38,7 +38,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, HelpMessage = "The semantic version for the release (e.g., v1.0.0).")]
-    [ValidatePattern('^v\d+\.\d+\.\d+$')]
+    [ValidatePattern('^v\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$')]
     [string]$Version,
 
     [Parameter(Mandatory = $false, HelpMessage = "If specified, the script will show what it would do without executing.")]
