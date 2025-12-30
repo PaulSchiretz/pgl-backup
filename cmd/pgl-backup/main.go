@@ -78,6 +78,7 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	preserveSourceNameFlag := flag.Bool("preserve-source-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
 	preBackupHooksFlag := flag.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
 	postBackupHooksFlag := flag.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
+	archiveIntervalSecondsFlag := flag.Int("archive-interval-seconds", 0, "In 'manual' mode, the interval in seconds for creating new archives (e.g., 86400 for 24h).")
 	compressionEnabledFlag := flag.Bool("compression", true, "Enable compression for backups.")
 	compressionFormatFlag := flag.String("compression-format", "", "Compression format for backups: 'zip', 'tar.gz or 'tar.zst'.")
 
@@ -120,6 +121,7 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	addIfUsed("retry-wait", *retryWaitFlag)
 	addIfUsed("buffer-size-kb", *bufferSizeKBFlag)
 	addIfUsed("mod-time-window", *modTimeWindowFlag)
+	addIfUsed("archive-interval-seconds", *archiveIntervalSecondsFlag)
 	addIfUsed("compression", *compressionEnabledFlag)
 
 	// Handle flags that require parsing/validation.

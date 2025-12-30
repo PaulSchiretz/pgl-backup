@@ -2,7 +2,7 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/paulschiretz/pgl-backup.svg)](https://pkg.go.dev/github.com/paulschiretz/pgl-backup) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE) [![Go Report Card](https://goreportcard.com/badge/github.com/paulschiretz/pgl-backup)](https://goreportcard.com/report/github.com/paulschiretz/pgl-backup) [![Latest Release](https://img.shields.io/github/v/release/paulschiretz/pgl-backup)](https://github.com/paulschiretz/pgl-backup/releases)
 
-> This project was born from the desire to create a hassle-free backup tool that is fast, reliable, and as simple as possible. It is built in a robust, best-practice way, avoiding fancy features that could compromise solidity. The goal is to provide everything you need for solid, performant, cross-platform backups—no more, no less.
+> This project was born from a desire for a backup tool that is fast, reliable, and simple. It prioritizes robust, best-practice engineering over fancy features that could compromise solidity. The goal is to provide everything you need for solid, performant, cross-platform backups—no more, no less.
 
 `pgl-backup` is a simple, powerful, and robust file backup utility written in Go. It is designed for creating versioned backups of local directories to another local or network-attached drive. It supports periodic snapshots, an efficient incremental mode with a flexible retention policy, and automatic compression. A core design goal is ensuring backups can be restored no matter what; by relying on standard file structures and open archive formats, your data remains fully accessible via native OS tools without needing `pgl-backup` installed.
 
@@ -228,7 +228,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
   "archive": {
     "incremental": {
       "mode": "auto",
-      "interval": "24h0m0s"
+      "intervalSeconds": 86400
     }
   },
   "hooks": {}
@@ -533,8 +533,8 @@ All command-line flags can be set in the `pgl-backup.config.json` file.
 | `source` / `paths.source`       | `string`      | `""`                                  | The directory to back up. **Required**. |
 | `target` / `paths.targetBase`   | `string`      | `""`                                  | The base directory where backups are stored. **Required**. |
 | `mode` / `mode`                 | `string`      | `"incremental"`                       | Backup mode: `"incremental"` or `"snapshot"`. |
-| `paths.snapshotsSubDir`          | `string`      | `"PGL_Backup_Snapshots"`               | The name of the sub-directory where snapshots are stored (snapshot mode only). |
-| `paths.archivesSubDir`          | `string`      | `"PGL_Backup_Archives"`               | The name of the sub-directory within the target where historical archives are stored (incremental mode only). |
+| `paths.snapshotsSubDir`         | `string`      | `"PGL_Backup_Snapshots"`              | The name of the sub-directory where snapshots are stored (snapshot mode only). |
+| `paths.archivesSubDir`          | `string`      | `"PGL_Backup_Archives"`               | The name of the sub-directory where historical archives are stored (incremental mode only). |
 | `fail-fast` / `failFast`        | `bool`        | `false`                               | If true, stops the backup immediately on the first file sync error. |
 | `paths.incrementalSubDir`       | `string`      | `"PGL_Backup_Current"`                | The name of the directory for the active incremental backup. |
 | `paths.contentSubDir`           | `string`      | `"PGL_Backup_Content"`                | The name of the sub-directory within a backup that holds the actual synced content. |
@@ -544,7 +544,7 @@ All command-line flags can be set in the `pgl-backup.config.json` file.
 | `metrics` / `metrics`           | `bool`        | `true`                                | If true, enables detailed performance and file-counting metrics. |
 | `sync-engine` / `engine.type`   | `string`      | `"native"`                            | The sync engine to use: `"native"` or `"robocopy"` (Windows only). |
 | `archive.incremental.mode` | `string` | `"auto"` | Archive interval mode: `"auto"` (derives interval from retention policy) or `"manual"`. In `auto` mode, if the retention policy is disabled, archiving is also disabled. |
-| `archive.incremental.interval` | `duration` | `"24h"` | In `manual` mode, the interval after which a new archive is created (e.g., "24h", "168h"). Use "0" to disable archiving. |
+| `archive-interval-seconds` / `archive.incremental.intervalSeconds` | `int` | `86400` | In `manual` mode, the interval in seconds after which a new archive is created (e.g., `86400` for 24h). Use `0` to disable archiving. |
 | `retention.incremental.enabled`         | `bool`         | `true`                             | Enables the retention policy for incremental mode archives. |
 | `retention.incremental.hours`         | `int`         | `0`                                   | Number of recent hourly incremental archives to keep. |
 | `retention.incremental.days`          | `int`         | `7`                                   | Number of recent daily incremental archives to keep. |
@@ -565,7 +565,7 @@ All command-line flags can be set in the `pgl-backup.config.json` file.
 | `user-exclude-dirs` / `userExcludeDirs`  | `[]string`    | `[]`                                  | List of directory patterns to exclude. |
 | `pre-backup-hooks` / `preBackup`| `[]string`    | `[]`                                  | List of shell commands to run before the backup. |
 | `post-backup-hooks` / `postBackup`| `[]string`    | `[]`                                  | List of shell commands to run after the backup. |
-| `preserve-source-name` / `paths.preserveSourceDirectoryName` | `bool` | `true` | If true, appends the source directory's name to the destination path. |
+| `preserve-source-name` / `paths.preserveSourceDirectoryName` | `bool` | `true` | If true, creates a subdirectory in the destination named after the source directory. If false, syncs contents directly. |
 | **Performance Tuning** | | | | 
 | `sync-workers` / `engine.performance.syncWorkers` | `int` | `runtime.NumCPU()` | Number of concurrent workers for file synchronization. |
 | `mirror-workers` / `engine.performance.mirrorWorkers` | `int` | `runtime.NumCPU()` | Number of concurrent workers for file deletions in mirror mode. |

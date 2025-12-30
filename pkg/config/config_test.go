@@ -105,22 +105,22 @@ func TestConfig_Validate(t *testing.T) {
 
 		// Test negative interval in manual mode (should error)
 		cfg.Archive.Incremental.Mode = ManualInterval
-		cfg.Archive.Incremental.Interval = -1 * time.Hour
+		cfg.Archive.Incremental.IntervalSeconds = -1
 		if err := cfg.Validate(); err == nil {
-			t.Error("expected error for negative archive interval in manual mode, but got nil")
+			t.Error("expected error for negative archive intervalSeconds in manual mode, but got nil")
 		}
 
 		// Test zero interval in manual mode (should NOT error, as it disables archive)
-		cfg.Archive.Incremental.Interval = 0
+		cfg.Archive.Incremental.IntervalSeconds = 0
 		if err := cfg.Validate(); err != nil {
-			t.Errorf("expected no error for zero archive interval in manual mode (disables archive), but got: %v", err)
+			t.Errorf("expected no error for zero archive intervalSeconds in manual mode (disables archive), but got: %v", err)
 		}
 
 		// In auto mode, the interval is calculated, so a user-set 0 should not error.
 		cfg.Archive.Incremental.Mode = AutoInterval
-		cfg.Archive.Incremental.Interval = 0
+		cfg.Archive.Incremental.IntervalSeconds = 0
 		if err := cfg.Validate(); err != nil {
-			t.Errorf("expected no error for zero archive interval in auto mode (value is ignored), but got: %v", err)
+			t.Errorf("expected no error for zero archive intervalSeconds in auto mode (value is ignored), but got: %v", err)
 		}
 	})
 

@@ -248,6 +248,24 @@ func TestParseFlagConfig(t *testing.T) {
 			}
 		})
 	})
+
+	t.Run("Set Archive Interval Flag", func(t *testing.T) {
+		args := []string{"-archive-interval-seconds=172800"} // 48h
+		runTestWithFlags(t, args, func() {
+			_, setFlags, err := parseFlagConfig()
+			if err != nil {
+				t.Fatalf("expected no error, but got: %v", err)
+			}
+			val, ok := setFlags["archive-interval-seconds"]
+			if !ok {
+				t.Fatal("expected 'archive-interval-seconds' flag to be in setFlags map")
+			}
+			expectedSeconds := 172800
+			if intVal, typeOK := val.(int); !typeOK || intVal != expectedSeconds {
+				t.Errorf("expected archive-interval-seconds to be %v, but got %v (type %T)", expectedSeconds, val, val)
+			}
+		})
+	})
 }
 
 // equalSlices is a helper to compare two string slices for equality.
