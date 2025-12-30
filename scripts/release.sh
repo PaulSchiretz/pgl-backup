@@ -76,6 +76,14 @@ if ! command -v go &> /dev/null; then
     echo "Error: Go is not found in your PATH. Please install Go and try again."
     exit 1
 fi
+if ! command -v zip &> /dev/null; then
+    echo "Error: zip is not found in your PATH. Please install zip and try again."
+    exit 1
+fi
+if ! command -v tar &> /dev/null; then
+    echo "Error: tar is not found in your PATH. Please install tar and try again."
+    exit 1
+fi
 
 # Check for uncommitted changes
 if ! git diff-index --quiet HEAD --; then
@@ -142,13 +150,13 @@ for platform in "${PLATFORMS[@]}"; do
     STAGING_DIR="$RELEASE_DIR/staging_${GOOS}_${GOARCH}"
     mkdir -p "$STAGING_DIR"
     cp "$RELEASE_DIR/$OUTPUT_NAME" "$STAGING_DIR/"
-    cp "$PROJECT_ROOT/LICENSE" "$STAGING_DIR/"
-    cp "$PROJECT_ROOT/README.md" "$STAGING_DIR/"
-    cp "$PROJECT_ROOT/NOTICE" "$STAGING_DIR/"
+    cp "$PROJECT_ROOT/LICENSE" "$STAGING_DIR/LICENSE.txt"
+    cp "$PROJECT_ROOT/README.md" "$STAGING_DIR/README.txt"
+    cp "$PROJECT_ROOT/NOTICE" "$STAGING_DIR/NOTICE.txt"
 
     # Archive the contents of the staging directory.
-    if [ "$GOOS" = "windows" ]; then
-      (cd "$STAGING_DIR" && zip "${ARCHIVE_PATH}.zip" ./* > /dev/null)
+    if [ "$GOOS" = "windows" ] || [ "$GOOS" = "darwin" ]; then
+      (cd "$STAGING_DIR" && zip -r "${ARCHIVE_PATH}.zip" . > /dev/null)
     else
       tar -czf "${ARCHIVE_PATH}.tar.gz" -C "$STAGING_DIR" .
     fi
@@ -160,7 +168,19 @@ done
 
 echo "✅ All platforms built and archived successfully."
 
-# 5. Generate Checksums
+# 5. Create Source Code Archives
+write_header "Creating source code archives"
+if [ "$DRY_RUN" = true ]; then
+    echo "[DRY RUN] Would create source code archives."
+else
+    SOURCE_ZIP_PATH="$RELEASE_DIR/${BINARY_NAME}_${VERSION}_source.zip"
+    SOURCE_TAR_PATH="$RELEASE_DIR/${BINARY_NAME}_${VERSION}_source.tar.gz"
+    git archive --format=zip --output="$SOURCE_ZIP_PATH" HEAD
+    git archive --format=tar.gz --output="$SOURCE_TAR_PATH" HEAD
+    echo "✅ Source code archives created."
+fi
+
+# 6. Generate Checksums
 write_header "Generating checksums"
 pushd "$RELEASE_DIR" > /dev/null
 
@@ -177,7 +197,7 @@ fi
 echo "✅ Checksums generated in '$RELEASE_DIR/checksums.txt'."
 popd > /dev/null
 
-# 6. Create and push git tag
+# 7. Create and push git tag
 write_header "Tagging release in git"
 if [ "$DRY_RUN" = true ]; then
     echo "✅ [DRY RUN] Skipping git tag creation and push."

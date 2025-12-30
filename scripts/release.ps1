@@ -169,12 +169,12 @@ foreach ($platform in $platforms) {
         $stagingDirName = "staging_${GOOS}_${GOARCH}"
         $stagingDir = New-Item -Path (Join-Path $ReleaseDir $stagingDirName) -ItemType Directory
         Copy-Item -Path $binaryPath -Destination $stagingDir.FullName
-        Copy-Item -Path $licensePath -Destination $stagingDir.FullName
-        Copy-Item -Path $readmePath -Destination $stagingDir.FullName
-        Copy-Item -Path $noticePath -Destination $stagingDir.FullName
+        Copy-Item -Path $licensePath -Destination (Join-Path $stagingDir.FullName "LICENSE.txt")
+        Copy-Item -Path $readmePath -Destination (Join-Path $stagingDir.FullName "README.txt")
+        Copy-Item -Path $noticePath -Destination (Join-Path $stagingDir.FullName "NOTICE.txt")
 
         # Archive the contents of the staging directory.
-        if ($GOOS -eq "windows") {
+        if ($GOOS -eq "windows" -or $GOOS -eq "darwin") {
             Compress-Archive -Path $stagingDir.FullName\* -DestinationPath "$archivePath.zip" -Force
         } else {
             tar -czf "$archivePath.tar.gz" -C $stagingDir.FullName .
@@ -187,7 +187,19 @@ foreach ($platform in $platforms) {
 
 Write-Host "✅ All platforms built and archived successfully." -ForegroundColor Green
 
-# 4. Generate Checksums
+# 4. Create Source Code Archives
+Write-Header "Creating source code archives"
+if ($DryRun) {
+    Write-Host "[DRY RUN] Would create source code archives."
+} else {
+    $sourceZipPath = Join-Path -Path $ReleaseDir -ChildPath "${BinaryName}_${Version}_source.zip"
+    $sourceTarPath = Join-Path -Path $ReleaseDir -ChildPath "${BinaryName}_${Version}_source.tar.gz"
+    git archive --format=zip --output="$sourceZipPath" HEAD
+    git archive --format=tar.gz --output="$sourceTarPath" HEAD
+    Write-Host "✅ Source code archives created." -ForegroundColor Green
+}
+
+# 5. Generate Checksums
 Write-Header "Generating checksums"
 if ($DryRun) {
     Write-Host "[DRY RUN] Would generate checksums file: $ReleaseDir\checksums.txt"
@@ -196,7 +208,7 @@ if ($DryRun) {
     Write-Host "✅ Checksums generated in '$ReleaseDir\checksums.txt'." -ForegroundColor Green
 }
 
-# 5. Create and push git tag
+# 6. Create and push git tag
 Write-Header "Tagging release in git"
 if ($DryRun) {
     Write-Host "[DRY RUN] Would create git tag: $Version"
