@@ -38,6 +38,7 @@ func init() {
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s (version %s):\n", appName, version)
 		fmt.Fprintf(flag.CommandLine.Output(), "A simple and powerful file backup utility with snapshot and incremental modes.\n\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "Note: Structural options (paths, retention policies) are configured via pgl-backup.config.json.\n\n")
 		flag.PrintDefaults()
 	}
 }
@@ -49,9 +50,10 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	// Flags are exposed for options that are useful to override for a single run
 	// (e.g., -dry-run, -mode=snapshot, -log-level=debug).
 	//
-	// Core strategic options that define the long-term behavior of a backup set
-	// (e.g., retention policies, rollover intervals) do not have corresponding flags.
-	// These should be set consistently in the pgl-backup.conf file to ensure
+	// Structural options that define the layout of the backup repository (e.g., subdirectories)
+	// and complex long-term policies (e.g., retention counts) generally do not have flags.
+	//
+	// These should be set consistently in the pgl-backup.config.json file to ensure
 	// predictable behavior over time.
 
 	// Define flags with zero-value defaults. We will merge them later.
@@ -73,15 +75,15 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	retryWaitFlag := flag.Int("retry-wait", 0, "Seconds to wait between retries.")
 	bufferSizeKBFlag := flag.Int("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression.")
 	modTimeWindowFlag := flag.Int("mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
-	userExcludeFilesFlag := flag.String("user-exclude-files", "", "Comma-separated list of case-insensitiv file names to exclude (supports glob patterns).")
-	userExcludeDirsFlag := flag.String("user-exclude-dirs", "", "Comma-separated list of case-insensitiv directory names to exclude (supports glob patterns).")
+	userExcludeFilesFlag := flag.String("user-exclude-files", "", "Comma-separated list of case-insensitive file names to exclude (supports glob patterns).")
+	userExcludeDirsFlag := flag.String("user-exclude-dirs", "", "Comma-separated list of case-insensitive directory names to exclude (supports glob patterns).")
 	preserveSourceNameFlag := flag.Bool("preserve-source-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
 	preBackupHooksFlag := flag.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
 	postBackupHooksFlag := flag.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
 	archiveIntervalSecondsFlag := flag.Int("archive-interval-seconds", 0, "In 'manual' mode, the interval in seconds for creating new archives (e.g., 86400 for 24h).")
 	archiveIntervalModeFlag := flag.String("archive-interval-mode", "", "Archive interval mode: 'auto' or 'manual'.")
 	compressionEnabledFlag := flag.Bool("compression", true, "Enable compression for backups.")
-	compressionFormatFlag := flag.String("compression-format", "", "Compression format for backups: 'zip', 'tar.gz or 'tar.zst'.")
+	compressionFormatFlag := flag.String("compression-format", "", "Compression format for backups: 'zip', 'tar.gz', or 'tar.zst'.")
 
 	flag.Parse()
 

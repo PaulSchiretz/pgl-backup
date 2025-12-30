@@ -526,7 +526,7 @@ The best policy depends on how much data you are backing up and how much disk sp
 
 ## Configuration Details
 
-All command-line flags can be set in the `pgl-backup.config.json` file.
+All command-line flags can be set in the `pgl-backup.config.json` file. Note that structural options (like directory paths) and complex policies (like retention) are only available in the configuration file to ensure consistency.
 
 | Flag / JSON Key                 | Type          | Default                               | Description                                                                                             |
 | ------------------------------- | ------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------- |
