@@ -1,6 +1,6 @@
 # Contributor Covenant Code of Conduct
 
-> *Never forget, ***this is just software***; there are so many more important aspects of life. Let's be friends, be kind to each other, and make this a great community for everyone!*
+> *Never forget: this is just software. There are so many more important things in life. Let's be friends, be kind to each other, and make this a great community for everyone!*
 
 ## Our Pledge
 

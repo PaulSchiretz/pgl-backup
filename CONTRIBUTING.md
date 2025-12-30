@@ -16,7 +16,7 @@ We're always open to new ideas for making `pgl-backup` more useful. The best way
 
 ## Our Philosophy on Dependencies
 
-This project aims to have as few external dependencies as possible, relying on the Go standard library wherever practical. Third-party packages are generally not appreciated unless they provide a significant, unique benefit that is not feasible to implement directly.
+This project aims to have as few external dependencies as possible, relying on the Go standard library wherever practical. Third-party packages are used sparingly and only when they provide a significant, unique benefit that is not feasible to implement directly.
 
 If you believe a new dependency is necessary, please open an issue to discuss it *before* submitting a pull request. This helps ensure that any additions align with the project's philosophy of simplicity and robustness.
 

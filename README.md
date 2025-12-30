@@ -535,6 +535,7 @@ All command-line flags can be set in the `pgl-backup.config.json` file.
 | `mode` / `mode`                 | `string`      | `"incremental"`                       | Backup mode: `"incremental"` or `"snapshot"`. |
 | `paths.snapshotsSubDir`          | `string`      | `"PGL_Backup_Snapshots"`               | The name of the sub-directory where snapshots are stored (snapshot mode only). |
 | `paths.archivesSubDir`          | `string`      | `"PGL_Backup_Archives"`               | The name of the sub-directory within the target where historical archives are stored (incremental mode only). |
+| `fail-fast` / `failFast`        | `bool`        | `false`                               | If true, stops the backup immediately on the first file sync error. |
 | `paths.incrementalSubDir`       | `string`      | `"PGL_Backup_Current"`                | The name of the directory for the active incremental backup. |
 | `paths.contentSubDir`           | `string`      | `"PGL_Backup_Content"`                | The name of the sub-directory within a backup that holds the actual synced content. |
 | `init`                          | `bool`        | `false`                               | If true, generates a config file and exits. |
@@ -556,8 +557,8 @@ All command-line flags can be set in the `pgl-backup.config.json` file.
 | `retention.snapshot.weeks`         | `int`         | `0`                                      | Number of recent weekly snapshots to keep. |
 | `retention.snapshot.months`        | `int`         | `0`                                      | Number of recent monthly snapshots to keep. |
 | `retention.snapshot.years`         | `int`         | `0`                                      | Number of recent yearly snapshots to keep. |
-| `compression` / `compression.enabled` | `bool` | `false` | If true, enables compression for any backups (incremental archives or snapshots) that are not already compressed. |
-| `compression-format` / `compression.format` | `string` | `"tar.zst"` | The archive format to use: `"zip"`, `"tar.gz"` or `"tar.zst"`. |
+| `compression` / `compression.enabled` | `bool` | `true` | If true, enables compression for any backups (incremental archives or snapshots) that are not already compressed. |
+| `compression-format` / `compression.format` | `string` | `"tar.zst"` | The archive format to use: `"zip"`, `"tar.gz"`, or `"tar.zst"`. |
 | `defaultExcludeFiles`           | `[]string`    | `[*.tmp, *.temp, *.swp, *.lnk, ~*, desktop.ini, .DS_Store, Thumbs.db, Icon\r]`                     | The list of default file patterns to exclude. Can be customized. |
 | `defaultExcludeDirs`            | `[]string`    | `[@tmp, @eadir, .SynologyWorkingDirectory, #recycle, $Recycle.Bin]`                     | The list of default directory patterns to exclude. Can be customized. |
 | `user-exclude-files` / `userExcludeFiles`| `[]string`    | `[]`                                  | List of file patterns to exclude. |
