@@ -478,7 +478,7 @@ func (r *syncRun) denormalizedAbsPath(base, relPathKey string) string {
 
 // isExcluded checks if a given relative path key matches any of the exclusion patterns,
 // using a tiered optimization strategy to avoid expensive glob matching when possible.
-// It assumes `relPathKey` and `relPathBasename` have already been normalized.
+// It handles normalization (case-folding and path separators) internally.
 func (r *syncRun) isExcluded(relPathKey, relPathBasename string, isDir bool) bool {
 	var patterns exclusionSet
 
@@ -759,8 +759,8 @@ func (r *syncRun) syncWalker() {
 
 		// Check for exclusions.
 		// `relPathKey` is already normalized, but `d.Name()` is the raw basename from the filesystem
-		// and must be normalized before being passed to `isExcluded` for basename matching.
-		if r.isExcluded(relPathKey, util.NormalizePath(d.Name()), d.IsDir()) {
+		// and is passed directly to `isExcluded`, which handles all normalization.
+		if r.isExcluded(relPathKey, d.Name(), d.IsDir()) {
 			plog.Notice("EXCL", "reason", "excluded by pattern", "path", relPathKey)
 			if d.IsDir() {
 				r.metrics.AddDirsExcluded(1) // Track excluded directory
@@ -1008,8 +1008,8 @@ func (r *syncRun) mirrorWalker() []string {
 
 		// Check for exclusions.
 		// `relPathKey` is already normalized, but `d.Name()` is the raw basename from the filesystem
-		// and must be normalized before being passed to `isExcluded` for basename matching.
-		if r.isExcluded(relPathKey, util.NormalizePath(d.Name()), d.IsDir()) {
+		// and is passed directly to `isExcluded`, which handles all normalization.
+		if r.isExcluded(relPathKey, d.Name(), d.IsDir()) {
 			if d.IsDir() { // Do not log excluded directories during mirror, as they are not actioned upon.
 				return filepath.SkipDir // Excluded dir, leave it and its contents.
 			}

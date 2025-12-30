@@ -56,7 +56,7 @@ type PathRetentionManager struct {
 	config config.Config
 }
 
-// RetentionManager defines the interface for a component that applies a retenpolicy to backups.
+// RetentionManager defines the interface for a component that applies a retention policy to backups.
 type RetentionManager interface {
 	Apply(ctx context.Context, policyTitle string, dirPath string, retentionPolicy config.RetentionPolicyConfig, excludeDir string) error
 }

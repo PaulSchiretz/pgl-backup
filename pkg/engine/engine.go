@@ -299,7 +299,7 @@ func (e *Engine) performRetention(ctx context.Context) error {
 		incrementalDirName := e.config.Paths.IncrementalSubDir
 		if err := e.retentionManager.Apply(ctx, "incremental", archivesDir, e.config.Retention.Incremental, incrementalDirName); err != nil {
 			plog.Warn("Error applying incremental retention policy", "error", err)
-			// no error is returned as our backup is still good no need to faile here
+			// no error is returned as our backup is still good no need to fail here
 		}
 	}
 
@@ -308,7 +308,7 @@ func (e *Engine) performRetention(ctx context.Context) error {
 		snapshotsDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.SnapshotsSubDir)
 		if err := e.retentionManager.Apply(ctx, "snapshot", snapshotsDir, e.config.Retention.Snapshot, ""); err != nil {
 			plog.Warn("Error applying snapshot retention policy", "error", err)
-			// no error is returned as  our backup is still good no need to faile here
+			// no error is returned as our backup is still good no need to fail here
 		}
 	}
 	return nil
