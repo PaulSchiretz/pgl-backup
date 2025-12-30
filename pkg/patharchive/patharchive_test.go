@@ -109,7 +109,7 @@ func TestArchive(t *testing.T) {
 		tempDir := t.TempDir()
 		cfg := config.NewDefault()
 		cfg.Paths.TargetBase = tempDir
-		cfg.Archive.Incremental.Mode = config.ManualInterval
+		cfg.Archive.Incremental.IntervalMode = config.ManualInterval
 		cfg.Archive.Incremental.IntervalSeconds = 86400 // 24h
 
 		archiver := NewPathArchiver(cfg)
@@ -174,7 +174,7 @@ func TestArchive(t *testing.T) {
 		tempDir := t.TempDir()
 		cfg := config.NewDefault()
 		cfg.Paths.TargetBase = tempDir
-		cfg.Archive.Incremental.Mode = config.ManualInterval
+		cfg.Archive.Incremental.IntervalMode = config.ManualInterval
 		cfg.Archive.Incremental.IntervalSeconds = 86400 // 24h
 
 		archiver := NewPathArchiver(cfg)
@@ -210,7 +210,7 @@ func TestArchive(t *testing.T) {
 		cfg := config.NewDefault()
 		cfg.Paths.TargetBase = tempDir
 		// Explicitly disable archiving by setting interval to 0 in manual mode
-		cfg.Archive.Incremental.Mode = config.ManualInterval
+		cfg.Archive.Incremental.IntervalMode = config.ManualInterval
 		cfg.Archive.Incremental.IntervalSeconds = 0
 
 		archiver := NewPathArchiver(cfg)
@@ -238,7 +238,7 @@ func TestArchive(t *testing.T) {
 		tempDir := t.TempDir()
 		cfg := config.NewDefault()
 		cfg.Paths.TargetBase = tempDir
-		cfg.Archive.Incremental.Mode = config.ManualInterval
+		cfg.Archive.Incremental.IntervalMode = config.ManualInterval
 		cfg.Archive.Incremental.IntervalSeconds = 86400 // 24h
 		cfg.DryRun = true                               // Enable Dry Run
 
@@ -286,7 +286,7 @@ func TestDetermineInterval(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				// Arrange
 				cfg := config.NewDefault()
-				cfg.Archive.Incremental.Mode = config.AutoInterval
+				cfg.Archive.Incremental.IntervalMode = config.AutoInterval
 				cfg.Retention.Incremental = tc.retentionPolicy
 
 				// Act
@@ -305,7 +305,7 @@ func TestDetermineInterval(t *testing.T) {
 		t.Run("Returns configured value", func(t *testing.T) {
 			// Arrange
 			cfg := config.NewDefault()
-			cfg.Archive.Incremental.Mode = config.ManualInterval
+			cfg.Archive.Incremental.IntervalMode = config.ManualInterval
 			cfg.Archive.Incremental.IntervalSeconds = 43200 // 12h
 
 			// Act
@@ -325,7 +325,7 @@ func TestDetermineInterval(t *testing.T) {
 			t.Cleanup(func() { plog.SetOutput(os.Stderr) })
 
 			cfg := config.NewDefault()
-			cfg.Archive.Incremental.Mode = config.ManualInterval
+			cfg.Archive.Incremental.IntervalMode = config.ManualInterval
 			cfg.Archive.Incremental.IntervalSeconds = 172800 // 48h
 			cfg.Retention.Incremental.Days = 7               // Daily retention is enabled
 
@@ -350,7 +350,7 @@ func TestDetermineInterval(t *testing.T) {
 			t.Cleanup(func() { plog.SetOutput(os.Stderr) })
 
 			cfg := config.NewDefault()
-			cfg.Archive.Incremental.Mode = config.ManualInterval
+			cfg.Archive.Incremental.IntervalMode = config.ManualInterval
 			cfg.Archive.Incremental.IntervalSeconds = 43200 // 12h
 			cfg.Retention.Incremental.Days = 7              // Daily retention is enabled
 

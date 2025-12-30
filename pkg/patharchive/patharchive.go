@@ -221,7 +221,7 @@ func (r *archiveRun) shouldArchive() bool {
 // If the mode is 'auto', it calculates the optimal interval based on the retention policy.
 // If the mode is 'manual', it validates the user-configured interval.
 func (a *PathArchiver) determineInterval() time.Duration {
-	if a.config.Archive.Incremental.Mode == config.ManualInterval {
+	if a.config.Archive.Incremental.IntervalMode == config.ManualInterval {
 		interval := time.Duration(a.config.Archive.Incremental.IntervalSeconds) * time.Second
 		a.checkInterval(interval)
 		return interval

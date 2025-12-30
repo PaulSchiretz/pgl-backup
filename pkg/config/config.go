@@ -236,8 +236,8 @@ func (rim *ArchiveIntervalMode) UnmarshalJSON(data []byte) error {
 }
 
 type ArchivePolicyConfig struct {
-	// Mode determines if the interval is set manually or derived automatically from the retention policy.
-	Mode ArchiveIntervalMode `json:"mode"`
+	// IntervalMode determines if the interval is set manually or derived automatically from the retention policy.
+	IntervalMode ArchiveIntervalMode `json:"intervalMode"`
 	// IntervalSeconds is the duration in seconds after which a new backup archive is created in incremental mode.
 	// This is only used when Mode is 'manual'.
 	IntervalSeconds int `json:"intervalSeconds,omitempty"`
@@ -384,7 +384,7 @@ func NewDefault() Config {
 		},
 		Archive: BackupArchiveConfig{
 			Incremental: ArchivePolicyConfig{
-				Mode:            AutoInterval, // Default to auto-adjusting the interval based on the retention policy.
+				IntervalMode:    AutoInterval, // Default to auto-adjusting the interval based on the retention policy.
 				IntervalSeconds: 86400,        // Interval will be calculated by the engine in 'auto' mode. Default 24h.
 				// If a user switches to 'manual' mode, they must specify an interval.
 			},
@@ -576,7 +576,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("bufferSizeKB must be greater than 0")
 	}
 	if c.Mode == IncrementalMode {
-		if c.Archive.Incremental.Mode == ManualInterval && c.Archive.Incremental.IntervalSeconds < 0 {
+		if c.Archive.Incremental.IntervalMode == ManualInterval && c.Archive.Incremental.IntervalSeconds < 0 {
 			return fmt.Errorf("archive.incremental.intervalSeconds cannot be negative when mode is 'manual'. Use '0' to disable archive")
 		}
 	}
@@ -622,8 +622,8 @@ func (c *Config) LogSummary() {
 	case IncrementalMode:
 		logArgs = append(logArgs, "incremental_subdir", c.Paths.IncrementalSubDir)
 		logArgs = append(logArgs, "archives_subdir", c.Paths.ArchivesSubDir)
-		logArgs = append(logArgs, "archive_mode", c.Archive.Incremental.Mode)
-		if c.Archive.Incremental.Mode == ManualInterval {
+		logArgs = append(logArgs, "archive_interval_mode", c.Archive.Incremental.IntervalMode)
+		if c.Archive.Incremental.IntervalMode == ManualInterval {
 			logArgs = append(logArgs, "archive_interval_seconds", c.Archive.Incremental.IntervalSeconds)
 		}
 	case SnapshotMode:
@@ -755,8 +755,8 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 		case "post-backup-hooks":
 			merged.Hooks.PostBackup = value.([]string)
 		// Note: The following flags are not exposed via CLI but are handled here for completeness.
-		case "archive-mode":
-			merged.Archive.Incremental.Mode = value.(ArchiveIntervalMode)
+		case "archive-interval-mode":
+			merged.Archive.Incremental.IntervalMode = value.(ArchiveIntervalMode)
 		case "archive-interval-seconds":
 			merged.Archive.Incremental.IntervalSeconds = value.(int)
 		case "compression":

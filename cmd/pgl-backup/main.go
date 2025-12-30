@@ -79,6 +79,7 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 	preBackupHooksFlag := flag.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
 	postBackupHooksFlag := flag.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
 	archiveIntervalSecondsFlag := flag.Int("archive-interval-seconds", 0, "In 'manual' mode, the interval in seconds for creating new archives (e.g., 86400 for 24h).")
+	archiveIntervalModeFlag := flag.String("archive-interval-mode", "", "Archive interval mode: 'auto' or 'manual'.")
 	compressionEnabledFlag := flag.Bool("compression", true, "Enable compression for backups.")
 	compressionFormatFlag := flag.String("compression-format", "", "Compression format for backups: 'zip', 'tar.gz or 'tar.zst'.")
 
@@ -143,6 +144,13 @@ func parseFlagConfig() (action, map[string]interface{}, error) {
 			return actionRunBackup, nil, err
 		}
 		flagMap["sync-engine"] = engineType
+	}
+	if usedFlags["archive-interval-mode"] {
+		mode, err := config.ArchiveIntervalModeFromString(*archiveIntervalModeFlag)
+		if err != nil {
+			return actionRunBackup, nil, err
+		}
+		flagMap["archive-interval-mode"] = mode
 	}
 	if usedFlags["compression-format"] {
 		format, err := config.CompressionFormatFromString(*compressionFormatFlag)

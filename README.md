@@ -227,7 +227,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
   },
   "archive": {
     "incremental": {
-      "mode": "auto",
+      "intervalMode": "auto",
       "intervalSeconds": 86400
     }
   },
@@ -543,7 +543,7 @@ All command-line flags can be set in the `pgl-backup.config.json` file.
 | `log-level` / `logLevel`        | `string`      | `"info"`                              | Set the logging level: `"debug"`, `"notice"`, `"info"`, `"warn"`, or `"error"`. |
 | `metrics` / `metrics`           | `bool`        | `true`                                | If true, enables detailed performance and file-counting metrics. |
 | `sync-engine` / `engine.type`   | `string`      | `"native"`                            | The sync engine to use: `"native"` or `"robocopy"` (Windows only). |
-| `archive.incremental.mode` | `string` | `"auto"` | Archive interval mode: `"auto"` (derives interval from retention policy) or `"manual"`. In `auto` mode, if the retention policy is disabled, archiving is also disabled. |
+| `archive-interval-mode` / `archive.incremental.intervalMode` | `string` | `"auto"` | Archive interval mode: `"auto"` (derives interval from retention policy) or `"manual"`. In `auto` mode, if the retention policy is disabled, archiving is also disabled. |
 | `archive-interval-seconds` / `archive.incremental.intervalSeconds` | `int` | `86400` | In `manual` mode, the interval in seconds after which a new archive is created (e.g., `86400` for 24h). Use `0` to disable archiving. |
 | `retention.incremental.enabled`         | `bool`         | `true`                             | Enables the retention policy for incremental mode archives. |
 | `retention.incremental.hours`         | `int`         | `0`                                   | Number of recent hourly incremental archives to keep. |

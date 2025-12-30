@@ -104,7 +104,7 @@ func TestConfig_Validate(t *testing.T) {
 		cfg.Mode = IncrementalMode
 
 		// Test negative interval in manual mode (should error)
-		cfg.Archive.Incremental.Mode = ManualInterval
+		cfg.Archive.Incremental.IntervalMode = ManualInterval
 		cfg.Archive.Incremental.IntervalSeconds = -1
 		if err := cfg.Validate(); err == nil {
 			t.Error("expected error for negative archive intervalSeconds in manual mode, but got nil")
@@ -117,7 +117,7 @@ func TestConfig_Validate(t *testing.T) {
 		}
 
 		// In auto mode, the interval is calculated, so a user-set 0 should not error.
-		cfg.Archive.Incremental.Mode = AutoInterval
+		cfg.Archive.Incremental.IntervalMode = AutoInterval
 		cfg.Archive.Incremental.IntervalSeconds = 0
 		if err := cfg.Validate(); err != nil {
 			t.Errorf("expected no error for zero archive intervalSeconds in auto mode (value is ignored), but got: %v", err)
@@ -402,8 +402,8 @@ func TestLoad(t *testing.T) {
 			t.Errorf("expected prefix to be 'custom_prefix_', but got %s", cfg.Naming.Prefix)
 		}
 		// Check that a default value not in the file is still present
-		if cfg.Archive.Incremental.Mode != AutoInterval {
-			t.Errorf("expected default archive mode to be auto, but got %v", cfg.Archive.Incremental.Mode)
+		if cfg.Archive.Incremental.IntervalMode != AutoInterval {
+			t.Errorf("expected default archive mode to be auto, but got %v", cfg.Archive.Incremental.IntervalMode)
 		}
 	})
 
