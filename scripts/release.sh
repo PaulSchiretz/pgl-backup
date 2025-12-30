@@ -56,7 +56,7 @@ fi
 # This is placed here because the VERSION variable is needed.
 RELEASE_DIR="$PROJECT_ROOT/releases/$VERSION"
 
-# Regex to validate semantic versioning with a 'v' prefix (e.g., v1.2.3)
+# Regex to validate semantic versioning with a 'v' prefix (e.g., vX.Y.Z or vX.Y.Z-rc.N)
 if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
   echo "Error: Invalid version format. Expected format: vX.Y.Z or vX.Y.Z-rc.N"
   write_usage

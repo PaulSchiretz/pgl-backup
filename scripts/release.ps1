@@ -13,7 +13,7 @@
   7. Creates and pushes a git tag for the release.
 
 .PARAMETER Version
-  The semantic version for the release, prefixed with 'v' (e.g., v1.0.0).
+  The semantic version for the release, prefixed with 'v' (e.g., vX.Y.Z or vX.Y.Z-rc.N).
 
 .EXAMPLE
   .\release.ps1 -Version v1.0.0
