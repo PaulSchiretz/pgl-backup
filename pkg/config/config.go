@@ -273,7 +273,7 @@ func CompressionFormatFromString(s string) (CompressionFormat, error) {
 	if format, ok := stringToCompressionFormat[s]; ok {
 		return format, nil
 	}
-	return "", fmt.Errorf("invalid CompressionFormat: %q. Must be 'zip' or 'tar.gz'", s)
+	return "", fmt.Errorf("invalid CompressionFormat: %q. Must be 'zip', 'tar.gz', or 'tar.zst'", s)
 }
 
 // MarshalJSON implements the json.Marshaler interface for CompressionFormat.
