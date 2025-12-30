@@ -23,7 +23,6 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"bufio"
-	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -33,7 +32,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/klauspost/compress/flate"
 	"github.com/klauspost/compress/zstd"
+	"github.com/klauspost/pgzip"
 	"github.com/paulschiretz/pgl-backup/pkg/config"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompressionmetrics"
@@ -445,9 +446,12 @@ func (r *compressionRun) createArchive(sourceDir string) (tempPath string, err e
 	switch r.format {
 	case config.ZipFormat:
 		zipWriter := zip.NewWriter(bufWriter)
+		zipWriter.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
+			return flate.NewWriter(out, flate.DefaultCompression)
+		})
 		archiver = &zipArchiveWriter{zipWriter: zipWriter}
 	case config.TarGzFormat:
-		gzipWriter := gzip.NewWriter(bufWriter)
+		gzipWriter := pgzip.NewWriter(bufWriter)
 		tarWriter := tar.NewWriter(gzipWriter)
 		archiver = &tarArchiveWriter{tarWriter: tarWriter, compressedWriter: gzipWriter}
 	case config.TarZstFormat:

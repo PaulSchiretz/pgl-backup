@@ -6,7 +6,30 @@ This project incorporates components from the following sources. The full licens
 texts are provided below as required by their respective terms.
 
 --------------------------------------------------------------------------------
-1. Component: github.com/klauspost/compress
+1. Component: github.com/klauspost/pgzip
+   License: MIT License
+   Copyright (c) 2014 Klaus Post
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+2. Component: github.com/klauspost/compress
    License: BSD 3-Clause "New" or "Revised" License
    Copyright (c) 2012 The Go Authors. All rights reserved.
    Copyright (c) 2019 Klaus Post. All rights reserved.
@@ -38,7 +61,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
-2. Component: gzhttp (Files: gzhttp/*)
+3. Component: github.com/klauspost/compress/gzhttp (Files: gzhttp/*)
    License: Apache License, Version 2.0
    Copyright (c) The New York Times Company
 
@@ -245,7 +268,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
    limitations under the License.
 
 --------------------------------------------------------------------------------
-3. Component: readahead (Files: s2/cmd/internal/readahead/*)
+4. Component: github.com/klauspost/compress/s2/cmd/internal/readahead (Files: s2/cmd/internal/readahead/*)
    License: MIT License
    Copyright (c) 2015 Klaus Post
 
@@ -268,7 +291,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 --------------------------------------------------------------------------------
-4. Component: filepathx (Files: s2/cmd/internal/filepathx/*)
+5. Component: github.com/klauspost/compress/s2/cmd/internal/filepathx (Files: s2/cmd/internal/filepathx/*)
    License: MIT License
    Copyright (c) 2016 The filepathx Authors
 
@@ -291,7 +314,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 --------------------------------------------------------------------------------
-5. Component: Snappy-Go / Snapref (Files: snappy/*, internal/snapref/*)
+6. Component: github.com/klauspost/compress/snappy, github.com/klauspost/compress/internal/snapref (Files: snappy/*, internal/snapref/*)
    License: BSD 3-Clause "New" or "Revised" License
    Copyright (c) 2011 The Snappy-Go Authors. All rights reserved.
 
@@ -322,7 +345,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 --------------------------------------------------------------------------------
-6. Component: Go Standard Library
+7. Component: Go Standard Library
    License: BSD 3-Clause "New" or "Revised" License
    Copyright (c) 2009 The Go Authors. All rights reserved.
 
