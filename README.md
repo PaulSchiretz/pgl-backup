@@ -8,6 +8,7 @@
 
 ## Table of Contents
 
+*   [Core Concepts](#core-concepts)
 *   [Key Features](#key-features)
 *   [Installation](#installation)
     *   [From Source](#from-source)
@@ -39,6 +40,13 @@
 *   [Contributing](#contributing)
 *   [Acknowledgments](#acknowledgments)
 *   [License](#license)
+
+## Core Concepts
+
+*   **Reliability**: Pre-flight checks validate paths, permissions, and configuration *before* a single byte is moved.
+*   **Transparency**: No proprietary containers. Backups are stored exactly as they appear in the source or within standard archives.
+*   **Performance**: A high-performance, concurrent sync engine designed for modern hardware and high-latency network shares.
+*   **Safety**: Built-in protection against "ghost" mount points, permission lockouts, and case-sensitivity mismatches.
 
 ## Key Features
 
