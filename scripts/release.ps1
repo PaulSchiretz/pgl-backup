@@ -175,9 +175,10 @@ foreach ($platform in $platforms) {
 
         # Archive the contents of the staging directory.
         if ($GOOS -eq "windows" -or $GOOS -eq "darwin") {
-            Compress-Archive -Path $stagingDir.FullName\* -DestinationPath "$archivePath.zip" -Force
+            $compressPath = Join-Path -Path $stagingDir.FullName -ChildPath "*"
+            Compress-Archive -Path $compressPath -DestinationPath "$archivePath.zip" -Force
         } else {
-            tar -czf "$archivePath.tar.gz" -C $stagingDir.FullName .
+            tar -czf "$archivePath.tar.gz" -C "$($stagingDir.FullName)" .
         }
         # Clean up the staging directory and the original binary.
         Remove-Item -Path $stagingDir.FullName -Recurse -Force
