@@ -1,6 +1,9 @@
 # pgl-backup
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/paulschiretz/pgl-backup.svg)](https://pkg.go.dev/github.com/paulschiretz/pgl-backup) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE) [![Go Report Card](https://goreportcard.com/badge/github.com/paulschiretz/pgl-backup)](https://goreportcard.com/report/github.com/paulschiretz/pgl-backup) [![Latest Release](https://img.shields.io/github/v/release/paulschiretz/pgl-backup)](https://github.com/paulschiretz/pgl-backup/releases)
+[![Go Reference](https://pkg.go.dev/badge/github.com/paulschiretz/pgl-backup.svg)](https://pkg.go.dev/github.com/paulschiretz/pgl-backup)
+[![Latest Release](https://img.shields.io/github/v/release/paulschiretz/pgl-backup?include_prereleases&sort=semver)](https://github.com/paulschiretz/pgl-backup/releases)
+[![Go Report Card](https://goreportcard.com/badge/github.com/paulschiretz/pgl-backup)](https://goreportcard.com/report/github.com/paulschiretz/pgl-backup)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 > This project was born from a desire for a backup tool that is fast, reliable, and simple. It prioritizes robust, best-practice engineering over fancy features that could compromise solidity. The goal is to provide everything you need for solid, performant, cross-platform backups—no more, no less.
 
