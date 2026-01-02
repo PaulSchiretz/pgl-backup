@@ -119,6 +119,7 @@ Write-Header "Cross-compiling binaries"
 # Define target platforms: GOOS/GOARCH
 $platforms = @(
     "windows/amd64",
+    "windows/arm64",
     "linux/amd64",
     "linux/arm64",
     "darwin/amd64",
@@ -174,7 +175,7 @@ foreach ($platform in $platforms) {
         Copy-Item -Path $noticePath -Destination (Join-Path $stagingDir.FullName "NOTICE.txt")
 
         # Archive the contents of the staging directory.
-        if ($GOOS -eq "windows" -or $GOOS -eq "darwin") {
+        if ($GOOS -eq "windows") {
             $compressPath = Join-Path -Path $stagingDir.FullName -ChildPath "*"
             Compress-Archive -Path $compressPath -DestinationPath "$archivePath.zip" -Force
         } else {
@@ -205,7 +206,7 @@ Write-Header "Generating checksums"
 if ($DryRun) {
     Write-Host "[DRY RUN] Would generate checksums file: $ReleaseDir\checksums.txt"
 } else {
-    Get-FileHash -Path "$ReleaseDir\*" -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $($_.Path | Split-Path -Leaf)" } | Set-Content "$ReleaseDir\checksums.txt"
+    Get-FileHash -Path "$ReleaseDir\*" -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } | Set-Content "$ReleaseDir\checksums.txt"
     Write-Host "✅ Checksums generated in '$ReleaseDir\checksums.txt'." -ForegroundColor Green
 }
 

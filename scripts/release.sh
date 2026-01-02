@@ -119,7 +119,7 @@ echo "✅ Cleaned and created '$RELEASE_DIR' directory."
 write_header "Cross-compiling binaries"
 
 # Define target platforms: GOOS/GOARCH
-PLATFORMS=("windows/amd64" "linux/amd64" "linux/arm64" "darwin/amd64" "darwin/arm64" "freebsd/amd64")
+PLATFORMS=("windows/amd64" "windows/arm64" "linux/amd64" "linux/arm64" "darwin/amd64" "darwin/arm64" "freebsd/amd64")
 
 # The ldflags variable for injecting the version
 LDFLAGS="-s -w -X main.version=$VERSION"
@@ -155,7 +155,7 @@ for platform in "${PLATFORMS[@]}"; do
     cp "$PROJECT_ROOT/NOTICE" "$STAGING_DIR/NOTICE.txt"
 
     # Archive the contents of the staging directory.
-    if [ "$GOOS" = "windows" ] || [ "$GOOS" = "darwin" ]; then
+    if [ "$GOOS" = "windows" ]; then
       (cd "$STAGING_DIR" && zip -r "${ARCHIVE_PATH}.zip" . > /dev/null)
     else
       tar -czf "${ARCHIVE_PATH}.tar.gz" -C "$STAGING_DIR" .
