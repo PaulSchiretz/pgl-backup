@@ -2,6 +2,7 @@ package pathretention
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -209,6 +210,48 @@ func TestApplyRetentionPolicy_DryRun(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(tempDir, "backup_to_delete")); os.IsNotExist(err) {
 		t.Errorf("expected backup_to_delete to still exist in dry run mode, but it was deleted")
+	}
+}
+
+func TestApplyRetentionPolicy_WorkerCancellation(t *testing.T) {
+	// Arrange
+	tempDir := t.TempDir()
+	cfg := config.NewDefault()
+	cfg.Paths.TargetBase = tempDir
+	cfg.Naming.Prefix = "backup_"
+	// Use 1 worker to serialize execution for predictable cancellation testing
+	cfg.Engine.Performance.DeleteWorkers = 1
+
+	policy := config.RetentionPolicyConfig{
+		Enabled: true,
+		Days:    1, // Keep one daily backup
+	}
+
+	r := newTestRetentionManager(cfg)
+	now := time.Now()
+
+	// Create 1 backup to keep
+	createTestBackup(t, tempDir, "backup_kept", now.Add(-1*24*time.Hour))
+
+	// Create many backups to delete to ensure the loop runs long enough to catch cancellation
+	for i := 0; i < 100; i++ {
+		createTestBackup(t, tempDir, fmt.Sprintf("backup_delete_%d", i), now.Add(time.Duration(-5*24*time.Hour-time.Duration(i)*time.Hour)))
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Cancel shortly after starting
+	go func() {
+		time.Sleep(1 * time.Millisecond)
+		cancel()
+	}()
+
+	// Act
+	_ = r.Apply(ctx, "test", tempDir, policy, "")
+
+	// Assert
+	if _, err := os.Stat(filepath.Join(tempDir, "backup_kept")); err != nil {
+		t.Errorf("expected kept backup to exist, but it does not: %v", err)
 	}
 }
 

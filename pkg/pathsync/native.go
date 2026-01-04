@@ -9,7 +9,7 @@ package pathsync
 // operations concurrently, maximizing I/O throughput. This pipeline is
 // orchestrated by the `handleSync` function.
 //
-// 1. The Producer (`syncWalker`):
+// 1. The Producer (`syncTaskProducer`):
 //    - A single goroutine that walks the source directory tree (`filepath.WalkDir`).
 //    - It handles directories directly: creating them in the destination and recording their
 //      presence in the `discoveredSrcPaths` set.
@@ -18,7 +18,7 @@ package pathsync
 // 2. The Consumers (`syncWorker` pool):
 //    - A pool of worker goroutines that read `syncTask` items from the `syncTasks` channel.
 //    - Each worker performs the I/O for a single file (checking, copying).
-//    - The `syncWalker` has already recorded the file's presence in the `discoveredSrcPaths` set.
+//    - The `syncTaskProducer` has already recorded the file's presence in the `discoveredSrcPaths` set.
 //
 // --- Phase 2: Mirroring (Deletions) ---
 //
@@ -115,13 +115,13 @@ type syncRun struct {
 	syncTaskPool             *sync.Pool
 	mirrorTaskPool           *sync.Pool
 
-	// discoveredPaths is a concurrent set populated by the syncWalker. It holds every
+	// discoveredPaths is a concurrent set populated by the syncTaskProducer. It holds every
 	// non-excluded path found in the source directory. During the mirror phase, it is
 	// read to determine which paths in the destination are no longer present in the source
 	// and should be deleted.
 	discoveredPaths *sharded.ShardedSet
 
-	// discoveredDirInfo is a concurrent map populated by the syncWalker. It stores the
+	// discoveredDirInfo is a concurrent map populated by the syncTaskProducer. It stores the
 	// PathInfo for every directory found in the source. This serves as a cache to avoid
 	// redundant Lstat calls by workers needing to create parent directories.
 	discoveredDirInfo *sharded.ShardedMap
@@ -130,7 +130,7 @@ type syncRun struct {
 	// by any syncWorker. This prevents duplicate MkdirAll calls across the concurrent pool.
 	syncedDirCache *sharded.ShardedSet
 
-	// syncWg waits for the syncWalker and syncWorkers to finish processing all sync tasks.
+	// syncWg waits for the syncTaskProducer and syncWorkers to finish processing all sync tasks.
 	syncWg sync.WaitGroup
 
 	// syncTasksChan is the channel where the Walker sends pre-processed tasks.
@@ -144,10 +144,10 @@ type syncRun struct {
 	// keyed by the relative path of the file that failed.
 	syncErrs *sharded.ShardedMap
 
-	// mirrorWg waits for the mirrorWalker and mirrorWorkers to finish processing all deletion tasks.
+	// mirrorWg waits for the mirrorTaskProducer and mirrorWorkers to finish processing all deletion tasks.
 	mirrorWg sync.WaitGroup
 
-	// mirrorTasksChan is the channel where the mirrorWalker sends paths to be deleted.
+	// mirrorTasksChan is the channel where the mirrorTaskProducer sends paths to be deleted.
 	mirrorTasksChan chan *mirrorTask
 
 	// criticalMirrorErrsChan captures the first critical error from the mirror phase.
@@ -704,7 +704,7 @@ func (r *syncRun) ensureParentDirectoryExists(relPathKey string) error {
 
 	// 2. If not in cache, we need to create it now.
 	// Instead of re-statting the source directory, we look up its info from the cache
-	// populated by the syncWalker.
+	// populated by the syncTaskProducer.
 	val, ok := r.discoveredDirInfo.Load(relPathKey)
 	if !ok {
 		// This should be logically impossible if the walker has processed the parent
@@ -724,9 +724,9 @@ func (r *syncRun) ensureParentDirectoryExists(relPathKey string) error {
 	return r.processDirectorySync(&parentTask)
 }
 
-// syncWalker is a dedicated goroutine that walks the source directory tree,
+// syncTaskProducer is a dedicated goroutine that walks the source directory tree,
 // sending each syncTask to the syncTasks channel for processing by workers.
-func (r *syncRun) syncWalker() {
+func (r *syncRun) syncTaskProducer() {
 	defer close(r.syncTasksChan) // Close syncTasksChan to signal syncWorkers to stop when walk is complete
 
 	err := filepath.WalkDir(r.src, func(absSrcPath string, d os.DirEntry, err error) error {
@@ -825,7 +825,7 @@ func (r *syncRun) syncWalker() {
 		// If the walker fails, send the error and cancel everything.
 		// This is a blocking send because a walker failure is critical and must be reported.
 		// The handleSync function will pick this up and terminate the process.
-		r.criticalSyncErrsChan <- fmt.Errorf("walker failed: %w", err)
+		r.criticalSyncErrsChan <- fmt.Errorf("sync producer failed: %w", err)
 	}
 }
 
@@ -911,7 +911,7 @@ func (r *syncRun) syncWorker() {
 					// processing other files. This allows the backup to achieve partial
 					// success, providing a comprehensive report of all failed files at the end.
 					//
-					// Data Integrity: The `syncWalker` has already added this `RelPathKey` to
+					// Data Integrity: The `syncTaskProducer` has already added this `RelPathKey` to
 					// `discoveredPaths`. This ensures that even if the file copy fails, the
 					// existing (potentially outdated) version in the destination will NOT be
 					// deleted during the mirror phase, preventing data loss.
@@ -938,9 +938,9 @@ func (r *syncRun) handleSync() error {
 		go r.syncWorker()
 	}
 
-	// 3. Start the syncWalker (Producer)
+	// 3. Start the syncTaskProducer (Producer)
 	// This goroutine walks the file tree and feeds paths into 'syncTasks'.
-	go r.syncWalker()
+	go r.syncTaskProducer()
 
 	// 3. Wait for all workers to finish processing all tasks.
 	r.syncWg.Wait()
@@ -971,10 +971,10 @@ func (r *syncRun) handleSync() error {
 	return nil
 }
 
-// mirrorWalker is the producer for the deletion phase. It walks the destination
+// mirrorTaskProducer is the producer for the deletion phase. It walks the destination
 // directory and sends paths that need to be deleted to the mirrorTasksChan.
 // It returns a slice of directory paths to be deleted after all files are gone.
-func (r *syncRun) mirrorWalker() []string {
+func (r *syncRun) mirrorTaskProducer() []string {
 	defer close(r.mirrorTasksChan)
 	var relPathKeyDirsToDelete []string
 	err := filepath.WalkDir(r.trg, func(absTrgPath string, d os.DirEntry, err error) error {
@@ -1036,7 +1036,7 @@ func (r *syncRun) mirrorWalker() []string {
 
 	if err != nil {
 		// A walker failure is a critical error for the mirror phase.
-		r.criticalMirrorErrsChan <- fmt.Errorf("mirror walker failed: %w", err)
+		r.criticalMirrorErrsChan <- fmt.Errorf("mirror producer failed: %w", err)
 	}
 	return relPathKeyDirsToDelete
 }
@@ -1102,7 +1102,7 @@ func (r *syncRun) handleMirror() error {
 
 	// Walk the destination and send files to be deleted to the workers.
 	// This returns a list of directories that also need to be deleted.
-	relPathKeyDirsToDelete := r.mirrorWalker()
+	relPathKeyDirsToDelete := r.mirrorTaskProducer()
 
 	// Wait for all file deletions to complete.
 	r.mirrorWg.Wait()

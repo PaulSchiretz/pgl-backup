@@ -214,3 +214,78 @@ func TestCheckBackupTargetWritable(t *testing.T) {
 		}
 	})
 }
+
+func TestCheckPathNesting(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Setup directory structure
+	srcDir := filepath.Join(tempDir, "source")
+	targetDir := filepath.Join(tempDir, "target")
+	nestedTarget := filepath.Join(srcDir, "nested_target")
+	nestedSource := filepath.Join(targetDir, "nested_source")
+	otherDir := filepath.Join(tempDir, "other")
+
+	for _, p := range []string{srcDir, targetDir, nestedTarget, nestedSource, otherDir} {
+		if err := os.MkdirAll(p, 0755); err != nil {
+			t.Fatalf("failed to create test dir %s: %v", p, err)
+		}
+	}
+
+	t.Run("Happy Path - Separate Directories", func(t *testing.T) {
+		if err := checkPathNesting(srcDir, targetDir); err != nil {
+			t.Errorf("expected no error, got: %v", err)
+		}
+	})
+
+	t.Run("Happy Path - Siblings", func(t *testing.T) {
+		if err := checkPathNesting(srcDir, otherDir); err != nil {
+			t.Errorf("expected no error, got: %v", err)
+		}
+	})
+
+	t.Run("Happy Path - Empty Strings", func(t *testing.T) {
+		if err := checkPathNesting("", ""); err != nil {
+			t.Errorf("expected no error, got: %v", err)
+		}
+	})
+
+	t.Run("Error - Target Inside Source", func(t *testing.T) {
+		err := checkPathNesting(srcDir, nestedTarget)
+		if err == nil {
+			t.Error("expected error, got nil")
+		} else if !strings.Contains(err.Error(), "inside or same as source path") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("Error - Source Inside Target", func(t *testing.T) {
+		err := checkPathNesting(nestedSource, targetDir)
+		if err == nil {
+			t.Error("expected error, got nil")
+		} else if !strings.Contains(err.Error(), "inside or same as target path") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("Error - Same Directory", func(t *testing.T) {
+		err := checkPathNesting(srcDir, srcDir)
+		if err == nil {
+			t.Error("expected error, got nil")
+		}
+	})
+
+	t.Run("Error - Relative Paths Nested", func(t *testing.T) {
+		// Test with relative paths that imply nesting.
+		// Source: "data"
+		// Target: "data/backup"
+		src := "data"
+		trg := filepath.Join("data", "backup")
+
+		err := checkPathNesting(src, trg)
+		if err == nil {
+			t.Error("expected error for nested relative paths, got nil")
+		} else if !strings.Contains(err.Error(), "inside or same as source path") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+}

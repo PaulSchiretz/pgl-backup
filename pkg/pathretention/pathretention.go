@@ -50,6 +50,8 @@ type retentionRun struct {
 	dryRun               bool
 	metrics              pathretentionmetrics.Metrics
 	numWorkers           int
+	deleteTasksChan      chan metafile.MetafileInfo
+	deleteWg             sync.WaitGroup
 }
 
 type PathRetentionManager struct {
@@ -94,6 +96,7 @@ func (rm *PathRetentionManager) Apply(ctx context.Context, retentionPolicyTitle 
 		dryRun:               rm.config.DryRun,
 		metrics:              m,
 		numWorkers:           rm.config.Engine.Performance.DeleteWorkers,
+		deleteTasksChan:      make(chan metafile.MetafileInfo, rm.config.Engine.Performance.DeleteWorkers*2),
 	}
 
 	// Get a sorted list of all valid backups
@@ -181,60 +184,59 @@ func (r *retentionRun) execute() error {
 		r.metrics.LogSummary("Delete finished")
 	}()
 
-	// --- 4. Delete backups in parallel using a worker pool ---
-	// This is especially effective for network drives where latency is a factor.
-	// Buffer it to 2x the workers to keep the pipeline full without wasting memory
-	deleteDirTasksChan := make(chan metafile.MetafileInfo, r.numWorkers*2)
-	var wg sync.WaitGroup
-
 	// Start workers
 	for i := 0; i < r.numWorkers; i++ {
-		wg.Add(1)
-		go func(workerID int) {
-			defer wg.Done()
-			for b := range deleteDirTasksChan {
-				// Check for cancellation before each deletion.
-				select {
-				case <-r.ctx.Done():
-					// Don't process any more jobs if context is cancelled.
-					return
-				default:
-				}
-
-				dirToDelete := filepath.Join(r.dirPath, util.DenormalizePath(b.RelPathKey))
-
-				if r.dryRun {
-					plog.Notice("[DRY RUN] DELETE", "policy", r.retentionPolicyTitle, "path", dirToDelete)
-					continue
-				}
-				plog.Notice("DELETE", "policy", r.retentionPolicyTitle, "path", dirToDelete, "worker", workerID)
-				if err := os.RemoveAll(dirToDelete); err != nil {
-					r.metrics.AddBackupsFailed(1)
-					plog.Warn("Failed to delete outdated backup directory", "policy", r.retentionPolicyTitle, "path", dirToDelete, "error", err)
-				} else {
-					r.metrics.AddBackupsDeleted(1)
-				}
-				plog.Notice("DELETED", "policy", r.retentionPolicyTitle, "path", dirToDelete)
-			}
-		}(i + 1)
+		r.deleteWg.Add(1)
+		go r.deleteWorker()
 	}
 
-	// Feed the jobs in a separate goroutine so the main function can simply wait for the workers to finish.
-	go func() {
-		defer close(deleteDirTasksChan)
-		for _, b := range eligibleBackups {
-			select {
-			case <-r.ctx.Done():
-				plog.Debug("Cancellation received, stopping retention job feeding.")
-				return // Stop feeding on cancel.
-			case deleteDirTasksChan <- b:
-			}
-		}
-	}()
+	// Start producer
+	go r.deleteTaskProducer(eligibleBackups)
 
-	wg.Wait()
+	r.deleteWg.Wait()
 
 	return nil
+}
+
+// deleteTaskProducer feeds the eligible backups into the channel for workers.
+func (r *retentionRun) deleteTaskProducer(eligibleBackups []metafile.MetafileInfo) {
+	defer close(r.deleteTasksChan)
+	for _, b := range eligibleBackups {
+		select {
+		case <-r.ctx.Done():
+			plog.Debug("Cancellation received, stopping retention job feeding.")
+			return // Stop feeding on cancel.
+		case r.deleteTasksChan <- b:
+		}
+	}
+}
+
+// deleteWorker consumes tasks from the channel and deletes the backups.
+func (r *retentionRun) deleteWorker() {
+	defer r.deleteWg.Done()
+	for b := range r.deleteTasksChan {
+		// Check for cancellation before each deletion.
+		select {
+		case <-r.ctx.Done():
+			return
+		default:
+		}
+
+		dirToDelete := filepath.Join(r.dirPath, util.DenormalizePath(b.RelPathKey))
+
+		if r.dryRun {
+			plog.Notice("[DRY RUN] DELETE", "policy", r.retentionPolicyTitle, "path", dirToDelete)
+			continue
+		}
+		plog.Notice("DELETE", "policy", r.retentionPolicyTitle, "path", dirToDelete)
+		if err := os.RemoveAll(dirToDelete); err != nil {
+			r.metrics.AddBackupsFailed(1)
+			plog.Warn("Failed to delete outdated backup directory", "policy", r.retentionPolicyTitle, "path", dirToDelete, "error", err)
+		} else {
+			r.metrics.AddBackupsDeleted(1)
+		}
+		plog.Notice("DELETED", "policy", r.retentionPolicyTitle, "path", dirToDelete)
+	}
 }
 
 // filterBackupsToDelete identifies which backups should be deleted based on the retention policy.

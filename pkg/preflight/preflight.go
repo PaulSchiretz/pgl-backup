@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/paulschiretz/pgl-backup/pkg/config"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
@@ -45,6 +46,11 @@ func RunChecks(c *config.Config) error {
 	// 4. Perform cross-platform safety checks.
 	if err := checkCaseSensitivityMismatch(c.Paths.Source); err != nil {
 		return err // This returns a warning as an error to halt execution.
+	}
+
+	// 5. Check for path nesting.
+	if err := checkPathNesting(c.Paths.Source, c.Paths.TargetBase); err != nil {
+		return err
 	}
 
 	return nil
@@ -110,6 +116,37 @@ func checkBackupTargetAccessible(targetPath string) error {
 	// Platform-specific: If the folder exists, we check it directly (e.g., Unix mount point check).
 	if err := platformValidateMountPoint(targetPath); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+// checkPathNesting ensures that source and target paths are not nested within each other.
+// This prevents infinite recursion loops (Target inside Source) and unsupported configurations
+// (Source inside Target).
+func checkPathNesting(source, target string) error {
+	if source == "" || target == "" {
+		return nil
+	}
+
+	absSource, err := filepath.Abs(source)
+	if err != nil {
+		return fmt.Errorf("failed to resolve absolute path for source: %w", err)
+	}
+
+	absTarget, err := filepath.Abs(target)
+	if err != nil {
+		return fmt.Errorf("failed to resolve absolute path for target: %w", err)
+	}
+
+	// Check if Target is inside Source (Infinite Recursion Risk)
+	if rel, err := filepath.Rel(absSource, absTarget); err == nil && !strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("target path '%s' is inside or same as source path '%s'. This causes infinite recursion", target, source)
+	}
+
+	// Check if Source is inside Target (Unsupported)
+	if rel, err := filepath.Rel(absTarget, absSource); err == nil && !strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("source path '%s' is inside or same as target path '%s'. This is not supported", source, target)
 	}
 
 	return nil

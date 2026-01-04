@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"compress/gzip"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -166,6 +167,91 @@ func TestCompress(t *testing.T) {
 		archivePath := filepath.Join(backupDir, backupName+".zip")
 		if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
 			t.Error("archive file was left over after cancellation")
+		}
+	})
+
+	t.Run("Worker Cancellation During Processing", func(t *testing.T) {
+		// Arrange
+		tempDir := t.TempDir()
+		cfg := config.NewDefault()
+		cfg.Naming.Prefix = "backup_"
+		// Use 1 worker to serialize execution
+		cfg.Engine.Performance.CompressWorkers = 1
+		manager := newTestCompressionManager(t, cfg)
+
+		// Create a backup manually to populate it with many files
+		backupName := "backup_heavy"
+		backupPath := filepath.Join(tempDir, backupName)
+		if err := os.MkdirAll(backupPath, util.UserWritableDirPerms); err != nil {
+			t.Fatalf("failed to create backup dir: %v", err)
+		}
+		metadata := metafile.MetafileContent{TimestampUTC: time.Now(), IsCompressed: false}
+		if err := metafile.Write(backupPath, metadata); err != nil {
+			t.Fatalf("failed to write metafile: %v", err)
+		}
+		contentPath := filepath.Join(backupPath, cfg.Paths.ContentSubDir)
+		if err := os.Mkdir(contentPath, util.UserWritableDirPerms); err != nil {
+			t.Fatalf("failed to create content dir: %v", err)
+		}
+		// Create enough files to likely span across the 1ms sleep
+		for i := 0; i < 500; i++ {
+			fname := filepath.Join(contentPath, fmt.Sprintf("file_%d.txt", i))
+			if err := os.WriteFile(fname, []byte("some content"), util.UserWritableFilePerms); err != nil {
+				t.Fatalf("failed to create file: %v", err)
+			}
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+
+		// Cancel shortly after starting
+		go func() {
+			time.Sleep(1 * time.Millisecond)
+			cancel()
+		}()
+
+		policy := config.CompressionPolicyConfig{
+			Format: config.ZipFormat,
+		}
+
+		// Act
+		err := manager.Compress(ctx, []string{backupPath}, policy)
+
+		// Assert
+		if err != nil {
+			t.Errorf("Compress returned error on cancellation: %v", err)
+		}
+
+		// Verify consistency
+		archivePath := filepath.Join(backupPath, backupName+".zip")
+		_, errStat := os.Stat(archivePath)
+		archiveExists := errStat == nil
+
+		meta, err := metafile.Read(backupPath)
+		if err != nil {
+			t.Fatalf("failed to read metafile: %v", err)
+		}
+
+		if archiveExists {
+			// If it finished before cancellation
+			if !meta.IsCompressed {
+				t.Error("Archive exists but metadata says not compressed")
+			}
+		} else {
+			// If it was cancelled
+			if meta.IsCompressed {
+				t.Error("Archive does not exist but metadata says compressed")
+			}
+			// Check for leftover temp files
+			entries, _ := os.ReadDir(backupPath)
+			for _, e := range entries {
+				if strings.HasSuffix(e.Name(), ".tmp") {
+					t.Errorf("Found temp file left behind: %s", e.Name())
+				}
+			}
+			// Content directory should still exist
+			if _, err := os.Stat(contentPath); os.IsNotExist(err) {
+				t.Error("Content directory missing after cancellation")
+			}
 		}
 	})
 

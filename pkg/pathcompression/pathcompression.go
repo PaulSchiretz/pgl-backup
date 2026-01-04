@@ -45,15 +45,17 @@ import (
 // compressionRun holds the mutable state for a single execution of the compression manager.
 // This makes the CompressionEngine itself stateless and safe for concurrent use if needed.
 type compressionRun struct {
-	ctx             context.Context
-	contentSubDir   string
-	format          config.CompressionFormat
-	eligibleBackups []metafile.MetafileInfo
-	metrics         pathcompressionmetrics.Metrics
-	dryRun          bool
-	ioWriterPool    *sync.Pool
-	ioBufferPool    *sync.Pool
-	numWorkers      int
+	ctx               context.Context
+	contentSubDir     string
+	format            config.CompressionFormat
+	eligibleBackups   []metafile.MetafileInfo
+	metrics           pathcompressionmetrics.Metrics
+	dryRun            bool
+	ioWriterPool      *sync.Pool
+	ioBufferPool      *sync.Pool
+	numWorkers        int
+	compressTasksChan chan metafile.MetafileInfo
+	compressWg        sync.WaitGroup
 }
 
 type PathCompressionManager struct {
@@ -102,9 +104,10 @@ func (c *PathCompressionManager) Compress(ctx context.Context, backups []string,
 				return &b
 			},
 		},
-		metrics:         m,
-		eligibleBackups: c.identifyEligibleBackups(backups),
-		numWorkers:      c.config.Engine.Performance.CompressWorkers,
+		metrics:           m,
+		eligibleBackups:   c.identifyEligibleBackups(backups),
+		numWorkers:        c.config.Engine.Performance.CompressWorkers,
+		compressTasksChan: make(chan metafile.MetafileInfo, c.config.Engine.Performance.CompressWorkers*2),
 	}
 
 	// Check if we need compressing
@@ -131,84 +134,79 @@ func (r *compressionRun) execute() error {
 		r.metrics.LogSummary("Compression finished")
 	}()
 
-	// --- 4. Compress backups in parallel using a worker pool ---
-	// This is especially effective for network drives where latency is a factor.
-	// Buffer it to 2x the workers to keep the pipeline full without wasting memory
-	compressDirTasksChan := make(chan metafile.MetafileInfo, r.numWorkers*2)
-	var wg sync.WaitGroup
-
 	// Start workers
 	for i := 0; i < r.numWorkers; i++ {
-		wg.Add(1)
-		go func(workerID int) {
-			defer wg.Done()
-			for b := range compressDirTasksChan {
-				// Check for cancellation before each deletion.
-				select {
-				case <-r.ctx.Done():
-					// Don't process any more jobs if the context is cancelled.
-					return
-				default:
-				}
-
-				fullPathToCompress := b.RelPathKey
-
-				if r.dryRun {
-					plog.Notice("[DRY RUN] COMPRESS", "path", fullPathToCompress)
-					continue
-				}
-
-				plog.Notice("COMPRESS", "path", fullPathToCompress, "worker", workerID)
-				if err := r.compressDirectory(fullPathToCompress); err != nil {
-					// If the error is a cancellation, we should not treat it as a failure.
-					// We just stop processing this item.
-					if err == context.Canceled {
-						return
-					}
-
-					// A failure to compress a single backup is logged as a warning but does not
-					// stop the overall process. The original uncompressed backup is left untouched.
-					// We now update the metafile to track the failure.
-					r.metrics.AddArchivesFailed(1)
-					plog.Warn("Failed to compress directory", "path", fullPathToCompress, "error", err)
-				} else {
-					r.metrics.AddArchivesCreated(1)
-					// On successful archive creation, we first update the metafile.
-					b.Metadata.IsCompressed = true
-					if writeErr := metafile.Write(fullPathToCompress, b.Metadata); writeErr != nil {
-						// If we fail to mark it as compressed, we must not delete the original content.
-						// The next run will find the archive and repair the metadata.
-						plog.Error("Failed to write updated metafile after compression success. Original content has been preserved.", "path", fullPathToCompress, "error", writeErr)
-					} else {
-						// Only after the metafile is successfully updated do we remove the original content.
-						// This makes the operation more atomic.
-						contentDir := filepath.Join(fullPathToCompress, r.contentSubDir)
-						if err := os.RemoveAll(contentDir); err != nil {
-							plog.Error("Failed to remove original content directory after successful compression and metadata update. The compressed archive is safe, but the original content remains. Manual cleanup may be required.", "path", contentDir, "error", err)
-						}
-					}
-				}
-				plog.Notice("COMPRESSED", "path", fullPathToCompress)
-			}
-		}(i + 1)
+		r.compressWg.Add(1)
+		go r.compressWorker()
 	}
 
-	// Feed the jobs in a separate goroutine so the main function can simply wait for the workers to finish.
-	go func() {
-		defer close(compressDirTasksChan)
-		for _, b := range r.eligibleBackups {
-			select {
-			case <-r.ctx.Done():
-				plog.Debug("Cancellation received, stopping compression job feeding.")
-				return // Stop feeding on cancel.
-			case compressDirTasksChan <- b:
-			}
-		}
-	}()
+	// Start producer
+	go r.compressTaskProducer()
 
-	wg.Wait()
+	r.compressWg.Wait()
 
 	return nil
+}
+
+// compressTaskProducer feeds the eligible backups into the channel for workers.
+func (r *compressionRun) compressTaskProducer() {
+	defer close(r.compressTasksChan)
+	for _, b := range r.eligibleBackups {
+		select {
+		case <-r.ctx.Done():
+			plog.Debug("Cancellation received, stopping compression job feeding.")
+			return // Stop feeding on cancel.
+		case r.compressTasksChan <- b:
+		}
+	}
+}
+
+// compressWorker consumes tasks from the channel and compresses the backups.
+func (r *compressionRun) compressWorker() {
+	defer r.compressWg.Done()
+
+	for b := range r.compressTasksChan {
+		// Check for cancellation before processing.
+		select {
+		case <-r.ctx.Done():
+			return
+		default:
+		}
+
+		fullPathToCompress := b.RelPathKey
+
+		if r.dryRun {
+			plog.Notice("[DRY RUN] COMPRESS", "path", fullPathToCompress)
+			continue
+		}
+
+		plog.Notice("COMPRESS", "path", fullPathToCompress)
+		if err := r.compressDirectory(fullPathToCompress); err != nil {
+			// If the error is a cancellation, we should not treat it as a failure.
+			if err == context.Canceled {
+				return
+			}
+
+			// A failure to compress a single backup is logged as a warning but does not
+			// stop the overall process.
+			r.metrics.AddArchivesFailed(1)
+			plog.Warn("Failed to compress directory", "path", fullPathToCompress, "error", err)
+		} else {
+			r.metrics.AddArchivesCreated(1)
+			// On successful archive creation, we first update the metafile.
+			b.Metadata.IsCompressed = true
+			if writeErr := metafile.Write(fullPathToCompress, b.Metadata); writeErr != nil {
+				plog.Error("Failed to write updated metafile after compression success. Original content has been preserved.", "path", fullPathToCompress, "error", writeErr)
+			} else {
+				// Only after the metafile is successfully updated do we remove the original content.
+				contentDir := filepath.Join(fullPathToCompress, r.contentSubDir)
+				if err := os.RemoveAll(contentDir); err != nil {
+					plog.Error("Failed to remove original content directory after successful compression. Manual cleanup may be required.", "path", contentDir, "error", err)
+				}
+			}
+		}
+		plog.Notice("COMPRESSED", "path", fullPathToCompress)
+	}
 }
 
 // identifyEligibleBackups scans the provided backup paths and returns a list of those
