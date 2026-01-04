@@ -2,6 +2,7 @@ package pathsync
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -847,6 +848,89 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestNativeSync_WorkerCancellation(t *testing.T) {
+	// Arrange
+	tempDir := t.TempDir()
+	srcDir := filepath.Join(tempDir, "src")
+	dstDir := filepath.Join(tempDir, "dst")
+
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		t.Fatalf("failed to create src dir: %v", err)
+	}
+	// Create many files to ensure the sync takes some time
+	for i := 0; i < 1000; i++ {
+		fname := filepath.Join(srcDir, fmt.Sprintf("file_%d.txt", i))
+		if err := os.WriteFile(fname, []byte("content"), 0644); err != nil {
+			t.Fatalf("failed to create file: %v", err)
+		}
+	}
+
+	cfg := config.NewDefault()
+	// Use 1 worker to serialize execution and make it easier to interrupt
+	cfg.Engine.Performance.SyncWorkers = 1
+	syncer := NewPathSyncer(cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Cancel shortly after starting
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+
+	// Act
+	err := syncer.Sync(ctx, srcDir, dstDir, false, nil, nil, false)
+
+	// Assert
+	if err != nil && !strings.Contains(err.Error(), "context canceled") && !strings.Contains(err.Error(), "critical sync error") {
+		t.Errorf("expected context canceled error, got: %v", err)
+	}
+}
+
+func TestNativeSync_MirrorCancellation(t *testing.T) {
+	// Arrange
+	tempDir := t.TempDir()
+	srcDir := filepath.Join(tempDir, "src")
+	dstDir := filepath.Join(tempDir, "dst")
+
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		t.Fatalf("failed to create src dir: %v", err)
+	}
+	if err := os.MkdirAll(dstDir, 0755); err != nil {
+		t.Fatalf("failed to create dst dir: %v", err)
+	}
+
+	// Create many files in DST that need to be deleted (Mirror phase work)
+	// Src is empty, so Sync phase is fast.
+	for i := 0; i < 1000; i++ {
+		fname := filepath.Join(dstDir, fmt.Sprintf("file_to_delete_%d.txt", i))
+		if err := os.WriteFile(fname, []byte("content"), 0644); err != nil {
+			t.Fatalf("failed to create file: %v", err)
+		}
+	}
+
+	cfg := config.NewDefault()
+	// Use 1 worker to serialize execution and make it easier to interrupt
+	cfg.Engine.Performance.MirrorWorkers = 1
+	syncer := NewPathSyncer(cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Cancel shortly after starting
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+
+	// Act
+	err := syncer.Sync(ctx, srcDir, dstDir, true, nil, nil, false)
+
+	// Assert
+	if err != nil && !strings.Contains(err.Error(), "context canceled") && !strings.Contains(err.Error(), "critical mirror error") {
+		t.Errorf("expected context canceled error, got: %v", err)
 	}
 }
 
