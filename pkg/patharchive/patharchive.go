@@ -42,6 +42,7 @@ type archiveRun struct {
 	currentTimestampUTC       time.Time
 	dryRun                    bool
 	metrics                   patharchivemetrics.Metrics
+	location                  *time.Location
 }
 
 type PathArchiver struct {
@@ -113,6 +114,7 @@ func (a *PathArchiver) Archive(ctx context.Context, dirPath, currentBackupPath s
 		currentTimestampUTC:       currentTimestampUTC,
 		dryRun:                    a.config.DryRun,
 		metrics:                   m,
+		location:                  time.Local,
 	}
 
 	return run.execute()
@@ -185,19 +187,10 @@ func (r *archiveRun) shouldArchive() bool {
 	// archive boundaries based on the local system's midnight to align with a
 	// user's calendar day, even though all stored timestamps are UTC.
 	if r.interval >= 24*time.Hour {
-		loc := time.Local
+		loc := r.location
 
-		// Normalize both times to the system's local midnight.
-		y1, m1, d1 := r.currentBackupTimestampUTC.In(loc).Date()
-		lastDayMidnight := time.Date(y1, m1, d1, 0, 0, 0, 0, loc)
-
-		y2, m2, d2 := r.currentTimestampUTC.In(loc).Date()
-		currentDayMidnight := time.Date(y2, m2, d2, 0, 0, 0, 0, loc)
-
-		// Calculate days since a fixed anchor (Unix Epoch Local).
-		anchor := time.Date(1970, 1, 1, 0, 0, 0, 0, loc)
-		lastDayNum := int64(lastDayMidnight.Sub(anchor).Hours() / 24)
-		currentDayNum := int64(currentDayMidnight.Sub(anchor).Hours() / 24)
+		lastDayNum := calculateEpochDays(r.currentBackupTimestampUTC, loc)
+		currentDayNum := calculateEpochDays(r.currentTimestampUTC, loc)
 
 		// Calculate the Bucket Size in Days
 		daysInBucket := int64(r.interval / (24 * time.Hour))
@@ -215,6 +208,17 @@ func (r *archiveRun) shouldArchive() bool {
 	currentBackupBoundary := r.currentTimestampUTC.Truncate(r.interval)
 
 	return !currentBackupBoundary.Equal(lastBackupBoundary)
+}
+
+// calculateEpochDays calculates the number of days since the Unix Epoch (1970-01-01)
+// for a given time in a specific location. It normalizes the time to midnight
+// and adds a 12-hour buffer to handle DST transitions (23h/25h days) robustly.
+func calculateEpochDays(t time.Time, loc *time.Location) int64 {
+	y, m, d := t.In(loc).Date()
+	midnight := time.Date(y, m, d, 0, 0, 0, 0, loc)
+	anchor := time.Date(1970, 1, 1, 0, 0, 0, 0, loc)
+	// Add 12 hours to center the calculation in the day, avoiding DST jitter (23h vs 25h days).
+	return int64(midnight.Sub(anchor).Hours()+12) / 24
 }
 
 // determineInterval calculates the effective archive interval based on configuration.

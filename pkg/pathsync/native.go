@@ -646,7 +646,7 @@ func (r *syncRun) processSymlinkSync(task *syncTask) error {
 }
 
 // processDirectorySync handles the creation and permission setting for a directory in the destination.
-// It returns filepath.SkipDir if the directory cannot be created, signaling the walker to not descend.
+// It returns an error (specifically filepath.SkipDir) if the directory cannot be created.
 func (r *syncRun) processDirectorySync(task *syncTask) error {
 
 	if r.dryRun {

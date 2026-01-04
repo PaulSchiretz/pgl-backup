@@ -40,6 +40,7 @@ func TestShouldArchive(t *testing.T) {
 		interval                  time.Duration
 		currentBackupTimestampUTC time.Time
 		currentTimestampUTC       time.Time
+		location                  *time.Location
 		shouldArchive             bool
 	}{
 		{
@@ -71,28 +72,63 @@ func TestShouldArchive(t *testing.T) {
 			shouldArchive:             true,
 		},
 		{
-			name:                      "Weekly - No Archive (Day 3)",
-			interval:                  7 * 24 * time.Hour,
+			name:     "Weekly - No Archive (Day 3)",
+			interval: 7 * 24 * time.Hour,
+			// Unix Epoch (1970-01-01) was a Thursday.
+			// Oct 23, 2023 is a Monday.
+			// Oct 25, 2023 is a Wednesday.
+			// Both fall within the same 7-day bucket (Thursday to Wednesday).
 			currentBackupTimestampUTC: time.Date(2023, 10, 23, 12, 0, 0, 0, time.UTC), // Day D
-			currentTimestampUTC:       time.Date(2023, 10, 26, 12, 0, 0, 0, time.UTC), // Day D + 3
+			currentTimestampUTC:       time.Date(2023, 10, 25, 12, 0, 0, 0, time.UTC), // Day D + 2
 			shouldArchive:             false,
 		},
 		{
-			name:                      "Weekly - Archive (Day 7 Boundary)",
-			interval:                  7 * 24 * time.Hour,
+			name:     "Weekly - Archive (Day 7 Boundary)",
+			interval: 7 * 24 * time.Hour,
+			// Unix Epoch (1970-01-01) was a Thursday.
+			// Oct 23, 2023 is a Monday.
+			// Oct 30, 2023 is the following Monday.
+			// They are in different 7-day buckets because the boundary (Thursday) was crossed on Oct 26.
 			currentBackupTimestampUTC: time.Date(2023, 10, 23, 12, 0, 0, 0, time.UTC), // Day D (Bucket B)
 			currentTimestampUTC:       time.Date(2023, 10, 30, 12, 0, 0, 0, time.UTC), // Day D + 7 (Bucket B + 1)
+			shouldArchive:             true,
+		},
+		{
+			name:     "Daily - DST Spring Forward (23h day)",
+			interval: 24 * time.Hour,
+			// March 12, 2023 was DST start in NY.
+			// 2023-03-11 12:00 EST -> 2023-03-12 12:00 EDT is 23 hours.
+			// We want to ensure this counts as a full day change.
+			currentBackupTimestampUTC: time.Date(2023, 3, 11, 17, 0, 0, 0, time.UTC), // 12:00 EST
+			currentTimestampUTC:       time.Date(2023, 3, 12, 16, 0, 0, 0, time.UTC), // 12:00 EDT (23h later)
+			location:                  mustLoadLocation("America/New_York"),
+			shouldArchive:             true,
+		},
+		{
+			name:     "Daily - DST Fall Back (25h day)",
+			interval: 24 * time.Hour,
+			// Nov 5, 2023 was DST end in NY.
+			// 2023-11-04 12:00 EDT -> 2023-11-05 12:00 EST is 25 hours.
+			// We want to ensure this counts as a full day change.
+			currentBackupTimestampUTC: time.Date(2023, 11, 4, 16, 0, 0, 0, time.UTC), // 12:00 EDT
+			currentTimestampUTC:       time.Date(2023, 11, 5, 17, 0, 0, 0, time.UTC), // 12:00 EST (25h later)
+			location:                  mustLoadLocation("America/New_York"),
 			shouldArchive:             true,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			loc := tc.location
+			if loc == nil {
+				loc = time.UTC
+			}
 			// Create a run struct to pass to shouldArchive
 			run := &archiveRun{
 				currentBackupTimestampUTC: tc.currentBackupTimestampUTC,
 				currentTimestampUTC:       tc.currentTimestampUTC,
 				interval:                  tc.interval,
+				location:                  loc,
 			}
 			result := run.shouldArchive()
 
@@ -101,6 +137,83 @@ func TestShouldArchive(t *testing.T) {
 			}
 		})
 	}
+}
+
+func mustLoadLocation(name string) *time.Location {
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		// Fallback for systems without zoneinfo (e.g. Windows sometimes)
+		return time.UTC
+	}
+	return loc
+}
+
+func TestEpochBucketingVerification(t *testing.T) {
+	// This test verifies the assumptions made about epoch buckets in the main test cases.
+	// Unix Epoch 1970-01-01 was a Thursday.
+	// Therefore, 7-day buckets align with Thursday-to-Wednesday cycles.
+
+	// Oct 23, 2023 (Monday) -> Bucket A
+	t1 := time.Date(2023, 10, 23, 12, 0, 0, 0, time.UTC)
+	// Oct 25, 2023 (Wednesday) -> Bucket A
+	t2 := time.Date(2023, 10, 25, 12, 0, 0, 0, time.UTC)
+	// Oct 26, 2023 (Thursday) -> Bucket B (New Bucket)
+	t3 := time.Date(2023, 10, 26, 12, 0, 0, 0, time.UTC)
+
+	b1 := calculateEpochBucket(t1, 7)
+	b2 := calculateEpochBucket(t2, 7)
+	b3 := calculateEpochBucket(t3, 7)
+
+	if b1 != b2 {
+		t.Errorf("Expected Mon Oct 23 and Wed Oct 25 to be in same bucket, got %d and %d", b1, b2)
+	}
+	if b2 == b3 {
+		t.Errorf("Expected Wed Oct 25 and Thu Oct 26 to be in different buckets, got %d and %d", b2, b3)
+	}
+}
+
+func TestCalculateEpochDays(t *testing.T) {
+	loc := time.UTC
+
+	// Case 1: Leap Year (1972)
+	// Feb 28, 1972
+	t1 := time.Date(1972, 2, 28, 12, 0, 0, 0, loc)
+	d1 := calculateEpochDays(t1, loc)
+
+	// Feb 29, 1972 (Leap Day)
+	t2 := time.Date(1972, 2, 29, 12, 0, 0, 0, loc)
+	d2 := calculateEpochDays(t2, loc)
+
+	// Mar 1, 1972
+	t3 := time.Date(1972, 3, 1, 12, 0, 0, 0, loc)
+	d3 := calculateEpochDays(t3, loc)
+
+	if d2 != d1+1 {
+		t.Errorf("Leap Year: Expected Feb 29 to be 1 day after Feb 28, got diff %d", d2-d1)
+	}
+	if d3 != d2+1 {
+		t.Errorf("Leap Year: Expected Mar 1 to be 1 day after Feb 29, got diff %d", d3-d2)
+	}
+
+	// Case 2: Non-Leap Year (1973)
+	// Feb 28, 1973
+	t4 := time.Date(1973, 2, 28, 12, 0, 0, 0, loc)
+	d4 := calculateEpochDays(t4, loc)
+
+	// Mar 1, 1973
+	t5 := time.Date(1973, 3, 1, 12, 0, 0, 0, loc)
+	d5 := calculateEpochDays(t5, loc)
+
+	if d5 != d4+1 {
+		t.Errorf("Non-Leap Year: Expected Mar 1 to be 1 day after Feb 28, got diff %d", d5-d4)
+	}
+}
+
+// calculateEpochBucket is a helper to verify test assumptions about bucketing.
+// It mirrors the logic in patharchive.go.
+func calculateEpochBucket(t time.Time, intervalDays int64) int64 {
+	days := calculateEpochDays(t, t.Location())
+	return days / intervalDays
 }
 
 func TestArchive(t *testing.T) {

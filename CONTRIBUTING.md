@@ -32,3 +32,17 @@ That's fantastic! Here’s how you can get your changes merged:
 6.  Commit your changes (`git commit -am 'Add some feature'`).
 7.  Push to the branch (`git push origin feature/my-new-feature`).
 8.  Create a new Pull Request.
+
+## Architectural Overview
+
+If you are diving into the code, here is a high-level overview of how the engine works.
+
+### 1. Producer-Consumer Concurrency
+To maximize I/O throughput, especially on high-latency network drives, the Sync, Compression, and Retention engines utilize a **Producer-Consumer** pattern.
+*   **Producer ("Walker")**: A single goroutine scans the filesystem and feeds tasks (files to copy, backups to compress) into a buffered channel.
+*   **Consumers ("Workers")**: A pool of goroutines reads from the channel and performs the blocking I/O operations in parallel.
+
+### 2. Core Strategies
+*   **Predictable Creation (Archiving)**: Archive creation is anchored to the *local system's midnight*. This ensures backups align with the user's calendar day, regardless of UTC timestamps.
+*   **Consistent History (Retention)**: Retention policies apply standard calendar concepts (ISO weeks, YYYY-MM-DD) to the *UTC timestamp* stored in metadata. This ensures portable, consistent history.
+*   **Fail-Forward (Compression)**: The compression engine only attempts to compress the specific backup created during the current run. If it fails (e.g., corrupt data), it leaves the backup uncompressed and moves on. It does *not* retry historical failures, preventing "poison pill" scenarios.

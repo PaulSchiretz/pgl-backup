@@ -12,8 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Promoted v1.0.0-rc.1 to stable release.
 - Fixed typo in usage output
+- Refactored internal worker engines to use explicit Producer-Consumer patterns.
 - Added pre-flight check to prevent source/target path nesting.
 - Compress osx release as tar.gz instead of zip
+
+### Fixed
+- Daylight Saving Time (DST) handling for archive intervals to correctly handle 23-hour and 25-hour days.
 
 ## [v1.0.0-rc.1] - 2025-12-31
 
