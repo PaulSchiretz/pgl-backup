@@ -10,6 +10,23 @@
 //      predictable control over the *frequency* of new archives, anchored to their local day.
 //      This is distinct from the retention logic in the `engine` package, which uses UTC
 //      for consistent historical cleanup.
+//    - Boundary Crossing: Crucially, for intervals >= 24h, the logic checks if a *calendar boundary*
+//      (e.g., midnight) has been crossed between the last backup time and now. It does NOT simply
+//      check `TimeSince(LastBackup) > Interval`. This ensures that even if backups run frequently
+//      (updating the "last backup" timestamp each time), an archive is still triggered exactly once
+//     when the day/week changes, preventing the "sliding window" problem.
+//
+// 2. Archive Creation Strategy - Rename vs. Copy
+//   - This package exclusively uses an `os.Rename` operation to archive the `current` backup.
+//     A `Copy` strategy was considered and rejected.
+//   - Rationale: A backup target (USB HDD, NAS) is almost always slower than the source (SSD).
+//     A `Copy` operation on the target (reading 1TB and writing 1TB) is therefore the
+//     slowest possible action. On network drives, this causes the "hairpin problem" where
+//     data must be read to the client and written back, doubling network traffic.
+//     In contrast, a `Rename` is an instant metadata operation.
+//   - The subsequent full re-sync from a fast source to a slow target is significantly
+//     faster than a slow target copying to itself. The `Rename` strategy is therefore the
+//     unambiguously correct choice for performance in all typical backup scenarios.
 
 // package patharchive is responsible for archiving the "current" incremental backup
 // into a permanent, timestamped directory when a configured time interval is crossed.
@@ -146,11 +163,13 @@ func (r *archiveRun) execute() (string, error) {
 	}
 
 	if r.dryRun {
-		plog.Notice("[DRY RUN] ARCHIVE", "from", r.currentBackupPath, "to", r.archiveBackupPath)
+		action := "moved"
+		plog.Notice("[DRY RUN] ARCHIVE", "action", action, "from", r.currentBackupPath, "to", r.archiveBackupPath)
 		return "", nil
 	}
 
-	plog.Notice("ARCHIVE", "from", r.currentBackupPath, "to", r.archiveBackupPath)
+	// Log the intent before starting the operation
+	plog.Info("Starting archive operation", "from", r.currentBackupPath, "to", r.archiveBackupPath)
 
 	// Sanity check: ensure the destination for the archive does not already exist.
 	if _, err := os.Stat(r.archiveBackupPath); err == nil {
@@ -161,11 +180,13 @@ func (r *archiveRun) execute() (string, error) {
 		return "", fmt.Errorf("could not check archive destination %s: %w", r.archiveBackupPath, err)
 	}
 
+	// Strategy: Rename (Move)
 	if err := os.Rename(r.currentBackupPath, r.archiveBackupPath); err != nil {
-		return "", fmt.Errorf("failed to archive backup: %w", err)
+		return "", fmt.Errorf("failed to rename backup to archive: %w", err)
 	}
+	plog.Notice("ARCHIVED", "moved", r.currentBackupPath, "to", r.archiveBackupPath)
+
 	r.metrics.AddArchivesCreated(1)
-	plog.Notice("ARCHIVED", "from", r.currentBackupPath, "to", r.archiveBackupPath)
 	return r.archiveBackupPath, nil
 }
 

@@ -43,6 +43,6 @@ To maximize I/O throughput, especially on high-latency network drives, the Sync,
 *   **Consumers ("Workers")**: A pool of goroutines reads from the channel and performs the blocking I/O operations in parallel.
 
 ### 2. Core Strategies
-*   **Predictable Creation (Archiving)**: Archive creation is anchored to the *local system's midnight*. This ensures backups align with the user's calendar day, regardless of UTC timestamps.
+*   **Predictable Creation (Archiving)**: Archive creation is anchored to the *local system's midnight*. This ensures backups align with the user's calendar day. Crucially, it uses **Boundary Crossing** logic (e.g., "did we cross midnight?") rather than simple elapsed time. This ensures that even if you run backups every 10 minutes (updating the timestamp constantly), an archive is still correctly created once per day/week/etc.
 *   **Consistent History (Retention)**: Retention policies apply standard calendar concepts (ISO weeks, YYYY-MM-DD) to the *UTC timestamp* stored in metadata. This ensures portable, consistent history.
 *   **Fail-Forward (Compression)**: The compression engine only attempts to compress the specific backup created during the current run. If it fails (e.g., corrupt data), it leaves the backup uncompressed and moves on. It does *not* retry historical failures, preventing "poison pill" scenarios.
