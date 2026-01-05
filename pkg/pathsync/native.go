@@ -40,6 +40,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -156,6 +157,10 @@ type syncRun struct {
 	// mirrorErrs captures non-fatal I/O errors from mirror workers.
 	mirrorErrs *sharded.ShardedMap
 
+	// mirrorDirsToDelete tracks directories in the destination that need to be deleted.
+	// Populated by mirrorTaskProducer, consumed by handleMirror.
+	mirrorDirsToDelete *sharded.ShardedSet
+
 	// ctx is the cancellable context for the entire run.
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -214,6 +219,7 @@ func (s *PathSyncer) handleNative(ctx context.Context, src, trg string, mirror b
 		syncErrs:               sharded.NewShardedMap(),
 		criticalMirrorErrsChan: make(chan error, 1),
 		mirrorErrs:             sharded.NewShardedMap(),
+		mirrorDirsToDelete:     sharded.NewShardedSet(),
 		ctx:                    ctx,
 		metrics:                m, // Use the selected metrics implementation.
 	}
@@ -824,8 +830,15 @@ func (r *syncRun) syncTaskProducer() {
 	if err != nil {
 		// If the walker fails, send the error and cancel everything.
 		// This is a blocking send because a walker failure is critical and must be reported.
-		// The handleSync function will pick this up and terminate the process.
-		r.criticalSyncErrsChan <- fmt.Errorf("sync producer failed: %w", err)
+		// We use select to avoid leaking the goroutine if the receiver has stopped.
+		select {
+		case r.criticalSyncErrsChan <- fmt.Errorf("sync producer failed: %w", err):
+		case <-r.ctx.Done():
+		default:
+			// If the channel is full, a critical error is already pending (likely from a worker).
+			// We log this error and exit to ensure the channel is closed and workers can finish.
+			plog.Warn("Sync producer failed, but critical error channel is full", "error", err)
+		}
 	}
 }
 
@@ -974,9 +987,8 @@ func (r *syncRun) handleSync() error {
 // mirrorTaskProducer is the producer for the deletion phase. It walks the destination
 // directory and sends paths that need to be deleted to the mirrorTasksChan.
 // It returns a slice of directory paths to be deleted after all files are gone.
-func (r *syncRun) mirrorTaskProducer() []string {
+func (r *syncRun) mirrorTaskProducer() {
 	defer close(r.mirrorTasksChan)
-	var relPathKeyDirsToDelete []string
 	err := filepath.WalkDir(r.trg, func(absTrgPath string, d os.DirEntry, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -1019,8 +1031,8 @@ func (r *syncRun) mirrorTaskProducer() []string {
 		// This path needs to be deleted.
 		if d.IsDir() {
 			// For directories, we add them to a list to be deleted later.
-			// This ensures we delete contents before the directory itself (post-order).
-			relPathKeyDirsToDelete = append(relPathKeyDirsToDelete, relPathKey)
+			// We store them in the set to be sorted and deleted in handleMirror.
+			r.mirrorDirsToDelete.Store(relPathKey)
 		} else {
 			// For files, we can send them to be deleted immediately.
 			task := r.mirrorTaskPool.Get().(*mirrorTask)
@@ -1036,9 +1048,15 @@ func (r *syncRun) mirrorTaskProducer() []string {
 
 	if err != nil {
 		// A walker failure is a critical error for the mirror phase.
-		r.criticalMirrorErrsChan <- fmt.Errorf("mirror producer failed: %w", err)
+		// Use select to avoid deadlock if the channel is full (e.g., a worker already failed fast).
+		select {
+		case r.criticalMirrorErrsChan <- fmt.Errorf("mirror producer failed: %w", err):
+		case <-r.ctx.Done():
+		default:
+			// If the channel is full, a critical error is already pending. Log this one as a warning.
+			plog.Warn("Mirror producer failed, but critical error channel is full", "error", err)
+		}
 	}
-	return relPathKeyDirsToDelete
 }
 
 // mirrorWorker is the consumer for the deletion phase. It reads paths from
@@ -1100,9 +1118,8 @@ func (r *syncRun) handleMirror() error {
 		go r.mirrorWorker()
 	}
 
-	// Walk the destination and send files to be deleted to the workers.
-	// This returns a list of directories that also need to be deleted.
-	relPathKeyDirsToDelete := r.mirrorTaskProducer()
+	// Start the mirrorTaskProducer (Producer) in a goroutine.
+	go r.mirrorTaskProducer()
 
 	// Wait for all file deletions to complete.
 	r.mirrorWg.Wait()
@@ -1116,9 +1133,16 @@ func (r *syncRun) handleMirror() error {
 
 	// --- Phase 2B: Sequential Deletion of Directories ---
 	// Now that all files are gone, delete the obsolete directories.
-	// We do this sequentially and in reverse order to ensure children are removed before parents.
-	for i := len(relPathKeyDirsToDelete) - 1; i >= 0; i-- {
-		relPathKey := relPathKeyDirsToDelete[i]
+	// We retrieve them from the set and sort by length descending to ensure children are removed before parents.
+	// Explanation: A child path (e.g., "a/b") is always strictly longer than its parent path ("a").
+	// By deleting longest paths first, we guarantee that we never attempt to delete a parent directory
+	// before its children are gone, preventing "directory not empty" errors.
+	relPathKeyDirsToDelete := r.mirrorDirsToDelete.Keys()
+	sort.Slice(relPathKeyDirsToDelete, func(i, j int) bool {
+		return len(relPathKeyDirsToDelete[i]) > len(relPathKeyDirsToDelete[j])
+	})
+
+	for _, relPathKey := range relPathKeyDirsToDelete {
 		absPathToDelete := r.denormalizedAbsPath(r.trg, relPathKey)
 		if r.dryRun {
 			plog.Notice("[DRY RUN] DELETE", "path", relPathKey)
