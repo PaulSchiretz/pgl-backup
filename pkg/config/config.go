@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -342,11 +341,11 @@ func NewDefault() Config {
 			RetryWaitSeconds:     5, // Default wait time between retries.
 			ModTimeWindowSeconds: 1, // Set the default to 1 second
 			Performance: BackupEnginePerformanceConfig{ // Initialize performance settings here
-				SyncWorkers:     runtime.NumCPU(), // Default to the number of CPU cores for file copies.
-				MirrorWorkers:   runtime.NumCPU(), // Default to the number of CPU cores for file deletions.
-				DeleteWorkers:   4,                // A sensible default for deleting entire backup sets.
-				CompressWorkers: 4,                // A sensible default for compressing backups.
-				BufferSizeKB:    256,              // Default to 256KB buffer. Keep it between 64KB-4MB
+				SyncWorkers:     4,   // Default to 4. Safe for HDDs (prevents thrashing), decent for SSDs.
+				MirrorWorkers:   4,   // Default to 4.
+				DeleteWorkers:   4,   // A sensible default for deleting entire backup sets.
+				CompressWorkers: 4,   // A sensible default for compressing backups.
+				BufferSizeKB:    256, // Default to 256KB buffer. Keep it between 64KB-4MB
 			}},
 		Naming: BackupNamingConfig{
 			Prefix: "PGL_Backup_",

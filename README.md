@@ -175,11 +175,11 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
     "retryWaitSeconds": 5,
     "modTimeWindowSeconds": 1,
     "performance": {
-      "mirrorWorkers": 8,
-      "bufferSizeKB": 256,
-      "syncWorkers": 8,
+      "syncWorkers": 4,
+      "mirrorWorkers": 4,
+      "deleteWorkers": 4,
       "compressWorkers": 4,
-      "deleteWorkers": 4
+      "bufferSizeKB": 256
     }
   },
   "logLevel": "info",
@@ -581,8 +581,8 @@ All command-line flags can be set in the `pgl-backup.config.json` file. Note tha
 | `post-backup-hooks` / `postBackup`| `[]string`    | `[]`                                  | List of shell commands to run after the backup. |
 | `preserve-source-name` / `paths.preserveSourceDirectoryName` | `bool` | `true` | If true, creates a subdirectory in the destination named after the source directory. If false, syncs contents directly. |
 | **Performance Tuning** | | | | 
-| `sync-workers` / `engine.performance.syncWorkers` | `int` | `runtime.NumCPU()` | Number of concurrent workers for file synchronization. |
-| `mirror-workers` / `engine.performance.mirrorWorkers` | `int` | `runtime.NumCPU()` | Number of concurrent workers for file deletions in mirror mode. |
+| `sync-workers` / `engine.performance.syncWorkers` | `int` | `4` | Number of concurrent workers for file synchronization. |
+| `mirror-workers` / `engine.performance.mirrorWorkers` | `int` | `4` | Number of concurrent workers for file deletions in mirror mode. |
 | `delete-workers` / `engine.performance.deleteWorkers` | `int` | `4` | Number of concurrent workers for deleting outdated backups. |
 | `compress-workers` / `engine.performance.compressWorkers` | `int` | `4` | Number of concurrent workers for compressing backups. |
 | `retry-count` / `engine.retryCount` | `int` | `3` | Number of retries for failed file copies. |
