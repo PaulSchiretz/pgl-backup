@@ -558,6 +558,7 @@ All command-line flags can be set in the `pgl-backup.config.json` file. Note tha
 | `sync-engine` / `engine.type`   | `string`      | `"native"`                            | The sync engine to use: `"native"` or `"robocopy"` (Windows only). |
 | `archive-interval-mode` / `archive.incremental.intervalMode` | `string` | `"auto"` | Archive interval mode: `"auto"` (derives interval from retention policy) or `"manual"`. In `auto` mode, if the retention policy is disabled, archiving is also disabled. |
 | `archive-interval-seconds` / `archive.incremental.intervalSeconds` | `int` | `86400` | In `manual` mode, the interval in seconds after which a new archive is created (e.g., `86400` for 24h). Use `0` to disable archiving. |
+| `archive.incremental.renameOnly` | `bool` | `false` | If true, moves the current backup to the archive instead of copying it. Faster creation, but forces a full re-sync next run. |
 | `retention.incremental.enabled`         | `bool`         | `true`                             | Enables the retention policy for incremental mode archives. |
 | `retention.incremental.hours`         | `int`         | `0`                                   | Number of recent hourly incremental archives to keep. |
 | `retention.incremental.days`          | `int`         | `7`                                   | Number of recent daily incremental archives to keep. |
@@ -623,7 +624,7 @@ This occurs because the binaries are currently unsigned. Please refer to the [Se
 *   **Cause**: The default number of concurrent workers may not be optimal for your specific hardware (e.g., slow spinning disks vs. fast SSDs, network latency).
 *   **Solution**:
     *   Adjust the `sync-workers` and `buffer-size-kb` settings in your `pgl-backup.config.json` file.
-    *   For systems with slow I/O (like a single spinning disk or a high-latency network share), *decreasing* the number of `sync-workers` (e.g., to `2` or `4`) can sometimes improve performance by reducing disk head thrashing.
+    *   For systems with slow I/O (like a single spinning disk or a high-latency network share), *decreasing* the number of `sync-workers` (e.g., to `1` or `2`) is recommended to minimize seek latency, as higher concurrency can cause significant thrashing.
     *   For systems with very fast I/O (like a local NVMe SSD), increasing `sync-workers` might yield better results.
 
 ### Error: `failed to create symlink (requires Admin or Developer Mode)`
