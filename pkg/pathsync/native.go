@@ -671,6 +671,7 @@ func (r *syncRun) processDirectorySync(task *syncTask) error {
 
 	// 2. Perform the concurrent I/O.
 	// Check if the destination exists and handle type conflicts (e.g. File vs Dir).
+	var dirCreated bool = false
 	info, err := os.Lstat(absTrgPath)
 	if err == nil {
 		// Path exists.
@@ -681,23 +682,29 @@ func (r *syncRun) processDirectorySync(task *syncTask) error {
 			if err := os.RemoveAll(absTrgPath); err != nil {
 				return fmt.Errorf("failed to remove conflicting destination file %s: %w", task.RelPathKey, err)
 			}
+			// Create the directory.
+			if err := os.MkdirAll(absTrgPath, expectedPerms); err != nil {
+				plog.Warn("Failed to create destination directory, skipping", "path", task.RelPathKey, "error", err)
+				return filepath.SkipDir
+			}
+			dirCreated = true
 		} else {
 			// It is already a directory. Ensure permissions are correct.
 			if err := os.Chmod(absTrgPath, expectedPerms); err != nil {
 				plog.Warn("Failed to set permissions on destination directory", "path", task.RelPathKey, "error", err)
 				return fmt.Errorf("failed to set permissions on destination directory %s: %w", task.RelPathKey, err)
 			}
-			return nil
 		}
-	} else if !os.IsNotExist(err) {
+	} else if os.IsNotExist(err) {
+		// Path does not exist. Create it.
+		if err := os.MkdirAll(absTrgPath, expectedPerms); err != nil {
+			plog.Warn("Failed to create destination directory, skipping", "path", task.RelPathKey, "error", err)
+			return filepath.SkipDir
+		}
+		dirCreated = true
+	} else {
 		// Unexpected error from Lstat.
 		return fmt.Errorf("failed to lstat destination directory %s: %w", task.RelPathKey, err)
-	}
-
-	// Path does not exist. Create it.
-	if err := os.MkdirAll(absTrgPath, expectedPerms); err != nil {
-		plog.Warn("Failed to create destination directory, skipping", "path", task.RelPathKey, "error", err)
-		return filepath.SkipDir
 	}
 
 	// 3. Atomically update the cache and check if we were the first to do so.
@@ -706,8 +713,10 @@ func (r *syncRun) processDirectorySync(task *syncTask) error {
 		return nil
 	}
 
-	plog.Notice("DIR", "path", task.RelPathKey)
-	r.metrics.AddDirsCreated(1)
+	if dirCreated {
+		plog.Notice("DIR", "path", task.RelPathKey)
+		r.metrics.AddDirsCreated(1)
+	}
 	return nil
 }
 
