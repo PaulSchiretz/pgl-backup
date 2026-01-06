@@ -670,23 +670,34 @@ func (r *syncRun) processDirectorySync(task *syncTask) error {
 	expectedPerms := util.WithUserWritePermission(task.PathInfo.Mode.Perm())
 
 	// 2. Perform the concurrent I/O.
-	// Optimistic creation: Try Chmod first (cheapest syscall).
-	// If it works, dir exists. If not, MkdirAll.
-	// This avoids the internal Stat() loop of MkdirAll for existing directories.
-	if err := os.Chmod(absTrgPath, expectedPerms); err != nil {
-		if os.IsNotExist(err) {
-			if err := os.MkdirAll(absTrgPath, expectedPerms); err != nil {
-				plog.Warn("Failed to create destination directory, skipping", "path", task.RelPathKey, "error", err)
-				// Path is already recorded, but we can't descend.
-				return filepath.SkipDir
+	// Check if the destination exists and handle type conflicts (e.g. File vs Dir).
+	info, err := os.Lstat(absTrgPath)
+	if err == nil {
+		// Path exists.
+		if !info.IsDir() {
+			// It exists but is not a directory (e.g. it's a file or symlink).
+			// We must remove it to create the directory.
+			plog.Warn("Destination path exists but is not a directory, removing", "path", task.RelPathKey, "type", info.Mode().String())
+			if err := os.RemoveAll(absTrgPath); err != nil {
+				return fmt.Errorf("failed to remove conflicting destination file %s: %w", task.RelPathKey, err)
 			}
 		} else {
-			plog.Warn("Failed to set permissions on destination directory", "path", task.RelPathKey, "error", err)
-			// A Chmod failure on an existing dir should not typically cause a SkipDir.
-			// If we cannot set permissions, it's an error for the file copy that relies on this directory.
-			// This error will be propagated to the syncWorker, which will record it as a non-fatal error.
-			return fmt.Errorf("failed to set permissions on destination directory %s: %w", task.RelPathKey, err)
+			// It is already a directory. Ensure permissions are correct.
+			if err := os.Chmod(absTrgPath, expectedPerms); err != nil {
+				plog.Warn("Failed to set permissions on destination directory", "path", task.RelPathKey, "error", err)
+				return fmt.Errorf("failed to set permissions on destination directory %s: %w", task.RelPathKey, err)
+			}
+			return nil
 		}
+	} else if !os.IsNotExist(err) {
+		// Unexpected error from Lstat.
+		return fmt.Errorf("failed to lstat destination directory %s: %w", task.RelPathKey, err)
+	}
+
+	// Path does not exist. Create it.
+	if err := os.MkdirAll(absTrgPath, expectedPerms); err != nil {
+		plog.Warn("Failed to create destination directory, skipping", "path", task.RelPathKey, "error", err)
+		return filepath.SkipDir
 	}
 
 	// 3. Atomically update the cache and check if we were the first to do so.

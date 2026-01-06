@@ -493,6 +493,29 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
+			name:   "Overwrite Destination File with Directory",
+			mirror: false,
+			srcDirs: []testDir{
+				{path: "conflict_dir", perm: 0755, modTime: baseTime},
+			},
+			srcFiles: []testFile{
+				{path: "conflict_dir/file.txt", content: "content", modTime: baseTime},
+			},
+			dstFiles: []testFile{
+				// Pre-create a FILE in the destination where a directory is expected.
+				{path: "conflict_dir", content: "blocking file", modTime: baseTime},
+			},
+			expectedDstFiles: map[string]testFile{
+				"conflict_dir/file.txt": {path: "conflict_dir/file.txt", content: "content", modTime: baseTime},
+			},
+			verify: func(t *testing.T, src, dst string) {
+				info := getPathInfo(t, filepath.Join(dst, "conflict_dir"))
+				if !info.IsDir() {
+					t.Errorf("expected 'conflict_dir' to be a directory, but got mode %v", info.Mode())
+				}
+			},
+		},
+		{
 			name:   "Overwrite Destination Symlink with File",
 			mirror: false,
 			srcFiles: []testFile{
@@ -547,32 +570,26 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
-			name: "Error Aggregation for Multiple Failures",
+			name: "Overwrite Destination File with Directory (Multiple)",
 			srcFiles: []testFile{
 				{path: "unwritable_dir/file1.txt", content: "content1", modTime: baseTime},
 				{path: "unwritable_dir/file2.txt", content: "content2", modTime: baseTime},
 				{path: "writable_dir/file3.txt", content: "content3", modTime: baseTime},
 			},
 			dstFiles: []testFile{
-				// Pre-create a FILE in the destination where a directory is expected.
-				// This will cause an OS-agnostic "is not a directory" error when the sync tries to create the parent dir.
+				// Pre-create a FILE in the destination where a directory is expected. The engine should fix this.
 				{path: "unwritable_dir", content: "i am a file, not a directory", modTime: baseTime},
 			},
 			expectedDstFiles: map[string]testFile{
+				"unwritable_dir/file1.txt": {path: "unwritable_dir/file1.txt", content: "content1", modTime: baseTime},
+				"unwritable_dir/file2.txt": {path: "unwritable_dir/file2.txt", content: "content2", modTime: baseTime},
 				// The sync for file3.txt should succeed.
 				"writable_dir/file3.txt": {path: "writable_dir/file3.txt", content: "content3", modTime: baseTime},
 			},
-			expectedMissingDstFiles: []string{
-				"unwritable_dir/file1.txt",
-				"unwritable_dir/file2.txt",
-			},
-			// This test now expects a nil error, as non-critical errors are logged
-			// but do not cause the sync to fail.
-			expectedErrorContains: "",
 		},
 		{
-			name:     "Fail-Fast on First Error",
-			failFast: true,
+			name:     "Overwrite Destination File with Directory (Fail-Fast Mode)",
+			failFast: true, // Should still succeed because this is no longer an error
 			srcFiles: []testFile{
 				// This file will cause the error.
 				{path: filepath.Join("unwritable_dir", "file1.txt"), content: "content1", modTime: baseTime},
@@ -581,18 +598,12 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 			dstFiles: []testFile{
 				// Pre-create a FILE in the destination where a directory is expected.
-				// This will cause ensureParentDirectoryExists to fail.
 				{path: "unwritable_dir", content: "i am a file, not a directory", modTime: baseTime},
 			},
 			expectedDstFiles: map[string]testFile{
-				// The pre-existing file should still be there.
-				"unwritable_dir": {path: "unwritable_dir", content: "i am a file, not a directory", modTime: baseTime},
+				"unwritable_dir/file1.txt": {path: "unwritable_dir/file1.txt", content: "content1", modTime: baseTime},
+				"unwritable_dir/file2.txt": {path: "unwritable_dir/file2.txt", content: "content2", modTime: baseTime},
 			},
-			expectedMissingDstFiles: []string{
-				filepath.Join("unwritable_dir", "file1.txt"), // This file should not have been synced.
-				filepath.Join("unwritable_dir", "file2.txt"), // This file should not have been synced.
-			},
-			expectedErrorContains: "critical sync error", // The error should be wrapped as critical.
 		},
 		{
 			name:          "Metrics Counting",
