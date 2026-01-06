@@ -15,9 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refactored internal worker engines to use explicit Producer-Consumer patterns and fixed some edge cases.
 - Added pre-flight check to prevent source/target path nesting.
 - Compress osx release as tar.gz instead of zip
+- Optimized directory synchronization to avoid redundant syscalls for existing directories.
 
 ### Fixed
 - Daylight Saving Time (DST) handling for archive intervals to correctly handle 23-hour and 25-hour days.
+- Critical safety fix: Inaccessible source paths (e.g., permission denied) are now preserved in the destination instead of being deleted during the mirror phase.
+- Fixed an issue where a destination file blocking a source directory creation would cause sync failures; the file is now correctly replaced by the directory.
 
 ## [v1.0.0-rc.1] - 2025-12-31
 
