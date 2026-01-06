@@ -736,24 +736,38 @@ func (r *syncRun) syncTaskProducer() {
 	defer close(r.syncTasksChan) // Close syncTasksChan to signal syncWorkers to stop when walk is complete
 
 	err := filepath.WalkDir(r.src, func(absSrcPath string, d os.DirEntry, err error) error {
+		// Calculate relative path key immediately.
+		// This is needed for both error handling (to prevent deletion) and normal processing.
+		relPathKey, normErr := r.normalizedRelPathKey(r.src, absSrcPath)
+		if normErr != nil {
+			return fmt.Errorf("could not get relative path for %s: %w", absSrcPath, normErr)
+		}
+
 		if err != nil {
 			// Check if the error is due to context cancellation.
 			if err == context.Canceled || err == context.DeadlineExceeded {
 				plog.Debug("Sync walker cancelled", "path", absSrcPath)
 				return err // Propagate cancellation.
 			}
+
+			// CRITICAL: If we can't access a path (e.g. Permission Denied), we must ensure we don't
+			// accidentally wipe the destination.
+			if relPathKey == "." {
+				return fmt.Errorf("source root is unreadable: %w", err) // Critical: If source root is unreadable, abort sync immediately.
+			}
+
+			// CRITICAL: Record the path unconditionally here
+			// If it's a subdir/file we can't read, record it so we don't delete it from destination.
+			if r.mirror {
+				r.discoveredPaths.Store(relPathKey)
+			}
+
 			// If we can't access a path, log the error but keep walking
 			plog.Warn("SKIP", "reason", "error accessing path", "path", absSrcPath, "error", err)
 			if d != nil && d.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
-		}
-
-		relPathKey, err := r.normalizedRelPathKey(r.src, absSrcPath)
-		if err != nil {
-			// Something really is off, fail fast, this should never happen!
-			return fmt.Errorf("could not get relative path for %s: %w", absSrcPath, err)
 		}
 
 		// We skip processing the root dir itself of the walk.
@@ -764,7 +778,7 @@ func (r *syncRun) syncTaskProducer() {
 		r.metrics.AddEntriesProcessed(1)
 
 		// Check for exclusions.
-		// `relPathKey` is already normalized, but `d.Name()` is the raw basename from the filesystem
+		// `relPathKey` is already normalized, `d.Name()` is the raw basename from the filesystem
 		// and is passed directly to `isExcluded`, which handles all normalization.
 		if r.isExcluded(relPathKey, d.Name(), d.IsDir()) {
 			plog.Notice("EXCL", "reason", "excluded by pattern", "path", relPathKey)
@@ -774,6 +788,13 @@ func (r *syncRun) syncTaskProducer() {
 			}
 			r.metrics.AddFilesExcluded(1) // Track excluded file
 			return nil                    // It's an excluded file, do not process further.
+		}
+
+		// CRITICAL: Record the path unconditionally here
+		// If we mirror and the item exists in the source, it MUST be recorded in the set
+		// to prevent it from being deleted during the mirror phase.
+		if r.mirror {
+			r.discoveredPaths.Store(relPathKey)
 		}
 
 		// 3. Get Info for worker
@@ -787,14 +808,6 @@ func (r *syncRun) syncTaskProducer() {
 			}
 			return nil // It was a file we couldn't get info for, just skip it.
 		}
-
-		// --- CRITICAL: Record the path unconditionally here ---
-		// If we mirror and the item exists in the source, it MUST be recorded in the set
-		// to prevent it from being deleted during the mirror phase.
-		if r.mirror {
-			r.discoveredPaths.Store(relPathKey)
-		}
-		// ----------------------------------------------------------------
 
 		isDir := info.Mode().IsDir()
 		isSymlink := info.Mode()&os.ModeSymlink != 0
