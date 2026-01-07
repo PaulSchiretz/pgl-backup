@@ -79,6 +79,10 @@ if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
     Write-Error "Go is not found in your PATH. Please install Go and try again."
     exit 1
 }
+if (-not (Get-Command tar -ErrorAction SilentlyContinue)) {
+    Write-Error "The 'tar' command is not found in your PATH. It is required for packaging non-Windows binaries."
+    exit 1
+}
 
 # Check for uncommitted changes
 $gitStatus = git status --porcelain
