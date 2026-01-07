@@ -461,7 +461,6 @@ The best policy depends on how much data you are backing up and how much disk sp
 }
 ```
 
-
 #### The "Default" (Simple 4-Week History)
 **Goal**: A simple, "set-it-and-forget-it" policy that provides a month of history without using excessive disk space. This is the default policy when you first initialize `pgl-backup`.
 **Total Backups Stored**: ~4 (4 weekly)
@@ -475,6 +474,42 @@ The best policy depends on how much data you are backing up and how much disk sp
     "days": 0,
     "weeks": 4,
     "months": 0,
+    "years": 0
+  }
+}
+```
+
+#### The "Purely Incremental" (Minimal History)
+**Goal**: You mostly care about the current state (which is always available in `PGL_Backup_Current`) but want one previous snapshot just in case.
+**Total Backups Stored**: ~1 (1 monthly)
+**Auto Archive Interval Sets To**: ~30 Days
+
+```json
+"retention": {
+  "incremental": {
+    "enabled": true,
+    "hours": 0,
+    "days": 0,
+    "weeks": 0,
+    "months": 1,
+    "years": 0
+  }
+}
+```
+
+#### The "Monthly Only" (Low Frequency)
+**Goal**: For data that changes slowly. You only create an archive once a month.
+**Total Backups Stored**: ~12 (12 monthly)
+**Auto Archive Interval Sets To**: 30 Days
+
+```json
+"retention": {
+  "incremental": {
+    "enabled": true,
+    "hours": 0,
+    "days": 0,
+    "weeks": 0,
+    "months": 12,
     "years": 0
   }
 }
