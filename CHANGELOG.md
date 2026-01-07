@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Compress osx release as tar.gz instead of zip
 - Optimized directory synchronization to avoid redundant syscalls for existing directories.
 - Updated `-init` flag behavior to preserve existing configuration settings, merging them with provided CLI flags.
+- Changed default retention policy to keep 0 daily, 4 weekly, 0 monthly, and 0 yearly backups. This provides a simple 4-week history by default.
 
 ### Fixed
 - Daylight Saving Time (DST) handling for archive intervals to correctly handle 23-hour and 25-hour days.

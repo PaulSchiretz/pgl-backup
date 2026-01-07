@@ -238,10 +238,10 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
     "incremental": {
       "enabled": true,
       "hours": 0,
-      "days": 7,
+      "days": 0,
       "weeks": 4,
-      "months": 3,
-      "years": 1
+      "months": 0,
+      "years": 0
     },
     "snapshot": {
       "enabled": false,
@@ -462,35 +462,35 @@ The best policy depends on how much data you are backing up and how much disk sp
 ```
 
 
-#### The "Default" (Balanced)
-**Goal**: A balanced, "set-it-and-forget-it" policy that provides a good mix of recent and long-term history without using excessive disk space. This is the default policy when you first initialize `pgl-backup`.
-**Total Backups Stored**: ~15 (7 daily + 4 weekly + 3 monthly + 1 yearly)
-**Auto Archive Interval Sets To**: 24 Hours
+#### The "Default" (Simple 4-Week History)
+**Goal**: A simple, "set-it-and-forget-it" policy that provides a month of history without using excessive disk space. This is the default policy when you first initialize `pgl-backup`.
+**Total Backups Stored**: ~4 (4 weekly)
+**Auto Archive Interval Sets To**: 1 Week
 
 ```json
 "retention": {
   "incremental": {
     "enabled": true,
     "hours": 0,
-    "days": 7,
+    "days": 0,
     "weeks": 4,
-    "months": 3,
-    "years": 1
+    "months": 0,
+    "years": 0
   }
 }
 ```
 
-#### The "Safety Net" (Developer Machine)
-**Goal**: Protect active work where recent recovery is critical. The priority is being able to undo a mistake made an hour ago. Long-term history is less important.
-**Total Backups Stored**: ~31 (24 hourly + 7 daily)
+#### The "Safety Net" (Active Work)
+**Goal**: Protect active work where recent recovery is critical. The priority is being able to undo a mistake made recently.
+**Total Backups Stored**: ~6 (3 hourly + 3 daily)
 **Auto Archive Interval Sets To**: 1 Hour
 
 ```json
 "retention": {
   "incremental": {
     "enabled": true,
-    "hours": 24,
-    "days": 7,
+    "hours": 3,
+    "days": 3,
     "weeks": 0,
     "months": 0,
     "years": 0
@@ -498,8 +498,8 @@ The best policy depends on how much data you are backing up and how much disk sp
 }
 ```
 #### The "Standard GFS" (Balanced)
-**Goal**: The industry standard for production servers. It balances a reasonable safety net (1 week of daily backups) with a solid historical archive (1 year) without using excessive storage.
-**Total Backups Stored**: ~23 (7 daily + 4 weekly + 12 monthly)
+**Goal**: A robust policy for important data. It balances a reasonable safety net (3 days) with a solid historical archive (3 months).
+**Total Backups Stored**: ~10 (3 daily + 4 weekly + 3 monthly)
 **Auto Archive Interval Sets To**: 24 Hours
 
 ```json
@@ -507,27 +507,27 @@ The best policy depends on how much data you are backing up and how much disk sp
   "incremental": {
     "enabled": true,
     "hours": 0,
-    "days": 7,
+    "days": 3,
     "weeks": 4,
-    "months": 12,
+    "months": 3,
     "years": 0
   }
 }
 ```
 
-#### The "Legal Compliance" (Long-Term Archive)
-**Goal**: Audit trails and regulatory compliance (e.g., tax or financial data). Recent recovery is less important than proving what data existed 5 years ago.
-**Total Backups Stored**: ~49 (30 daily + 12 monthly + 7 yearly)
-**Auto Archive Interval Sets To**: 24 Hours
+#### The "Long-Term" (Yearly Archive)
+**Goal**: For data where you might need to go back many years, but fine-grained daily history isn't needed.
+**Total Backups Stored**: ~11 (4 weekly + 7 yearly)
+**Auto Archive Interval Sets To**: 1 Week
 
 ```json
 "retention": {
   "incremental": {
     "enabled": true,
     "hours": 0,
-    "days": 30,
-    "weeks": 0,
-    "months": 12,
+    "days": 0,
+    "weeks": 4,
+    "months": 0,
     "years": 7
   }
 }
@@ -535,17 +535,17 @@ The best policy depends on how much data you are backing up and how much disk sp
 
 #### The "Home Media" (Minimalist)
 **Goal**: Backing up terabytes of movies/photos where data rarely changes and storage costs are high. You just want a few recent versions in case of accidental deletion.
-**Total Backups Stored**: ~7 (2 daily + 2 weekly + 2 monthly + 1 yearly)
-**Auto Archive Interval Sets To**: 24 Hours
+**Total Backups Stored**: ~3 (1 weekly + 1 monthly + 1 yearly)
+**Auto Archive Interval Sets To**: 1 Week
 
 ```json
 "retention": {
   "incremental": {
     "enabled": true,
     "hours": 0,
-    "days": 2,
-    "weeks": 2,
-    "months": 2,
+    "days": 0,
+    "weeks": 1,
+    "months": 1,
     "years": 1
   }
 }
@@ -577,10 +577,10 @@ All command-line flags can be set in the `pgl-backup.config.json` file. Note tha
 | `archive.incremental.renameOnly` | `bool` | `false` | If true, moves the current backup to the archive instead of copying it. Faster creation, but forces a full re-sync next run. |
 | `retention.incremental.enabled`         | `bool`         | `true`                             | Enables the retention policy for incremental mode archives. |
 | `retention.incremental.hours`         | `int`         | `0`                                   | Number of recent hourly incremental archives to keep. |
-| `retention.incremental.days`          | `int`         | `7`                                   | Number of recent daily incremental archives to keep. |
+| `retention.incremental.days`          | `int`         | `0`                                   | Number of recent daily incremental archives to keep. |
 | `retention.incremental.weeks`         | `int`         | `4`                                   | Number of recent weekly incremental archives to keep. |
-| `retention.incremental.months`        | `int`         | `3`                                   | Number of recent monthly incremental archives to keep. |
-| `retention.incremental.years`         | `int`         | `1`                                   | Number of recent yearly incremental archives to keep. |
+| `retention.incremental.months`        | `int`         | `0`                                   | Number of recent monthly incremental archives to keep. |
+| `retention.incremental.years`         | `int`         | `0`                                   | Number of recent yearly incremental archives to keep. |
 | `retention.snapshot.enabled`         | `bool`         | `false`                               | Set to true to enable the retention policy for snapshot mode backups. Disabled by default. |
 | `retention.snapshot.hours`         | `int`         | `0`                                      | Number of recent hourly snapshots to keep. |
 | `retention.snapshot.days`          | `int`         | `0`                                      | Number of recent daily snapshots to keep. |

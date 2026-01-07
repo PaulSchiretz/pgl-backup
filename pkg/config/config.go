@@ -392,10 +392,10 @@ func NewDefault() Config {
 			Incremental: RetentionPolicyConfig{
 				Enabled: true, // Enabled by default for incremental mode.
 				Hours:   0,    // Default: No hourly backups.
-				Days:    7,    // Default: Keep one backup for each of the last 7 days.
+				Days:    0,    // Default: No daily backups.
 				Weeks:   4,    // Default: Keep one backup for each of the last 4 weeks.
-				Months:  3,    // Default: Keep one backup for each of the last 3 months.
-				Years:   1,    // Default: Keep one backup for each of the last 1 year.
+				Months:  0,    // Default: No monthly backups.
+				Years:   0,    // Default: No yearly backups.
 			},
 			Snapshot: RetentionPolicyConfig{
 				Enabled: false, // Disabled by default to protect snapshots.
