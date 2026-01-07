@@ -182,7 +182,8 @@ func (r *archiveRun) execute() (string, error) {
 
 	// Strategy: Rename (Move)
 	if err := os.Rename(r.currentBackupPath, r.archiveBackupPath); err != nil {
-		return "", fmt.Errorf("failed to rename backup to archive: %w", err)
+		plog.Warn("Failed to archive current backup (directory might be in use). Skipping archive step and proceeding with sync.", "error", err)
+		return "", nil
 	}
 	plog.Notice("ARCHIVED", "moved", r.currentBackupPath, "to", r.archiveBackupPath)
 

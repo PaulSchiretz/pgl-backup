@@ -221,6 +221,7 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("error during backup archiving: %w", err)
 		}
+		// Make sure an archive was created, the path might be empty if a non critical error occuered.
 		if archivePath != "" {
 			backupsToCompress = append(backupsToCompress, archivePath)
 		}

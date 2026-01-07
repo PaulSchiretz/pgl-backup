@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Daylight Saving Time (DST) handling for archive intervals to correctly handle 23-hour and 25-hour days.
 - Critical safety fix: Inaccessible source paths (e.g., permission denied) are now preserved in the destination instead of being deleted during the mirror phase.
 - Fixed an issue where a destination file blocking a source directory creation would cause sync failures; the file is now correctly replaced by the directory.
+- Fixed an issue where the backup process would fail if the current backup directory was locked (e.g., open in Windows Explorer) during archiving. It now logs a warning and proceeds with the sync.
+
+### Known Limitations
+- Windows Volume Shadow Copy Service (VSS) is not currently supported. Locked files (e.g., open Outlook .pst files) cannot be backed up.
 
 ## [v1.0.0-rc.1] - 2025-12-31
 
