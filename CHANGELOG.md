@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v1.0.0] - 2026-xx-xx
 
+### Added
+- Added `-init-default` flag to explicitly overwrite configuration with defaults.
+- Added `-force` flag to bypass confirmation prompts.
+
 ### Changed
 - Promoted v1.0.0-rc.1 to stable release.
 - Fixed typo in usage output
@@ -16,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added pre-flight check to prevent source/target path nesting.
 - Compress osx release as tar.gz instead of zip
 - Optimized directory synchronization to avoid redundant syscalls for existing directories.
+- Updated `-init` flag behavior to preserve existing configuration settings, merging them with provided CLI flags.
 
 ### Fixed
 - Daylight Saving Time (DST) handling for archive intervals to correctly handle 23-hour and 25-hour days.

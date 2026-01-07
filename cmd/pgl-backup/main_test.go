@@ -75,6 +75,7 @@ func TestParseFlagConfig(t *testing.T) {
 		}{
 			{"Version Flag", "-version", actionShowVersion},
 			{"Init Flag", "-init", actionInitConfig},
+			{"Init Default Flag", "-init-default", actionInitConfig},
 		}
 
 		for _, tc := range testCases {
@@ -196,6 +197,40 @@ func TestParseFlagConfig(t *testing.T) {
 			}
 			if boolVal, typeOK := val.(bool); !typeOK || !boolVal {
 				t.Errorf("expected metrics to be true, but got %v (type %T)", val, val)
+			}
+		})
+	})
+
+	t.Run("Set Init Default Flag", func(t *testing.T) {
+		args := []string{"-init-default"}
+		runTestWithFlags(t, args, func() {
+			_, setFlags, err := parseFlagConfig()
+			if err != nil {
+				t.Fatalf("expected no error, but got: %v", err)
+			}
+			val, ok := setFlags["init-default"]
+			if !ok {
+				t.Fatal("expected 'init-default' flag to be in setFlags map")
+			}
+			if boolVal, typeOK := val.(bool); !typeOK || !boolVal {
+				t.Errorf("expected init-default to be true, but got %v (type %T)", val, val)
+			}
+		})
+	})
+
+	t.Run("Set Force Flag", func(t *testing.T) {
+		args := []string{"-force"}
+		runTestWithFlags(t, args, func() {
+			_, setFlags, err := parseFlagConfig()
+			if err != nil {
+				t.Fatalf("expected no error, but got: %v", err)
+			}
+			val, ok := setFlags["force"]
+			if !ok {
+				t.Fatal("expected 'force' flag to be in setFlags map")
+			}
+			if boolVal, typeOK := val.(bool); !typeOK || !boolVal {
+				t.Errorf("expected force to be true, but got %v (type %T)", val, val)
 			}
 		})
 	})

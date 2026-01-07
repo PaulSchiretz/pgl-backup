@@ -1,7 +1,7 @@
 # pgl-backup
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/paulschiretz/pgl-backup.svg)](https://pkg.go.dev/github.com/paulschiretz/pgl-backup)
-[![Latest Release](https://img.shields.io/github/v/release/paulschiretz/pgl-backup?include_prereleases&sort=semver)](https://github.com/paulschiretz/pgl-backup/releases)
+[![Latest Release](https://img.shields.io/github/v/release/paulschiretz/pgl-backup)](https://github.com/paulschiretz/pgl-backup/releases)
 [![Go Report Card](https://goreportcard.com/badge/github.com/paulschiretz/pgl-backup)](https://goreportcard.com/report/github.com/paulschiretz/pgl-backup)
 [![Changelog](https://img.shields.io/badge/changelog-md-blue)](./CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
@@ -147,7 +147,11 @@ Let's set up a daily incremental backup for your `~/Documents` folder to an exte
 
 ### Step 1: Initialize Configuration
 
-The easiest way to get started is to use the `-init` flag. This will generate a `pgl-backup.config.json` file in your target directory. The `-source` and `-target` flags are required for this step.
+The easiest way to get started is to use the `-init` flag. This will generate a `pgl-backup.config.json` file in your target directory.
+
+*   **New Backups**: It creates the directory and a default configuration file. The `-source` and `-target` flags are required.
+*   **Existing Backups**: It reads your existing configuration, applies any new flags you provide (like changing the log level or source path), and saves the updated config. It preserves your retention policies and other settings.
+*   **Fresh Start**: If you want to completely overwrite an existing configuration with defaults, use `-init-default` instead.
 
 ```sh
 # Example for Linux/macOS
@@ -155,6 +159,16 @@ pgl-backup -source="$HOME/Documents" -target="/media/backup-drive/MyDocumentsBac
 
 # Example for Windows
 pgl-backup -source="C:\Users\YourUser\Documents" -target="E:\Backups\MyDocumentsBackup" -init
+```
+
+You can also combine -init with other flags to customize the configuration immediately:
+
+```sh
+# Example for Linux/macOS
+pgl-backup -source="$HOME/Documents" -target="/media/backup-drive/MyDocumentsBackup" -init -log-level=debug -user-exclude-files="*.mp4"
+
+# Example for Windows
+pgl-backup -source="C:\Users\YourUser\Documents" -target="E:\Backups\MyDocumentsBackup" -init -log-level=debug -user-exclude-files="*.mp4"
 ```
 
 This command will:
@@ -551,7 +565,9 @@ All command-line flags can be set in the `pgl-backup.config.json` file. Note tha
 | `fail-fast` / `failFast`        | `bool`        | `false`                               | If true, stops the backup immediately on the first file sync error. |
 | `paths.incrementalSubDir`       | `string`      | `"PGL_Backup_Current"`                | The name of the directory for the active incremental backup. |
 | `paths.contentSubDir`           | `string`      | `"PGL_Backup_Content"`                | The name of the sub-directory within a backup that holds the actual synced content. |
-| `init`                          | `bool`        | `false`                               | If true, generates a config file and exits. |
+| `init`                          | `bool`        | `false`                               | If true, generates/updates a config file (preserving existing settings) and exits. |
+| `init-default`                  | `bool`        | `false`                               | If true, overwrites any existing config with defaults and exits. |
+| `force`                         | `bool`        | `false`                               | Bypass confirmation prompts (e.g., for -init-default). |
 | `dry-run` / `dryRun`            | `bool`        | `false`                               | If true, simulates the backup without making changes. |
 | `log-level` / `logLevel`        | `string`      | `"info"`                              | Set the logging level: `"debug"`, `"notice"`, `"info"`, `"warn"`, or `"error"`. |
 | `metrics` / `metrics`           | `bool`        | `true`                                | If true, enables detailed performance and file-counting metrics. |
