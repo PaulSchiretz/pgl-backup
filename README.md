@@ -659,7 +659,8 @@ This occurs because the binaries are currently unsigned. Please refer to the [Se
 
 ### Error: `The process cannot access the file...` (Windows)
 
-*   **Cause**: The file is currently open and locked by another application (e.g., an open Word document, Outlook .pst file, or running database). `pgl-backup` does not currently support Volume Shadow Copy Service (VSS) to back up locked files.
+*   **Cause**: The file is currently open and locked by another application (e.g., an open Word document, Outlook .pst file, or running database).
+*   **Note**: `pgl-backup` does not use the Volume Shadow Copy Service (VSS). VSS is a complex, Windows-only technology that requires Administrator privileges and is typically only needed for specific edge cases. `pgl-backup` prioritizes simplicity, speed, and cross-platform consistency.
 *   **Solution**:
     *   Close the application using the file before running the backup.
     *   Use the `pre-backup-hooks` feature to stop the relevant service/application before the backup and `post-backup-hooks` to restart it.

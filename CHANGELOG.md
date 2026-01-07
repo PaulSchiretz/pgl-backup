@@ -28,9 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed an issue where a destination file blocking a source directory creation would cause sync failures; the file is now correctly replaced by the directory.
 - Fixed an issue where the backup process would fail if the current backup directory was locked (e.g., open in Windows Explorer) during archiving. It now logs a warning and proceeds with the sync.
 
-### Known Limitations
-- Windows Volume Shadow Copy Service (VSS) is not currently supported. Locked files (e.g., open Outlook .pst files) cannot be backed up.
-
 ## [v1.0.0-rc.1] - 2025-12-31
 
 ### Added
