@@ -271,7 +271,7 @@ pgl-backup -target="/media/backup-drive/MyDocumentsBackup"
 ```
 
 The first run will copy all files into a `PGL_Backup_Content` subdirectory inside the main `PGL_Backup_Current` directory.
-Subsequent runs will efficiently update the contents of `PGL_Backup_Current/PGL_Backup_Content`. After 24 hours (or your configured interval), the next run will first rename the entire PGL_Backup_Current directory to a timestamped archive (e.g., `PGL_Backup_2023-10-27-...`) inside the `PGL_Backup_Archives` sub-directory, and then create a new, clean `PGL_Backup_Current` for the next sync.
+Subsequent runs will efficiently update the contents of `PGL_Backup_Current/PGL_Backup_Content`. After 1 week (by default) or your configured interval, the next run will first rename the entire PGL_Backup_Current directory to a timestamped archive (e.g., `PGL_Backup_2023-10-27-...`) inside the `PGL_Backup_Archives` sub-directory, and then create a new, clean `PGL_Backup_Current` for the next sync.
 When compression is enabled, the `PGL_Backup_Content` subdirectory within an archive is compressed, and the original subdirectory is removed, leaving the compressed file alongside the backup's metadata.
 
 Your backup target will be organized like this:
