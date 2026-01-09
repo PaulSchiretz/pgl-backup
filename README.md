@@ -602,6 +602,7 @@ All command-line flags can be set in the `pgl-backup.config.json` file. Note tha
 | `paths.contentSubDir`           | `string`      | `"PGL_Backup_Content"`                | The name of the sub-directory within a backup that holds the actual synced content. |
 | `init`                          | `bool`        | `false`                               | If true, generates/updates a config file (preserving existing settings) and exits. |
 | `init-default`                  | `bool`        | `false`                               | If true, overwrites any existing config with defaults and exits. |
+| `backup`                        | `bool`        | `false`                               | If true, runs the backup operation. This is the default action if no other action flag is specified. |
 | `force`                         | `bool`        | `false`                               | Bypass confirmation prompts (e.g., for -init-default). |
 | `dry-run` / `dryRun`            | `bool`        | `false`                               | If true, simulates the backup without making changes. |
 | `log-level` / `logLevel`        | `string`      | `"info"`                              | Set the logging level: `"debug"`, `"notice"`, `"info"`, `"warn"`, or `"error"`. |

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.0.1] - 2026-XX-XX
+
+### Changed
+- Simplified Flag parsing
+- Exit with code 0, if user cancels -init-default
+
 ## [v1.0.0] - 2026-01-07
 
 ### Added

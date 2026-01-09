@@ -132,7 +132,7 @@ $platforms = @(
 )
 
 # The ldflags variable for injecting the version
-$ldflags = "-s -w -X main.version=$Version"
+$ldflags = "-s -w -X main.appVersion=$Version"
 
 foreach ($platform in $platforms) {
     $parts = $platform.Split('/')
