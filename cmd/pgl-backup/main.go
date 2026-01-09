@@ -45,6 +45,24 @@ func init() {
 	}
 }
 
+// promptForConfirmation prompts the user for a yes/no response.
+func promptForConfirmation(prompt string, defaultYes bool) bool {
+	suffix := "[y/N]"
+	if defaultYes {
+		suffix = "[Y/n]"
+	}
+	fmt.Printf("%s %s: ", prompt, suffix)
+
+	var response string
+	_, _ = fmt.Scanln(&response)
+	response = strings.ToLower(strings.TrimSpace(response))
+
+	if response == "" {
+		return defaultYes
+	}
+	return response == "y" || response == "yes"
+}
+
 // parseFlagConfig defines and parses command-line flags, and constructs a
 // configuration object containing only the values provided by those flags.
 func parseFlagConfig() (action, map[string]interface{}, error) {
@@ -201,7 +219,7 @@ func runInit(ctx context.Context, flagMap map[string]interface{}, version string
 	var baseConfig config.Config
 
 	// Check if init-default is set
-	if _, ok := flagMap["init-default"]; ok {
+	if val, ok := flagMap["init-default"]; ok && val.(bool) {
 		// Check for force flag to bypass confirmation
 		force := false
 		if f, ok := flagMap["force"]; ok {
@@ -213,13 +231,9 @@ func runInit(ctx context.Context, flagMap map[string]interface{}, version string
 			if _, err := os.Stat(configPath); err == nil {
 				fmt.Printf("WARNING: Configuration file already exists at %s.\n", configPath)
 				fmt.Printf("Using -init-default will overwrite it with default values. All custom settings will be lost.\n")
-				fmt.Printf("Are you sure you want to continue? [y/N]: ")
-
-				var response string
-				_, _ = fmt.Scanln(&response)
-				response = strings.ToLower(strings.TrimSpace(response))
-				if response != "y" && response != "yes" {
-					return fmt.Errorf("operation cancelled by user")
+				if !promptForConfirmation("Are you sure you want to continue?", false) {
+					plog.Info(appName + " init-default operation canceled.")
+					return nil
 				}
 			}
 		}
