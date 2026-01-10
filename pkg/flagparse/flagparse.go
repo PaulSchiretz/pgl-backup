@@ -3,87 +3,164 @@ package flagparse
 import (
 	"flag"
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/paulschiretz/pgl-backup/pkg/config"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
-	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
-// ActionFlag defines a special command to execute instead of a backup.
-type ActionFlag int
+// CommandFlag defines a special command to execute instead of a backup.
+type CommandFlag int
 
 const (
-	BackupAction ActionFlag = iota // The default ActionFlag is to run a backup.
-	VersionAction
-	InitAction
-	InitDefaultAction
+	BackupCommand CommandFlag = iota // The default CommandFlag is to run a backup.
+	VersionCommand
+	InitCommand
 )
 
-var actionFlagToString = map[ActionFlag]string{BackupAction: "backup", InitAction: "init", InitDefaultAction: "init-default", VersionAction: "version"}
-var stringToActionFlag = util.InvertMap(actionFlagToString)
+// SharedFlags holds pointers to flag values that are common across multiple commands.
+// This prevents code duplication when defining flags for 'init', 'backup', etc.
+type SharedFlags struct {
+	Source                 *string
+	Target                 *string
+	Mode                   *string
+	LogLevel               *string
+	FailFast               *bool
+	DryRun                 *bool
+	Metrics                *bool
+	Force                  *bool
+	SyncEngine             *string
+	SyncWorkers            *int
+	MirrorWorkers          *int
+	DeleteWorkers          *int
+	CompressWorkers        *int
+	RetryCount             *int
+	RetryWait              *int
+	BufferSizeKB           *int
+	ModTimeWindow          *int
+	UserExcludeFiles       *string
+	UserExcludeDirs        *string
+	PreserveSourceName     *bool
+	PreBackupHooks         *string
+	PostBackupHooks        *string
+	ArchiveIntervalSeconds *int
+	ArchiveIntervalMode    *string
+	CompressionEnabled     *bool
+	CompressionFormat      *string
+}
 
-// ParseFlagConfig defines and parses command-line flags, and constructs a
-// configuration object containing only the values provided by those flags.
-func ParseFlagConfig() (ActionFlag, map[string]interface{}, error) {
-	// --- Flag Design Philosophy ---
-	// Flags are exposed for options that are useful to override for a single run
-	// (e.g., -dry-run, -mode=snapshot, -log-level=debug).
-	//
-	// Structural options that define the layout of the backup repository (e.g., subdirectories)
-	// and complex long-term policies (e.g., retention counts) generally do not have flags.
-	//
-	// These should be set consistently in the pgl-backup.config.json file to ensure
-	// predictable behavior over time.
+// registerSharedFlags defines the common flags on the provided FlagSet and returns
+// a struct containing pointers to the values.
+func registerSharedFlags(fs *flag.FlagSet) *SharedFlags {
+	f := &SharedFlags{}
+	f.Source = fs.String("source", "", "Source directory to copy from")
+	f.Target = fs.String("target", "", "Base destination directory for backups")
+	f.Mode = fs.String("mode", "incremental", "Backup mode: 'incremental' or 'snapshot'.")
+	f.LogLevel = fs.String("log-level", "info", "Set the logging level: 'debug', 'notice', 'info', 'warn', 'error'.")
+	f.FailFast = fs.Bool("fail-fast", false, "Stop the backup immediately on the first file sync error.")
+	f.DryRun = fs.Bool("dry-run", false, "Show what would be done without making any changes.")
+	f.Metrics = fs.Bool("metrics", false, "Enable detailed performance and file-counting metrics.")
+	f.Force = fs.Bool("force", false, "Bypass confirmation prompts.")
+	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
+	f.SyncWorkers = fs.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
+	f.MirrorWorkers = fs.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
+	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
+	f.CompressWorkers = fs.Int("compress-workers", 0, "Number of worker goroutines for compressing backups.")
+	f.RetryCount = fs.Int("retry-count", 0, "Number of retries for failed file copies.")
+	f.RetryWait = fs.Int("retry-wait", 0, "Seconds to wait between retries.")
+	f.BufferSizeKB = fs.Int("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression.")
+	f.ModTimeWindow = fs.Int("mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
+	f.UserExcludeFiles = fs.String("user-exclude-files", "", "Comma-separated list of case-insensitive file names to exclude (supports glob patterns).")
+	f.UserExcludeDirs = fs.String("user-exclude-dirs", "", "Comma-separated list of case-insensitive directory names to exclude (supports glob patterns).")
+	f.PreserveSourceName = fs.Bool("preserve-source-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
+	f.PreBackupHooks = fs.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
+	f.PostBackupHooks = fs.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
+	f.ArchiveIntervalSeconds = fs.Int("archive-interval-seconds", 0, "In 'manual' mode, the interval in seconds for creating new archives (e.g., 86400 for 24h).")
+	f.ArchiveIntervalMode = fs.String("archive-interval-mode", "", "Archive interval mode: 'auto' or 'manual'.")
+	f.CompressionEnabled = fs.Bool("compression", true, "Enable compression for backups.")
+	f.CompressionFormat = fs.String("compression-format", "", "Compression format for backups: 'zip', 'tar.gz', or 'tar.zst'.")
+	return f
+}
 
-	// Define flags with zero-value defaults. We will merge them later.
-	initFlag := flag.Bool("init", false, "Generate a default pgl-backup.config.json file (preserves existing settings) and exit.")
-	initDefaultFlag := flag.Bool("init-default", false, "Generate a default pgl-backup.config.json file (overwrites existing settings) and exit.")
-	backupFlag := flag.Bool("backup", false, "Run the backup operation (default action).")
-	versionFlag := flag.Bool("version", false, "Print the application version and exit.")
-	srcFlag := flag.String("source", "", "Source directory to copy from")
-	targetFlag := flag.String("target", "", "Base destination directory for backups")
-	modeFlag := flag.String("mode", "incremental", "Backup mode: 'incremental' or 'snapshot'.")
-	logLevelFlag := flag.String("log-level", "info", "Set the logging level: 'debug', 'notice', 'info', 'warn', 'error'.")
-	failFastFlag := flag.Bool("fail-fast", false, "Stop the backup immediately on the first file sync error.")
-	dryRunFlag := flag.Bool("dry-run", false, "Show what would be done without making any changes.")
-	metricsFlag := flag.Bool("metrics", false, "Enable detailed performance and file-counting metrics.")
-	forceFlag := flag.Bool("force", false, "Bypass confirmation prompts.")
-	syncEngineFlag := flag.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
-	syncWorkersFlag := flag.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
-	mirrorWorkersFlag := flag.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
-	deleteWorkersFlag := flag.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
-	compressWorkersFlag := flag.Int("compress-workers", 0, "Number of worker goroutines for compressing backups.")
-	retryCountFlag := flag.Int("retry-count", 0, "Number of retries for failed file copies.")
-	retryWaitFlag := flag.Int("retry-wait", 0, "Seconds to wait between retries.")
-	bufferSizeKBFlag := flag.Int("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression.")
-	modTimeWindowFlag := flag.Int("mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
-	userExcludeFilesFlag := flag.String("user-exclude-files", "", "Comma-separated list of case-insensitive file names to exclude (supports glob patterns).")
-	userExcludeDirsFlag := flag.String("user-exclude-dirs", "", "Comma-separated list of case-insensitive directory names to exclude (supports glob patterns).")
-	preserveSourceNameFlag := flag.Bool("preserve-source-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
-	preBackupHooksFlag := flag.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
-	postBackupHooksFlag := flag.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
-	archiveIntervalSecondsFlag := flag.Int("archive-interval-seconds", 0, "In 'manual' mode, the interval in seconds for creating new archives (e.g., 86400 for 24h).")
-	archiveIntervalModeFlag := flag.String("archive-interval-mode", "", "Archive interval mode: 'auto' or 'manual'.")
-	compressionEnabledFlag := flag.Bool("compression", true, "Enable compression for backups.")
-	compressionFormatFlag := flag.String("compression-format", "", "Compression format for backups: 'zip', 'tar.gz', or 'tar.zst'.")
+// Parse parses the provided arguments (usually os.Args[1:]) and returns the action and config map.
+func Parse(appName, appVersion string, args []string) (CommandFlag, map[string]interface{}, error) {
+	// Handle top-level help
+	// If no arguments provided, print help and exit.
+	if len(args) == 0 {
+		fs := flag.NewFlagSet(appName, flag.ExitOnError)
+		printTopLevelUsage(appName, appVersion, fs)
+		os.Exit(0)
+	}
 
-	flag.Parse()
+	cmd := strings.ToLower(args[0])
 
+	if cmd == "help" || cmd == "-h" || cmd == "-help" || cmd == "--help" {
+		fs := flag.NewFlagSet(appName, flag.ExitOnError)
+		printTopLevelUsage(appName, appVersion, fs)
+		os.Exit(0)
+	}
+
+	// Check for subcommand
+	switch cmd {
+	case "init":
+		fs := flag.NewFlagSet("init", flag.ExitOnError)
+		shared := registerSharedFlags(fs)
+
+		// Specific flag for init to handle the old -init-default behavior
+		defaultFlag := fs.Bool("default", false, "Overwrite existing configuration with defaults.")
+
+		// Custom usage for the subcommand
+		fs.Usage = func() {
+			printSubcommandUsage(appName, appVersion, "init", "Initialize a new backup target directory.", fs)
+		}
+
+		if err := fs.Parse(args[1:]); err != nil {
+			return InitCommand, nil, err
+		}
+
+		flagMap, err := flagsToMap(fs, shared)
+		if err != nil {
+			return InitCommand, nil, err
+		}
+
+		if *defaultFlag {
+			flagMap["default"] = true
+		}
+		return InitCommand, flagMap, nil
+
+	case "backup":
+		fs := flag.NewFlagSet("backup", flag.ExitOnError)
+		shared := registerSharedFlags(fs)
+
+		fs.Usage = func() {
+			printSubcommandUsage(appName, appVersion, "backup", "Run the backup operation.", fs)
+		}
+
+		if err := fs.Parse(args[1:]); err != nil {
+			return BackupCommand, nil, err
+		}
+		flagMap, err := flagsToMap(fs, shared)
+		return BackupCommand, flagMap, err
+
+	case "version":
+		return VersionCommand, nil, nil
+
+	default:
+		return BackupCommand, nil, fmt.Errorf("unknown command: %s", args[0])
+	}
+}
+
+// flagsToMap converts the parsed flags in the FlagSet to a map, using the SharedFlags struct values.
+func flagsToMap(fs *flag.FlagSet, sf *SharedFlags) (map[string]interface{}, error) {
 	// Create a map of the flags that were explicitly set by the user, along with their values.
 	// This map is used to selectively override the base configuration.
 	usedFlags := make(map[string]bool)
-	flag.Visit(func(f *flag.Flag) { usedFlags[f.Name] = true })
+	fs.Visit(func(f *flag.Flag) { usedFlags[f.Name] = true })
 
 	flagMap := make(map[string]interface{})
-
-	// Helper to add a value to the map only if the corresponding flag was set and is not false.
-	addActionFlagIfUsed := func(name string, value interface{}) {
-		if usedFlags[name] && value.(bool) {
-			flagMap[name] = value
-		}
-	}
 
 	// Helper to add a value to the map only if the corresponding flag was set.
 	addIfUsed := func(name string, value interface{}) {
@@ -100,62 +177,56 @@ func ParseFlagConfig() (ActionFlag, map[string]interface{}, error) {
 	}
 
 	// Populate the map with action flags using the helper.
-	addActionFlagIfUsed("init", *initFlag)
-	addActionFlagIfUsed("init-default", *initDefaultFlag)
-	addActionFlagIfUsed("backup", *backupFlag)
-	addActionFlagIfUsed("version", *versionFlag)
-
-	// Populate the map using the helper.
-	addIfUsed("source", *srcFlag)
-	addIfUsed("target", *targetFlag)
-	addIfUsed("log-level", *logLevelFlag)
-	addIfUsed("fail-fast", *failFastFlag)
-	addIfUsed("dry-run", *dryRunFlag)
-	addIfUsed("metrics", *metricsFlag)
-	addIfUsed("force", *forceFlag)
-	addIfUsed("preserve-source-name", *preserveSourceNameFlag)
-	addIfUsed("sync-workers", *syncWorkersFlag)
-	addIfUsed("mirror-workers", *mirrorWorkersFlag)
-	addIfUsed("delete-workers", *deleteWorkersFlag)
-	addIfUsed("compress-workers", *compressWorkersFlag)
-	addIfUsed("retry-count", *retryCountFlag)
-	addIfUsed("retry-wait", *retryWaitFlag)
-	addIfUsed("buffer-size-kb", *bufferSizeKBFlag)
-	addIfUsed("mod-time-window", *modTimeWindowFlag)
-	addIfUsed("archive-interval-seconds", *archiveIntervalSecondsFlag)
-	addIfUsed("compression", *compressionEnabledFlag)
+	addIfUsed("source", *sf.Source)
+	addIfUsed("target", *sf.Target)
+	addIfUsed("log-level", *sf.LogLevel)
+	addIfUsed("fail-fast", *sf.FailFast)
+	addIfUsed("dry-run", *sf.DryRun)
+	addIfUsed("metrics", *sf.Metrics)
+	addIfUsed("force", *sf.Force)
+	addIfUsed("preserve-source-name", *sf.PreserveSourceName)
+	addIfUsed("sync-workers", *sf.SyncWorkers)
+	addIfUsed("mirror-workers", *sf.MirrorWorkers)
+	addIfUsed("delete-workers", *sf.DeleteWorkers)
+	addIfUsed("compress-workers", *sf.CompressWorkers)
+	addIfUsed("retry-count", *sf.RetryCount)
+	addIfUsed("retry-wait", *sf.RetryWait)
+	addIfUsed("buffer-size-kb", *sf.BufferSizeKB)
+	addIfUsed("mod-time-window", *sf.ModTimeWindow)
+	addIfUsed("archive-interval-seconds", *sf.ArchiveIntervalSeconds)
+	addIfUsed("compression", *sf.CompressionEnabled)
 
 	// Handle flags that require parsing/validation.
-	addParsedIfUsed("user-exclude-files", *userExcludeFilesFlag, ParseExcludeList)
-	addParsedIfUsed("user-exclude-dirs", *userExcludeDirsFlag, ParseExcludeList)
-	addParsedIfUsed("pre-backup-hooks", *preBackupHooksFlag, ParseCmdList)
-	addParsedIfUsed("post-backup-hooks", *postBackupHooksFlag, ParseCmdList)
+	addParsedIfUsed("user-exclude-files", *sf.UserExcludeFiles, ParseExcludeList)
+	addParsedIfUsed("user-exclude-dirs", *sf.UserExcludeDirs, ParseExcludeList)
+	addParsedIfUsed("pre-backup-hooks", *sf.PreBackupHooks, ParseCmdList)
+	addParsedIfUsed("post-backup-hooks", *sf.PostBackupHooks, ParseCmdList)
 
 	if usedFlags["mode"] {
-		mode, err := config.BackupModeFromString(*modeFlag)
+		mode, err := config.BackupModeFromString(*sf.Mode)
 		if err != nil {
-			return BackupAction, nil, err
+			return nil, err
 		}
 		flagMap["mode"] = mode
 	}
 	if usedFlags["sync-engine"] {
-		engineType, err := config.SyncEngineFromString(*syncEngineFlag)
+		engineType, err := config.SyncEngineFromString(*sf.SyncEngine)
 		if err != nil {
-			return BackupAction, nil, err
+			return nil, err
 		}
 		flagMap["sync-engine"] = engineType
 	}
 	if usedFlags["archive-interval-mode"] {
-		mode, err := config.ArchiveIntervalModeFromString(*archiveIntervalModeFlag)
+		mode, err := config.ArchiveIntervalModeFromString(*sf.ArchiveIntervalMode)
 		if err != nil {
-			return BackupAction, nil, err
+			return nil, err
 		}
 		flagMap["archive-interval-mode"] = mode
 	}
 	if usedFlags["compression-format"] {
-		format, err := config.CompressionFormatFromString(*compressionFormatFlag)
+		format, err := config.CompressionFormatFromString(*sf.CompressionFormat)
 		if err != nil {
-			return BackupAction, nil, err
+			return nil, err
 		}
 		flagMap["compression-format"] = format
 	}
@@ -168,35 +239,33 @@ func ParseFlagConfig() (ActionFlag, map[string]interface{}, error) {
 		}
 	}
 
-	if err := ValidateActionFlags(flagMap); err != nil {
-		return BackupAction, nil, err
-	}
-
-	// Determine which ActionFlag to set based on flags.
-	if *versionFlag {
-		return VersionAction, flagMap, nil
-	}
-	if *initFlag {
-		return InitAction, flagMap, nil
-	}
-	if *initDefaultFlag {
-		return InitDefaultAction, flagMap, nil
-	}
-	return BackupAction, flagMap, nil
+	return flagMap, nil
 }
 
-// ValidateActionFlags checks for conflicting actionFlags in the provided map.
-func ValidateActionFlags(flagMap map[string]interface{}) error {
-	var setFlags []string
-	for name := range stringToActionFlag {
-		if val, ok := flagMap[name]; ok && val.(bool) {
-			setFlags = append(setFlags, "-"+name)
-		}
-	}
-	if len(setFlags) > 1 {
-		return fmt.Errorf("cannot use multiple exclusive action flags together: %s", strings.Join(setFlags, ", "))
-	}
-	return nil
+// printTopLevelUsage prints the main help message.
+func printTopLevelUsage(appName, appVersion string, fs *flag.FlagSet) {
+
+	execName := filepath.Base(os.Args[0])
+	fmt.Fprintf(fs.Output(), "%s(%s) ", appName, appVersion)
+	fmt.Fprintf(fs.Output(), "A simple and powerful cross-platform backup utility.\n\n")
+	fmt.Fprintf(fs.Output(), "Usage: %s <command> [flags]\n\n", execName)
+	fmt.Fprintf(fs.Output(), "Commands:\n")
+	fmt.Fprintf(fs.Output(), "  backup      Run the backup operation\n")
+	fmt.Fprintf(fs.Output(), "  init        Initialize a new configuration\n")
+	fmt.Fprintf(fs.Output(), "  version     Print the application version\n")
+	fmt.Fprintf(fs.Output(), "\nRun '%s <command> -help' for more information on a command.\n", execName)
+}
+
+// printSubcommandUsage prints the help message for a specific subcommand.
+func printSubcommandUsage(appName, appVersion, command, desc string, fs *flag.FlagSet) {
+
+	execName := filepath.Base(os.Args[0])
+	fmt.Fprintf(fs.Output(), "%s(%s) ", appName, appVersion)
+	fmt.Fprintf(fs.Output(), "A simple and powerful cross-platform backup utility.\n\n")
+	fmt.Fprintf(fs.Output(), "Usage of the %s command: %s %s [flags]\n\n", command, execName, command)
+	fmt.Fprintf(fs.Output(), "%s\n\n", desc)
+	fmt.Fprintf(fs.Output(), "Flags:\n")
+	fs.PrintDefaults()
 }
 
 // ParseCmdList parses a comma-separated list of shell-like commands.

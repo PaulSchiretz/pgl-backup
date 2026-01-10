@@ -85,7 +85,7 @@ Ensure you have [Go](https://go.dev/dl/) installed (version 1.25+ recommended).
 If you have a Go environment set up, you can install `pgl-backup` directly:
 
 ```sh
-go install github.com/paulschiretz/pgl-backup/cmd/pgl-backup@latest
+go install github.com/paulschiretz/pgl-backup@latest
 ```
 
 ### From Pre-compiled Binaries
@@ -147,28 +147,28 @@ Let's set up a daily incremental backup for your `~/Documents` folder to an exte
 
 ### Step 1: Initialize Configuration
 
-The easiest way to get started is to use the `-init` flag. This will generate a `pgl-backup.config.json` file in your target directory.
+The easiest way to get started is to use the `init` command. This will generate a `pgl-backup.config.json` file in your target directory.
 
 *   **New Backups**: It creates the directory and a default configuration file. The `-source` and `-target` flags are required.
 *   **Existing Backups**: It reads your existing configuration, applies any new flags you provide (like changing the log level or source path), and saves the updated config. It preserves your retention policies and other settings.
-*   **Fresh Start**: If you want to completely overwrite an existing configuration with defaults, use `-init-default` instead.
+*   **Fresh Start**: If you want to completely overwrite an existing configuration with defaults, use `init -default` instead.
 
 ```sh
 # Example for Linux/macOS
-pgl-backup -source="$HOME/Documents" -target="/media/backup-drive/MyDocumentsBackup" -init
+pgl-backup init -source="$HOME/Documents" -target="/media/backup-drive/MyDocumentsBackup"
 
 # Example for Windows
-pgl-backup -source="C:\Users\YourUser\Documents" -target="E:\Backups\MyDocumentsBackup" -init
+pgl-backup init -source="C:\Users\YourUser\Documents" -target="E:\Backups\MyDocumentsBackup"
 ```
 
-You can also combine -init with other flags to customize the configuration immediately:
+You can also combine the init command with other flags to customize the configuration immediately:
 
 ```sh
 # Example for Linux/macOS
-pgl-backup -source="$HOME/Documents" -target="/media/backup-drive/MyDocumentsBackup" -init -log-level=debug -user-exclude-files="*.mp4"
+pgl-backup init -source="$HOME/Documents" -target="/media/backup-drive/MyDocumentsBackup" -log-level=debug -user-exclude-files="*.mp4"
 
 # Example for Windows
-pgl-backup -source="C:\Users\YourUser\Documents" -target="E:\Backups\MyDocumentsBackup" -init -log-level=debug -user-exclude-files="*.mp4"
+pgl-backup init -source="C:\Users\YourUser\Documents" -target="E:\Backups\MyDocumentsBackup" -log-level=debug -user-exclude-files="*.mp4"
 ```
 
 This command will:
@@ -267,7 +267,8 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
 Now, simply point `pgl-backup` at the target directory. It will automatically load the configuration file and run the backup. 
 
 ```sh
-pgl-backup -target="/media/backup-drive/MyDocumentsBackup"
+# Run the backup
+pgl-backup backup -target="/media/backup-drive/MyDocumentsBackup"
 ```
 
 The first run will copy all files into a `PGL_Backup_Content` subdirectory inside the main `PGL_Backup_Current` directory.
@@ -285,12 +286,14 @@ Your backup target will be organized like this:
 
 ## Usage and Examples
 
+`pgl-backup` uses a subcommand structure: `pgl-backup [command] [flags]`. Running `pgl-backup` without any arguments will display the help message.
+
 ### Basic Backup
 
 Once configured, this is the only command you need. It's perfect for a cron job or scheduled task.
 
 ```sh
-pgl-backup -target="/path/to/your/backup-target"
+pgl-backup backup -target="/path/to/your/backup-target"
 ```
 
 ### Dry Run
@@ -298,7 +301,7 @@ pgl-backup -target="/path/to/your/backup-target"
 See what changes would be made without touching any files.
 
 ```sh
-pgl-backup -target="/path/to/your/backup-target" -dry-run
+pgl-backup backup -target="/path/to/your/backup-target" -dry-run
 ```
 
 ### One-Off Snapshot Backup
@@ -306,7 +309,7 @@ pgl-backup -target="/path/to/your/backup-target" -dry-run
 You can override any configuration setting with a command-line flag. Here's how to perform a single snapshot backup, ignoring the `incremental` mode set in the config file.
 
 ```sh
-pgl-backup -target="/path/to/your/backup-target" -mode=snapshot
+pgl-backup backup -target="/path/to/your/backup-target" -mode=snapshot
 ```
 
 ### Excluding Files and Directories
@@ -314,7 +317,7 @@ pgl-backup -target="/path/to/your/backup-target" -mode=snapshot
 Exclude temporary files and `node_modules` directories. Patterns support standard file globbing.
 
 ```sh
-pgl-backup -target="..." -user-exclude-files="*.tmp,*.log" -user-exclude-dirs="node_modules,.cache"
+pgl-backup backup -target="..." -user-exclude-files="*.tmp,*.log" -user-exclude-dirs="node_modules,.cache"
 ```
 > **Note on Matching**: All exclusion patterns are case-insensitive on all operating systems. A pattern like *.jpeg will match photo.jpeg, photo.JPEG, and photo.JpEg. This ensures your configuration is portable and behaves predictably across Windows, macOS, and Linux.
 
@@ -323,7 +326,7 @@ pgl-backup -target="..." -user-exclude-files="*.tmp,*.log" -user-exclude-dirs="n
 Run a script before the backup starts. Commands with spaces must be wrapped in single or double quotes.
 
 ```sh
-pgl-backup -target="..." -pre-backup-hooks="'/usr/local/bin/dump_database.sh', 'echo Backup starting...'"
+pgl-backup backup -target="..." -pre-backup-hooks="'/usr/local/bin/dump_database.sh', 'echo Backup starting...'"
 ```
 >**Security Note:** Hooks execute arbitrary shell commands. Ensure that any commands in your configuration are from a trusted source and have the correct permissions to prevent unintended side effects.
 
@@ -588,7 +591,15 @@ The best policy depends on how much data you are backing up and how much disk sp
 
 ## Configuration Details
 
-All command-line flags can be set in the `pgl-backup.config.json` file. Note that structural options (like directory paths) and complex policies (like retention) are only available in the configuration file to ensure consistency.
+### Commands
+
+* `backup`: Run the backup operation.
+* `init`: Initialize or update a configuration. Use `-default` to overwrite an existing configuration with defaults.
+* `version`: Print the application version.
+
+### Flags
+
+All command-line flags can also be set in the `pgl-backup.config.json` file. Note that structural options (like directory paths) and complex policies (like retention) are only available in the configuration file to ensure consistency.
 
 | Flag / JSON Key                 | Type          | Default                               | Description                                                                                             |
 | ------------------------------- | ------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------- |
@@ -600,10 +611,8 @@ All command-line flags can be set in the `pgl-backup.config.json` file. Note tha
 | `fail-fast` / `failFast`        | `bool`        | `false`                               | If true, stops the backup immediately on the first file sync error. |
 | `paths.incrementalSubDir`       | `string`      | `"PGL_Backup_Current"`                | The name of the directory for the active incremental backup. |
 | `paths.contentSubDir`           | `string`      | `"PGL_Backup_Content"`                | The name of the sub-directory within a backup that holds the actual synced content. |
-| `init`                          | `bool`        | `false`                               | If true, generates/updates a config file (preserving existing settings) and exits. |
-| `init-default`                  | `bool`        | `false`                               | If true, overwrites any existing config with defaults and exits. |
-| `backup`                        | `bool`        | `false`                               | If true, runs the backup operation. This is the default action if no other action flag is specified. |
-| `force`                         | `bool`        | `false`                               | Bypass confirmation prompts (e.g., for -init-default). |
+| `default`                       | `bool`        | `false`                               | Used with `init` command. Overwrite existing configuration with defaults. |
+| `force`                         | `bool`        | `false`                               | Bypass confirmation prompts (e.g., for init -default). |
 | `dry-run` / `dryRun`            | `bool`        | `false`                               | If true, simulates the backup without making changes. |
 | `log-level` / `logLevel`        | `string`      | `"info"`                              | Set the logging level: `"debug"`, `"notice"`, `"info"`, `"warn"`, or `"error"`. |
 | `metrics` / `metrics`           | `bool`        | `true`                                | If true, enables detailed performance and file-counting metrics. |
