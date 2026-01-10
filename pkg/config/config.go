@@ -470,7 +470,7 @@ func Generate(configToGenerate Config) error {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
-	plog.Info("Successfully created default config file", "path", configPath)
+	plog.Info("Successfully updated config file", "path", configPath)
 	return nil
 }
 

@@ -115,7 +115,7 @@ func (e *Engine) InitializeBackupTarget(ctx context.Context) error {
 	default:
 	}
 
-	plog.Info("Initializing new backup target")
+	plog.Info("Initializing backup target")
 
 	// Perform preflight checks before attempting to lock or write.
 	// The config is passed by pointer because Validate() can modify it (e.g., cleaning paths).
