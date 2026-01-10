@@ -119,7 +119,14 @@ func (e *Engine) InitializeBackupTarget(ctx context.Context) error {
 
 	// Perform preflight checks before attempting to lock or write.
 	// The config is passed by pointer because Validate() can modify it (e.g., cleaning paths).
-	if err := preflight.RunChecks(&e.config); err != nil {
+	if err := preflight.RunChecks(&e.config, preflight.PreflightChecks{
+		SourceAccessible:   true,
+		TargetAccessible:   true,
+		TargetWriteable:    true,
+		CaseMissmatch:      true,
+		PathNesting:        true,
+		EnsureTargetExists: true,
+	}); err != nil {
 		return err
 	}
 
@@ -149,7 +156,14 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 	}
 
 	// Perform preflight checks on the final, merged configuration.
-	if err := preflight.RunChecks(&e.config); err != nil {
+	if err := preflight.RunChecks(&e.config, preflight.PreflightChecks{
+		SourceAccessible:   true,
+		TargetAccessible:   true,
+		TargetWriteable:    true,
+		CaseMissmatch:      true,
+		PathNesting:        true,
+		EnsureTargetExists: true,
+	}); err != nil {
 		return err
 	}
 
@@ -248,6 +262,47 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 	}
 
 	plog.Info("Backup completed")
+	return nil
+}
+
+// ExecutePrune executes the retention policies to clean up outdated backups.
+func (e *Engine) ExecutePrune(ctx context.Context) error {
+	// Check for cancellation at the very beginning.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	// Perform preflight checks on the final, merged configuration.
+	if err := preflight.RunChecks(&e.config, preflight.PreflightChecks{
+		SourceAccessible:   false,
+		TargetAccessible:   true,
+		TargetWriteable:    true,
+		CaseMissmatch:      false,
+		PathNesting:        false,
+		EnsureTargetExists: false,
+	}); err != nil {
+		return err
+	}
+
+	// Acquire Lock on Target Directory using final config.
+	releaseLock, err := e.acquireTargetLock(ctx)
+	if err != nil {
+		return err // A real error occurred during lock acquisition.
+	}
+	if releaseLock == nil {
+		return nil // Lock was already held, exit gracefully.
+	}
+	defer releaseLock()
+
+	plog.Info("Starting prune", "target", e.config.Paths.TargetBase)
+
+	if err := e.performRetention(ctx); err != nil {
+		return fmt.Errorf("prune error: %w", err)
+	}
+
+	plog.Info("Prune completed")
 	return nil
 }
 

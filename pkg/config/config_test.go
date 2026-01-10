@@ -22,7 +22,7 @@ func TestConfig_Validate(t *testing.T) {
 
 	t.Run("Valid Config", func(t *testing.T) {
 		cfg := newValidConfig(t)
-		if err := cfg.Validate(); err != nil {
+		if err := cfg.Validate(true); err != nil {
 			t.Errorf("expected valid config to pass validation, but got error: %v", err)
 		}
 	})
@@ -30,7 +30,7 @@ func TestConfig_Validate(t *testing.T) {
 	t.Run("Empty Source Path", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Paths.Source = ""
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for empty source path, but got nil")
 		}
 	})
@@ -38,15 +38,31 @@ func TestConfig_Validate(t *testing.T) {
 	t.Run("Non-Existent Source Path", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Paths.Source = filepath.Join(t.TempDir(), "nonexistent")
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for non-existent source path, but got nil")
+		}
+	})
+
+	t.Run("Skip Source Check - Empty Source", func(t *testing.T) {
+		cfg := newValidConfig(t)
+		cfg.Paths.Source = ""
+		if err := cfg.Validate(false); err != nil {
+			t.Errorf("expected no error when skipping source check with empty source, but got: %v", err)
+		}
+	})
+
+	t.Run("Skip Source Check - Non-Existent Source", func(t *testing.T) {
+		cfg := newValidConfig(t)
+		cfg.Paths.Source = filepath.Join(t.TempDir(), "nonexistent")
+		if err := cfg.Validate(false); err != nil {
+			t.Errorf("expected no error when skipping source check with non-existent source, but got: %v", err)
 		}
 	})
 
 	t.Run("Empty Target Path", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Paths.TargetBase = ""
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for empty target path, but got nil")
 		}
 	})
@@ -54,7 +70,7 @@ func TestConfig_Validate(t *testing.T) {
 	t.Run("Invalid SyncWorkers", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Engine.Performance.SyncWorkers = 0
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for zero sync workers, but got nil")
 		}
 	})
@@ -62,7 +78,7 @@ func TestConfig_Validate(t *testing.T) {
 	t.Run("Invalid MirrorWorkers", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Engine.Performance.MirrorWorkers = 0
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for zero mirror workers, but got nil")
 		}
 	})
@@ -70,7 +86,7 @@ func TestConfig_Validate(t *testing.T) {
 	t.Run("Invalid CompressWorkers", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Engine.Performance.CompressWorkers = 0
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for zero compress workers, but got nil")
 		}
 	})
@@ -78,7 +94,7 @@ func TestConfig_Validate(t *testing.T) {
 	t.Run("Invalid DeleteWorkers", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Engine.Performance.DeleteWorkers = 0
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for zero delete workers, but got nil")
 		}
 	})
@@ -86,7 +102,7 @@ func TestConfig_Validate(t *testing.T) {
 	t.Run("Invalid RetryCount", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Engine.RetryCount = -1
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for negative retry count, but got nil")
 		}
 	})
@@ -94,7 +110,7 @@ func TestConfig_Validate(t *testing.T) {
 	t.Run("Invalid RetryWaitSeconds", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Engine.RetryWaitSeconds = -1
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for negative retry wait, but got nil")
 		}
 	})
@@ -106,20 +122,20 @@ func TestConfig_Validate(t *testing.T) {
 		// Test negative interval in manual mode (should error)
 		cfg.Archive.Incremental.IntervalMode = ManualInterval
 		cfg.Archive.Incremental.IntervalSeconds = -1
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for negative archive intervalSeconds in manual mode, but got nil")
 		}
 
 		// Test zero interval in manual mode (should NOT error, as it disables archive)
 		cfg.Archive.Incremental.IntervalSeconds = 0
-		if err := cfg.Validate(); err != nil {
+		if err := cfg.Validate(true); err != nil {
 			t.Errorf("expected no error for zero archive intervalSeconds in manual mode (disables archive), but got: %v", err)
 		}
 
 		// In auto mode, the interval is calculated, so a user-set 0 should not error.
 		cfg.Archive.Incremental.IntervalMode = AutoInterval
 		cfg.Archive.Incremental.IntervalSeconds = 0
-		if err := cfg.Validate(); err != nil {
+		if err := cfg.Validate(true); err != nil {
 			t.Errorf("expected no error for zero archive intervalSeconds in auto mode (value is ignored), but got: %v", err)
 		}
 	})
@@ -130,31 +146,31 @@ func TestConfig_Validate(t *testing.T) {
 
 		// Test ArchivesSubDir empty
 		cfg.Paths.ArchivesSubDir = ""
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for empty archivesSubDir, but got nil")
 		}
 
 		// Test ArchivesSubDir with path separators
 		cfg.Paths.ArchivesSubDir = "invalid/path"
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for archivesSubDir with path separators, but got nil")
 		}
 		cfg.Paths.ArchivesSubDir = "valid" // Reset
 
 		// Test empty IncrementalSubDir
 		cfg.Paths.IncrementalSubDir = ""
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for empty IncrementalSubDir, but got nil")
 		}
 
 		// Test IncrementalSubDir
 		cfg.Paths.IncrementalSubDir = "invalid/path"
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for incrementalSubDir with path separators, but got nil")
 		}
 
 		cfg.Paths.IncrementalSubDir = "valid" // Reset to valid
-		if err := cfg.Validate(); err != nil {
+		if err := cfg.Validate(true); err != nil {
 			t.Errorf("expected no error for valid archivesSubDir and incrementalSubDir, but got: %v", err)
 		}
 	})
@@ -165,18 +181,18 @@ func TestConfig_Validate(t *testing.T) {
 
 		// Test empty
 		cfg.Paths.SnapshotsSubDir = ""
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for empty snapshotsSubDir, but got nil")
 		}
 
 		// Test with path separators
 		cfg.Paths.SnapshotsSubDir = "invalid/path"
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for snapshotsSubDir with path separators, but got nil")
 		}
 
 		cfg.Paths.SnapshotsSubDir = "valid" // Reset to valid
-		if err := cfg.Validate(); err != nil {
+		if err := cfg.Validate(true); err != nil {
 			t.Errorf("expected no error for valid snapshotsSubDir, but got: %v", err)
 		}
 	})
@@ -184,7 +200,7 @@ func TestConfig_Validate(t *testing.T) {
 	t.Run("Invalid Glob Pattern", func(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Paths.UserExcludeFiles = []string{"["} // Invalid glob pattern
-		if err := cfg.Validate(); err == nil {
+		if err := cfg.Validate(true); err == nil {
 			t.Error("expected error for invalid glob pattern, but got nil")
 		}
 	})

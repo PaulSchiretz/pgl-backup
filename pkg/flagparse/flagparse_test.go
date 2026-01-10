@@ -131,6 +131,7 @@ func TestParse(t *testing.T) {
 			{"Version Command", []string{"version"}, VersionCommand},
 			{"Init Command", []string{"init"}, InitCommand},
 			{"Init Default Command", []string{"init", "-default"}, InitCommand},
+			{"Prune Command", []string{"prune"}, PruneCommand},
 		}
 
 		for _, tc := range testCases {

@@ -38,6 +38,8 @@ func run(ctx context.Context) error {
 		return cmd.RunInit(ctx, flagMap, appName, appVersion)
 	case flagparse.BackupCommand:
 		return cmd.RunBackup(ctx, flagMap, appName, appVersion)
+	case flagparse.PruneCommand:
+		return cmd.RunPrune(ctx, flagMap, appName, appVersion)
 	default:
 		return fmt.Errorf("internal error: unknown command %d", appCommand)
 	}

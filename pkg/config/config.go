@@ -477,9 +477,9 @@ func Generate(configToGenerate Config) error {
 // Validate checks the configuration for logical errors and inconsistencies.
 // It performs strict checks, including ensuring the source path is non-empty
 // and exists.
-func (c *Config) Validate() error {
+func (c *Config) Validate(checkSource bool) error {
 	// --- Strict Path Validation (Fail-Fast) ---
-	if c.Paths.Source == "" {
+	if checkSource && c.Paths.Source == "" {
 		return fmt.Errorf("source path cannot be empty")
 	}
 	if c.Paths.TargetBase == "" {
@@ -498,8 +498,10 @@ func (c *Config) Validate() error {
 		c.Paths.Source = filepath.Clean(c.Paths.Source)
 
 		// After cleaning and expanding the path, check for existence.
-		if _, err := os.Stat(c.Paths.Source); os.IsNotExist(err) {
-			return fmt.Errorf("source path '%s' does not exist", c.Paths.Source)
+		if checkSource {
+			if _, err := os.Stat(c.Paths.Source); os.IsNotExist(err) {
+				return fmt.Errorf("source path '%s' does not exist", c.Paths.Source)
+			}
 		}
 	}
 

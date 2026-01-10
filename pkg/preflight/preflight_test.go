@@ -107,7 +107,14 @@ func TestRunChecks(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.DryRun = false
 
-		err := RunChecks(cfg)
+		err := RunChecks(cfg, PreflightChecks{
+			SourceAccessible:   true,
+			TargetAccessible:   true,
+			TargetWriteable:    true,
+			CaseMissmatch:      true,
+			PathNesting:        true,
+			EnsureTargetExists: true,
+		})
 		if err != nil {
 			t.Fatalf("RunChecks() failed on a valid config: %v", err)
 		}
@@ -122,7 +129,14 @@ func TestRunChecks(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.DryRun = true
 
-		err := RunChecks(cfg)
+		err := RunChecks(cfg, PreflightChecks{
+			SourceAccessible:   true,
+			TargetAccessible:   true,
+			TargetWriteable:    true,
+			CaseMissmatch:      true,
+			PathNesting:        true,
+			EnsureTargetExists: true,
+		})
 		if err != nil {
 			t.Fatalf("RunChecks() failed on a valid config during a dry run: %v", err)
 		}
@@ -137,12 +151,36 @@ func TestRunChecks(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Paths.Source = "" // Make the config invalid.
 
-		err := RunChecks(cfg)
+		err := RunChecks(cfg, PreflightChecks{
+			SourceAccessible:   true,
+			TargetAccessible:   true,
+			TargetWriteable:    true,
+			CaseMissmatch:      true,
+			PathNesting:        true,
+			EnsureTargetExists: true,
+		})
 		if err == nil {
 			t.Fatal("expected RunChecks() to fail with an invalid config, but it passed")
 		}
 		if !strings.Contains(err.Error(), "invalid configuration") {
 			t.Errorf("expected error to be about invalid configuration, but got: %v", err)
+		}
+	})
+
+	t.Run("Happy Path - Skip Source Check", func(t *testing.T) {
+		cfg := newValidConfig(t)
+		cfg.Paths.Source = "/non/existent/path" // Invalid source
+
+		err := RunChecks(cfg, PreflightChecks{
+			SourceAccessible:   false,
+			TargetAccessible:   true,
+			TargetWriteable:    true,
+			CaseMissmatch:      false,
+			PathNesting:        false,
+			EnsureTargetExists: true,
+		})
+		if err != nil {
+			t.Fatalf("RunChecks() failed when skipping source check: %v", err)
 		}
 	})
 
@@ -155,7 +193,14 @@ func TestRunChecks(t *testing.T) {
 		}
 		cfg.Paths.TargetBase = targetFile
 
-		err := RunChecks(cfg)
+		err := RunChecks(cfg, PreflightChecks{
+			SourceAccessible:   true,
+			TargetAccessible:   true,
+			TargetWriteable:    true,
+			CaseMissmatch:      true,
+			PathNesting:        true,
+			EnsureTargetExists: true,
+		})
 		if err == nil {
 			t.Fatal("expected RunChecks() to fail with an inaccessible target, but it passed")
 		}
@@ -173,7 +218,14 @@ func TestRunChecks(t *testing.T) {
 		}
 		cfg.Paths.Source = sourceFile
 
-		err := RunChecks(cfg)
+		err := RunChecks(cfg, PreflightChecks{
+			SourceAccessible:   true,
+			TargetAccessible:   true,
+			TargetWriteable:    true,
+			CaseMissmatch:      true,
+			PathNesting:        true,
+			EnsureTargetExists: true,
+		})
 		if err == nil {
 			t.Fatal("expected RunChecks() to fail with an inaccessible source, but it passed")
 		}

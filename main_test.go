@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -38,6 +39,16 @@ func TestRun(t *testing.T) {
 			name:          "Invalid Command",
 			args:          []string{"pgl-backup", "invalid"},
 			expectedError: "unknown command: invalid",
+		},
+		{
+			name:          "Prune Missing Target",
+			args:          []string{"pgl-backup", "prune"},
+			expectedError: "the -target flag is required",
+		},
+		{
+			name:          "Prune Non-Existent Target",
+			args:          []string{"pgl-backup", "prune", "-target", filepath.Join(os.TempDir(), "pgl_nonexistent_target_12345")},
+			expectedError: "target directory does not exist",
 		},
 	}
 

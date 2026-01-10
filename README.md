@@ -330,6 +330,14 @@ pgl-backup backup -target="..." -pre-backup-hooks="'/usr/local/bin/dump_database
 ```
 >**Security Note:** Hooks execute arbitrary shell commands. Ensure that any commands in your configuration are from a trusted source and have the correct permissions to prevent unintended side effects.
 
+### Prune Backups
+
+Manually apply retention policies to clean up outdated backups without running a full backup. This is useful for freeing up disk space immediately.
+
+```sh 
+  pgl-backup prune -target="/path/to/your/backup-target"
+```
+
 ## How to Restore a Backup
 
 `pgl-backup` is intentionally designed to store your data in standard, open formats. This philosophy ensures that you retain full ownership and access to your files at all times, using native operating system tools, without ever needing to install or rely on `pgl-backup` itself for restoration.
@@ -594,6 +602,7 @@ The best policy depends on how much data you are backing up and how much disk sp
 ### Commands
 
 * `backup`: Run the backup operation.
+* `prune`: Apply retention policies to clean up old backups.
 * `init`: Initialize or update a configuration. Use `-default` to overwrite an existing configuration with defaults.
 * `version`: Print the application version.
 

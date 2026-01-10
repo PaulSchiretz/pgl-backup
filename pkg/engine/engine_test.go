@@ -150,6 +150,30 @@ func TestInitializeBackupTarget(t *testing.T) {
 	})
 }
 
+func TestExecutePrune_DoesNotCreateTarget(t *testing.T) {
+	// Arrange
+	tempDir := t.TempDir()
+	targetDir := filepath.Join(tempDir, "non_existent_target")
+
+	cfg := config.NewDefault()
+	cfg.Paths.TargetBase = targetDir
+	cfg.Paths.Source = t.TempDir() // Valid source
+
+	e := newTestEngine(cfg)
+
+	// Act
+	err := e.ExecutePrune(context.Background())
+
+	// Assert
+	if err == nil {
+		t.Error("expected ExecutePrune to fail when target does not exist, but it succeeded")
+	}
+
+	if _, err := os.Stat(targetDir); !os.IsNotExist(err) {
+		t.Error("expected target directory NOT to be created, but it was")
+	}
+}
+
 func TestPerformCompression(t *testing.T) {
 	t.Run("Empty List", func(t *testing.T) {
 		// Arrange
