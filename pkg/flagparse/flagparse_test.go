@@ -59,6 +59,39 @@ func TestParseExcludeList(t *testing.T) {
 }
 
 func TestParse(t *testing.T) {
+	t.Run("No Arguments", func(t *testing.T) {
+		act, _, err := Parse("test", "v1", []string{})
+		if err != nil {
+			t.Fatalf("expected no error, but got: %v", err)
+		}
+		if act != NoCommand {
+			t.Errorf("expected action to be NoCommand, but got %v", act)
+		}
+	})
+
+	t.Run("Help Command", func(t *testing.T) {
+		act, _, err := Parse("test", "v1", []string{"help"})
+		if err != nil {
+			t.Fatalf("expected no error, but got: %v", err)
+		}
+		if act != NoCommand {
+			t.Errorf("expected action to be NoCommand, but got %v", act)
+		}
+	})
+
+	t.Run("Version Command", func(t *testing.T) {
+		act, flagMap, err := Parse("test", "v1", []string{"version"})
+		if err != nil {
+			t.Fatalf("expected no error, but got: %v", err)
+		}
+		if act != VersionCommand {
+			t.Errorf("expected action to be VersionCommand, but got %v", act)
+		}
+		if len(flagMap) != 0 {
+			t.Errorf("expected empty flag map, but got %v", flagMap)
+		}
+	})
+
 	t.Run("Override Source and Target (Explicit Subcommand)", func(t *testing.T) {
 		args := []string{"backup", "-source=/new/src", "-target=/new/dst"}
 		_, setFlags, err := Parse("test", "v1", args)

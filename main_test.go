@@ -27,6 +27,14 @@ func TestRun(t *testing.T) {
 		expectedError string
 	}{
 		{
+			name: "No Arguments (Help)",
+			args: []string{"pgl-backup"},
+		},
+		{
+			name: "Help Flag",
+			args: []string{"pgl-backup", "--help"},
+		},
+		{
 			name:          "Invalid Command",
 			args:          []string{"pgl-backup", "invalid"},
 			expectedError: "unknown command: invalid",

@@ -30,6 +30,8 @@ func run(ctx context.Context) error {
 	}
 
 	switch appCommand {
+	case flagparse.NoCommand:
+		return nil
 	case flagparse.VersionCommand:
 		return cmd.RunVersion(appName, appVersion)
 	case flagparse.InitCommand:

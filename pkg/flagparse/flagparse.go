@@ -16,7 +16,8 @@ import (
 type CommandFlag int
 
 const (
-	BackupCommand CommandFlag = iota // The default CommandFlag is to run a backup.
+	NoCommand CommandFlag = iota
+	BackupCommand
 	VersionCommand
 	InitCommand
 )
@@ -92,7 +93,7 @@ func Parse(appName, appVersion string, args []string) (CommandFlag, map[string]i
 	if len(args) == 0 {
 		fs := flag.NewFlagSet(appName, flag.ExitOnError)
 		printTopLevelUsage(appName, appVersion, fs)
-		os.Exit(0)
+		return NoCommand, nil, nil
 	}
 
 	cmd := strings.ToLower(args[0])
@@ -100,7 +101,7 @@ func Parse(appName, appVersion string, args []string) (CommandFlag, map[string]i
 	if cmd == "help" || cmd == "-h" || cmd == "-help" || cmd == "--help" {
 		fs := flag.NewFlagSet(appName, flag.ExitOnError)
 		printTopLevelUsage(appName, appVersion, fs)
-		os.Exit(0)
+		return NoCommand, nil, nil
 	}
 
 	// Check for subcommand
