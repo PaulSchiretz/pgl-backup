@@ -157,6 +157,7 @@ func TestParse(t *testing.T) {
 			{"Init Mixed", []string{"Init"}, InitCommand},
 			{"Backup Mixed", []string{"BackUp"}, BackupCommand},
 			{"Version Mixed", []string{"Version"}, VersionCommand},
+			{"Prune Mixed", []string{"Prune"}, PruneCommand},
 		}
 
 		for _, tc := range testCases {

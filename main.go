@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -26,6 +28,9 @@ func run(ctx context.Context) error {
 
 	appCommand, flagMap, err := flagparse.Parse(appName, appVersion, os.Args[1:])
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 

@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/paulschiretz/pgl-backup/pkg/config"
-	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
 // CommandFlag defines a special command to execute instead of a backup.
@@ -23,17 +22,20 @@ const (
 	PruneCommand
 )
 
-// SharedFlags holds pointers to flag values that are common across multiple commands.
-// This prevents code duplication when defining flags for 'init', 'backup', etc.
-type SharedFlags struct {
+// CmdFlags holds pointers to all possible command-line flags.
+// Fields are pointers so we can distinguish between "not registered for this command" (nil)
+// and "registered but not set by user" (non-nil pointer to zero value).
+type CmdFlags struct {
+	// Global
+	LogLevel *string
+	DryRun   *bool
+	Metrics  *bool
+
+	// Common / Backup / Init
 	Source                 *string
 	Target                 *string
 	Mode                   *string
-	LogLevel               *string
 	FailFast               *bool
-	DryRun                 *bool
-	Metrics                *bool
-	Force                  *bool
 	SyncEngine             *string
 	SyncWorkers            *int
 	MirrorWorkers          *int
@@ -52,20 +54,23 @@ type SharedFlags struct {
 	ArchiveIntervalMode    *string
 	CompressionEnabled     *bool
 	CompressionFormat      *string
+
+	// Init specific
+	Force   *bool
+	Default *bool
 }
 
-// registerSharedFlags defines the common flags on the provided FlagSet and returns
-// a struct containing pointers to the values.
-func registerSharedFlags(fs *flag.FlagSet) *SharedFlags {
-	f := &SharedFlags{}
+func registerGlobalFlags(fs *flag.FlagSet, f *CmdFlags) {
+	f.LogLevel = fs.String("log-level", "info", "Set the logging level: 'debug', 'notice', 'info', 'warn', 'error'.")
+	f.DryRun = fs.Bool("dry-run", false, "Show what would be done without making any changes.")
+	f.Metrics = fs.Bool("metrics", false, "Enable detailed performance and file-counting metrics.")
+}
+
+func registerBackupFlags(fs *flag.FlagSet, f *CmdFlags) {
 	f.Source = fs.String("source", "", "Source directory to copy from")
 	f.Target = fs.String("target", "", "Base destination directory for backups")
 	f.Mode = fs.String("mode", "incremental", "Backup mode: 'incremental' or 'snapshot'.")
-	f.LogLevel = fs.String("log-level", "info", "Set the logging level: 'debug', 'notice', 'info', 'warn', 'error'.")
 	f.FailFast = fs.Bool("fail-fast", false, "Stop the backup immediately on the first file sync error.")
-	f.DryRun = fs.Bool("dry-run", false, "Show what would be done without making any changes.")
-	f.Metrics = fs.Bool("metrics", false, "Enable detailed performance and file-counting metrics.")
-	f.Force = fs.Bool("force", false, "Bypass confirmation prompts.")
 	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
 	f.SyncWorkers = fs.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
 	f.MirrorWorkers = fs.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
@@ -84,7 +89,17 @@ func registerSharedFlags(fs *flag.FlagSet) *SharedFlags {
 	f.ArchiveIntervalMode = fs.String("archive-interval-mode", "", "Archive interval mode: 'auto' or 'manual'.")
 	f.CompressionEnabled = fs.Bool("compression", true, "Enable compression for backups.")
 	f.CompressionFormat = fs.String("compression-format", "", "Compression format for backups: 'zip', 'tar.gz', or 'tar.zst'.")
-	return f
+}
+
+func registerInitFlags(fs *flag.FlagSet, f *CmdFlags) {
+	// Init supports all backup flags (to generate config) plus 'force' and 'default'.
+	f.Force = fs.Bool("force", false, "Bypass confirmation prompts.")
+	f.Default = fs.Bool("default", false, "Overwrite existing configuration with defaults.")
+}
+
+func registerPruneFlags(fs *flag.FlagSet, f *CmdFlags) {
+	f.Target = fs.String("target", "", "Base destination directory for backups")
+	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
 }
 
 // Parse parses the provided arguments (usually os.Args[1:]) and returns the action and config map.
@@ -105,14 +120,16 @@ func Parse(appName, appVersion string, args []string) (CommandFlag, map[string]i
 		return NoCommand, nil, nil
 	}
 
+	f := &CmdFlags{}
+
 	// Check for subcommand
 	switch cmd {
 	case "init":
 		fs := flag.NewFlagSet("init", flag.ContinueOnError)
-		shared := registerSharedFlags(fs)
 
-		// Specific flag for init to handle the old -init-default behavior
-		defaultFlag := fs.Bool("default", false, "Overwrite existing configuration with defaults.")
+		registerGlobalFlags(fs, f)
+		registerBackupFlags(fs, f) // Init also supports all backup flags (to generate config)
+		registerInitFlags(fs, f)
 
 		// Custom usage for the subcommand
 		fs.Usage = func() {
@@ -123,19 +140,13 @@ func Parse(appName, appVersion string, args []string) (CommandFlag, map[string]i
 			return InitCommand, nil, err
 		}
 
-		flagMap, err := flagsToMap(fs, shared)
-		if err != nil {
-			return InitCommand, nil, err
-		}
-
-		if *defaultFlag {
-			flagMap["default"] = true
-		}
-		return InitCommand, flagMap, nil
+		flagMap, err := flagsToMap(fs, f)
+		return InitCommand, flagMap, err
 
 	case "prune":
 		fs := flag.NewFlagSet("prune", flag.ContinueOnError)
-		shared := registerSharedFlags(fs)
+		registerGlobalFlags(fs, f)
+		registerPruneFlags(fs, f)
 
 		fs.Usage = func() {
 			printSubcommandUsage(appName, appVersion, "prune", "Apply retention policies to clean up outdated backups.", fs)
@@ -144,12 +155,13 @@ func Parse(appName, appVersion string, args []string) (CommandFlag, map[string]i
 		if err := fs.Parse(args[1:]); err != nil {
 			return PruneCommand, nil, err
 		}
-		flagMap, err := flagsToMap(fs, shared)
+		flagMap, err := flagsToMap(fs, f)
 		return PruneCommand, flagMap, err
 
 	case "backup":
 		fs := flag.NewFlagSet("backup", flag.ContinueOnError)
-		shared := registerSharedFlags(fs)
+		registerGlobalFlags(fs, f)
+		registerBackupFlags(fs, f)
 
 		fs.Usage = func() {
 			printSubcommandUsage(appName, appVersion, "backup", "Run the backup operation.", fs)
@@ -158,7 +170,7 @@ func Parse(appName, appVersion string, args []string) (CommandFlag, map[string]i
 		if err := fs.Parse(args[1:]); err != nil {
 			return BackupCommand, nil, err
 		}
-		flagMap, err := flagsToMap(fs, shared)
+		flagMap, err := flagsToMap(fs, f)
 		return BackupCommand, flagMap, err
 
 	case "version":
@@ -169,93 +181,92 @@ func Parse(appName, appVersion string, args []string) (CommandFlag, map[string]i
 	}
 }
 
-// flagsToMap converts the parsed flags in the FlagSet to a map, using the SharedFlags struct values.
-func flagsToMap(fs *flag.FlagSet, sf *SharedFlags) (map[string]interface{}, error) {
+func flagsToMap(fs *flag.FlagSet, f *CmdFlags) (map[string]interface{}, error) {
 	// Create a map of the flags that were explicitly set by the user, along with their values.
 	// This map is used to selectively override the base configuration.
 	usedFlags := make(map[string]bool)
 	fs.Visit(func(f *flag.Flag) { usedFlags[f.Name] = true })
 
-	flagMap := make(map[string]interface{})
+	flagMap := make(map[string]any)
 
-	// Helper to add a value to the map only if the corresponding flag was set.
-	addIfUsed := func(name string, value interface{}) {
-		if usedFlags[name] {
-			flagMap[name] = value
-		}
-	}
+	addIfUsed(flagMap, usedFlags, "log-level", f.LogLevel)
+	addIfUsed(flagMap, usedFlags, "dry-run", f.DryRun)
+	addIfUsed(flagMap, usedFlags, "metrics", f.Metrics)
 
-	// Helper for flags that need parsing. It only calls the parser if the flag was used.
-	addParsedIfUsed := func(name string, rawValue string, parser func(string) []string) {
-		if usedFlags[name] {
-			flagMap[name] = parser(rawValue)
-		}
-	}
+	addIfUsed(flagMap, usedFlags, "source", f.Source)
+	addIfUsed(flagMap, usedFlags, "target", f.Target)
+	addIfUsed(flagMap, usedFlags, "fail-fast", f.FailFast)
+	addIfUsed(flagMap, usedFlags, "sync-workers", f.SyncWorkers)
+	addIfUsed(flagMap, usedFlags, "mirror-workers", f.MirrorWorkers)
+	addIfUsed(flagMap, usedFlags, "delete-workers", f.DeleteWorkers)
+	addIfUsed(flagMap, usedFlags, "compress-workers", f.CompressWorkers)
+	addIfUsed(flagMap, usedFlags, "retry-count", f.RetryCount)
+	addIfUsed(flagMap, usedFlags, "retry-wait", f.RetryWait)
+	addIfUsed(flagMap, usedFlags, "buffer-size-kb", f.BufferSizeKB)
+	addIfUsed(flagMap, usedFlags, "mod-time-window", f.ModTimeWindow)
+	addIfUsed(flagMap, usedFlags, "preserve-source-name", f.PreserveSourceName)
+	addIfUsed(flagMap, usedFlags, "archive-interval-seconds", f.ArchiveIntervalSeconds)
+	addIfUsed(flagMap, usedFlags, "compression", f.CompressionEnabled)
 
-	// Populate the map with action flags using the helper.
-	addIfUsed("source", *sf.Source)
-	addIfUsed("target", *sf.Target)
-	addIfUsed("log-level", *sf.LogLevel)
-	addIfUsed("fail-fast", *sf.FailFast)
-	addIfUsed("dry-run", *sf.DryRun)
-	addIfUsed("metrics", *sf.Metrics)
-	addIfUsed("force", *sf.Force)
-	addIfUsed("preserve-source-name", *sf.PreserveSourceName)
-	addIfUsed("sync-workers", *sf.SyncWorkers)
-	addIfUsed("mirror-workers", *sf.MirrorWorkers)
-	addIfUsed("delete-workers", *sf.DeleteWorkers)
-	addIfUsed("compress-workers", *sf.CompressWorkers)
-	addIfUsed("retry-count", *sf.RetryCount)
-	addIfUsed("retry-wait", *sf.RetryWait)
-	addIfUsed("buffer-size-kb", *sf.BufferSizeKB)
-	addIfUsed("mod-time-window", *sf.ModTimeWindow)
-	addIfUsed("archive-interval-seconds", *sf.ArchiveIntervalSeconds)
-	addIfUsed("compression", *sf.CompressionEnabled)
+	// Init specific flags
+	addIfUsed(flagMap, usedFlags, "force", f.Force)
+	addIfUsed(flagMap, usedFlags, "default", f.Default)
 
 	// Handle flags that require parsing/validation.
-	addParsedIfUsed("user-exclude-files", *sf.UserExcludeFiles, ParseExcludeList)
-	addParsedIfUsed("user-exclude-dirs", *sf.UserExcludeDirs, ParseExcludeList)
-	addParsedIfUsed("pre-backup-hooks", *sf.PreBackupHooks, ParseCmdList)
-	addParsedIfUsed("post-backup-hooks", *sf.PostBackupHooks, ParseCmdList)
+	addParsedIfUsed(flagMap, usedFlags, "user-exclude-files", f.UserExcludeFiles, ParseExcludeList)
+	addParsedIfUsed(flagMap, usedFlags, "user-exclude-dirs", f.UserExcludeDirs, ParseExcludeList)
+	addParsedIfUsed(flagMap, usedFlags, "pre-backup-hooks", f.PreBackupHooks, ParseCmdList)
+	addParsedIfUsed(flagMap, usedFlags, "post-backup-hooks", f.PostBackupHooks, ParseCmdList)
 
-	if usedFlags["mode"] {
-		mode, err := config.BackupModeFromString(*sf.Mode)
+	if f.Mode != nil && usedFlags["mode"] {
+		mode, err := config.BackupModeFromString(*f.Mode)
 		if err != nil {
 			return nil, err
 		}
 		flagMap["mode"] = mode
 	}
-	if usedFlags["sync-engine"] {
-		engineType, err := config.SyncEngineFromString(*sf.SyncEngine)
+	if f.SyncEngine != nil && usedFlags["sync-engine"] {
+		engineType, err := config.SyncEngineFromString(*f.SyncEngine)
 		if err != nil {
 			return nil, err
 		}
-		flagMap["sync-engine"] = engineType
+
+		// Final sanity check: if robocopy was requested on a non-windows OS, force native.
+		if runtime.GOOS != "windows" && engineType == config.RobocopyEngine {
+			flagMap["sync-engine"] = config.NativeEngine
+		} else {
+			flagMap["sync-engine"] = engineType
+		}
 	}
-	if usedFlags["archive-interval-mode"] {
-		mode, err := config.ArchiveIntervalModeFromString(*sf.ArchiveIntervalMode)
+	if f.ArchiveIntervalMode != nil && usedFlags["archive-interval-mode"] {
+		mode, err := config.ArchiveIntervalModeFromString(*f.ArchiveIntervalMode)
 		if err != nil {
 			return nil, err
 		}
 		flagMap["archive-interval-mode"] = mode
 	}
-	if usedFlags["compression-format"] {
-		format, err := config.CompressionFormatFromString(*sf.CompressionFormat)
+	if f.CompressionFormat != nil && usedFlags["compression-format"] {
+		format, err := config.CompressionFormatFromString(*f.CompressionFormat)
 		if err != nil {
 			return nil, err
 		}
 		flagMap["compression-format"] = format
 	}
-
-	// Final sanity check: if robocopy was requested on a non-windows OS, force native.
-	if runtime.GOOS != "windows" {
-		if val, ok := flagMap["sync-engine"]; ok && val.(config.SyncEngine) == config.RobocopyEngine {
-			plog.Warn("Robocopy is not available on this OS. Forcing 'native' sync engine.")
-			flagMap["sync-engine"] = config.NativeEngine
-		}
-	}
-
 	return flagMap, nil
+}
+
+// addIfUsed adds the value of ptr to flagMap if ptr is not nil and the flag was set.
+func addIfUsed[T any](flagMap map[string]interface{}, usedFlags map[string]bool, name string, ptr *T) {
+	if ptr != nil && usedFlags[name] {
+		flagMap[name] = *ptr
+	}
+}
+
+// addParsedIfUsed adds the parsed value of ptr to flagMap if ptr is not nil and the flag was set.
+func addParsedIfUsed(flagMap map[string]interface{}, usedFlags map[string]bool, name string, ptr *string, parser func(string) []string) {
+	if ptr != nil && usedFlags[name] {
+		flagMap[name] = parser(*ptr)
+	}
 }
 
 // printTopLevelUsage prints the main help message.
