@@ -267,7 +267,7 @@ func printTopLevelUsage(appName, appVersion string, fs *flag.FlagSet) {
 	fmt.Fprintf(fs.Output(), "Usage: %s <command> [flags]\n\n", execName)
 	fmt.Fprintf(fs.Output(), "Commands:\n")
 	fmt.Fprintf(fs.Output(), "  backup      Run the backup operation\n")
-	fmt.Fprintf(fs.Output(), "  prune       Apply retention policies to clean up old backups\n")
+	fmt.Fprintf(fs.Output(), "  prune       Apply retention policies to clean up outdated backups\n")
 	fmt.Fprintf(fs.Output(), "  init        Initialize a new configuration\n")
 	fmt.Fprintf(fs.Output(), "  version     Print the application version\n")
 	fmt.Fprintf(fs.Output(), "\nRun '%s <command> -help' for more information on a command.\n", execName)

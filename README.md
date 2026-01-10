@@ -332,10 +332,10 @@ pgl-backup backup -target="..." -pre-backup-hooks="'/usr/local/bin/dump_database
 
 ### Prune Backups
 
-Manually apply retention policies to clean up outdated backups without running a full backup. This is useful for freeing up disk space immediately.
+Manually apply retention policies to clean up outdated backups without running a full backup. This is useful for freeing up disk space immediately. Supports `-dry-run` to preview deletions.
 
-```sh 
-  pgl-backup prune -target="/path/to/your/backup-target"
+```sh
+pgl-backup prune -target="/path/to/your/backup-target"
 ```
 
 ## How to Restore a Backup
@@ -602,7 +602,7 @@ The best policy depends on how much data you are backing up and how much disk sp
 ### Commands
 
 * `backup`: Run the backup operation.
-* `prune`: Apply retention policies to clean up old backups.
+* `prune`: Apply retention policies to clean up outdated backups.
 * `init`: Initialize or update a configuration. Use `-default` to overwrite an existing configuration with defaults.
 * `version`: Print the application version.
 
