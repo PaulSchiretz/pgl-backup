@@ -286,7 +286,7 @@ Your backup target will be organized like this:
 
 ## Usage and Examples
 
-`pgl-backup` uses a subcommand structure: `pgl-backup [command] [flags]`. Running `pgl-backup` without any arguments will display the help message.
+`pgl-backup` uses a subcommand structure: `pgl-backup <command> [flags]`. Running `pgl-backup` without any arguments will display the help message.
 
 ### Basic Backup
 

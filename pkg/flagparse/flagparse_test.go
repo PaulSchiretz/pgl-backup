@@ -380,6 +380,18 @@ func TestParse(t *testing.T) {
 			t.Errorf("expected error containing 'unknown command', got: %v", err)
 		}
 	})
+
+	t.Run("Invalid Flag for Subcommand", func(t *testing.T) {
+		// This test would exit the process if we were using flag.ExitOnError
+		args := []string{"backup", "-non-existent-flag"}
+		_, _, err := Parse("test", "v1", args)
+		if err == nil {
+			t.Fatal("expected error for invalid flag, got nil")
+		}
+		if !strings.Contains(err.Error(), "flag provided but not defined") {
+			t.Errorf("expected error about undefined flag, got: %v", err)
+		}
+	})
 }
 
 func TestParseCmdList(t *testing.T) {

@@ -91,7 +91,7 @@ func Parse(appName, appVersion string, args []string) (CommandFlag, map[string]i
 	// Handle top-level help
 	// If no arguments provided, print help and exit.
 	if len(args) == 0 {
-		fs := flag.NewFlagSet(appName, flag.ExitOnError)
+		fs := flag.NewFlagSet(appName, flag.ContinueOnError)
 		printTopLevelUsage(appName, appVersion, fs)
 		return NoCommand, nil, nil
 	}
@@ -99,7 +99,7 @@ func Parse(appName, appVersion string, args []string) (CommandFlag, map[string]i
 	cmd := strings.ToLower(args[0])
 
 	if cmd == "help" || cmd == "-h" || cmd == "-help" || cmd == "--help" {
-		fs := flag.NewFlagSet(appName, flag.ExitOnError)
+		fs := flag.NewFlagSet(appName, flag.ContinueOnError)
 		printTopLevelUsage(appName, appVersion, fs)
 		return NoCommand, nil, nil
 	}
@@ -107,7 +107,7 @@ func Parse(appName, appVersion string, args []string) (CommandFlag, map[string]i
 	// Check for subcommand
 	switch cmd {
 	case "init":
-		fs := flag.NewFlagSet("init", flag.ExitOnError)
+		fs := flag.NewFlagSet("init", flag.ContinueOnError)
 		shared := registerSharedFlags(fs)
 
 		// Specific flag for init to handle the old -init-default behavior
@@ -133,7 +133,7 @@ func Parse(appName, appVersion string, args []string) (CommandFlag, map[string]i
 		return InitCommand, flagMap, nil
 
 	case "backup":
-		fs := flag.NewFlagSet("backup", flag.ExitOnError)
+		fs := flag.NewFlagSet("backup", flag.ContinueOnError)
 		shared := registerSharedFlags(fs)
 
 		fs.Usage = func() {
