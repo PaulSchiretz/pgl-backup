@@ -123,7 +123,7 @@ func (e *Engine) InitializeBackupTarget(ctx context.Context) error {
 		SourceAccessible:   true,
 		TargetAccessible:   true,
 		TargetWriteable:    true,
-		CaseMissmatch:      true,
+		CaseMismatch:       true,
 		PathNesting:        true,
 		EnsureTargetExists: true,
 	}); err != nil {
@@ -160,7 +160,7 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 		SourceAccessible:   true,
 		TargetAccessible:   true,
 		TargetWriteable:    true,
-		CaseMissmatch:      true,
+		CaseMismatch:       true,
 		PathNesting:        true,
 		EnsureTargetExists: true,
 	}); err != nil {
@@ -235,7 +235,7 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("error during backup archiving: %w", err)
 		}
-		// Make sure an archive was created, the path might be empty if a non critical error occuered.
+		// Make sure an archive was created, the path might be empty if a non critical error occurred.
 		if archivePath != "" {
 			backupsToCompress = append(backupsToCompress, archivePath)
 		}
@@ -279,7 +279,7 @@ func (e *Engine) ExecutePrune(ctx context.Context) error {
 		SourceAccessible:   false,
 		TargetAccessible:   true,
 		TargetWriteable:    true,
-		CaseMissmatch:      false,
+		CaseMismatch:       false,
 		PathNesting:        false,
 		EnsureTargetExists: false,
 	}); err != nil {

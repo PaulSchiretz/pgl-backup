@@ -21,7 +21,7 @@ type PreflightChecks struct {
 	SourceAccessible   bool
 	TargetAccessible   bool
 	TargetWriteable    bool
-	CaseMissmatch      bool
+	CaseMismatch       bool
 	PathNesting        bool
 	EnsureTargetExists bool
 }
@@ -62,7 +62,7 @@ func RunChecks(c *config.Config, checks PreflightChecks) error {
 	}
 
 	// 4. Perform cross-platform safety checks.
-	if checks.CaseMissmatch {
+	if checks.CaseMismatch {
 		if err := checkCaseSensitivityMismatch(c.Paths.Source); err != nil {
 			return err // This returns a warning as an error to halt execution.
 		}

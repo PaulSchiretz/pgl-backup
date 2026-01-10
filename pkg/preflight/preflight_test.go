@@ -111,7 +111,7 @@ func TestRunChecks(t *testing.T) {
 			SourceAccessible:   true,
 			TargetAccessible:   true,
 			TargetWriteable:    true,
-			CaseMissmatch:      true,
+			CaseMismatch:       true,
 			PathNesting:        true,
 			EnsureTargetExists: true,
 		})
@@ -133,7 +133,7 @@ func TestRunChecks(t *testing.T) {
 			SourceAccessible:   true,
 			TargetAccessible:   true,
 			TargetWriteable:    true,
-			CaseMissmatch:      true,
+			CaseMismatch:       true,
 			PathNesting:        true,
 			EnsureTargetExists: true,
 		})
@@ -155,7 +155,7 @@ func TestRunChecks(t *testing.T) {
 			SourceAccessible:   true,
 			TargetAccessible:   true,
 			TargetWriteable:    true,
-			CaseMissmatch:      true,
+			CaseMismatch:       true,
 			PathNesting:        true,
 			EnsureTargetExists: true,
 		})
@@ -175,7 +175,7 @@ func TestRunChecks(t *testing.T) {
 			SourceAccessible:   false,
 			TargetAccessible:   true,
 			TargetWriteable:    true,
-			CaseMissmatch:      false,
+			CaseMismatch:       false,
 			PathNesting:        false,
 			EnsureTargetExists: true,
 		})
@@ -197,7 +197,7 @@ func TestRunChecks(t *testing.T) {
 			SourceAccessible:   true,
 			TargetAccessible:   true,
 			TargetWriteable:    true,
-			CaseMissmatch:      true,
+			CaseMismatch:       true,
 			PathNesting:        true,
 			EnsureTargetExists: true,
 		})
@@ -222,7 +222,7 @@ func TestRunChecks(t *testing.T) {
 			SourceAccessible:   true,
 			TargetAccessible:   true,
 			TargetWriteable:    true,
-			CaseMissmatch:      true,
+			CaseMismatch:       true,
 			PathNesting:        true,
 			EnsureTargetExists: true,
 		})

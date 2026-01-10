@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v1.1.0] - 2026-01-10
 
 ### Added
-- Added `prune` command to manually apply retention policies without running a full backup including s.
+- Added `prune` command to manually apply retention policies without running a full backup.
 
 ### Changed
 - Refactored CLI architecture to use subcommands (`init`, `backup`, `version`) instead of top-level action flags.
