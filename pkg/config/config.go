@@ -344,7 +344,7 @@ func NewDefault() Config {
 				SyncWorkers:     4,   // Default to 4. Safe for HDDs (prevents thrashing), decent for SSDs.
 				MirrorWorkers:   4,   // Default to 4.
 				DeleteWorkers:   4,   // A sensible default for deleting entire backup sets.
-				CompressWorkers: 4,   // A sensible default for compressing backups.
+				CompressWorkers: 1,   // Default to 1. Our compression libraries (pgzip, zstd) use internal parallelism to utilize all cores for a single file. Increasing this might cause oversubscription.
 				BufferSizeKB:    256, // Default to 256KB buffer. Keep it between 64KB-4MB
 			}},
 		Naming: BackupNamingConfig{

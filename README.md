@@ -192,7 +192,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
       "syncWorkers": 4,
       "mirrorWorkers": 4,
       "deleteWorkers": 4,
-      "compressWorkers": 4,
+      "compressWorkers": 1,
       "bufferSizeKB": 256
     }
   },
@@ -654,7 +654,7 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `sync-workers` / `engine.performance.syncWorkers` | `int` | `4` | Number of concurrent workers for file synchronization. |
 | `mirror-workers` / `engine.performance.mirrorWorkers` | `int` | `4` | Number of concurrent workers for file deletions in mirror mode. |
 | `delete-workers` / `engine.performance.deleteWorkers` | `int` | `4` | Number of concurrent workers for deleting outdated backups. |
-| `compress-workers` / `engine.performance.compressWorkers` | `int` | `4` | Number of concurrent workers for compressing backups. |
+| `compress-workers` / `engine.performance.compressWorkers` | `int` | `1` | Number of concurrent workers for compressing backups. |
 | `retry-count` / `engine.retryCount` | `int` | `3` | Number of retries for failed file copies. |
 | `retry-wait` / `engine.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries. |
 | `mod-time-window` / `engine.modTimeWindowSeconds` | `int` | `1` | Time window in seconds to consider file modification times equal (default 1s). |
