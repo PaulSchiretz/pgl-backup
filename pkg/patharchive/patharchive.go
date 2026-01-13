@@ -34,6 +34,7 @@ package patharchive
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -46,6 +47,8 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
+
+var ErrNothingToArchive = errors.New("nothing to archive")
 
 // archiveRun holds the mutable state for a single execution of the archiver.
 // This makes the ArchiveEngine itself stateless and safe for concurrent use if needed.
@@ -90,7 +93,7 @@ func (a *PathArchiver) Archive(ctx context.Context, dirPath, currentBackupPath s
 	if err != nil {
 		if os.IsNotExist(err) {
 			// This is a normal condition on the first run; no previous backup to archive.
-			return "", nil
+			return "", ErrNothingToArchive
 		}
 		// Any other error (e.g., corrupt file, permissions) is a problem.
 		return "", fmt.Errorf("could not read previous backup metadata for archive check: %w", err)
@@ -141,7 +144,7 @@ func (a *PathArchiver) Archive(ctx context.Context, dirPath, currentBackupPath s
 func (r *archiveRun) execute() (string, error) {
 
 	if !r.shouldArchive() {
-		return "", nil
+		return "", ErrNothingToArchive
 	}
 
 	plog.Info("Archiving backup",
@@ -165,7 +168,7 @@ func (r *archiveRun) execute() (string, error) {
 	if r.dryRun {
 		action := "moved"
 		plog.Notice("[DRY RUN] ARCHIVE", "action", action, "from", r.currentBackupPath, "to", r.archiveBackupPath)
-		return "", nil
+		return r.archiveBackupPath, nil
 	}
 
 	// Log the intent before starting the operation
@@ -182,8 +185,7 @@ func (r *archiveRun) execute() (string, error) {
 
 	// Strategy: Rename (Move)
 	if err := os.Rename(r.currentBackupPath, r.archiveBackupPath); err != nil {
-		plog.Warn("Failed to archive current backup (directory might be in use). Skipping archive step and proceeding with sync.", "error", err)
-		return "", nil
+		return "", fmt.Errorf("failed to archive current backup (directory might be in use): %w", err)
 	}
 	plog.Notice("ARCHIVED", "moved", r.currentBackupPath, "to", r.archiveBackupPath)
 

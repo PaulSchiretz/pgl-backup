@@ -272,7 +272,7 @@ func TestArchive(t *testing.T) {
 
 		// Act
 		_, err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC)
-		if err != nil {
+		if err != nil && err != ErrNothingToArchive {
 			t.Fatalf("Archive failed unexpectedly: %v", err)
 		}
 
@@ -336,7 +336,7 @@ func TestArchive(t *testing.T) {
 
 		// Act
 		_, err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC)
-		if err != nil {
+		if err != nil && err != ErrNothingToArchive {
 			t.Fatalf("Archive failed unexpectedly: %v", err)
 		}
 

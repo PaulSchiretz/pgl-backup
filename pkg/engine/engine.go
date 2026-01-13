@@ -233,10 +233,11 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 	if runState.mode == config.IncrementalMode {
 		archivePath, err := e.performArchiving(ctx, runState)
 		if err != nil {
-			return fmt.Errorf("error during backup archiving: %w", err)
-		}
-		// Make sure an archive was created, the path might be empty if a non critical error occurred.
-		if archivePath != "" {
+			if err != patharchive.ErrNothingToArchive {
+				return fmt.Errorf("error during backup archiving: %w", err)
+			}
+		} else {
+			// mark for compression
 			backupsToCompress = append(backupsToCompress, archivePath)
 		}
 	}
