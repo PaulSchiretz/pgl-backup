@@ -214,6 +214,11 @@ func (r *compressionRun) compressWorker() {
 func (c *PathCompressionManager) identifyEligibleBackups(backups []string) []metafile.MetafileInfo {
 	var eligible []metafile.MetafileInfo
 	for _, backupPath := range backups {
+		// Check if the backup directory still exists. It might have been removed by retention policy.
+		if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+			continue
+		}
+
 		// Read metadata
 		metadata, err := metafile.Read(backupPath)
 		if err != nil {
