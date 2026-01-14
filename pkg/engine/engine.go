@@ -70,8 +70,9 @@ type engineRunState struct {
 	archivingPolicy         config.ArchivePolicyConfig
 	compressArchivingResult bool
 
-	doRetention     bool
-	retentionPolicy config.RetentionPolicyConfig
+	doRetention         bool
+	retentionPolicy     config.RetentionPolicyConfig
+	retentionExcludeDir string
 
 	doCompression     bool
 	compressionPolicy config.CompressionPolicyConfig
@@ -148,9 +149,9 @@ func (e *Engine) initBackupRun(mode config.BackupMode) (*engineRunState, error) 
 		// The relSyncTargetPath name must remain uniquely based on UTC time to avoid DST conflicts,
 		// but we add the user's local offset to make the timezone clear to the user.
 		timestamp := config.FormatTimestampWithOffset(runState.timestampUTC)
-		backupDirName := e.config.Naming.Prefix + timestamp
+		currentSnapshotDirName := e.config.Naming.Prefix + timestamp
 		// we sync our snapshots directly to the archive dir for now!
-		runState.relSyncTargetPath = filepath.Join(e.config.Paths.SnapshotSubDirs.Archive, backupDirName)
+		runState.relSyncTargetPath = filepath.Join(e.config.Paths.SnapshotSubDirs.Archive, currentSnapshotDirName)
 		runState.relSyncTargetContentPath = filepath.Join(runState.relSyncTargetPath, e.config.Paths.ContentSubDir)
 
 		runState.doArchiving = false
@@ -161,6 +162,7 @@ func (e *Engine) initBackupRun(mode config.BackupMode) (*engineRunState, error) 
 
 		runState.doRetention = e.config.Retention.Snapshot.Enabled
 		runState.retentionPolicy = e.config.Retention.Snapshot
+		runState.retentionExcludeDir = currentSnapshotDirName // exclude the current snapshot from retention
 
 		if !e.config.DryRun && runState.doSync {
 			absSyncTargetPath := filepath.Join(runState.absTargetBase, runState.relSyncTargetPath)
@@ -188,6 +190,7 @@ func (e *Engine) initBackupRun(mode config.BackupMode) (*engineRunState, error) 
 
 		runState.doRetention = e.config.Retention.Incremental.Enabled
 		runState.retentionPolicy = e.config.Retention.Incremental
+		runState.retentionExcludeDir = ""
 
 		if !e.config.DryRun && runState.doSync {
 			absSyncTargetPath := filepath.Join(runState.absTargetBase, runState.relSyncTargetPath)
@@ -223,6 +226,7 @@ func (e *Engine) initPruneRun(mode config.BackupMode) (*engineRunState, error) {
 
 		runState.doRetention = e.config.Retention.Snapshot.Enabled
 		runState.retentionPolicy = e.config.Retention.Snapshot
+		runState.retentionExcludeDir = ""
 	} else {
 		// INCREMENTAL MODE
 		runState.relCurrentPath = e.config.Paths.IncrementalSubDirs.Current
@@ -234,6 +238,7 @@ func (e *Engine) initPruneRun(mode config.BackupMode) (*engineRunState, error) {
 
 		runState.doRetention = e.config.Retention.Incremental.Enabled
 		runState.retentionPolicy = e.config.Retention.Incremental
+		runState.retentionExcludeDir = ""
 	}
 	return runState, nil
 }
@@ -479,7 +484,7 @@ func (e *Engine) performRetention(ctx context.Context, r *engineRunState) error 
 	}
 
 	absArchivePath := filepath.Join(r.absTargetBase, r.relArchivePath)
-	if err := e.retentionManager.Apply(ctx, r.mode.String(), absArchivePath, r.retentionPolicy, r.relCurrentPath); err != nil {
+	if err := e.retentionManager.Apply(ctx, r.mode.String(), absArchivePath, r.retentionPolicy, r.retentionExcludeDir); err != nil {
 		plog.Warn("Error applying retention policy", "mote", r.mode.String(), "error", err)
 		// no error is returned as our backup is still good no need to fail here
 	}
