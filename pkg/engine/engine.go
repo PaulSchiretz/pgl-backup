@@ -143,7 +143,9 @@ func (e *Engine) initBackupRun(mode config.BackupMode) (*engineRunState, error) 
 		runState.relCurrentPath = e.config.Paths.SnapshotSubDirs.Current
 		runState.relArchivePath = e.config.Paths.SnapshotSubDirs.Archive
 
-		// The synSubDir name must remain uniquely based on UTC time to avoid DST conflicts,
+		runState.doSync = true
+		runState.doSyncCompression = true
+		// The relSyncTargetPath name must remain uniquely based on UTC time to avoid DST conflicts,
 		// but we add the user's local offset to make the timezone clear to the user.
 		timestamp := config.FormatTimestampWithOffset(runState.timestampUTC)
 		backupDirName := e.config.Naming.Prefix + timestamp
@@ -151,9 +153,9 @@ func (e *Engine) initBackupRun(mode config.BackupMode) (*engineRunState, error) 
 		runState.relSyncTargetPath = filepath.Join(e.config.Paths.SnapshotSubDirs.Archive, backupDirName)
 		runState.relSyncTargetContentPath = filepath.Join(runState.relSyncTargetPath, e.config.Paths.ContentSubDir)
 
-		runState.doSync = true
-
 		runState.doArchiving = false
+		runState.doArchivingCompression = false
+
 		runState.doCompression = e.config.Compression.Snapshot.Enabled
 		runState.compressionPolicy = e.config.Compression.Snapshot
 
@@ -173,11 +175,13 @@ func (e *Engine) initBackupRun(mode config.BackupMode) (*engineRunState, error) 
 		runState.relArchivePath = e.config.Paths.IncrementalSubDirs.Archive
 
 		runState.doSync = true
+		runState.doSyncCompression = false
 		runState.relSyncTargetPath = e.config.Paths.IncrementalSubDirs.Current
 		runState.relSyncTargetContentPath = filepath.Join(runState.relSyncTargetPath, e.config.Paths.ContentSubDir)
 
 		runState.doArchiving = true
 		runState.archivingPolicy = e.config.Archive.Incremental
+		runState.doArchivingCompression = true
 
 		runState.doCompression = e.config.Compression.Incremental.Enabled
 		runState.compressionPolicy = e.config.Compression.Incremental
