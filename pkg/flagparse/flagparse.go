@@ -32,29 +32,30 @@ type CmdFlags struct {
 	Metrics  *bool
 
 	// Common / Backup / Init
-	Source                 *string
-	Target                 *string
-	Mode                   *string
-	FailFast               *bool
-	SyncEngine             *string
-	SyncWorkers            *int
-	MirrorWorkers          *int
-	DeleteWorkers          *int
-	CompressWorkers        *int
-	RetryCount             *int
-	RetryWait              *int
-	BufferSizeKB           *int
-	ModTimeWindow          *int
-	UserExcludeFiles       *string
-	UserExcludeDirs        *string
-	PreserveSourceName     *bool
-	PreBackupHooks         *string
-	PostBackupHooks        *string
-	ArchiveIntervalSeconds *int
-	ArchiveIntervalMode    *string
-	CompressionEnabled     *bool
-	CompressionFormat      *string
-
+	Source                            *string
+	Target                            *string
+	Mode                              *string
+	FailFast                          *bool
+	SyncEngine                        *string
+	SyncWorkers                       *int
+	MirrorWorkers                     *int
+	DeleteWorkers                     *int
+	CompressWorkers                   *int
+	RetryCount                        *int
+	RetryWait                         *int
+	BufferSizeKB                      *int
+	ModTimeWindow                     *int
+	UserExcludeFiles                  *string
+	UserExcludeDirs                   *string
+	PreserveSourceName                *bool
+	PreBackupHooks                    *string
+	PostBackupHooks                   *string
+	ArchiveIncrementalIntervalSeconds *int
+	ArchiveIncrementalIntervalMode    *string
+	CompressionIncrementalEnabled     *bool
+	CompressionIncrementalFormat      *string
+	CompressionSnapshotEnabled        *bool
+	CompressionSnapshotFormat         *string
 	// Init specific
 	Force   *bool
 	Default *bool
@@ -85,10 +86,12 @@ func registerBackupFlags(fs *flag.FlagSet, f *CmdFlags) {
 	f.PreserveSourceName = fs.Bool("preserve-source-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
 	f.PreBackupHooks = fs.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
 	f.PostBackupHooks = fs.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
-	f.ArchiveIntervalSeconds = fs.Int("archive-interval-seconds", 0, "In 'manual' mode, the interval in seconds for creating new archives (e.g., 86400 for 24h).")
-	f.ArchiveIntervalMode = fs.String("archive-interval-mode", "", "Archive interval mode: 'auto' or 'manual'.")
-	f.CompressionEnabled = fs.Bool("compression", true, "Enable compression for backups.")
-	f.CompressionFormat = fs.String("compression-format", "", "Compression format for backups: 'zip', 'tar.gz', or 'tar.zst'.")
+	f.ArchiveIncrementalIntervalSeconds = fs.Int("archive-incremental-interval-seconds", 0, "In 'manual' mode, the interval in seconds for creating new incremental archives (e.g., 86400 for 24h).")
+	f.ArchiveIncrementalIntervalMode = fs.String("archive-incremental-interval-mode", "", "Incremental Archive interval mode: 'auto' or 'manual'.")
+	f.CompressionIncrementalEnabled = fs.Bool("compression-incremental", true, "Enable compression for incremental backups.")
+	f.CompressionIncrementalFormat = fs.String("compression-incremental-format", "", "Compression format for incremental backups: 'zip', 'tar.gz', or 'tar.zst'.")
+	f.CompressionSnapshotEnabled = fs.Bool("compression-snapshot", true, "Enable compression for snapshot backups.")
+	f.CompressionSnapshotFormat = fs.String("compression-snapshot-format", "", "Compression format for snapshot backups: 'zip', 'tar.gz', or 'tar.zst'.")
 }
 
 func registerInitFlags(fs *flag.FlagSet, f *CmdFlags) {
@@ -205,8 +208,9 @@ func flagsToMap(fs *flag.FlagSet, f *CmdFlags) (map[string]interface{}, error) {
 	addIfUsed(flagMap, usedFlags, "buffer-size-kb", f.BufferSizeKB)
 	addIfUsed(flagMap, usedFlags, "mod-time-window", f.ModTimeWindow)
 	addIfUsed(flagMap, usedFlags, "preserve-source-name", f.PreserveSourceName)
-	addIfUsed(flagMap, usedFlags, "archive-interval-seconds", f.ArchiveIntervalSeconds)
-	addIfUsed(flagMap, usedFlags, "compression", f.CompressionEnabled)
+	addIfUsed(flagMap, usedFlags, "archive-incremental-interval-seconds", f.ArchiveIncrementalIntervalSeconds)
+	addIfUsed(flagMap, usedFlags, "compression-incremental", f.CompressionIncrementalEnabled)
+	addIfUsed(flagMap, usedFlags, "compression-snapshot", f.CompressionSnapshotEnabled)
 
 	// Init specific flags
 	addIfUsed(flagMap, usedFlags, "force", f.Force)
@@ -238,19 +242,28 @@ func flagsToMap(fs *flag.FlagSet, f *CmdFlags) (map[string]interface{}, error) {
 			flagMap["sync-engine"] = engineType
 		}
 	}
-	if f.ArchiveIntervalMode != nil && usedFlags["archive-interval-mode"] {
-		mode, err := config.ArchiveIntervalModeFromString(*f.ArchiveIntervalMode)
+	if f.ArchiveIncrementalIntervalMode != nil && usedFlags["archive-incremental-interval-mode"] {
+		mode, err := config.ArchiveIntervalModeFromString(*f.ArchiveIncrementalIntervalMode)
 		if err != nil {
 			return nil, err
 		}
-		flagMap["archive-interval-mode"] = mode
+		flagMap["archive-incremental-interval-mode"] = mode
 	}
-	if f.CompressionFormat != nil && usedFlags["compression-format"] {
-		format, err := config.CompressionFormatFromString(*f.CompressionFormat)
+
+	if f.CompressionIncrementalFormat != nil && usedFlags["compression-incremental-format"] {
+		format, err := config.CompressionFormatFromString(*f.CompressionIncrementalFormat)
 		if err != nil {
 			return nil, err
 		}
-		flagMap["compression-format"] = format
+		flagMap["compression-incremental-format"] = format
+	}
+
+	if f.CompressionSnapshotFormat != nil && usedFlags["compression-snapshot-format"] {
+		format, err := config.CompressionFormatFromString(*f.CompressionSnapshotFormat)
+		if err != nil {
+			return nil, err
+		}
+		flagMap["compression-snapshot-format"] = format
 	}
 	return flagMap, nil
 }

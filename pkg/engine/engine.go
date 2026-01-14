@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/config"
@@ -53,10 +52,31 @@ import (
 // engineRunState holds the mutable state for a single execution of the backup engine.
 // This makes the Engine itself stateless and safe for concurrent use if needed.
 type engineRunState struct {
-	source              string
-	mode                config.BackupMode
-	currentTimestampUTC time.Time
-	target              string
+	absSource     string
+	absTargetBase string
+
+	mode         config.BackupMode
+	timestampUTC time.Time
+
+	relCurrentPath string
+	relArchivePath string
+
+	doSync                   bool
+	relSyncTargetPath        string
+	relSyncTargetContentPath string
+	doSyncCompression        bool
+
+	doArchiving            bool
+	archivingPolicy        config.ArchivePolicyConfig
+	doArchivingCompression bool
+
+	doRetention     bool
+	retentionPolicy config.RetentionPolicyConfig
+
+	doCompression     bool
+	compressionPolicy config.CompressionPolicyConfig
+
+	absBackupPathsToCompress []string
 }
 
 // Engine orchestrates the entire backup process.
@@ -103,6 +123,115 @@ func (e *Engine) acquireTargetLock(ctx context.Context) (func(), error) {
 	plog.Debug("Lock acquired successfully.")
 
 	return lock.Release, nil
+}
+
+// initBackupRun sets up the runState for a backup run
+func (e *Engine) initBackupRun(mode config.BackupMode) (*engineRunState, error) {
+
+	// Capture a consistent UTC timestamp for the entire run to ensure unambiguous folder names
+	// and avoid daylight saving time conflicts.
+	runState := &engineRunState{
+		absSource:     e.config.Paths.Source,
+		absTargetBase: e.config.Paths.TargetBase,
+		mode:          mode,
+		timestampUTC:  time.Now().UTC(),
+	}
+
+	if runState.mode == config.SnapshotMode {
+		// SNAPSHOT MODE
+
+		runState.relCurrentPath = e.config.Paths.SnapshotSubDirs.Current
+		runState.relArchivePath = e.config.Paths.SnapshotSubDirs.Archive
+
+		// The synSubDir name must remain uniquely based on UTC time to avoid DST conflicts,
+		// but we add the user's local offset to make the timezone clear to the user.
+		timestamp := config.FormatTimestampWithOffset(runState.timestampUTC)
+		backupDirName := e.config.Naming.Prefix + timestamp
+		// we sync our snapshots directly to the archive dir for now!
+		runState.relSyncTargetPath = filepath.Join(e.config.Paths.SnapshotSubDirs.Archive, backupDirName)
+		runState.relSyncTargetContentPath = filepath.Join(runState.relSyncTargetPath, e.config.Paths.ContentSubDir)
+
+		runState.doSync = true
+
+		runState.doArchiving = false
+		runState.doCompression = e.config.Compression.Snapshot.Enabled
+		runState.compressionPolicy = e.config.Compression.Snapshot
+
+		runState.doRetention = e.config.Retention.Snapshot.Enabled
+		runState.retentionPolicy = e.config.Retention.Snapshot
+
+		if !e.config.DryRun && runState.doSync {
+			absSyncTargetPath := filepath.Join(runState.absTargetBase, runState.relSyncTargetPath)
+			err := os.MkdirAll(absSyncTargetPath, util.UserWritableDirPerms)
+			if err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		// INCREMENTAL MODE
+		runState.relCurrentPath = e.config.Paths.IncrementalSubDirs.Current
+		runState.relArchivePath = e.config.Paths.IncrementalSubDirs.Archive
+
+		runState.doSync = true
+		runState.relSyncTargetPath = e.config.Paths.IncrementalSubDirs.Current
+		runState.relSyncTargetContentPath = filepath.Join(runState.relSyncTargetPath, e.config.Paths.ContentSubDir)
+
+		runState.doArchiving = true
+		runState.archivingPolicy = e.config.Archive.Incremental
+
+		runState.doCompression = e.config.Compression.Incremental.Enabled
+		runState.compressionPolicy = e.config.Compression.Incremental
+
+		runState.doRetention = e.config.Retention.Incremental.Enabled
+		runState.retentionPolicy = e.config.Retention.Incremental
+
+		if !e.config.DryRun && runState.doSync {
+			absSyncTargetPath := filepath.Join(runState.absTargetBase, runState.relSyncTargetPath)
+			err := os.MkdirAll(absSyncTargetPath, util.UserWritableDirPerms)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return runState, nil
+}
+
+// initPruneRun sets up the runState for a prune run for a BackupMode
+func (e *Engine) initPruneRun(mode config.BackupMode) (*engineRunState, error) {
+
+	// Capture a consistent UTC timestamp for the entire run to ensure unambiguous folder names
+	// and avoid daylight saving time conflicts.
+	runState := &engineRunState{
+		absSource:     e.config.Paths.Source,
+		absTargetBase: e.config.Paths.TargetBase,
+		mode:          mode,
+		timestampUTC:  time.Now().UTC(),
+	}
+
+	if runState.mode == config.SnapshotMode {
+		// SNAPSHOT MODE
+		runState.relCurrentPath = e.config.Paths.SnapshotSubDirs.Current
+		runState.relArchivePath = e.config.Paths.SnapshotSubDirs.Archive
+
+		runState.doSync = false
+		runState.doArchiving = false
+		runState.doCompression = false
+
+		runState.doRetention = e.config.Retention.Snapshot.Enabled
+		runState.retentionPolicy = e.config.Retention.Snapshot
+	} else {
+		// INCREMENTAL MODE
+		runState.relCurrentPath = e.config.Paths.IncrementalSubDirs.Current
+		runState.relArchivePath = e.config.Paths.IncrementalSubDirs.Archive
+
+		runState.doSync = false
+		runState.doArchiving = false
+		runState.doCompression = false
+
+		runState.doRetention = e.config.Retention.Incremental.Enabled
+		runState.retentionPolicy = e.config.Retention.Incremental
+	}
+	return runState, nil
 }
 
 // InitializeBackupTarget sets up a new backup target directory by running pre-flight checks
@@ -195,24 +324,16 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 		plog.Info("Running post-backup hooks")
 		if err := e.runHooks(ctx, e.config.Hooks.PostBackup, "post-backup"); err != nil {
 			if errors.Is(err, context.Canceled) {
-				plog.Info("Post-backup hooks skipped due to cancellation.")
+				plog.Info("post-backup hooks skipped due to cancellation.")
 			} else {
-				plog.Warn("Post-backup hook failed", "error", err)
+				plog.Warn("post-backup hook failed", "error", err)
 			}
 		}
 	}()
 
-	// Capture a consistent UTC timestamp for the entire run to ensure unambiguous folder names
-	// and avoid daylight saving time conflicts.
-	runState := &engineRunState{
-		source:              e.config.Paths.Source,
-		mode:                e.config.Mode,
-		currentTimestampUTC: time.Now().UTC(),
-		target:              "",
-	}
-
-	// Prepare for the backup run
-	if err := e.prepareRun(runState); err != nil {
+	// Intitialize the backup run
+	r, err := e.initBackupRun(e.config.Mode)
+	if err != nil {
 		return err
 	}
 
@@ -222,44 +343,29 @@ func (e *Engine) ExecuteBackup(ctx context.Context) error {
 		logMsg = "Starting backup (DRY RUN)"
 	}
 	plog.Info(logMsg,
-		"source", runState.source,
-		"target", runState.target,
-		"mode", runState.mode,
+		"source", r.absSource,
+		"target", r.absTargetBase,
+		"mode", r.mode,
 	)
 
-	var backupsToCompress []string
-
-	// Perform incremental Archiving
-	if runState.mode == config.IncrementalMode {
-		archivePath, err := e.performArchiving(ctx, runState)
-		if err != nil {
-			if err != patharchive.ErrNothingToArchive {
-				return fmt.Errorf("error during backup archiving: %w", err)
-			}
-		} else {
-			// mark for compression
-			backupsToCompress = append(backupsToCompress, archivePath)
-		}
+	// Perform Archiving
+	if err := e.performArchiving(ctx, r); err != nil {
+		return fmt.Errorf("fatal error during archiving: %w", err)
 	}
 
 	// Perform the backup
-	if err := e.performSync(ctx, runState); err != nil {
-		return fmt.Errorf("fatal backup error during sync: %w", err)
-	}
-
-	// Add snapshot to compression list if in snapshot mode
-	if runState.mode == config.SnapshotMode {
-		backupsToCompress = append(backupsToCompress, runState.target)
+	if err := e.performSync(ctx, r); err != nil {
+		return fmt.Errorf("fatal error during sync: %w", err)
 	}
 
 	// Clean up outdated backups (archives and snapshots)
-	if err := e.performRetention(ctx); err != nil {
-		return fmt.Errorf("fatal backup error during retention: %w", err)
+	if err := e.performRetention(ctx, r); err != nil {
+		return fmt.Errorf("fatal error during retention: %w", err)
 	}
 
 	// Compress backups that are eligible
-	if err := e.performCompression(ctx, backupsToCompress); err != nil {
-		return fmt.Errorf("fatal backup error during compression: %w", err)
+	if err := e.performCompression(ctx, r); err != nil {
+		return fmt.Errorf("fatal error during compression: %w", err)
 	}
 
 	plog.Info("Backup completed")
@@ -299,8 +405,22 @@ func (e *Engine) ExecutePrune(ctx context.Context) error {
 
 	plog.Info("Starting prune", "target", e.config.Paths.TargetBase)
 
-	if err := e.performRetention(ctx); err != nil {
-		return fmt.Errorf("prune error: %w", err)
+	// Prune Incremental Archives
+	ipr, err := e.initPruneRun(config.IncrementalMode)
+	if err != nil {
+		return err
+	}
+	if err := e.performRetention(ctx, ipr); err != nil {
+		return fmt.Errorf("prune incremental error: %w", err)
+	}
+
+	// Prune Snapshots
+	spr, err := e.initPruneRun(config.SnapshotMode)
+	if err != nil {
+		return err
+	}
+	if err := e.performRetention(ctx, spr); err != nil {
+		return fmt.Errorf("prune snapshot error: %w", err)
 	}
 
 	plog.Info("Prune completed")
@@ -349,117 +469,93 @@ func (e *Engine) runHooks(ctx context.Context, commands []string, hookType strin
 // This ensures the backup target is always kept in a consistent state according
 // to the user's configuration and prevents "retention debt" if one mode is
 // run less frequently than another.
-func (e *Engine) performRetention(ctx context.Context) error {
-	// Apply retention for incremental archives, if enabled.
-	if e.config.Retention.Incremental.Enabled {
-		archivesDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.ArchivesSubDir)
-		incrementalDirName := e.config.Paths.IncrementalSubDir
-		if err := e.retentionManager.Apply(ctx, "incremental", archivesDir, e.config.Retention.Incremental, incrementalDirName); err != nil {
-			plog.Warn("Error applying incremental retention policy", "error", err)
-			// no error is returned as our backup is still good no need to fail here
-		}
+func (e *Engine) performRetention(ctx context.Context, r *engineRunState) error {
+	if !r.doRetention {
+		return nil
 	}
 
-	// Apply retention for snapshots, if enabled.
-	if e.config.Retention.Snapshot.Enabled {
-		snapshotsDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.SnapshotsSubDir)
-		if err := e.retentionManager.Apply(ctx, "snapshot", snapshotsDir, e.config.Retention.Snapshot, ""); err != nil {
-			plog.Warn("Error applying snapshot retention policy", "error", err)
-			// no error is returned as our backup is still good no need to fail here
-		}
+	absArchivePath := filepath.Join(r.absTargetBase, r.relArchivePath)
+	if err := e.retentionManager.Apply(ctx, r.mode.String(), absArchivePath, r.retentionPolicy, r.relCurrentPath); err != nil {
+		plog.Warn("Error applying retention policy", "mote", r.mode.String(), "error", err)
+		// no error is returned as our backup is still good no need to fail here
 	}
 	return nil
 }
 
-// performCompression compresses outdated backups based on the configured policies.
-func (e *Engine) performCompression(ctx context.Context, backupsToCompress []string) error {
-	if e.config.Compression.Enabled && len(backupsToCompress) > 0 {
-		if err := e.compressionManager.Compress(ctx, backupsToCompress, e.config.Compression); err != nil {
+// performCompression compresses backups based on the configured policies.
+func (e *Engine) performCompression(ctx context.Context, r *engineRunState) error {
+	if r.doCompression && len(r.absBackupPathsToCompress) > 0 {
+		if err := e.compressionManager.Compress(ctx, r.absBackupPathsToCompress, r.compressionPolicy); err != nil {
 			plog.Warn("Error during backup compression", "error", err)
 		}
 	}
 	return nil
 }
 
-// prepareRun calculates the target directory for the backup.
-func (e *Engine) prepareRun(runState *engineRunState) error {
-	if runState.mode == config.SnapshotMode {
-		// SNAPSHOT MODE
-		//
-		// The directory name must remain uniquely based on UTC time to avoid DST conflicts,
-		// but we add the user's local offset to make the timezone clear to the user.
-		timestamp := config.FormatTimestampWithOffset(runState.currentTimestampUTC)
-		backupDirName := e.config.Naming.Prefix + timestamp
-		snapshotsSubDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.SnapshotsSubDir)
-		if !e.config.DryRun {
-			os.MkdirAll(snapshotsSubDir, util.UserWritableDirPerms)
-		}
-		runState.target = filepath.Join(snapshotsSubDir, backupDirName)
+// performSync is the main entry point for synchronization.
+func (e *Engine) performSync(ctx context.Context, r *engineRunState) error {
+
+	if !r.doSync {
+		return nil
+	}
+
+	mirror := r.mode == config.IncrementalMode
+
+	// The actual content will be synced into a dedicated subdirectory.
+	absSyncTarget := filepath.Join(r.absTargetBase, r.relSyncTargetPath)
+	absSyncContentTarget := filepath.Join(r.absTargetBase, r.relSyncTargetContentPath)
+
+	// Sync and check for errors after attempting the sync.
+	if err := e.syncer.Sync(ctx, r.absSource, absSyncContentTarget, e.config.Paths.PreserveSourceDirectoryName, mirror, e.config.Paths.ExcludeFiles(), e.config.Paths.ExcludeDirs(), e.config.Metrics); err != nil {
+		return err
+	}
+
+	// If the sync was successful, write the metafile to the target for retention purposes.
+	if e.config.DryRun {
+		plog.Info("[DRY RUN] Would write metafile", "directory", absSyncTarget)
+		return nil
 	} else {
-		// INCREMENTAL MODE
-		incrementalDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.IncrementalSubDir)
-		runState.target = incrementalDir
+		metadata := metafile.MetafileContent{
+			Version:      e.version,
+			TimestampUTC: r.timestampUTC,
+			Mode:         r.mode.String(),
+			Source:       r.absSource,
+		}
+		err := metafile.Write(absSyncTarget, metadata)
+		if err != nil {
+			return err
+		}
+	}
+
+	if r.doSyncCompression {
+		r.absBackupPathsToCompress = append(r.absBackupPathsToCompress, absSyncTarget)
 	}
 	return nil
 }
 
-// performSync is the main entry point for synchronization.
-func (e *Engine) performSync(ctx context.Context, runState *engineRunState) error {
+// performArchiving is the main entry point for archive updates.
+func (e *Engine) performArchiving(ctx context.Context, r *engineRunState) error {
 
-	mirror := runState.mode == config.IncrementalMode
-
-	// The actual content will be synced into a dedicated subdirectory.
-	contentTarget := filepath.Join(runState.target, e.config.Paths.ContentSubDir)
-	// If configured, append the source's base directory name to the destination path.
-	if e.config.Paths.PreserveSourceDirectoryName {
-		var nameToAppend string
-
-		// Check if the path is a root path (e.g., "/" or "C:\")
-		if filepath.Dir(runState.source) == runState.source {
-			// Handle Windows Drive Roots (e.g., "D:\") -> "D"
-			vol := filepath.VolumeName(runState.source)
-			// On Windows, for "C:\", VolumeName is "C:", we trim the colon.
-			// On Unix, for "/", VolumeName is "", so nameToAppend remains empty.
-			if vol != "" && strings.HasSuffix(vol, ":") {
-				nameToAppend = strings.TrimSuffix(vol, ":")
-			}
-		} else {
-			// Standard folder
-			nameToAppend = filepath.Base(runState.source)
-		}
-
-		// Append if valid
-		if nameToAppend != "" && nameToAppend != "." && nameToAppend != string(filepath.Separator) {
-			contentTarget = filepath.Join(contentTarget, nameToAppend)
-		}
-	}
-
-	// Sync and check for errors after attempting the sync.
-	if syncErr := e.syncer.Sync(ctx, runState.source, contentTarget, mirror, e.config.Paths.ExcludeFiles(), e.config.Paths.ExcludeDirs(), e.config.Metrics); syncErr != nil {
-		return fmt.Errorf("sync failed: %w", syncErr)
-	}
-
-	if e.config.DryRun {
-		plog.Info("[DRY RUN] Would write metafile", "directory", runState.target)
+	if !r.doArchiving {
 		return nil
 	}
-	// If the sync was successful, write the metafile to the target for retention purposes.
-	metadata := metafile.MetafileContent{
-		Version:      e.version,
-		TimestampUTC: runState.currentTimestampUTC,
-		Mode:         runState.mode.String(),
-		Source:       runState.source,
-	}
-	return metafile.Write(runState.target, metadata)
-}
 
-// performArchiving is the main entry point for archive updates.
-func (e *Engine) performArchiving(ctx context.Context, runState *engineRunState) (string, error) {
-	incrementalDirName := e.config.Paths.IncrementalSubDir
-	currentBackupPath := filepath.Join(e.config.Paths.TargetBase, incrementalDirName)
-	archivesDir := filepath.Join(e.config.Paths.TargetBase, e.config.Paths.ArchivesSubDir)
+	absCurrentPath := filepath.Join(e.config.Paths.TargetBase, r.relCurrentPath)
+	absArchivePath := filepath.Join(r.absTargetBase, r.relArchivePath)
 
 	// The archiver responsible for reading the metadata file and determining
 	// if an archive is necessary.
-	return e.archiver.Archive(ctx, archivesDir, currentBackupPath, runState.currentTimestampUTC)
+	absArchivePathCreated, err := e.archiver.Archive(ctx, absArchivePath, absCurrentPath, r.timestampUTC, r.archivingPolicy, r.retentionPolicy)
+	if err != nil {
+		if err != patharchive.ErrNothingToArchive {
+			return fmt.Errorf("error during backup archiving: %w", err)
+		}
+		return nil
+	}
+
+	// mark archivePath for compression
+	if r.doArchivingCompression {
+		r.absBackupPathsToCompress = append(r.absBackupPathsToCompress, absArchivePathCreated)
+	}
+	return nil
 }

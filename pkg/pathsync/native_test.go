@@ -125,17 +125,18 @@ type testDir struct {
 type nativeSyncTestRunner struct {
 	t *testing.T
 	// Inputs
-	mirror        bool
-	dryRun        bool
-	failFast      bool
-	enableMetrics bool
-	excludeFiles  []string
-	excludeDirs   []string
-	srcFiles      []testFile
-	srcDirs       []testDir
-	dstFiles      []testFile
-	dstDirs       []testDir
-	modTimeWin    *int
+	mirror                bool
+	preserveSourceDirName bool
+	dryRun                bool
+	failFast              bool
+	enableMetrics         bool
+	excludeFiles          []string
+	excludeDirs           []string
+	srcFiles              []testFile
+	srcDirs               []testDir
+	dstFiles              []testFile
+	dstDirs               []testDir
+	modTimeWin            *int
 	// Internal state
 	srcDir string
 	dstDir string
@@ -193,6 +194,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 	// --- Test Cases ---
 	testCases := []struct {
 		name                    string
+		preserveSourceDirName   bool
 		mirror                  bool
 		dryRun                  bool
 		failFast                bool
@@ -211,8 +213,9 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 		expectedErrorContains   string                              // If non-empty, asserts that the sync error contains this string.
 	}{
 		{
-			name:   "Simple Copy",
-			mirror: false,
+			name:                  "Simple Copy",
+			mirror:                false,
+			preserveSourceDirName: false,
 			srcFiles: []testFile{
 				{path: "file1.txt", content: "hello", modTime: baseTime},
 				{path: "subdir/file2.txt", content: "world", modTime: baseTime},
@@ -223,8 +226,9 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
-			name:   "Update File",
-			mirror: false,
+			name:                  "Update File",
+			mirror:                false,
+			preserveSourceDirName: false,
 			srcFiles: []testFile{
 				{path: "file1.txt", content: "new content", modTime: baseTime.Add(time.Hour)},
 			},
@@ -236,8 +240,9 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
-			name:   "Skip Unchanged File",
-			mirror: false,
+			name:                  "Skip Unchanged File",
+			mirror:                false,
+			preserveSourceDirName: false,
 			srcFiles: []testFile{
 				{path: "file1.txt", content: "same", modTime: baseTime},
 			},
@@ -249,9 +254,10 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
-			name:          "Exact ModTime Match - Window 0",
-			enableMetrics: true,
-			modTimeWindow: new(int), // Set to 0
+			name:                  "Exact ModTime Match - Window 0",
+			preserveSourceDirName: false,
+			enableMetrics:         true,
+			modTimeWindow:         new(int), // Set to 0
 			srcFiles: []testFile{
 				// Source file with a high-precision timestamp.
 				{path: "file.txt", content: "content", modTime: baseTime.Add(500 * time.Millisecond)},
@@ -266,8 +272,9 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
-			name:   "Sync Symlink",
-			mirror: false,
+			name:                  "Sync Symlink",
+			mirror:                false,
+			preserveSourceDirName: false,
 			srcFiles: []testFile{
 				{path: "target.txt", content: "target content", modTime: baseTime},
 				{path: "link.txt", symlinkTarget: "target.txt", modTime: baseTime},
@@ -278,8 +285,9 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
-			name:   "Mirror Deletion",
-			mirror: true,
+			name:                  "Mirror Deletion",
+			mirror:                true,
+			preserveSourceDirName: false,
 			dstFiles: []testFile{
 				{path: "obsolete.txt", content: "delete me", modTime: baseTime},
 				{path: "obsolete_dir/file.txt", content: "delete me too", modTime: baseTime},
@@ -287,9 +295,10 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			expectedMissingDstFiles: []string{"obsolete.txt", "obsolete_dir"},
 		},
 		{
-			name:         "Exclude Files",
-			mirror:       true,
-			excludeFiles: []string{"*.log", "temp.txt"},
+			name:                  "Exclude Files",
+			mirror:                true,
+			preserveSourceDirName: false,
+			excludeFiles:          []string{"*.log", "temp.txt"},
 			srcFiles: []testFile{
 				{path: "important.dat", content: "data", modTime: baseTime},
 				{path: "app.log", content: "logging", modTime: baseTime},
@@ -301,9 +310,10 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			expectedMissingDstFiles: []string{"app.log", "temp.txt"},
 		},
 		{
-			name:         "Exclusion with literal and wildcard",
-			mirror:       true,
-			excludeFiles: []string{"*.log", "temp.txt"},
+			name:                  "Exclusion with literal and wildcard",
+			mirror:                true,
+			preserveSourceDirName: false,
+			excludeFiles:          []string{"*.log", "temp.txt"},
 			srcFiles: []testFile{
 				{path: "important.dat", content: "data", modTime: baseTime},
 				{path: "app.log", content: "logging", modTime: baseTime},
@@ -315,9 +325,10 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			expectedMissingDstFiles: []string{"app.log", "temp.txt"},
 		},
 		{
-			name:         "Exclude Files with Suffix Pattern",
-			mirror:       true,
-			excludeFiles: []string{"*.tmp"},
+			name:                  "Exclude Files with Suffix Pattern",
+			mirror:                true,
+			preserveSourceDirName: false,
+			excludeFiles:          []string{"*.tmp"},
 			srcFiles: []testFile{
 				{path: "document.txt", content: "content", modTime: baseTime},
 				{path: "session.tmp", content: "temporary", modTime: baseTime},
@@ -328,9 +339,10 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			expectedMissingDstFiles: []string{"session.tmp"},
 		},
 		{
-			name:        "Exclude Dirs",
-			mirror:      true,
-			excludeDirs: []string{"node_modules", "tmp"},
+			name:                  "Exclude Dirs",
+			mirror:                true,
+			preserveSourceDirName: false,
+			excludeDirs:           []string{"node_modules", "tmp"},
 			srcFiles: []testFile{
 				{path: "index.js", content: "code", modTime: baseTime},
 				{path: "node_modules/lib.js", content: "library", modTime: baseTime},
@@ -342,9 +354,10 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			expectedMissingDstFiles: []string{"node_modules", "tmp"},
 		},
 		{
-			name:        "Exclude Dirs with Prefix Pattern",
-			mirror:      true,
-			excludeDirs: []string{"build/"},
+			name:                  "Exclude Dirs with Prefix Pattern",
+			mirror:                true,
+			preserveSourceDirName: false,
+			excludeDirs:           []string{"build/"},
 			srcFiles: []testFile{
 				{path: "index.html", content: "root file", modTime: baseTime},
 				{path: "build/app.js", content: "should be excluded", modTime: baseTime},
@@ -356,9 +369,10 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			expectedMissingDstFiles: []string{"build"},
 		},
 		{
-			name:        "Exclude Dirs without Trailing Slash",
-			mirror:      true,
-			excludeDirs: []string{"dist"},
+			name:                  "Exclude Dirs without Trailing Slash",
+			mirror:                true,
+			preserveSourceDirName: false,
+			excludeDirs:           []string{"dist"},
 			srcFiles: []testFile{
 				{path: "index.html", content: "root file", modTime: baseTime},
 				{path: "dist/bundle.js", content: "should be excluded", modTime: baseTime},
@@ -369,9 +383,10 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			expectedMissingDstFiles: []string{"dist"},
 		},
 		{
-			name:         "Mirror Deletion - Keep Excluded File in Dest",
-			mirror:       true,
-			excludeFiles: []string{"*.log"},
+			name:                  "Mirror Deletion - Keep Excluded File in Dest",
+			mirror:                true,
+			preserveSourceDirName: false,
+			excludeFiles:          []string{"*.log"},
 			dstFiles: []testFile{
 				{path: "app.log", content: "existing log", modTime: baseTime},
 				{path: "obsolete.txt", content: "delete me", modTime: baseTime},
@@ -382,18 +397,20 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			expectedMissingDstFiles: []string{"obsolete.txt"},
 		},
 		{
-			name:   "Dry Run - No Copy",
-			mirror: false,
-			dryRun: true,
+			name:                  "Dry Run - No Copy",
+			mirror:                false,
+			preserveSourceDirName: false,
+			dryRun:                true,
 			srcFiles: []testFile{
 				{path: "file1.txt", content: "hello", modTime: baseTime},
 			},
 			expectedMissingDstFiles: []string{"file1.txt"},
 		},
 		{
-			name:   "Dry Run - No Deletion",
-			mirror: true,
-			dryRun: true,
+			name:                  "Dry Run - No Deletion",
+			mirror:                true,
+			preserveSourceDirName: false,
+			dryRun:                true,
 			dstFiles: []testFile{
 				{path: "obsolete.txt", content: "do not delete", modTime: baseTime},
 			},
@@ -402,8 +419,9 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
-			name:   "Directory Permission Sync",
-			mirror: false,
+			name:                  "Directory Permission Sync",
+			mirror:                false,
+			preserveSourceDirName: false,
 			srcDirs: []testDir{
 				// Create a source dir with non-default permissions.
 				{path: "special_dir", perm: 0700, modTime: baseTime.Add(-time.Hour)},
@@ -428,10 +446,11 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
-			name:         "Exclusion with Backslashes on Windows",
-			mirror:       true,
-			excludeFiles: []string{`logs\app.log`}, // Use backslash in pattern
-			excludeDirs:  []string{`vendor\`},      // Use backslash in pattern
+			name:                  "Exclusion with Backslashes on Windows",
+			mirror:                true,
+			preserveSourceDirName: false,
+			excludeFiles:          []string{`logs\app.log`}, // Use backslash in pattern
+			excludeDirs:           []string{`vendor\`},      // Use backslash in pattern
 			srcFiles: []testFile{
 				{path: "main.go", content: "package main", modTime: baseTime},
 				{path: filepath.Join("logs", "app.log"), content: "log data", modTime: baseTime},
@@ -446,8 +465,9 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
-			name:   "Case-Sensitive Mirror - Deletes Mismatched Case",
-			mirror: true,
+			name:                  "Case-Sensitive Mirror - Deletes Mismatched Case",
+			mirror:                true,
+			preserveSourceDirName: false,
 			srcFiles: []testFile{
 				// Source has only the upper-case version.
 				{path: "Image.PNG", content: "new content", modTime: baseTime.Add(time.Hour)},
@@ -471,8 +491,9 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
-			name:   "Overwrite Destination Directory with File",
-			mirror: false,
+			name:                  "Overwrite Destination Directory with File",
+			mirror:                false,
+			preserveSourceDirName: false,
 			srcFiles: []testFile{
 				{path: "item.txt", content: "this is a file", modTime: baseTime},
 			},
@@ -493,8 +514,9 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
-			name:   "Overwrite Destination File with Directory",
-			mirror: false,
+			name:                  "Overwrite Destination File with Directory",
+			mirror:                false,
+			preserveSourceDirName: false,
 			srcDirs: []testDir{
 				{path: "conflict_dir", perm: 0755, modTime: baseTime},
 			},
@@ -516,8 +538,9 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
-			name:   "Overwrite Destination Symlink with File",
-			mirror: false,
+			name:                  "Overwrite Destination Symlink with File",
+			mirror:                false,
+			preserveSourceDirName: false,
 			srcFiles: []testFile{
 				// This is a regular file that will be synced.
 				{path: "file_to_sync.txt", content: "this is the real file", modTime: baseTime.Add(time.Hour)},
@@ -544,8 +567,9 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
-			name:   "Overwrite Destination File with Symlink",
-			mirror: false,
+			name:                  "Overwrite Destination File with Symlink",
+			mirror:                false,
+			preserveSourceDirName: false,
 			srcFiles: []testFile{
 				{path: "link_to_create.txt", symlinkTarget: "target.txt", modTime: baseTime},
 				{path: "target.txt", content: "target content", modTime: baseTime},
@@ -570,7 +594,8 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
-			name: "Overwrite Destination File with Directory (Multiple)",
+			name:                  "Overwrite Destination File with Directory (Multiple)",
+			preserveSourceDirName: false,
 			srcFiles: []testFile{
 				{path: "unwritable_dir/file1.txt", content: "content1", modTime: baseTime},
 				{path: "unwritable_dir/file2.txt", content: "content2", modTime: baseTime},
@@ -588,8 +613,9 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
-			name:     "Overwrite Destination File with Directory (Fail-Fast Mode)",
-			failFast: true, // Should still succeed because this is no longer an error
+			name:                  "Overwrite Destination File with Directory (Fail-Fast Mode)",
+			preserveSourceDirName: false,
+			failFast:              true, // Should still succeed because this is no longer an error
 			srcFiles: []testFile{
 				// This file will cause the error.
 				{path: filepath.Join("unwritable_dir", "file1.txt"), content: "content1", modTime: baseTime},
@@ -606,11 +632,12 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
-			name:          "Metrics Counting",
-			enableMetrics: true,
-			mirror:        true,
-			excludeFiles:  []string{"*.log", "config.json"},
-			excludeDirs:   []string{"ignored_dir"},
+			name:                  "Metrics Counting",
+			enableMetrics:         true,
+			mirror:                true,
+			preserveSourceDirName: false,
+			excludeFiles:          []string{"*.log", "config.json"},
+			excludeDirs:           []string{"ignored_dir"},
 			srcFiles: []testFile{
 				// 1. To be copied (new file)
 				{path: filepath.Join("dir1", "new_file.txt"), content: "new", modTime: baseTime},
@@ -656,9 +683,10 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
-			name:          "Noop Metrics When Disabled",
-			enableMetrics: false, // Explicitly disable metrics
-			mirror:        true,
+			name:                  "Noop Metrics When Disabled",
+			enableMetrics:         false, // Explicitly disable metrics
+			mirror:                true,
+			preserveSourceDirName: false,
 			srcFiles: []testFile{
 				{path: "file1.txt", content: "hello", modTime: baseTime},
 			},
@@ -693,18 +721,19 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			}
 
 			runner := &nativeSyncTestRunner{
-				t:             t,
-				mirror:        tc.mirror,
-				dryRun:        tc.dryRun,
-				failFast:      tc.failFast,
-				enableMetrics: tc.enableMetrics,
-				excludeFiles:  tc.excludeFiles,
-				excludeDirs:   tc.excludeDirs,
-				srcFiles:      tc.srcFiles,
-				srcDirs:       tc.srcDirs,
-				dstFiles:      tc.dstFiles,
-				dstDirs:       tc.dstDirs,
-				modTimeWin:    tc.modTimeWindow,
+				t:                     t,
+				preserveSourceDirName: tc.preserveSourceDirName,
+				mirror:                tc.mirror,
+				dryRun:                tc.dryRun,
+				failFast:              tc.failFast,
+				enableMetrics:         tc.enableMetrics,
+				excludeFiles:          tc.excludeFiles,
+				excludeDirs:           tc.excludeDirs,
+				srcFiles:              tc.srcFiles,
+				srcDirs:               tc.srcDirs,
+				dstFiles:              tc.dstFiles,
+				dstDirs:               tc.dstDirs,
+				modTimeWin:            tc.modTimeWindow,
 			}
 			runner.setup()
 
@@ -717,7 +746,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				cfg.Engine.ModTimeWindowSeconds = *tc.modTimeWindow
 			}
 			syncer := NewPathSyncer(cfg)
-			err := syncer.Sync(context.Background(), runner.srcDir, runner.dstDir, tc.mirror, tc.excludeFiles, tc.excludeDirs, tc.enableMetrics)
+			err := syncer.Sync(context.Background(), runner.srcDir, runner.dstDir, tc.preserveSourceDirName, tc.mirror, tc.excludeFiles, tc.excludeDirs, tc.enableMetrics)
 
 			// Assert on error
 			if tc.expectedErrorContains != "" {
@@ -893,7 +922,7 @@ func TestNativeSync_WorkerCancellation(t *testing.T) {
 	}()
 
 	// Act
-	err := syncer.Sync(ctx, srcDir, dstDir, false, nil, nil, false)
+	err := syncer.Sync(ctx, srcDir, dstDir, false, false, nil, nil, false)
 
 	// Assert
 	if err != nil && !strings.Contains(err.Error(), "context canceled") && !strings.Contains(err.Error(), "critical sync error") {
@@ -937,7 +966,7 @@ func TestNativeSync_MirrorCancellation(t *testing.T) {
 	}()
 
 	// Act
-	err := syncer.Sync(ctx, srcDir, dstDir, true, nil, nil, false)
+	err := syncer.Sync(ctx, srcDir, dstDir, false, true, nil, nil, false)
 
 	// Assert
 	if err != nil && !strings.Contains(err.Error(), "context canceled") && !strings.Contains(err.Error(), "critical mirror error") {

@@ -8,13 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/config"
-	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
@@ -22,19 +20,19 @@ import (
 type mockSyncer struct {
 	// Store the arguments that Sync was called with.
 	calledWith struct {
-		src, dst      string
-		enableMetrics bool
+		source, target string
+		enableMetrics  bool
 	}
 }
 
 // Sync records the src and dst paths it was called with and returns nil.
-func (m *mockSyncer) Sync(ctx context.Context, src, dst string, mirror bool, excludeFiles, excludeDirs []string, enableMetrics bool) error {
-	m.calledWith.src = src
-	m.calledWith.dst = dst
+func (m *mockSyncer) Sync(ctx context.Context, source, target string, preserveSourceDirName, mirror bool, excludeFiles, excludeDirs []string, enableMetrics bool) error {
+	m.calledWith.source = source
+	m.calledWith.target = target
 	m.calledWith.enableMetrics = enableMetrics
 	// To make the test more realistic, we need to simulate the real syncer's
 	// behavior of creating the destination directory.
-	if err := os.MkdirAll(dst, 0755); err != nil {
+	if err := os.MkdirAll(target, 0755); err != nil {
 		return err
 	}
 	return nil
@@ -46,7 +44,7 @@ type mockArchiver struct {
 	err           error
 }
 
-func (m *mockArchiver) Archive(ctx context.Context, archivesDir, currentBackupPath string, currentBackupUTC time.Time) (string, error) {
+func (m *mockArchiver) Archive(ctx context.Context, archivesDir, currentBackupPath string, currentBackupUTC time.Time, archivePolicy config.ArchivePolicyConfig, retentionPolicy config.RetentionPolicyConfig) (string, error) {
 	m.archiveCalled = true
 	return "", m.err
 }
@@ -77,28 +75,6 @@ func (m *mockCompressionManager) Compress(ctx context.Context, backups []string,
 func newTestEngine(cfg config.Config) *Engine {
 	e := New(cfg, "test-version")
 	return e //nolint:all // This is a test helper, not production code.
-}
-
-// Helper to create a temporary directory structure for a backup.
-func createTestBackup(t *testing.T, e *Engine, baseDir, name string, timestampUTC time.Time) {
-	t.Helper()
-	backupPath := filepath.Join(baseDir, name)
-	// The helper now needs to know if it should create the backup in the archives subdir.
-	if err := os.MkdirAll(backupPath, 0755); err != nil {
-		t.Fatalf("failed to create test backup dir: %v", err)
-	}
-
-	// Create a runState that mirrors what writeBackupMetafile expects.
-	runState := &engineRunState{
-		//target:              backupPath,
-		currentTimestampUTC: timestampUTC,
-		source:              "/src", // A dummy source path for the metafile content.
-		mode:                config.IncrementalMode,
-	}
-
-	if err := metafile.Write(backupPath, metafile.MetafileContent{Version: e.version, TimestampUTC: runState.currentTimestampUTC, Mode: runState.mode.String(), Source: runState.source}); err != nil {
-		t.Fatalf("failed to write metafile for test backup: %v", err)
-	}
 }
 
 func TestInitializeBackupTarget(t *testing.T) {
@@ -150,7 +126,8 @@ func TestInitializeBackupTarget(t *testing.T) {
 	})
 }
 
-func TestExecutePrune_DoesNotCreateTarget(t *testing.T) {
+// TestExecutePrune_OnNonExistentTarget verifies that ExecutePrune fails and does not create the target
+func TestExecutePrune_OnNonExistentTarget(t *testing.T) {
 	// Arrange
 	tempDir := t.TempDir()
 	targetDir := filepath.Join(tempDir, "non_existent_target")
@@ -183,7 +160,13 @@ func TestPerformCompression(t *testing.T) {
 		e.compressionManager = mock
 
 		// Act
-		err := e.performCompression(context.Background(), []string{})
+		runState := &engineRunState{
+			doCompression:            true,
+			compressionPolicy:        config.CompressionPolicyConfig{Enabled: true, Format: config.TarZstFormat},
+			absBackupPathsToCompress: []string{},
+		}
+		// The new performCompression takes the runState.
+		err := e.performCompression(context.Background(), runState)
 
 		// Assert
 		if err != nil {
@@ -194,11 +177,9 @@ func TestPerformCompression(t *testing.T) {
 		}
 	})
 
-	t.Run("Non-Empty List with Policy Enabled", func(t *testing.T) {
+	t.Run("Non-Empty List", func(t *testing.T) {
 		// Arrange
 		cfg := config.NewDefault()
-		cfg.Mode = config.IncrementalMode
-		cfg.Compression.Enabled = true
 		e := newTestEngine(cfg)
 		mock := &mockCompressionManager{}
 		e.compressionManager = mock
@@ -206,7 +187,12 @@ func TestPerformCompression(t *testing.T) {
 		backups := []string{"/path/to/backup1", "/path/to/backup2"}
 
 		// Act
-		err := e.performCompression(context.Background(), backups)
+		runState := &engineRunState{
+			doCompression:            true,
+			compressionPolicy:        config.CompressionPolicyConfig{Enabled: true, Format: config.TarZstFormat},
+			absBackupPathsToCompress: backups,
+		}
+		err := e.performCompression(context.Background(), runState)
 
 		// Assert
 		if err != nil {
@@ -348,143 +334,6 @@ func TestRunHooks(t *testing.T) {
 	})
 }
 
-func TestPerformSync_PreserveSourceDirectoryName(t *testing.T) {
-	// Suppress log output for this test to keep the test output clean.
-	var buf bytes.Buffer
-	plog.SetOutput(&buf)
-	t.Cleanup(func() { plog.SetOutput(os.Stderr) })
-
-	srcDir := t.TempDir()
-	targetBase := t.TempDir()
-
-	testCases := []struct {
-		name                        string
-		preserveSourceDirectoryName bool
-		expectedDst                 string
-		srcDir                      string // Optional: Override the default srcDir for specific cases
-	}{
-		{
-			name:                        "PreserveSourceDirectoryName is true",
-			preserveSourceDirectoryName: true,
-			expectedDst:                 filepath.Join(targetBase, "test_current", "PGL_Backup_Content", filepath.Base(srcDir)),
-		},
-		{
-			name:                        "PreserveSourceDirectoryName is false",
-			preserveSourceDirectoryName: false,
-			expectedDst:                 filepath.Join(targetBase, "test_current", "PGL_Backup_Content"),
-		},
-		{
-			name:                        "PreserveSourceDirectoryName is true - Windows Drive Root",
-			preserveSourceDirectoryName: true,
-			expectedDst:                 filepath.Join(targetBase, "test_current", "PGL_Backup_Content", "C"),
-			// This test case will only run on Windows, otherwise it will be skipped.
-			// On non-Windows, "C:" is not a root, so filepath.Base("C:") would be "C:".
-			// The logic should handle this gracefully.
-			srcDir: "C:\\",
-		},
-		{
-			name:                        "PreserveSourceDirectoryName is true - Unix Root",
-			preserveSourceDirectoryName: true,
-			expectedDst:                 filepath.Join(targetBase, "test_current", "PGL_Backup_Content"), // Should not append anything for "/"
-			srcDir:                      "/",
-		},
-		{
-			name:                        "PreserveSourceDirectoryName is true - Relative Path",
-			preserveSourceDirectoryName: true,
-			expectedDst:                 filepath.Join(targetBase, "test_current", "PGL_Backup_Content", "my_relative_dir"),
-			srcDir:                      "./my_relative_dir",
-		},
-		// Add more cases as needed, e.g., paths ending with a separator.
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Arrange
-			cfg := config.NewDefault()
-			cfg.Mode = config.IncrementalMode
-
-			// Use the test-case specific srcDir if provided, otherwise use the default.
-			testSrcDir := srcDir // Default temp dir
-			if tc.srcDir != "" {
-				testSrcDir = tc.srcDir
-			}
-
-			// Skip platform-specific tests on the wrong OS.
-			if (runtime.GOOS != "windows" && strings.HasPrefix(testSrcDir, "C:\\")) ||
-				(runtime.GOOS == "windows" && testSrcDir == "/") {
-				t.Skipf("Skipping platform-specific test case %q on %s", tc.name, runtime.GOOS)
-			}
-
-			cfg.Paths.Source = testSrcDir
-			cfg.Paths.TargetBase = targetBase
-			cfg.Paths.IncrementalSubDir = "test_current"
-			cfg.Paths.PreserveSourceDirectoryName = tc.preserveSourceDirectoryName
-
-			e := newTestEngine(cfg)
-			currentRun := &engineRunState{
-				target:              filepath.Join(targetBase, cfg.Paths.IncrementalSubDir),
-				currentTimestampUTC: time.Now().UTC(),
-				source:              cfg.Paths.Source,
-			}
-
-			// Inject the mock syncer
-			mock := &mockSyncer{}
-			e.syncer = mock
-
-			// Act
-			err := e.performSync(context.Background(), currentRun)
-			if err != nil {
-				t.Fatalf("performSync failed: %v", err)
-			}
-
-			if mock.calledWith.dst != tc.expectedDst {
-				t.Errorf("expected destination path to be %q, but got %q", tc.expectedDst, mock.calledWith.dst)
-			}
-		})
-	}
-}
-
-func TestPrepareDestination_IncrementalMode(t *testing.T) {
-	// Arrange
-	tempDir := t.TempDir()
-	cfg := config.NewDefault()
-	cfg.Mode = config.IncrementalMode
-	cfg.Paths.TargetBase = tempDir
-	cfg.Paths.IncrementalSubDir = "latest"
-
-	e := newTestEngine(cfg)
-	currentRun := &engineRunState{
-		currentTimestampUTC: time.Now().UTC(),
-		source:              cfg.Paths.Source,
-		mode:                cfg.Mode,
-	}
-
-	// Create a dummy "current" backup to trigger the archiver
-	createTestBackup(t, e, tempDir, cfg.Paths.IncrementalSubDir, time.Now().Add(-25*time.Hour))
-
-	// Inject a mock archiver
-	mock := &mockArchiver{}
-	e.archiver = mock
-
-	// Act
-	err := e.prepareRun(currentRun)
-	if err != nil {
-		t.Fatalf("prepareDestination failed: %v", err)
-	}
-
-	// Assert
-	// 1. The archiver should NOT be called in prepareRun anymore.
-	if mock.archiveCalled {
-		t.Error("expected archiver.Archive NOT to be called in prepareRun, but it was")
-	}
-
-	// 2. The target for the new sync should be the incremental directory.
-	expectedPath := filepath.Join(tempDir, cfg.Paths.IncrementalSubDir)
-	if expectedPath != currentRun.target {
-		t.Errorf("expected target path %q, but got %q", expectedPath, currentRun.target)
-	}
-}
-
 func TestExecuteBackup_Retention(t *testing.T) {
 	// Arrange
 	tempDir := t.TempDir()
@@ -516,35 +365,54 @@ func TestExecuteBackup_Retention(t *testing.T) {
 	}
 }
 
-func TestPrepareDestination(t *testing.T) {
+func TestInitBackupRun(t *testing.T) {
 	t.Run("Snapshot Mode", func(t *testing.T) {
 		// Arrange
 		tempDir := t.TempDir()
 		cfg := config.NewDefault()
-		cfg.Mode = config.SnapshotMode
 		cfg.Paths.TargetBase = tempDir
-		cfg.Paths.SnapshotsSubDir = "snapshots"
+		cfg.Paths.SnapshotSubDirs.Archive = "snapshots"
 		cfg.Naming.Prefix = "snap_"
+		cfg.Retention.Snapshot.Enabled = true
+		cfg.Compression.Snapshot.Enabled = true
 
 		e := newTestEngine(cfg)
-		testTime := time.Date(2023, 10, 27, 14, 30, 0, 0, time.UTC)
-		currentRun := &engineRunState{
-			currentTimestampUTC: testTime,
-			source:              cfg.Paths.Source,
-			mode:                cfg.Mode,
-		}
 
 		// Act
-		err := e.prepareRun(currentRun)
+		runState, err := e.initBackupRun(config.SnapshotMode)
 		if err != nil {
-			t.Fatalf("prepareDestination failed: %v", err)
+			t.Fatalf("initBackupRun failed: %v", err)
 		}
 
 		// Assert
-		snapshotsDir := filepath.Join(tempDir, cfg.Paths.SnapshotsSubDir)
-		expectedPath := filepath.Join(snapshotsDir, "snap_"+config.FormatTimestampWithOffset(testTime))
-		if expectedPath != currentRun.target {
-			t.Errorf("expected target path %q, but got %q", expectedPath, currentRun.target)
+		// Check run state properties
+		if runState.mode != config.SnapshotMode {
+			t.Errorf("expected mode to be Snapshot, got %v", runState.mode)
+		}
+
+		if !runState.doSync {
+			t.Error("expected doSync to be true for snapshot mode")
+		}
+		if !runState.doRetention {
+			t.Error("expected doRetention to be true for snapshot mode")
+		}
+		if !runState.doCompression {
+			t.Error("expected doCompression to be true for snapshot mode")
+		}
+		if runState.doArchiving {
+			t.Error("expected doArchiving to be false for snapshot mode")
+		}
+
+		actualSyncTargetPath := filepath.Join(tempDir, runState.relSyncTargetPath)
+
+		// Check target path
+		snapshotsDir := filepath.Join(tempDir, cfg.Paths.SnapshotSubDirs.Archive)
+		if !strings.HasPrefix(actualSyncTargetPath, snapshotsDir) {
+			t.Errorf("expected target path to be in snapshots dir %q, but got %q", snapshotsDir, actualSyncTargetPath)
+		}
+		backupName := filepath.Base(actualSyncTargetPath)
+		if !strings.HasPrefix(backupName, cfg.Naming.Prefix) {
+			t.Errorf("expected backup name to have prefix %q, but got %q", cfg.Naming.Prefix, backupName)
 		}
 	})
 
@@ -552,27 +420,44 @@ func TestPrepareDestination(t *testing.T) {
 		// Arrange
 		tempDir := t.TempDir()
 		cfg := config.NewDefault()
-		cfg.Mode = config.IncrementalMode
 		cfg.Paths.TargetBase = tempDir
-		cfg.Paths.IncrementalSubDir = "latest"
+		cfg.Paths.IncrementalSubDirs.Current = "latest"
+		cfg.Retention.Incremental.Enabled = true
+		cfg.Compression.Incremental.Enabled = true
 
 		e := newTestEngine(cfg)
-		currentRun := &engineRunState{
-			currentTimestampUTC: time.Now().UTC(),
-			source:              cfg.Paths.Source,
-			mode:                cfg.Mode,
-		}
 
 		// Act
-		err := e.prepareRun(currentRun)
+		runState, err := e.initBackupRun(config.IncrementalMode)
 		if err != nil {
-			t.Fatalf("prepareDestination failed: %v", err)
+			t.Fatalf("initBackupRun failed: %v", err)
 		}
 
 		// Assert
-		expectedPath := filepath.Join(tempDir, cfg.Paths.IncrementalSubDir)
-		if expectedPath != currentRun.target {
-			t.Errorf("expected target path %q, but got %q", expectedPath, currentRun.target)
+		// Check run state properties
+		if runState.mode != config.IncrementalMode {
+			t.Errorf("expected mode to be Incremental, got %v", runState.mode)
+		}
+
+		if !runState.doSync {
+			t.Error("expected doSync to be true for incremental mode")
+		}
+
+		if !runState.doRetention {
+			t.Error("expected doRetention to be true for incremental mode")
+		}
+		if !runState.doCompression {
+			t.Error("expected doCompression to be true for incremental mode")
+		}
+		if !runState.doArchiving {
+			t.Error("expected doArchiving to be true for incremental mode")
+		}
+
+		// Check target path
+		actualSyncTargetPath := filepath.Join(tempDir, runState.relSyncTargetPath)
+		expectedPath := filepath.Join(tempDir, cfg.Paths.IncrementalSubDirs.Current)
+		if expectedPath != actualSyncTargetPath {
+			t.Errorf("expected target path %q, but got %q", expectedPath, actualSyncTargetPath)
 		}
 	})
 }

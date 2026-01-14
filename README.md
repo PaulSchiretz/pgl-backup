@@ -200,8 +200,14 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
   "dryRun": false,
   "metrics": true,
   "compression": {
-    "enabled": true,
-    "format": "tar.zst"
+      "incremental": {
+      "enabled": true,
+      "format": "tar.zst"
+    },
+    "snapshot": {
+      "enabled": true,
+      "format": "tar.zst"
+    }
   },
   "naming": {
     "prefix": "PGL_Backup_"
@@ -209,9 +215,15 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
   "paths": {
     "source": "/home/user/Documents",
     "targetBase": "/media/backup-drive/MyDocumentsBackup",
-    "snapshotsSubDir": "PGL_Backup_Snapshots",
-    "archivesSubDir": "PGL_Backup_Archives",
-    "incrementalSubDir": "PGL_Backup_Current",
+    "incrementalSubDirs": {
+      "Current": "PGL_Backup_Incremental_Current",
+      "Archive": "PGL_Backup_Incremental_Archive"
+    },
+    "snapshotSubDirs": {
+      "Current": "PGL_Backup_Snapshot_Current",
+      "Archive": "PGL_Backup_Snapshot_Archive"
+    },
+    "contentSubDir": "PGL_Backup_Content",
     "preserveSourceDirectoryName": true,
     "defaultExcludeFiles": [
       "*.tmp",
@@ -279,9 +291,9 @@ Your backup target will be organized like this:
 ```
 /path/to/your/backup-target/
 ├── pgl-backup.config.json (The configuration for this backup set)
-├── PGL_Backup_Current/ (The active incremental backup)
-├── PGL_Backup_Archives/ (Timestamped historical incremental archives)
-└── PGL_Backup_Snapshots/ (Timestamped snapshots from snapshot mode)
+├── PGL_Backup_Incremental_Current/ (The current incremental backup)
+├── PGL_Backup_Incremental_Archive/ (Timestamped historical incremental backups)
+└── PGL_Backup_Snapshot_Archive/ (Timestamped backups from snapshot mode)
 ```
 
 ## Usage and Examples
@@ -615,20 +627,20 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `source` / `paths.source`       | `string`      | `""`                                  | The directory to back up. **Required**. |
 | `target` / `paths.targetBase`   | `string`      | `""`                                  | The base directory where backups are stored. **Required**. |
 | `mode` / `mode`                 | `string`      | `"incremental"`                       | Backup mode: `"incremental"` or `"snapshot"`. |
-| `paths.snapshotsSubDir`         | `string`      | `"PGL_Backup_Snapshots"`              | The name of the sub-directory where snapshots are stored (snapshot mode only). |
-| `paths.archivesSubDir`          | `string`      | `"PGL_Backup_Archives"`               | The name of the sub-directory where historical archives are stored (incremental mode only). |
-| `fail-fast` / `failFast`        | `bool`        | `false`                               | If true, stops the backup immediately on the first file sync error. |
-| `paths.incrementalSubDir`       | `string`      | `"PGL_Backup_Current"`                | The name of the directory for the active incremental backup. |
+| `paths.incrementalSubDirs.archive`          | `string`      | `"PGL_Backup_Incremental_Archive"`               | The name of the sub-directory where historical incremental backups are stored. |
+| `paths.incrementalSubDirs.current`       | `string`      | `"PGL_Backup_Incremental_Current"`                | The name of the sub-directory for the current incremental backup. |
+| `paths.snapshotSubDirs.archive`          | `string`      | `"PGL_Backup_Snapshot_Archive"`               | The name of the sub-directory where snapshot backups are stored. |
+| `paths.snapshotSubDirs.current`       | `string`      | `"PGL_Backup_Snapshot_Current"`                | The name of the sub-directory for the current snapshot backup. |
 | `paths.contentSubDir`           | `string`      | `"PGL_Backup_Content"`                | The name of the sub-directory within a backup that holds the actual synced content. |
+| `fail-fast` / `failFast`        | `bool`        | `false`                               | If true, stops the backup immediately on the first file sync error. |
 | `default`                       | `bool`        | `false`                               | Used with `init` command. Overwrite existing configuration with defaults. |
 | `force`                         | `bool`        | `false`                               | Bypass confirmation prompts (e.g., for init -default). |
 | `dry-run` / `dryRun`            | `bool`        | `false`                               | If true, simulates the backup without making changes. |
 | `log-level` / `logLevel`        | `string`      | `"info"`                              | Set the logging level: `"debug"`, `"notice"`, `"info"`, `"warn"`, or `"error"`. |
 | `metrics` / `metrics`           | `bool`        | `true`                                | If true, enables detailed performance and file-counting metrics. |
 | `sync-engine` / `engine.type`   | `string`      | `"native"`                            | The sync engine to use: `"native"` or `"robocopy"` (Windows only). |
-| `archive-interval-mode` / `archive.incremental.intervalMode` | `string` | `"auto"` | Archive interval mode: `"auto"` (derives interval from retention policy) or `"manual"`. In `auto` mode, if the retention policy is disabled, archiving is also disabled. |
-| `archive-interval-seconds` / `archive.incremental.intervalSeconds` | `int` | `86400` | In `manual` mode, the interval in seconds after which a new archive is created (e.g., `86400` for 24h). Use `0` to disable archiving. |
-| `archive.incremental.renameOnly` | `bool` | `false` | If true, moves the current backup to the archive instead of copying it. Faster creation, but forces a full re-sync next run. |
+| `archive-incremental-interval-mode` / `archive.incremental.intervalMode` | `string` | `"auto"` | Archive interval mode: `"auto"` (derives interval from retention policy) or `"manual"`. In `auto` mode, if the retention policy is disabled, archiving is also disabled. |
+| `archive-incremental-interval-seconds` / `archive.incremental.intervalSeconds` | `int` | `86400` | In `manual` mode, the interval in seconds after which a new archive is created (e.g., `86400` for 24h). Use `0` to disable archiving. |
 | `retention.incremental.enabled`         | `bool`         | `true`                             | Enables the retention policy for incremental mode archives. |
 | `retention.incremental.hours`         | `int`         | `0`                                   | Number of recent hourly incremental archives to keep. |
 | `retention.incremental.days`          | `int`         | `0`                                   | Number of recent daily incremental archives to keep. |
@@ -641,8 +653,10 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `retention.snapshot.weeks`         | `int`         | `0`                                      | Number of recent weekly snapshots to keep. |
 | `retention.snapshot.months`        | `int`         | `0`                                      | Number of recent monthly snapshots to keep. |
 | `retention.snapshot.years`         | `int`         | `0`                                      | Number of recent yearly snapshots to keep. |
-| `compression` / `compression.enabled` | `bool` | `true` | If true, enables compression for any backups (incremental archives or snapshots) that are not already compressed. |
-| `compression-format` / `compression.format` | `string` | `"tar.zst"` | The archive format to use: `"zip"`, `"tar.gz"`, or `"tar.zst"`. |
+| `compression-incremental` / `compression.incremental.enabled` | `bool` | `true` | If true, enables compression for incremental backups that are not already compressed. |
+| `compression-incremental-format` / `compression.incremental.format` | `string` | `"tar.zst"` | The archive format to use for incremental backups: `"zip"`, `"tar.gz"`, or `"tar.zst"`. |
+| `compression-snapshot` / `compression.snapshot.enabled` | `bool` | `true` | If true, enables compression for snapshot backups that are not already compressed. |
+| `compression-snapshot-format` / `compression.snapshot.format` | `string` | `"tar.zst"` | The archive format to use for snapshot backups: `"zip"`, `"tar.gz"`, or `"tar.zst"`. |
 | `defaultExcludeFiles`           | `[]string`    | `[*.tmp, *.temp, *.swp, *.lnk, ~*, desktop.ini, .DS_Store, Thumbs.db, Icon\r]`                     | The list of default file patterns to exclude. Can be customized. |
 | `defaultExcludeDirs`            | `[]string`    | `[@tmp, @eadir, .SynologyWorkingDirectory, #recycle, $Recycle.Bin]`                     | The list of default directory patterns to exclude. Can be customized. |
 | `user-exclude-files` / `userExcludeFiles`| `[]string`    | `[]`                                  | List of file patterns to exclude. |

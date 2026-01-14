@@ -25,7 +25,6 @@ func createTestMetafile(t *testing.T, dirPath string, timestampUTC time.Time) {
 	metadata := metafile.MetafileContent{
 		Version:      "test",
 		TimestampUTC: timestampUTC,
-		Mode:         "incremental",
 		Source:       "/src",
 	}
 
@@ -230,11 +229,11 @@ func TestArchive(t *testing.T) {
 		currentBackupTimestampUTC := time.Now().UTC().Add(-25 * time.Hour)
 		currentTimestampUTC := time.Now().UTC()
 		currentBackupPath := filepath.Join(tempDir, "current")
-		archivesDir := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir)
+		archivesDir := filepath.Join(tempDir, cfg.Paths.IncrementalSubDirs.Archive)
 		createTestMetafile(t, currentBackupPath, currentBackupTimestampUTC)
 
 		// Act
-		archivePath, err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC)
+		archivePath, err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC, cfg.Archive.Incremental, cfg.Retention.Incremental)
 		if err != nil {
 			t.Fatalf("Archive failed: %v", err)
 		}
@@ -267,11 +266,11 @@ func TestArchive(t *testing.T) {
 		currentBackupTimestampUTC := time.Now().UTC().Add(-2 * time.Hour)
 		currentTimestampUTC := time.Now().UTC()
 		currentBackupPath := filepath.Join(tempDir, "current")
-		archivesDir := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir)
+		archivesDir := filepath.Join(tempDir, cfg.Paths.IncrementalSubDirs.Archive)
 		createTestMetafile(t, currentBackupPath, currentBackupTimestampUTC)
 
 		// Act
-		_, err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC)
+		_, err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC, cfg.Archive.Incremental, cfg.Retention.Incremental)
 		if err != nil && err != ErrNothingToArchive {
 			t.Fatalf("Archive failed unexpectedly: %v", err)
 		}
@@ -295,7 +294,7 @@ func TestArchive(t *testing.T) {
 		currentBackupTimestampUTC := time.Now().UTC().Add(-25 * time.Hour)
 		currentTimestampUTC := time.Now().UTC()
 		currentBackupPath := filepath.Join(tempDir, "current")
-		archivesDir := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir)
+		archivesDir := filepath.Join(tempDir, cfg.Paths.IncrementalSubDirs.Archive)
 		createTestMetafile(t, currentBackupPath, currentBackupTimestampUTC)
 
 		// Manually create the destination to cause a conflict
@@ -305,7 +304,7 @@ func TestArchive(t *testing.T) {
 		os.MkdirAll(conflictPath, 0755)
 
 		// Act
-		_, err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC)
+		_, err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC, cfg.Archive.Incremental, cfg.Retention.Incremental)
 
 		// Assert
 		if err == nil {
@@ -331,11 +330,11 @@ func TestArchive(t *testing.T) {
 		currentBackupTimestampUTC := time.Now().UTC().Add(-25 * time.Hour)
 		currentTimestampUTC := time.Now().UTC()
 		currentBackupPath := filepath.Join(tempDir, "current")
-		archivesDir := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir)
+		archivesDir := filepath.Join(tempDir, cfg.Paths.IncrementalSubDirs.Archive)
 		createTestMetafile(t, currentBackupPath, currentBackupTimestampUTC)
 
 		// Act
-		_, err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC)
+		_, err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC, cfg.Archive.Incremental, cfg.Retention.Incremental)
 		if err != nil && err != ErrNothingToArchive {
 			t.Fatalf("Archive failed unexpectedly: %v", err)
 		}
@@ -360,11 +359,11 @@ func TestArchive(t *testing.T) {
 		currentBackupTimestampUTC := time.Now().UTC().Add(-25 * time.Hour)
 		currentTimestampUTC := time.Now().UTC()
 		currentBackupPath := filepath.Join(tempDir, "current")
-		archivesDir := filepath.Join(tempDir, cfg.Paths.ArchivesSubDir)
+		archivesDir := filepath.Join(tempDir, cfg.Paths.IncrementalSubDirs.Archive)
 		createTestMetafile(t, currentBackupPath, currentBackupTimestampUTC)
 
 		// Act
-		_, err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC)
+		_, err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC, cfg.Archive.Incremental, cfg.Retention.Incremental)
 		if err != nil {
 			t.Fatalf("Archive failed unexpectedly in dry run: %v", err)
 		}
@@ -404,7 +403,7 @@ func TestDetermineInterval(t *testing.T) {
 
 				// Act
 				archiver := NewPathArchiver(cfg)
-				interval := archiver.determineInterval()
+				interval := archiver.determineInterval(cfg.Archive.Incremental, cfg.Retention.Incremental)
 
 				// Assert
 				if interval != tc.expected {
@@ -423,7 +422,7 @@ func TestDetermineInterval(t *testing.T) {
 
 			// Act
 			archiver := NewPathArchiver(cfg)
-			interval := archiver.determineInterval()
+			interval := archiver.determineInterval(cfg.Archive.Incremental, cfg.Retention.Incremental)
 
 			// Assert
 			if interval != 12*time.Hour {
@@ -444,7 +443,7 @@ func TestDetermineInterval(t *testing.T) {
 
 			// Act
 			archiver := NewPathArchiver(cfg)
-			archiver.determineInterval()
+			archiver.determineInterval(cfg.Archive.Incremental, cfg.Retention.Incremental)
 
 			// Assert
 			logOutput := logBuf.String()
@@ -469,7 +468,7 @@ func TestDetermineInterval(t *testing.T) {
 
 			// Act
 			archiver := NewPathArchiver(cfg)
-			archiver.determineInterval()
+			archiver.determineInterval(cfg.Archive.Incremental, cfg.Retention.Incremental)
 
 			// Assert
 			logOutput := logBuf.String()

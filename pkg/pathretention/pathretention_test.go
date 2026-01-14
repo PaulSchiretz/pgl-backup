@@ -28,7 +28,6 @@ func createTestBackup(t *testing.T, baseDir, name string, timestampUTC time.Time
 	metadata := metafile.MetafileContent{
 		Version:      "test-version",
 		TimestampUTC: timestampUTC,
-		Mode:         "incremental",
 		Source:       "/src",
 	}
 

@@ -72,7 +72,7 @@ type PathArchiver struct {
 // Archiver defines the interface for a component that archives a backup, turning the
 // 'current' state into a permanent historical record.
 type Archiver interface {
-	Archive(ctx context.Context, dirPath, currentBackupPath string, currentTimestampUTC time.Time) (string, error)
+	Archive(ctx context.Context, dirPath, currentBackupPath string, currentTimestampUTC time.Time, archivePolicy config.ArchivePolicyConfig, retentionPolicy config.RetentionPolicyConfig) (string, error)
 }
 
 // Statically assert that *PathArchiver implements the Archiver interface.
@@ -88,7 +88,7 @@ func NewPathArchiver(cfg config.Config) *PathArchiver {
 // Archive checks if the time since the last backup has crossed the configured interval.
 // If it has, it renames the current backup directory to a permanent, timestamped archive directory. It also
 // prepares the archive interval before checking. It is now responsible for reading its own metadata.
-func (a *PathArchiver) Archive(ctx context.Context, dirPath, currentBackupPath string, currentTimestampUTC time.Time) (string, error) {
+func (a *PathArchiver) Archive(ctx context.Context, dirPath, currentBackupPath string, currentTimestampUTC time.Time, archivePolicy config.ArchivePolicyConfig, retentionPolicy config.RetentionPolicyConfig) (string, error) {
 	metadata, err := metafile.Read(currentBackupPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -103,7 +103,7 @@ func (a *PathArchiver) Archive(ctx context.Context, dirPath, currentBackupPath s
 	currentBackupTimestampUTC := metadata.TimestampUTC
 
 	// Determine the archiving interval
-	interval := a.determineInterval()
+	interval := a.determineInterval(archivePolicy, retentionPolicy)
 
 	// The directory name must remain uniquely based on UTC time to avoid DST conflicts,
 	// but we add the user's local offset to make the timezone clear to the user.
@@ -248,38 +248,37 @@ func calculateEpochDays(t time.Time, loc *time.Location) int64 {
 // determineInterval calculates the effective archive interval based on configuration.
 // If the mode is 'auto', it calculates the optimal interval based on the retention policy.
 // If the mode is 'manual', it validates the user-configured interval.
-func (a *PathArchiver) determineInterval() time.Duration {
-	if a.config.Archive.Incremental.IntervalMode == config.ManualInterval {
-		interval := time.Duration(a.config.Archive.Incremental.IntervalSeconds) * time.Second
-		a.checkInterval(interval)
+func (a *PathArchiver) determineInterval(archivePolicy config.ArchivePolicyConfig, retentionPolicy config.RetentionPolicyConfig) time.Duration {
+	if archivePolicy.IntervalMode == config.ManualInterval {
+		interval := time.Duration(archivePolicy.IntervalSeconds) * time.Second
+		a.checkInterval(interval, retentionPolicy)
 		return interval
 	}
-	return a.adjustInterval()
+	return a.adjustInterval(retentionPolicy)
 }
 
 // adjustInterval calculates the optimal archive interval based on the retention
 // policy. This is only called when the archive policy mode is 'auto'.
-func (a *PathArchiver) adjustInterval() time.Duration {
-	policy := a.config.Retention.Incremental
+func (a *PathArchiver) adjustInterval(retentionPolicy config.RetentionPolicyConfig) time.Duration {
 	var suggestedInterval time.Duration
 
 	// If the retention policy is explicitly disabled, auto-mode should also disable archiving.
-	if !policy.Enabled {
+	if !retentionPolicy.Enabled {
 		plog.Debug("Retention policy is disabled; auto-disabling archiving for this run.")
 		return 0 // disables the interval
 	}
 
 	// Pick the shortest duration required to satisfy the configured retention slots.
 	switch {
-	case policy.Hours > 0:
+	case retentionPolicy.Hours > 0:
 		suggestedInterval = 1 * time.Hour
-	case policy.Days > 0:
+	case retentionPolicy.Days > 0:
 		suggestedInterval = 24 * time.Hour
-	case policy.Weeks > 0:
+	case retentionPolicy.Weeks > 0:
 		suggestedInterval = 7 * 24 * time.Hour
-	case policy.Months > 0:
+	case retentionPolicy.Months > 0:
 		suggestedInterval = 30 * 24 * time.Hour // Approximation
-	case policy.Years > 0:
+	case retentionPolicy.Years > 0:
 		suggestedInterval = 365 * 24 * time.Hour // Approximation
 	default:
 		// Fallback if retention is disabled but mode is auto.
@@ -291,8 +290,7 @@ func (a *PathArchiver) adjustInterval() time.Duration {
 }
 
 // checkInterval validates the interval against the retention policy.
-func (a *PathArchiver) checkInterval(interval time.Duration) {
-	policy := a.config.Retention.Incremental
+func (a *PathArchiver) checkInterval(interval time.Duration, retentionPolicy config.RetentionPolicyConfig) {
 
 	if interval == 0 {
 		plog.Debug("Archiving is disabled (interval = 0). Retention policy warnings for interval mismatch are suppressed.")
@@ -300,21 +298,21 @@ func (a *PathArchiver) checkInterval(interval time.Duration) {
 	}
 
 	var mismatchedPeriods []string
-	if policy.Hours > 0 && interval > 1*time.Hour {
+	if retentionPolicy.Hours > 0 && interval > 1*time.Hour {
 		mismatchedPeriods = append(mismatchedPeriods, "Hourly")
 	}
-	if policy.Days > 0 && interval > 24*time.Hour {
+	if retentionPolicy.Days > 0 && interval > 24*time.Hour {
 		mismatchedPeriods = append(mismatchedPeriods, "Daily")
 	}
-	if policy.Weeks > 0 && interval > 168*time.Hour {
+	if retentionPolicy.Weeks > 0 && interval > 168*time.Hour {
 		mismatchedPeriods = append(mismatchedPeriods, "Weekly")
 	}
 	avgMonth := 30 * 24 * time.Hour
-	if policy.Months > 0 && interval > avgMonth {
+	if retentionPolicy.Months > 0 && interval > avgMonth {
 		mismatchedPeriods = append(mismatchedPeriods, "Monthly")
 	}
 	avgYear := 365 * 24 * time.Hour
-	if policy.Years > 0 && interval > avgYear {
+	if retentionPolicy.Years > 0 && interval > avgYear {
 		mismatchedPeriods = append(mismatchedPeriods, "Yearly")
 	}
 

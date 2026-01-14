@@ -144,34 +144,34 @@ func TestConfig_Validate(t *testing.T) {
 		cfg := newValidConfig(t)
 		cfg.Mode = IncrementalMode // This validation only applies in incremental mode
 
-		// Test ArchivesSubDir empty
-		cfg.Paths.ArchivesSubDir = ""
+		// Test IncrementalSubDirs.Archive empty
+		cfg.Paths.IncrementalSubDirs.Archive = ""
 		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for empty archivesSubDir, but got nil")
+			t.Error("expected error for empty IncrementalSubDirs.Archive, but got nil")
 		}
 
-		// Test ArchivesSubDir with path separators
-		cfg.Paths.ArchivesSubDir = "invalid/path"
+		// Test IncrementalSubDirs.Archive with path separators
+		cfg.Paths.IncrementalSubDirs.Archive = "invalid/path"
 		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for archivesSubDir with path separators, but got nil")
+			t.Error("expected error for IncrementalSubDirs.Archive with path separators, but got nil")
 		}
-		cfg.Paths.ArchivesSubDir = "valid" // Reset
+		cfg.Paths.IncrementalSubDirs.Archive = "valid" // Reset
 
-		// Test empty IncrementalSubDir
-		cfg.Paths.IncrementalSubDir = ""
+		// Test empty IncrementalSubDirs.Current
+		cfg.Paths.IncrementalSubDirs.Current = ""
 		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for empty IncrementalSubDir, but got nil")
+			t.Error("expected error for empty IncrementalSubDirs.Current, but got nil")
 		}
 
 		// Test IncrementalSubDir
-		cfg.Paths.IncrementalSubDir = "invalid/path"
+		cfg.Paths.IncrementalSubDirs.Current = "invalid/path"
 		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for incrementalSubDir with path separators, but got nil")
+			t.Error("expected error for IncrementalSubDirs.Current with path separators, but got nil")
 		}
 
-		cfg.Paths.IncrementalSubDir = "valid" // Reset to valid
+		cfg.Paths.IncrementalSubDirs.Current = "valid" // Reset to valid
 		if err := cfg.Validate(true); err != nil {
-			t.Errorf("expected no error for valid archivesSubDir and incrementalSubDir, but got: %v", err)
+			t.Errorf("expected no error for valid IncrementalSubDirs.Archive and IncrementalSubDirs.Current, but got: %v", err)
 		}
 	})
 
@@ -180,20 +180,37 @@ func TestConfig_Validate(t *testing.T) {
 		cfg.Mode = SnapshotMode // This validation only applies in snapshot mode
 
 		// Test empty
-		cfg.Paths.SnapshotsSubDir = ""
+		cfg.Paths.SnapshotSubDirs.Archive = ""
 		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for empty snapshotsSubDir, but got nil")
+			t.Error("expected error for empty cfg.Paths.SnapshotSubDirs.Archive, but got nil")
 		}
 
 		// Test with path separators
-		cfg.Paths.SnapshotsSubDir = "invalid/path"
+		cfg.Paths.SnapshotSubDirs.Archive = "invalid/path"
 		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for snapshotsSubDir with path separators, but got nil")
+			t.Error("expected error for cfg.Paths.SnapshotSubDirs.Archive with path separators, but got nil")
 		}
 
-		cfg.Paths.SnapshotsSubDir = "valid" // Reset to valid
+		cfg.Paths.SnapshotSubDirs.Archive = "valid" // Reset to valid
 		if err := cfg.Validate(true); err != nil {
-			t.Errorf("expected no error for valid snapshotsSubDir, but got: %v", err)
+			t.Errorf("expected no error for valid SnapshotSubDirs.Archive, but got: %v", err)
+		}
+
+		// Test empty SnapshotSubDirs.Current
+		cfg.Paths.SnapshotSubDirs.Current = ""
+		if err := cfg.Validate(true); err == nil {
+			t.Error("expected error for empty SnapshotSubDirs.Current, but got nil")
+		}
+
+		// Test SnapshotSubDirs.Current
+		cfg.Paths.SnapshotSubDirs.Current = "invalid/path"
+		if err := cfg.Validate(true); err == nil {
+			t.Error("expected error for SnapshotSubDirs.Current with path separators, but got nil")
+		}
+
+		cfg.Paths.SnapshotSubDirs.Current = "valid" // Reset to valid
+		if err := cfg.Validate(true); err != nil {
+			t.Errorf("expected no error for valid SnapshotSubDirs.Archive and SnapshotSubDirs.Current, but got: %v", err)
 		}
 	})
 

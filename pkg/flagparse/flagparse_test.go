@@ -322,8 +322,8 @@ func TestParse(t *testing.T) {
 	t.Run("Parse Compression Flags", func(t *testing.T) {
 		args := []string{
 			"backup",
-			"-compression",
-			"-compression-format=tar.gz",
+			"-compression-incremental",
+			"-compression-incremental-format=tar.gz",
 		}
 		_, setFlags, err := Parse("test", "v1", args)
 		if err != nil {
@@ -331,44 +331,64 @@ func TestParse(t *testing.T) {
 		}
 
 		// Check compression enabled
-		if val, ok := setFlags["compression"]; !ok || !val.(bool) {
-			t.Errorf("expected incremental-compression to be true, but got %v", val)
+		if val, ok := setFlags["compression-incremental"]; !ok || !val.(bool) {
+			t.Errorf("expected compression-incremental to be true, but got %v", val)
 		}
 
 		// Check compression format
-		if val, ok := setFlags["compression-format"]; !ok || string(val.(config.CompressionFormat)) != "tar.gz" {
-			t.Errorf("expected compression-format to be 'tar.gz', but got %v", val.(config.CompressionFormat))
+		if val, ok := setFlags["compression-incremental-format"]; !ok || string(val.(config.CompressionFormat)) != "tar.gz" {
+			t.Errorf("expected compression-incremental-format to be 'tar.gz', but got %v", val.(config.CompressionFormat))
+		}
+
+		args = []string{
+			"backup",
+			"-compression-snapshot",
+			"-compression-snapshot-format=tar.gz",
+		}
+		_, setFlags, err = Parse("test", "v1", args)
+		if err != nil {
+			t.Fatalf("expected no error, but got: %v", err)
+		}
+
+		// Check compression enabled
+		if val, ok := setFlags["compression-snapshot"]; !ok || !val.(bool) {
+			t.Errorf("expected compression-snapshot to be true, but got %v", val)
+		}
+
+		// Check compression format
+		if val, ok := setFlags["compression-snapshot-format"]; !ok || string(val.(config.CompressionFormat)) != "tar.gz" {
+			t.Errorf("expected compression-snapshot-format to be 'tar.gz', but got %v", val.(config.CompressionFormat))
 		}
 	})
 
 	t.Run("Set Archive Interval Flag", func(t *testing.T) {
-		args := []string{"backup", "-archive-interval-seconds=172800"} // 48h
+		args := []string{"backup", "-archive-incremental-interval-seconds=172800"} // 48h
 		_, setFlags, err := Parse("test", "v1", args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}
-		val, ok := setFlags["archive-interval-seconds"]
+		val, ok := setFlags["archive-incremental-interval-seconds"]
 		if !ok {
-			t.Fatal("expected 'archive-interval-seconds' flag to be in setFlags map")
+			t.Fatal("expected 'archive-incremental-interval-seconds' flag to be in setFlags map")
 		}
 		expectedSeconds := 172800
 		if intVal, typeOK := val.(int); !typeOK || intVal != expectedSeconds {
-			t.Errorf("expected archive-interval-seconds to be %v, but got %v (type %T)", expectedSeconds, val, val)
+			t.Errorf("expected archive-incremental-interval-seconds to be %v, but got %v (type %T)", expectedSeconds, val, val)
 		}
 	})
 
 	t.Run("Set Archive Interval Mode Flag", func(t *testing.T) {
-		args := []string{"backup", "-archive-interval-mode=manual"}
+		args := []string{"backup", "-archive-incremental-interval-mode=manual"}
 		_, setFlags, err := Parse("test", "v1", args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}
-		val, ok := setFlags["archive-interval-mode"]
+		val, ok := setFlags["archive-incremental-interval-mode"]
 		if !ok {
-			t.Fatal("expected 'archive-interval-mode' flag to be in setFlags map")
+			t.Fatal("expected 'archive-incremental-interval-mode' flag to be in setFlags map")
 		}
 		if modeVal, typeOK := val.(config.ArchiveIntervalMode); !typeOK || modeVal != config.ManualInterval {
-			t.Errorf("expected archive-interval-mode to be ManualInterval, but got %v", val)
+			t.Errorf("expected archive-incremental-interval-mode to be ManualInterval, but got %v", val)
 		}
 	})
 

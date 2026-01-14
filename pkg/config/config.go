@@ -37,29 +37,24 @@ type BackupNamingConfig struct {
 	Prefix string `json:"prefix"`
 }
 
+type BackupPathSubDirConfig struct {
+	Current string `json:"current"`
+	Archive string `json:"archive"`
+}
+
 type BackupPathConfig struct {
-	Source                      string   `json:"source"`
-	TargetBase                  string   `json:"targetBase"`
-	SnapshotsSubDir             string   `json:"snapshotsSubDir,omitempty"`
-	ArchivesSubDir              string   `json:"archivesSubDir,omitempty"`
-	IncrementalSubDir           string   `json:"incrementalSubDir,omitempty"`
-	ContentSubDir               string   `json:"contentSubDir,omitempty"`
-	PreserveSourceDirectoryName bool     `json:"preserveSourceDirectoryName"`
-	DefaultExcludeFiles         []string `json:"defaultExcludeFiles,omitempty"`
-	DefaultExcludeDirs          []string `json:"defaultExcludeDirs,omitempty"`
+	Source                      string                 `json:"source"`
+	TargetBase                  string                 `json:"targetBase"`
+	IncrementalSubDirs          BackupPathSubDirConfig `json:"incrementalSubDirs"`
+	SnapshotSubDirs             BackupPathSubDirConfig `json:"snapshotSubDirs"`
+	ContentSubDir               string                 `json:"contentSubDir"`
+	PreserveSourceDirectoryName bool                   `json:"preserveSourceDirectoryName"`
+	DefaultExcludeFiles         []string               `json:"defaultExcludeFiles,omitempty"`
+	DefaultExcludeDirs          []string               `json:"defaultExcludeDirs,omitempty"`
 	// Note: omitempty is intentionally not used for user-configurable slices
 	// so that they appear in the generated config file for better discoverability.
 	UserExcludeFiles []string `json:"userExcludeFiles"`
 	UserExcludeDirs  []string `json:"userExcludeDirs"`
-}
-
-type RetentionPolicyConfig struct {
-	Enabled bool `json:"enabled"`
-	Hours   int  `json:"hours"`
-	Days    int  `json:"days"`
-	Weeks   int  `json:"weeks"`
-	Months  int  `json:"months"`
-	Years   int  `json:"years"`
 }
 
 type BackupHooksConfig struct {
@@ -299,6 +294,20 @@ type CompressionPolicyConfig struct {
 	Format  CompressionFormat `json:"format,omitempty"`
 }
 
+type BackupCompressionConfig struct {
+	Incremental CompressionPolicyConfig `json:"incremental,omitempty"`
+	Snapshot    CompressionPolicyConfig `json:"snapshot,omitempty"`
+}
+
+type RetentionPolicyConfig struct {
+	Enabled bool `json:"enabled"`
+	Hours   int  `json:"hours"`
+	Days    int  `json:"days"`
+	Weeks   int  `json:"weeks"`
+	Months  int  `json:"months"`
+	Years   int  `json:"years"`
+}
+
 type BackupRetentionConfig struct {
 	Incremental RetentionPolicyConfig `json:"incremental,omitempty"`
 	Snapshot    RetentionPolicyConfig `json:"snapshot,omitempty"`
@@ -311,7 +320,7 @@ type Config struct {
 	DryRun      bool                    `json:"dryRun"`
 	FailFast    bool                    `json:"failFast"`
 	Metrics     bool                    `json:"metrics,omitempty"`
-	Compression CompressionPolicyConfig `json:"compression,omitempty"`
+	Compression BackupCompressionConfig `json:"compression,omitempty"`
 	Naming      BackupNamingConfig      `json:"naming"`
 	Paths       BackupPathConfig        `json:"paths"`
 	Retention   BackupRetentionConfig   `json:"retention,omitempty"`
@@ -331,9 +340,15 @@ func NewDefault() Config {
 		DryRun:   false,
 		FailFast: false,
 		Metrics:  true, // Default to enabled for detailed performance and file-counting metrics.
-		Compression: CompressionPolicyConfig{
-			Enabled: true,
-			Format:  TarZstFormat,
+		Compression: BackupCompressionConfig{
+			Incremental: CompressionPolicyConfig{
+				Enabled: true,
+				Format:  TarZstFormat,
+			},
+			Snapshot: CompressionPolicyConfig{
+				Enabled: true,
+				Format:  TarZstFormat,
+			},
 		},
 		Engine: BackupEngineConfig{
 			Type:                 NativeEngine,
@@ -351,15 +366,20 @@ func NewDefault() Config {
 			Prefix: "PGL_Backup_",
 		},
 		Paths: BackupPathConfig{
-			Source:                      "",                     // Intentionally empty to force user configuration.
-			TargetBase:                  "",                     // Intentionally empty to force user configuration.
-			SnapshotsSubDir:             "PGL_Backup_Snapshots", // Default name for the snapshots sub-directory.
-			ArchivesSubDir:              "PGL_Backup_Archives",  // Default name for the archives sub-directory.
-			IncrementalSubDir:           "PGL_Backup_Current",   // Default name for the active incremental backup directory.
-			ContentSubDir:               "PGL_Backup_Content",   // Default name for the content sub-directory.
-			PreserveSourceDirectoryName: true,                   // Default to preserving the source folder name in the destination.
-			UserExcludeFiles:            []string{},             // User-defined list of files to exclude.
-			UserExcludeDirs:             []string{},             // User-defined list of directories to exclude.
+			Source:     "", // Intentionally empty to force user configuration.
+			TargetBase: "", // Intentionally empty to force user configuration.
+			IncrementalSubDirs: BackupPathSubDirConfig{
+				Current: "PGL_Backup_Incremental_Current", // Default name for the incremental current sub-directory.
+				Archive: "PGL_Backup_Incremental_Archive", // Default name for the incremental archive sub-directory.
+			},
+			SnapshotSubDirs: BackupPathSubDirConfig{
+				Current: "PGL_Backup_Snapshot_Current", // Default name for the snapshot current sub-directory.
+				Archive: "PGL_Backup_Snapshot_Archive", // Default name for the snapshot archive sub-directory.
+			},
+			ContentSubDir:               "PGL_Backup_Content", // Default name for the content sub-directory.
+			PreserveSourceDirectoryName: true,                 // Default to preserving the source folder name in the destination.
+			UserExcludeFiles:            []string{},           // User-defined list of files to exclude.
+			UserExcludeDirs:             []string{},           // User-defined list of directories to exclude.
 			DefaultExcludeFiles: []string{
 				// Common temporary and system files across platforms.
 				"*.tmp",       // Temporary files
@@ -517,30 +537,39 @@ func (c *Config) Validate(checkSource bool) error {
 	// --- Validate SubDirs ---
 	switch c.Mode {
 	case IncrementalMode:
-		if c.Paths.ArchivesSubDir == "" {
-			return fmt.Errorf("archivesSubDir cannot be empty in incremental mode")
+		if c.Paths.IncrementalSubDirs.Archive == "" {
+			return fmt.Errorf("incrementalSubDirs.archive cannot be empty in incremental mode")
 		}
-		if c.Paths.IncrementalSubDir == "" {
-			return fmt.Errorf("incrementalSubDir cannot be empty in incremental mode")
+		if c.Paths.IncrementalSubDirs.Current == "" {
+			return fmt.Errorf("incrementalSubDirs.current cannot be empty in incremental mode")
 		}
 		// Disallow path separators to ensure the archives directory is a direct child of the target.
 		// This is critical for guaranteeing that the atomic `os.Rename` operation during archive
 		// works correctly, as it requires the source and destination to be on the same filesystem.
-		if strings.ContainsAny(c.Paths.ArchivesSubDir, `\/`) {
-			return fmt.Errorf("archivesSubDir cannot contain path separators ('/' or '\\')")
+		if strings.ContainsAny(c.Paths.IncrementalSubDirs.Archive, `\/`) {
+			return fmt.Errorf("incrementalSubDirs.archive cannot contain path separators ('/' or '\\')")
 		}
-		if strings.ContainsAny(c.Paths.IncrementalSubDir, `\/`) {
-			return fmt.Errorf("incrementalSubDir cannot contain path separators ('/' or '\\')")
+		if strings.ContainsAny(c.Paths.IncrementalSubDirs.Current, `\/`) {
+			return fmt.Errorf("incrementalSubDirs.current cannot contain path separators ('/' or '\\')")
 		}
 	case SnapshotMode:
 		// Disallow path separators to ensure the snapshots directory is a direct child of the target.
 		// This is critical for guaranteeing that the atomic `os.Rename` operation during
 		// works correctly, as it requires the source and destination to be on the same filesystem.
-		if c.Paths.SnapshotsSubDir == "" {
-			return fmt.Errorf("snapshotsSubDir cannot be empty in snapshot mode")
+		if c.Paths.SnapshotSubDirs.Archive == "" {
+			return fmt.Errorf("snapshotSubDirs.archive cannot be empty in snapshot mode")
 		}
-		if strings.ContainsAny(c.Paths.SnapshotsSubDir, `\/`) {
-			return fmt.Errorf("snapshotsSubDir cannot contain path separators ('/' or '\\')")
+		if c.Paths.SnapshotSubDirs.Current == "" {
+			return fmt.Errorf("snapshotSubDirs.current cannot be empty in snapshot mode")
+		}
+		// Disallow path separators to ensure the archives directory is a direct child of the target.
+		// This is critical for guaranteeing that the atomic `os.Rename` operation during archive
+		// works correctly, as it requires the source and destination to be on the same filesystem.
+		if strings.ContainsAny(c.Paths.SnapshotSubDirs.Archive, `\/`) {
+			return fmt.Errorf("snapshotSubDirs.archive cannot contain path separators ('/' or '\\')")
+		}
+		if strings.ContainsAny(c.Paths.SnapshotSubDirs.Current, `\/`) {
+			return fmt.Errorf("snapshotSubDirs.current cannot contain path separators ('/' or '\\')")
 		}
 	}
 
@@ -564,6 +593,10 @@ func (c *Config) Validate(checkSource bool) error {
 	if c.Engine.Performance.DeleteWorkers < 1 {
 		return fmt.Errorf("deleteWorkers must be at least 1")
 	}
+	if c.Engine.Performance.BufferSizeKB <= 0 {
+		return fmt.Errorf("bufferSizeKB must be greater than 0")
+	}
+
 	if c.Engine.RetryCount < 0 {
 		return fmt.Errorf("retryCount cannot be negative")
 	}
@@ -573,16 +606,15 @@ func (c *Config) Validate(checkSource bool) error {
 	if c.Engine.ModTimeWindowSeconds < 0 {
 		return fmt.Errorf("modTimeWindowSeconds cannot be negative")
 	}
-	if c.Engine.Performance.BufferSizeKB <= 0 {
-		return fmt.Errorf("bufferSizeKB must be greater than 0")
-	}
-	if c.Mode == IncrementalMode {
+
+	switch c.Mode {
+	case IncrementalMode:
 		if c.Archive.Incremental.IntervalMode == ManualInterval && c.Archive.Incremental.IntervalSeconds < 0 {
 			return fmt.Errorf("archive.incremental.intervalSeconds cannot be negative when mode is 'manual'. Use '0' to disable archive")
 		}
+	case SnapshotMode:
 	}
 
-	// --- Validate Compression Settings ---
 	if err := validateGlobPatterns("defaultExcludeFiles", c.Paths.DefaultExcludeFiles); err != nil {
 		return err
 	}
@@ -621,14 +653,41 @@ func (c *Config) LogSummary() {
 	}
 	switch c.Mode {
 	case IncrementalMode:
-		logArgs = append(logArgs, "incremental_subdir", c.Paths.IncrementalSubDir)
-		logArgs = append(logArgs, "archives_subdir", c.Paths.ArchivesSubDir)
+		logArgs = append(logArgs, "current_subdir", c.Paths.IncrementalSubDirs.Current)
+		logArgs = append(logArgs, "archive_subdir", c.Paths.IncrementalSubDirs.Archive)
 		logArgs = append(logArgs, "archive_interval_mode", c.Archive.Incremental.IntervalMode)
 		if c.Archive.Incremental.IntervalMode == ManualInterval {
 			logArgs = append(logArgs, "archive_interval_seconds", c.Archive.Incremental.IntervalSeconds)
 		}
+
+		if c.Compression.Incremental.Enabled {
+			compressionSummary := fmt.Sprintf("enabled (f:%s)", c.Compression.Incremental.Format)
+			logArgs = append(logArgs, "compression", compressionSummary)
+		}
+
+		if c.Retention.Incremental.Enabled {
+			retentionSummary := fmt.Sprintf("enabled (h:%d d:%d w:%d m:%d y:%d)",
+				c.Retention.Incremental.Hours, c.Retention.Incremental.Days, c.Retention.Incremental.Weeks,
+				c.Retention.Incremental.Months, c.Retention.Incremental.Years)
+			logArgs = append(logArgs, "retention", retentionSummary)
+		}
+
 	case SnapshotMode:
-		logArgs = append(logArgs, "snapshots_subdir", c.Paths.SnapshotsSubDir)
+		logArgs = append(logArgs, "current_subdir", c.Paths.SnapshotSubDirs.Current)
+		logArgs = append(logArgs, "archive_subdir", c.Paths.SnapshotSubDirs.Archive)
+
+		if c.Compression.Snapshot.Enabled {
+			compressionSummary := fmt.Sprintf("enabled (f:%s)", c.Compression.Snapshot.Format)
+			logArgs = append(logArgs, "compression", compressionSummary)
+		}
+
+		if c.Retention.Snapshot.Enabled {
+			snapshotRetentionSummary := fmt.Sprintf("enabled (h:%d d:%d w:%d m:%d y:%d)",
+				c.Retention.Snapshot.Hours, c.Retention.Snapshot.Days, c.Retention.Snapshot.Weeks,
+				c.Retention.Snapshot.Months, c.Retention.Snapshot.Years)
+			logArgs = append(logArgs, "retention", snapshotRetentionSummary)
+		}
+
 	}
 	if finalExcludeFiles := c.Paths.ExcludeFiles(); len(finalExcludeFiles) > 0 {
 		logArgs = append(logArgs, "exclude_files", strings.Join(finalExcludeFiles, ", "))
@@ -647,23 +706,6 @@ func (c *Config) LogSummary() {
 	}
 	if len(c.Hooks.PostBackup) > 0 {
 		logArgs = append(logArgs, "post_backup_hooks", strings.Join(c.Hooks.PostBackup, "; "))
-	}
-	if c.Retention.Incremental.Enabled {
-		retentionSummary := fmt.Sprintf("enabled (h:%d d:%d w:%d m:%d y:%d)",
-			c.Retention.Incremental.Hours, c.Retention.Incremental.Days, c.Retention.Incremental.Weeks,
-			c.Retention.Incremental.Months, c.Retention.Incremental.Years)
-		logArgs = append(logArgs, "incremental_retention", retentionSummary)
-	}
-	if c.Retention.Snapshot.Enabled {
-		snapshotRetentionSummary := fmt.Sprintf("enabled (h:%d d:%d w:%d m:%d y:%d)",
-			c.Retention.Snapshot.Hours, c.Retention.Snapshot.Days, c.Retention.Snapshot.Weeks,
-			c.Retention.Snapshot.Months, c.Retention.Snapshot.Years)
-		logArgs = append(logArgs, "snapshot_retention", snapshotRetentionSummary)
-	}
-
-	if c.Compression.Enabled {
-		logArgs = append(logArgs, "compression_enabled", c.Compression.Enabled)
-		logArgs = append(logArgs, "compression_format", c.Compression.Format)
 	}
 	plog.Info("Configuration loaded", logArgs...)
 }
@@ -755,15 +797,18 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 			merged.Hooks.PreBackup = value.([]string)
 		case "post-backup-hooks":
 			merged.Hooks.PostBackup = value.([]string)
-		// Note: The following flags are not exposed via CLI but are handled here for completeness.
-		case "archive-interval-mode":
+		case "archive-incremental-interval-mode":
 			merged.Archive.Incremental.IntervalMode = value.(ArchiveIntervalMode)
-		case "archive-interval-seconds":
+		case "archive-incremental-interval-seconds":
 			merged.Archive.Incremental.IntervalSeconds = value.(int)
-		case "compression":
-			merged.Compression.Enabled = value.(bool)
-		case "compression-format":
-			merged.Compression.Format = value.(CompressionFormat)
+		case "compression-incremental":
+			merged.Compression.Incremental.Enabled = value.(bool)
+		case "compression-incremental-format":
+			merged.Compression.Incremental.Format = value.(CompressionFormat)
+		case "compression-snapshot":
+			merged.Compression.Snapshot.Enabled = value.(bool)
+		case "compression-snapshot-format":
+			merged.Compression.Snapshot.Format = value.(CompressionFormat)
 		default:
 			plog.Debug("unhandled flag in MergeConfigWithFlags", "flag", name)
 		}
