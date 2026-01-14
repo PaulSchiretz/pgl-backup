@@ -453,6 +453,7 @@ func Load(appVersion string, targetBase string) (Config, error) {
 	plog.Info("Loading configuration", "path", configPath)
 	// Start with default values, then overwrite with the file's content.
 	// This makes the config loading resilient to missing fields in the JSON file.
+	// NOTE: if config.Version differes from appVersion we can add a migration step here.
 	config := NewDefault(appVersion)
 	decoder := json.NewDecoder(file)
 	if err := decoder.Decode(&config); err != nil {
@@ -474,9 +475,6 @@ func Load(appVersion string, targetBase string) (Config, error) {
 	if absLoadDir != absTargetInConfig {
 		return Config{}, fmt.Errorf("targetBase in config file (%s) does not match the directory it was loaded from (%s)", absTargetInConfig, absLoadDir)
 	}
-
-	// if config.Version differes from appVersion maybe migrate
-
 	return config, nil
 }
 
