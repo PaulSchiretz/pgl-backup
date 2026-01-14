@@ -15,7 +15,7 @@ func TestSync_Dispatch(t *testing.T) {
 		srcDir := t.TempDir()
 		dstDir := t.TempDir()
 
-		cfg := config.NewDefault()
+		cfg := config.NewDefault("test-version")
 		// Set an invalid engine type
 		cfg.Engine.Type = config.SyncEngine(99)
 
@@ -35,7 +35,7 @@ func TestSync_Dispatch(t *testing.T) {
 		srcDir := t.TempDir()
 		dstDir := t.TempDir()
 
-		cfg := config.NewDefault()
+		cfg := config.NewDefault("test-version")
 		cfg.Engine.Type = config.RobocopyEngine
 
 		syncer := NewPathSyncer(cfg)

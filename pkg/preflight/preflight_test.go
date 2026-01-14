@@ -97,7 +97,7 @@ func TestCheckBackupSourceAccessible(t *testing.T) {
 func TestRunChecks(t *testing.T) {
 	// Helper to create a valid config for testing purposes.
 	newValidConfig := func(t *testing.T) *config.Config {
-		cfg := config.NewDefault()
+		cfg := config.NewDefault("test-version")
 		cfg.Paths.Source = t.TempDir()
 		cfg.Paths.TargetBase = filepath.Join(t.TempDir(), "target")
 		return &cfg

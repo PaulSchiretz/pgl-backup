@@ -738,7 +738,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			runner.setup()
 
 			// The public Sync method now handles metrics enablement.
-			cfg := config.NewDefault()
+			cfg := config.NewDefault("test-version")
 			cfg.DryRun = tc.dryRun
 			cfg.FailFast = tc.failFast
 			cfg.Engine.Type = config.NativeEngine
@@ -908,7 +908,7 @@ func TestNativeSync_WorkerCancellation(t *testing.T) {
 		}
 	}
 
-	cfg := config.NewDefault()
+	cfg := config.NewDefault("test-version")
 	// Use 1 worker to serialize execution and make it easier to interrupt
 	cfg.Engine.Performance.SyncWorkers = 1
 	syncer := NewPathSyncer(cfg)
@@ -952,7 +952,7 @@ func TestNativeSync_MirrorCancellation(t *testing.T) {
 		}
 	}
 
-	cfg := config.NewDefault()
+	cfg := config.NewDefault("test-version")
 	// Use 1 worker to serialize execution and make it easier to interrupt
 	cfg.Engine.Performance.MirrorWorkers = 1
 	syncer := NewPathSyncer(cfg)

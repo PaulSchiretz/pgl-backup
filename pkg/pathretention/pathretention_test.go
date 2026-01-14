@@ -140,7 +140,7 @@ func TestDetermineBackupsToKeep_Promotion(t *testing.T) {
 func TestApplyRetentionPolicy(t *testing.T) {
 	// Arrange
 	tempDir := t.TempDir()
-	cfg := config.NewDefault()
+	cfg := config.NewDefault("test-version")
 	cfg.Paths.TargetBase = tempDir
 	cfg.Naming.Prefix = "backup_"
 	policy := config.RetentionPolicyConfig{
@@ -181,7 +181,7 @@ func TestApplyRetentionPolicy(t *testing.T) {
 func TestApplyRetentionPolicy_DryRun(t *testing.T) {
 	// Arrange
 	tempDir := t.TempDir()
-	cfg := config.NewDefault()
+	cfg := config.NewDefault("test-version")
 	cfg.Paths.TargetBase = tempDir
 	cfg.Naming.Prefix = "backup_"
 	cfg.DryRun = true // Enable Dry Run
@@ -215,7 +215,7 @@ func TestApplyRetentionPolicy_DryRun(t *testing.T) {
 func TestApplyRetentionPolicy_WorkerCancellation(t *testing.T) {
 	// Arrange
 	tempDir := t.TempDir()
-	cfg := config.NewDefault()
+	cfg := config.NewDefault("test-version")
 	cfg.Paths.TargetBase = tempDir
 	cfg.Naming.Prefix = "backup_"
 	// Use 1 worker to serialize execution for predictable cancellation testing
@@ -264,7 +264,7 @@ func TestApplyRetentionPolicy_DisabledOptimization(t *testing.T) {
 		t.Fatalf("failed to create file: %v", err)
 	}
 
-	cfg := config.NewDefault()
+	cfg := config.NewDefault("test-version")
 	r := newTestRetentionManager(cfg)
 
 	// Disabled policy (all zeros)
@@ -282,7 +282,7 @@ func TestApplyRetentionPolicy_DisabledOptimization(t *testing.T) {
 func TestFetchSortedBackups(t *testing.T) {
 	// Arrange
 	tempDir := t.TempDir()
-	cfg := config.NewDefault()
+	cfg := config.NewDefault("test-version")
 	cfg.Naming.Prefix = "backup_"
 
 	now := time.Now()

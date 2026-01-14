@@ -86,7 +86,7 @@ func TestCompress(t *testing.T) {
 		t.Run("Happy Path - "+tc.name, func(t *testing.T) {
 			// Arrange
 			tempDir := t.TempDir()
-			cfg := config.NewDefault()
+			cfg := config.NewDefault("test-version")
 			cfg.Naming.Prefix = "backup_"
 			manager := newTestCompressionManager(t, cfg)
 
@@ -141,7 +141,7 @@ func TestCompress(t *testing.T) {
 	t.Run("Cancellation", func(t *testing.T) {
 		// Arrange
 		tempDir := t.TempDir()
-		cfg := config.NewDefault()
+		cfg := config.NewDefault("test-version")
 		cfg.Naming.Prefix = "backup_"
 		manager := newTestCompressionManager(t, cfg)
 
@@ -173,7 +173,7 @@ func TestCompress(t *testing.T) {
 	t.Run("Worker Cancellation During Processing", func(t *testing.T) {
 		// Arrange
 		tempDir := t.TempDir()
-		cfg := config.NewDefault()
+		cfg := config.NewDefault("test-version")
 		cfg.Naming.Prefix = "backup_"
 		// Use 1 worker to serialize execution
 		cfg.Engine.Performance.CompressWorkers = 1
@@ -258,7 +258,7 @@ func TestCompress(t *testing.T) {
 	t.Run("Dry Run", func(t *testing.T) {
 		// Arrange
 		tempDir := t.TempDir()
-		cfg := config.NewDefault()
+		cfg := config.NewDefault("test-version")
 		cfg.Naming.Prefix = "backup_"
 		cfg.DryRun = true
 		manager := newTestCompressionManager(t, cfg)
@@ -292,7 +292,7 @@ func TestCompress(t *testing.T) {
 	t.Run("No backups to compress", func(t *testing.T) {
 		// Arrange
 		tempDir := t.TempDir()
-		cfg := config.NewDefault()
+		cfg := config.NewDefault("test-version")
 		cfg.Naming.Prefix = "backup_"
 		manager := newTestCompressionManager(t, cfg)
 
@@ -322,7 +322,7 @@ func TestCompress(t *testing.T) {
 
 		// Arrange
 		archivesDir := t.TempDir()
-		cfg := config.NewDefault()
+		cfg := config.NewDefault("test-version")
 		cfg.Naming.Prefix = "backup_"
 		manager := newTestCompressionManager(t, cfg)
 
@@ -375,7 +375,7 @@ func TestCompress(t *testing.T) {
 func TestIdentifyEligibleBackups(t *testing.T) {
 	// Arrange
 	tempDir := t.TempDir()
-	cfg := config.NewDefault()
+	cfg := config.NewDefault("test-version")
 	manager := newTestCompressionManager(t, cfg)
 
 	// 1. Compressed Backup (Should be ignored)

@@ -182,6 +182,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
 
 ```json
 {
+  "version": "v1.0.0",
   "mode": "incremental",
   "engine": {
     "type": "native",
@@ -624,6 +625,7 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 
 | Flag / JSON Key                 | Type          | Default                               | Description                                                                                             |
 | ------------------------------- | ------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `version`                       | `string`      | `""`                                  | The `pgl-backup` version. |
 | `source` / `paths.source`       | `string`      | `""`                                  | The directory to back up. **Required**. |
 | `target` / `paths.targetBase`   | `string`      | `""`                                  | The base directory where backups are stored. **Required**. |
 | `mode` / `mode`                 | `string`      | `"incremental"`                       | Backup mode: `"incremental"` or `"snapshot"`. |

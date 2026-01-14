@@ -48,16 +48,16 @@ func RunInit(ctx context.Context, flagMap map[string]interface{}, appName, appVe
 				}
 			}
 		}
-		baseConfig = config.NewDefault()
+		baseConfig = config.NewDefault(appVersion)
 	} else {
 		// Try to load existing config to preserve settings.
 		// If it fails (e.g. corrupt JSON or path mismatch), we fall back to defaults.
 		// Note: config.Load returns NewDefault() if the file simply doesn't exist.
 		var err error
-		baseConfig, err = config.Load(targetPath)
+		baseConfig, err = config.Load(appVersion, targetPath)
 		if err != nil {
 			plog.Warn("Could not load existing configuration, starting with defaults.", "reason", err)
-			baseConfig = config.NewDefault()
+			baseConfig = config.NewDefault(appVersion)
 		}
 	}
 

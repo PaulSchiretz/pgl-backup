@@ -314,6 +314,7 @@ type BackupRetentionConfig struct {
 }
 
 type Config struct {
+	Version     string                  `json:"version"`
 	Mode        BackupMode              `json:"mode"`
 	Engine      BackupEngineConfig      `json:"engine"` // Keep this for engine-specific settings
 	LogLevel    string                  `json:"logLevel"`
@@ -330,11 +331,12 @@ type Config struct {
 
 // NewDefault creates and returns a Config struct with sensible default
 // values. It dynamically sets the sync engine based on the operating system.
-func NewDefault() Config {
+func NewDefault(appVersion string) Config {
 	// Default to the native engine on all platforms. It's highly concurrent and generally offers
 	// the best performance and consistency with no external dependencies.
 	// Power users on Windows can still opt-in to 'robocopy' as a battle-tested alternative.
 	return Config{
+		Version:  appVersion,
 		Mode:     IncrementalMode, // Default mode
 		LogLevel: "info",          // Default log level.
 		DryRun:   false,
@@ -436,13 +438,13 @@ func NewDefault() Config {
 // Load attempts to load a configuration from "pgl-backup.config.json".
 // If the file doesn't exist, it returns the provided default config without an error.
 // If the file exists but fails to parse, it returns an error and a zero-value config.
-func Load(targetBase string) (Config, error) {
+func Load(appVersion string, targetBase string) (Config, error) {
 	configPath := filepath.Join(targetBase, ConfigFileName)
 
 	file, err := os.Open(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return NewDefault(), nil // Config file doesn't exist, which is a normal case.
+			return NewDefault(appVersion), nil // Config file doesn't exist, which is a normal case.
 		}
 		return Config{}, fmt.Errorf("error opening config file %s: %w", configPath, err)
 	}
@@ -451,7 +453,7 @@ func Load(targetBase string) (Config, error) {
 	plog.Info("Loading configuration", "path", configPath)
 	// Start with default values, then overwrite with the file's content.
 	// This makes the config loading resilient to missing fields in the JSON file.
-	config := NewDefault()
+	config := NewDefault(appVersion)
 	decoder := json.NewDecoder(file)
 	if err := decoder.Decode(&config); err != nil {
 		return Config{}, fmt.Errorf("error parsing config file %s: %w", configPath, err)
@@ -472,6 +474,9 @@ func Load(targetBase string) (Config, error) {
 	if absLoadDir != absTargetInConfig {
 		return Config{}, fmt.Errorf("targetBase in config file (%s) does not match the directory it was loaded from (%s)", absTargetInConfig, absLoadDir)
 	}
+
+	// if config.Version differes from appVersion maybe migrate
+
 	return config, nil
 }
 

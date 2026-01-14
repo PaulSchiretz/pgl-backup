@@ -100,7 +100,7 @@ func TestHandleRobocopy_Integration(t *testing.T) {
 		}
 
 		// Create the syncer
-		cfg := config.NewDefault()
+		cfg := config.NewDefault("test-version")
 		plog.SetLevel(plog.LevelWarn) // Keep test logs clean
 		syncer := NewPathSyncer(cfg)
 

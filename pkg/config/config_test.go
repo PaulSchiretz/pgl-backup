@@ -12,7 +12,7 @@ import (
 func TestConfig_Validate(t *testing.T) {
 	// Helper to get a valid base config for testing
 	newValidConfig := func(t *testing.T) Config {
-		cfg := NewDefault()
+		cfg := NewDefault("test-version")
 		// Create a temporary source directory so validation passes
 		srcDir := t.TempDir()
 		cfg.Paths.Source = srcDir
@@ -225,7 +225,7 @@ func TestConfig_Validate(t *testing.T) {
 
 func TestMergeConfigWithFlags(t *testing.T) {
 	t.Run("Flag overrides base config", func(t *testing.T) {
-		base := NewDefault() // base.LogLevel is "info"
+		base := NewDefault("test-version") // base.LogLevel is "info"
 		setFlags := map[string]interface{}{"log-level": "debug"}
 
 		merged := MergeConfigWithFlags(base, setFlags)
@@ -235,7 +235,7 @@ func TestMergeConfigWithFlags(t *testing.T) {
 	})
 
 	t.Run("Base config is used when flag is not set", func(t *testing.T) {
-		base := NewDefault()
+		base := NewDefault("test-version")
 		base.LogLevel = "warn" // Set a non-default base value
 		setFlags := map[string]interface{}{}
 
@@ -246,7 +246,7 @@ func TestMergeConfigWithFlags(t *testing.T) {
 	})
 
 	t.Run("Flag explicitly set to default overrides base", func(t *testing.T) {
-		base := NewDefault()
+		base := NewDefault("test-version")
 		base.Paths.PreserveSourceDirectoryName = false // Non-default base
 		setFlags := map[string]interface{}{"preserve-source-name": true}
 
@@ -257,7 +257,7 @@ func TestMergeConfigWithFlags(t *testing.T) {
 	})
 
 	t.Run("Slice flags override base slice", func(t *testing.T) {
-		base := NewDefault()
+		base := NewDefault("test-version")
 		base.Paths.UserExcludeFiles = []string{"from_base.txt"}
 		setFlags := map[string]interface{}{"user-exclude-files": []string{"from_flag.txt"}}
 
@@ -284,7 +284,7 @@ func TestMergeConfigWithFlags(t *testing.T) {
 	})
 
 	t.Run("Mod time window flag overrides base", func(t *testing.T) {
-		base := NewDefault()
+		base := NewDefault("test-version")
 		base.Engine.ModTimeWindowSeconds = 1 // Default base value
 		setFlags := map[string]interface{}{"mod-time-window": 0}
 
@@ -296,7 +296,7 @@ func TestMergeConfigWithFlags(t *testing.T) {
 	})
 
 	t.Run("Buffer size flag overrides base", func(t *testing.T) {
-		base := NewDefault()
+		base := NewDefault("test-version")
 		base.Engine.Performance.BufferSizeKB = 256 // Default base value
 		setFlags := map[string]interface{}{"buffer-size-kb": 1024}
 
@@ -311,7 +311,7 @@ func TestMergeConfigWithFlags(t *testing.T) {
 func TestGenerate(t *testing.T) {
 	t.Run("Generates file in target dir", func(t *testing.T) {
 		targetDir := t.TempDir()
-		cfg := NewDefault()
+		cfg := NewDefault("test-version")
 		cfg.Paths.TargetBase = targetDir
 
 		err := Generate(cfg)
@@ -334,7 +334,7 @@ func TestGenerate(t *testing.T) {
 			t.Fatalf("failed to create dummy config file: %v", err)
 		}
 
-		cfg := NewDefault()
+		cfg := NewDefault("test-version")
 		cfg.Paths.TargetBase = targetDir
 
 		err := Generate(cfg)
@@ -351,7 +351,7 @@ func TestGenerate(t *testing.T) {
 
 	t.Run("Generates file with custom values", func(t *testing.T) {
 		targetDir := t.TempDir()
-		customCfg := NewDefault()
+		customCfg := NewDefault("test-version")
 		customCfg.Paths.Source = "/my/custom/source" // A non-default value
 		customCfg.LogLevel = "debug"                 // A non-default value
 		// Set the targetBase in the config to match the directory it's being generated in.
@@ -364,7 +364,7 @@ func TestGenerate(t *testing.T) {
 		}
 
 		// Load the generated file and check its contents
-		loadedCfg, err := Load(targetDir)
+		loadedCfg, err := Load("test-version", targetDir)
 		if err != nil {
 			t.Fatalf("Failed to load generated config for verification: %v", err)
 		}
@@ -402,7 +402,7 @@ func TestLoad(t *testing.T) {
 	t.Run("No Config File", func(t *testing.T) {
 		tempDir := t.TempDir()
 
-		cfg, err := Load(tempDir)
+		cfg, err := Load("test-version", tempDir)
 		if err != nil {
 			t.Fatalf("Load() with no config file should not return an error, but got: %v", err)
 		}
@@ -425,7 +425,7 @@ func TestLoad(t *testing.T) {
 			t.Fatalf("failed to write test config file: %v", err)
 		}
 
-		cfg, err := Load(tempDir)
+		cfg, err := Load("test-version", tempDir)
 		if err != nil {
 			t.Fatalf("expected no error when loading valid config, but got: %v", err)
 		}
@@ -449,7 +449,7 @@ func TestLoad(t *testing.T) {
 			t.Fatalf("failed to write test config file: %v", err)
 		}
 
-		_, err := Load(tempDir)
+		_, err := Load("test-version", tempDir)
 		if err == nil {
 			t.Fatal("expected an error when loading malformed config, but got nil")
 		}
@@ -469,7 +469,7 @@ func TestLoad(t *testing.T) {
 			t.Fatalf("failed to write test config file: %v", err)
 		}
 
-		_, err := Load(loadDir)
+		_, err := Load("test-version", loadDir)
 		if err == nil {
 			t.Fatal("expected an error for mismatched targetBase, but got nil")
 		}

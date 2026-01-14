@@ -19,7 +19,7 @@ func RunPrune(ctx context.Context, flagMap map[string]interface{}, appName, appV
 	}
 
 	// Load config from the target directory.
-	loadedConfig, err := config.Load(targetPath)
+	loadedConfig, err := config.Load(appVersion, targetPath)
 	if err != nil {
 		return fmt.Errorf("failed to load configuration from target: %w", err)
 	}

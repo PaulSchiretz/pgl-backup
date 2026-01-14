@@ -19,7 +19,7 @@ func RunBackup(ctx context.Context, flagMap map[string]interface{}, appName, app
 	}
 
 	// Load config from the target directory, or use defaults if not found.
-	loadedConfig, err := config.Load(targetPath)
+	loadedConfig, err := config.Load(appVersion, targetPath)
 	if err != nil {
 		return fmt.Errorf("failed to load configuration from target: %w", err)
 	}
