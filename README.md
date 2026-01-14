@@ -200,7 +200,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
   "dryRun": false,
   "metrics": true,
   "compression": {
-      "incremental": {
+    "incremental": {
       "enabled": true,
       "format": "tar.zst"
     },
@@ -216,12 +216,12 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
     "source": "/home/user/Documents",
     "targetBase": "/media/backup-drive/MyDocumentsBackup",
     "incrementalSubDirs": {
-      "Current": "PGL_Backup_Incremental_Current",
-      "Archive": "PGL_Backup_Incremental_Archive"
+      "current": "PGL_Backup_Incremental_Current",
+      "archive": "PGL_Backup_Incremental_Archive"
     },
     "snapshotSubDirs": {
-      "Current": "PGL_Backup_Snapshot_Current",
-      "Archive": "PGL_Backup_Snapshot_Archive"
+      "current": "PGL_Backup_Snapshot_Current",
+      "archive": "PGL_Backup_Snapshot_Archive"
     },
     "contentSubDir": "PGL_Backup_Content",
     "preserveSourceDirectoryName": true,
@@ -657,12 +657,12 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `compression-incremental-format` / `compression.incremental.format` | `string` | `"tar.zst"` | The archive format to use for incremental backups: `"zip"`, `"tar.gz"`, or `"tar.zst"`. |
 | `compression-snapshot` / `compression.snapshot.enabled` | `bool` | `true` | If true, enables compression for snapshot backups that are not already compressed. |
 | `compression-snapshot-format` / `compression.snapshot.format` | `string` | `"tar.zst"` | The archive format to use for snapshot backups: `"zip"`, `"tar.gz"`, or `"tar.zst"`. |
-| `defaultExcludeFiles`           | `[]string`    | `[*.tmp, *.temp, *.swp, *.lnk, ~*, desktop.ini, .DS_Store, Thumbs.db, Icon\r]`                     | The list of default file patterns to exclude. Can be customized. |
-| `defaultExcludeDirs`            | `[]string`    | `[@tmp, @eadir, .SynologyWorkingDirectory, #recycle, $Recycle.Bin]`                     | The list of default directory patterns to exclude. Can be customized. |
-| `user-exclude-files` / `userExcludeFiles`| `[]string`    | `[]`                                  | List of file patterns to exclude. |
-| `user-exclude-dirs` / `userExcludeDirs`  | `[]string`    | `[]`                                  | List of directory patterns to exclude. |
-| `pre-backup-hooks` / `preBackup`| `[]string`    | `[]`                                  | List of shell commands to run before the backup. |
-| `post-backup-hooks` / `postBackup`| `[]string`    | `[]`                                  | List of shell commands to run after the backup. |
+| `paths.defaultExcludeFiles` | `[]string`    | `[*.tmp, *.temp, *.swp, *.lnk, ~*, desktop.ini, .DS_Store, Thumbs.db, Icon\r]`                     | The list of default file patterns to exclude. Can be customized. |
+| `paths.defaultExcludeDirs` | `[]string`    | `[@tmp, @eadir, .SynologyWorkingDirectory, #recycle, $Recycle.Bin]`                     | The list of default directory patterns to exclude. Can be customized. |
+| `user-exclude-files` / `paths.userExcludeFiles`| `[]string`    | `[]`                                  | List of file patterns to exclude. |
+| `user-exclude-dirs` / `paths.userExcludeDirs`  | `[]string`    | `[]`                                  | List of directory patterns to exclude. |
+| `pre-backup-hooks` / `hooks.preBackup`| `[]string`    | `[]`                                  | List of shell commands to run before the backup. |
+| `post-backup-hooks` / `hooks.postBackup`| `[]string`    | `[]`                                  | List of shell commands to run after the backup. |
 | `preserve-source-name` / `paths.preserveSourceDirectoryName` | `bool` | `true` | If true, creates a subdirectory in the destination named after the source directory. If false, syncs contents directly. |
 | **Performance Tuning** | | | | 
 | `sync-workers` / `engine.performance.syncWorkers` | `int` | `4` | Number of concurrent workers for file synchronization. |
