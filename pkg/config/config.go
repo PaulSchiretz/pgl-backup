@@ -475,6 +475,11 @@ func Load(appVersion string, targetBase string) (Config, error) {
 	if absLoadDir != absTargetInConfig {
 		return Config{}, fmt.Errorf("targetBase in config file (%s) does not match the directory it was loaded from (%s)", absTargetInConfig, absLoadDir)
 	}
+
+	// At this point our config has been migrated if needed so override the version in the struct
+	if config.Version != appVersion {
+		config.Version = appVersion
+	}
 	return config, nil
 }
 
