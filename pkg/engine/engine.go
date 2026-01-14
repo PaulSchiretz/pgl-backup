@@ -64,11 +64,11 @@ type engineRunState struct {
 	doSync                   bool
 	relSyncTargetPath        string
 	relSyncTargetContentPath string
-	doSyncCompression        bool
+	compressSyncResult       bool
 
-	doArchiving            bool
-	archivingPolicy        config.ArchivePolicyConfig
-	doArchivingCompression bool
+	doArchiving             bool
+	archivingPolicy         config.ArchivePolicyConfig
+	compressArchivingResult bool
 
 	doRetention     bool
 	retentionPolicy config.RetentionPolicyConfig
@@ -144,7 +144,7 @@ func (e *Engine) initBackupRun(mode config.BackupMode) (*engineRunState, error) 
 		runState.relArchivePath = e.config.Paths.SnapshotSubDirs.Archive
 
 		runState.doSync = true
-		runState.doSyncCompression = true
+		runState.compressSyncResult = true
 		// The relSyncTargetPath name must remain uniquely based on UTC time to avoid DST conflicts,
 		// but we add the user's local offset to make the timezone clear to the user.
 		timestamp := config.FormatTimestampWithOffset(runState.timestampUTC)
@@ -154,7 +154,7 @@ func (e *Engine) initBackupRun(mode config.BackupMode) (*engineRunState, error) 
 		runState.relSyncTargetContentPath = filepath.Join(runState.relSyncTargetPath, e.config.Paths.ContentSubDir)
 
 		runState.doArchiving = false
-		runState.doArchivingCompression = false
+		runState.compressArchivingResult = false
 
 		runState.doCompression = e.config.Compression.Snapshot.Enabled
 		runState.compressionPolicy = e.config.Compression.Snapshot
@@ -175,13 +175,13 @@ func (e *Engine) initBackupRun(mode config.BackupMode) (*engineRunState, error) 
 		runState.relArchivePath = e.config.Paths.IncrementalSubDirs.Archive
 
 		runState.doSync = true
-		runState.doSyncCompression = false
+		runState.compressSyncResult = false
 		runState.relSyncTargetPath = e.config.Paths.IncrementalSubDirs.Current
 		runState.relSyncTargetContentPath = filepath.Join(runState.relSyncTargetPath, e.config.Paths.ContentSubDir)
 
 		runState.doArchiving = true
 		runState.archivingPolicy = e.config.Archive.Incremental
-		runState.doArchivingCompression = true
+		runState.compressArchivingResult = true
 
 		runState.doCompression = e.config.Compression.Incremental.Enabled
 		runState.compressionPolicy = e.config.Compression.Incremental
@@ -531,7 +531,7 @@ func (e *Engine) performSync(ctx context.Context, r *engineRunState) error {
 		}
 	}
 
-	if r.doSyncCompression {
+	if r.compressSyncResult {
 		r.absBackupPathsToCompress = append(r.absBackupPathsToCompress, absSyncTarget)
 	}
 	return nil
@@ -558,7 +558,7 @@ func (e *Engine) performArchiving(ctx context.Context, r *engineRunState) error 
 	}
 
 	// mark archivePath for compression
-	if r.doArchivingCompression {
+	if r.compressArchivingResult {
 		r.absBackupPathsToCompress = append(r.absBackupPathsToCompress, absArchivePathCreated)
 	}
 	return nil
