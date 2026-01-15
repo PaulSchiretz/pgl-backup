@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/paulschiretz/pgl-backup/pkg/config"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
+
+// MetaFileName is the name of the backup metadata file.
+const MetaFileName = ".pgl-backup.meta.json"
 
 // MetafileInfo holds the parsed metadata and rel directory path of a backup found on disk.
 type MetafileInfo struct {
@@ -28,7 +30,7 @@ type MetafileContent struct {
 
 // Write creates and writes the .pgl-backup.meta.json file into a given directory.
 func Write(dirPath string, content MetafileContent) error {
-	metaFilePath := filepath.Join(dirPath, config.MetaFileName)
+	metaFilePath := filepath.Join(dirPath, MetaFileName)
 	jsonData, err := json.MarshalIndent(content, "", "  ")
 	if err != nil {
 		return fmt.Errorf("could not marshal meta data: %w", err)
@@ -48,7 +50,7 @@ func Write(dirPath string, content MetafileContent) error {
 // Read opens and parses the .pgl-backup.meta.json file in a given directory.
 // It returns the parsed metadata or an error if the file cannot be read or parsed.
 func Read(dirPath string) (MetafileContent, error) {
-	metaFilePath := filepath.Join(dirPath, config.MetaFileName)
+	metaFilePath := filepath.Join(dirPath, MetaFileName)
 	metaFile, err := os.Open(metaFilePath)
 	if err != nil {
 		// Note: os.IsNotExist errors are handled by the caller.

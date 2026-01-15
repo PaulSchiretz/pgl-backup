@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/config"
+	"github.com/paulschiretz/pgl-backup/pkg/lockfile"
+	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
@@ -66,7 +68,7 @@ type mockCompressionManager struct {
 	err            error
 }
 
-func (m *mockCompressionManager) Compress(ctx context.Context, backups []string, policy config.CompressionPolicyConfig) error {
+func (m *mockCompressionManager) Compress(ctx context.Context, absPaths []string, format pathcompression.Format) error {
 	m.compressCalled = true
 	return m.err
 }
@@ -162,7 +164,7 @@ func TestPerformCompression(t *testing.T) {
 		// Act
 		runState := &engineRunState{
 			doCompression:            true,
-			compressionPolicy:        config.CompressionPolicyConfig{Enabled: true, Format: config.TarZstFormat},
+			compressionPolicy:        config.CompressionPolicyConfig{Enabled: true, Format: pathcompression.TarZst},
 			absBackupPathsToCompress: []string{},
 		}
 		// The new performCompression takes the runState.
@@ -189,7 +191,7 @@ func TestPerformCompression(t *testing.T) {
 		// Act
 		runState := &engineRunState{
 			doCompression:            true,
-			compressionPolicy:        config.CompressionPolicyConfig{Enabled: true, Format: config.TarZstFormat},
+			compressionPolicy:        config.CompressionPolicyConfig{Enabled: true, Format: pathcompression.TarZst},
 			absBackupPathsToCompress: backups,
 		}
 		err := e.performCompression(context.Background(), runState)
@@ -356,7 +358,7 @@ func TestExecuteBackup_Retention(t *testing.T) {
 	// Act
 	// We don't care about the error, only that the retention manager was called.
 	// We also ignore the lock file error for this test.
-	_ = os.Remove(filepath.Join(tempDir, config.LockFileName))
+	_ = os.Remove(filepath.Join(tempDir, lockfile.LockFileName))
 	_ = e.ExecuteBackup(context.Background())
 
 	// Assert

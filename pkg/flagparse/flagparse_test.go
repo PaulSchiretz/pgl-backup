@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/paulschiretz/pgl-backup/pkg/config"
+	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
 )
 
 // equalSlices is a helper to compare two string slices for equality.
@@ -336,8 +337,8 @@ func TestParse(t *testing.T) {
 		}
 
 		// Check compression format
-		if val, ok := setFlags["compression-incremental-format"]; !ok || string(val.(config.CompressionFormat)) != "tar.gz" {
-			t.Errorf("expected compression-incremental-format to be 'tar.gz', but got %v", val.(config.CompressionFormat))
+		if val, ok := setFlags["compression-incremental-format"]; !ok || string(val.(pathcompression.Format)) != "tar.gz" {
+			t.Errorf("expected compression-incremental-format to be 'tar.gz', but got %v", val.(pathcompression.Format))
 		}
 
 		args = []string{
@@ -356,8 +357,8 @@ func TestParse(t *testing.T) {
 		}
 
 		// Check compression format
-		if val, ok := setFlags["compression-snapshot-format"]; !ok || string(val.(config.CompressionFormat)) != "tar.gz" {
-			t.Errorf("expected compression-snapshot-format to be 'tar.gz', but got %v", val.(config.CompressionFormat))
+		if val, ok := setFlags["compression-snapshot-format"]; !ok || string(val.(pathcompression.Format)) != "tar.gz" {
+			t.Errorf("expected compression-snapshot-format to be 'tar.gz', but got %v", val.(pathcompression.Format))
 		}
 	})
 

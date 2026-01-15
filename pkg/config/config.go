@@ -8,6 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/paulschiretz/pgl-backup/pkg/lockfile"
+	"github.com/paulschiretz/pgl-backup/pkg/metafile"
+	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
@@ -15,19 +18,12 @@ import (
 // ConfigFileName is the name of the configuration file.
 const ConfigFileName = "pgl-backup.config.json"
 
-// MetaFileName is the name of the backup metadata file.
-const MetaFileName = ".pgl-backup.meta.json"
-
-// LockFileName is the name of the lock file created in the target directory.
-// The '~' prefix marks it as temporary.
-const LockFileName = ".~pgl-backup.lock"
-
 // backupTimeFormat defines the standard, non-configurable time format for backup directory names.
 const backupTimeFormat = "2006-01-02-15-04-05"
 
 // systemExcludeFilePatterns is a slice of file patterns that should
 // always be excluded from synchronization for the system to function correctly.
-var systemExcludeFilePatterns = []string{MetaFileName, LockFileName, ConfigFileName}
+var systemExcludeFilePatterns = []string{metafile.MetaFileName, lockfile.LockFileName, ConfigFileName}
 
 // systemExcludeDirPatterns is a slice of directory patterns that should
 // always be excluded from synchronization for the system to function correctly.
@@ -243,56 +239,9 @@ type BackupArchiveConfig struct {
 	Incremental ArchivePolicyConfig `json:"incremental,omitempty"`
 }
 
-// CompressionFormat represents the archive format for compression.
-type CompressionFormat string
-
-const (
-	ZipFormat    CompressionFormat = "zip"
-	TarGzFormat  CompressionFormat = "tar.gz"
-	TarZstFormat CompressionFormat = "tar.zst"
-)
-
-var compressionFormatToString = map[CompressionFormat]string{ZipFormat: "zip", TarGzFormat: "tar.gz", TarZstFormat: "tar.zst"}
-var stringToCompressionFormat = util.InvertMap(compressionFormatToString)
-
-// String returns the string representation of a CompressionFormat.
-func (cf CompressionFormat) String() string {
-	if str, ok := compressionFormatToString[cf]; ok {
-		return str
-	}
-	return fmt.Sprintf("unknown_compression_format(%s)", string(cf))
-}
-
-// CompressionFormatFromString parses a string and returns the corresponding CompressionFormat.
-func CompressionFormatFromString(s string) (CompressionFormat, error) {
-	if format, ok := stringToCompressionFormat[s]; ok {
-		return format, nil
-	}
-	return "", fmt.Errorf("invalid CompressionFormat: %q. Must be 'zip', 'tar.gz', or 'tar.zst'", s)
-}
-
-// MarshalJSON implements the json.Marshaler interface for CompressionFormat.
-func (cf CompressionFormat) MarshalJSON() ([]byte, error) {
-	return json.Marshal(cf.String())
-}
-
-// UnmarshalJSON implements the json.Unmarshaler interface for CompressionFormat.
-func (cf *CompressionFormat) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return fmt.Errorf("CompressionFormat should be a string, got %s", data)
-	}
-	format, err := CompressionFormatFromString(s)
-	if err != nil {
-		return err
-	}
-	*cf = format
-	return nil
-}
-
 type CompressionPolicyConfig struct {
-	Enabled bool              `json:"enabled"`
-	Format  CompressionFormat `json:"format,omitempty"`
+	Enabled bool                   `json:"enabled"`
+	Format  pathcompression.Format `json:"format"`
 }
 
 type BackupCompressionConfig struct {
@@ -423,11 +372,11 @@ func NewDefault(appVersion string) Config {
 		Compression: BackupCompressionConfig{
 			Incremental: CompressionPolicyConfig{
 				Enabled: true,
-				Format:  TarZstFormat,
+				Format:  pathcompression.TarZst,
 			},
 			Snapshot: CompressionPolicyConfig{
 				Enabled: true,
-				Format:  TarZstFormat,
+				Format:  pathcompression.TarZst,
 			},
 		},
 		Hooks: BackupHooksConfig{
@@ -826,11 +775,11 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 		case "compression-incremental":
 			merged.Compression.Incremental.Enabled = value.(bool)
 		case "compression-incremental-format":
-			merged.Compression.Incremental.Format = value.(CompressionFormat)
+			merged.Compression.Incremental.Format = value.(pathcompression.Format)
 		case "compression-snapshot":
 			merged.Compression.Snapshot.Enabled = value.(bool)
 		case "compression-snapshot-format":
-			merged.Compression.Snapshot.Format = value.(CompressionFormat)
+			merged.Compression.Snapshot.Format = value.(pathcompression.Format)
 		default:
 			plog.Debug("unhandled flag in MergeConfigWithFlags", "flag", name)
 		}

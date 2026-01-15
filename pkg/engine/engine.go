@@ -95,12 +95,18 @@ type Engine struct {
 // New creates a new backup engine with the given configuration and version.
 func New(cfg config.Config, version string) *Engine {
 	return &Engine{
-		config:              cfg,
-		version:             version,
-		syncer:              pathsync.NewPathSyncer(cfg),
-		archiver:            patharchive.NewPathArchiver(cfg),
-		retentionManager:    pathretention.NewPathRetentionManager(cfg),
-		compressionManager:  pathcompression.NewPathCompressionManager(cfg),
+		config:           cfg,
+		version:          version,
+		syncer:           pathsync.NewPathSyncer(cfg),
+		archiver:         patharchive.NewPathArchiver(cfg),
+		retentionManager: pathretention.NewPathRetentionManager(cfg),
+		compressionManager: pathcompression.NewPathCompressionManager(pathcompression.Config{
+			MetricsEnabled: cfg.Metrics,
+			ContentSubDir:  cfg.Paths.ContentSubDir,
+			DryRun:         cfg.DryRun,
+			BufferSizeKB:   cfg.Engine.Performance.BufferSizeKB,
+			NumWorkers:     cfg.Engine.Performance.CompressWorkers,
+		}),
 		hookCommandExecutor: exec.CommandContext, // Default to the real implementation.
 	}
 }
@@ -108,11 +114,10 @@ func New(cfg config.Config, version string) *Engine {
 // acquireTargetLock ensures the target directory exists and acquires a file lock within it.
 // It returns a release function that must be called to unlock the directory.
 func (e *Engine) acquireTargetLock(ctx context.Context) (func(), error) {
-	lockFilePath := filepath.Join(e.config.Paths.TargetBase, config.LockFileName)
-	appID := fmt.Sprintf("pgl-backup:%s", e.config.Paths.Source)
+	appID := fmt.Sprintf("pgl-backup:%s", e.config.Paths.TargetBase)
 
-	plog.Debug("Attempting to acquire lock", "path", lockFilePath)
-	lock, err := lockfile.Acquire(ctx, lockFilePath, appID)
+	plog.Debug("Attempting to acquire lock", "path", e.config.Paths.TargetBase)
+	lock, err := lockfile.Acquire(ctx, e.config.Paths.TargetBase, appID)
 	if err != nil {
 		var lockErr *lockfile.ErrLockActive
 		if errors.As(err, &lockErr) {
@@ -497,7 +502,7 @@ func (e *Engine) performCompression(ctx context.Context, r *engineRunState) erro
 		return nil
 	}
 
-	if err := e.compressionManager.Compress(ctx, r.absBackupPathsToCompress, r.compressionPolicy); err != nil {
+	if err := e.compressionManager.Compress(ctx, r.absBackupPathsToCompress, r.compressionPolicy.Format); err != nil {
 		plog.Warn("Error during backup compression", "error", err)
 	}
 	return nil

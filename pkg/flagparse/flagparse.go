@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/paulschiretz/pgl-backup/pkg/config"
+	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
 )
 
 // CommandFlag defines a special command to execute instead of a backup.
@@ -256,7 +257,7 @@ func flagsToMap(fs *flag.FlagSet, f *CmdFlags) (map[string]interface{}, error) {
 	}
 
 	if f.CompressionIncrementalFormat != nil && usedFlags["compression-incremental-format"] {
-		format, err := config.CompressionFormatFromString(*f.CompressionIncrementalFormat)
+		format, err := pathcompression.ParseFormat(*f.CompressionIncrementalFormat)
 		if err != nil {
 			return nil, err
 		}
@@ -264,7 +265,7 @@ func flagsToMap(fs *flag.FlagSet, f *CmdFlags) (map[string]interface{}, error) {
 	}
 
 	if f.CompressionSnapshotFormat != nil && usedFlags["compression-snapshot-format"] {
-		format, err := config.CompressionFormatFromString(*f.CompressionSnapshotFormat)
+		format, err := pathcompression.ParseFormat(*f.CompressionSnapshotFormat)
 		if err != nil {
 			return nil, err
 		}
