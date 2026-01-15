@@ -112,7 +112,7 @@ func (a *PathArchiver) Archive(ctx context.Context, dirPath, currentBackupPath s
 	archiveBackupPath := filepath.Join(dirPath, archiveDirName)
 
 	// Ensure the archives directory exists.
-	if interval > 0 && !a.config.DryRun {
+	if !a.config.DryRun {
 		if err := os.MkdirAll(dirPath, util.UserWritableDirPerms); err != nil {
 			return "", fmt.Errorf("failed to create archives subdirectory %s: %w", dirPath, err)
 		}
@@ -204,7 +204,7 @@ func (r *archiveRun) execute() (string, error) {
 // for midnight-to-midnight boundary crossings (epoch day counting).
 func (r *archiveRun) shouldArchive() bool {
 	if r.interval == 0 {
-		return false // Archive is explicitly disabled.
+		return true // Archive interval check is explicitly disabled, always create an archive.
 	}
 
 	// For intervals of 24 hours or longer, this function intentionally calculates
@@ -264,8 +264,9 @@ func (a *PathArchiver) adjustInterval(retentionPolicy config.RetentionPolicyConf
 
 	// If the retention policy is explicitly disabled, auto-mode should also disable archiving.
 	if !retentionPolicy.Enabled {
-		plog.Debug("Retention policy is disabled; auto-disabling archiving for this run.")
-		return 0 // disables the interval
+		suggestedInterval = 24 * time.Hour
+		plog.Debug("Retention policy is disabled; Auto-determined archive interval", "interval", suggestedInterval)
+		return suggestedInterval
 	}
 
 	// Pick the shortest duration required to satisfy the configured retention slots.
@@ -292,8 +293,9 @@ func (a *PathArchiver) adjustInterval(retentionPolicy config.RetentionPolicyConf
 // checkInterval validates the interval against the retention policy.
 func (a *PathArchiver) checkInterval(interval time.Duration, retentionPolicy config.RetentionPolicyConfig) {
 
+	// Shortcut for always archive interval
 	if interval == 0 {
-		plog.Debug("Archiving is disabled (interval = 0). Retention policy warnings for interval mismatch are suppressed.")
+		plog.Debug("Archiving is always enabled (interval = 0) Retention policy warnings for interval mismatch are suppressed.")
 		return
 	}
 

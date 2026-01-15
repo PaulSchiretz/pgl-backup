@@ -479,7 +479,7 @@ func (e *Engine) runHooks(ctx context.Context, commands []string, hookType strin
 // to the user's configuration and prevents "retention debt" if one mode is
 // run less frequently than another.
 func (e *Engine) performRetention(ctx context.Context, r *engineRunState) error {
-	if !r.doRetention {
+	if !r.doRetention || !r.retentionPolicy.Enabled {
 		return nil
 	}
 
@@ -493,10 +493,12 @@ func (e *Engine) performRetention(ctx context.Context, r *engineRunState) error 
 
 // performCompression compresses backups based on the configured policies.
 func (e *Engine) performCompression(ctx context.Context, r *engineRunState) error {
-	if r.doCompression && len(r.absBackupPathsToCompress) > 0 {
-		if err := e.compressionManager.Compress(ctx, r.absBackupPathsToCompress, r.compressionPolicy); err != nil {
-			plog.Warn("Error during backup compression", "error", err)
-		}
+	if !r.doCompression || !r.compressionPolicy.Enabled || len(r.absBackupPathsToCompress) <= 0 {
+		return nil
+	}
+
+	if err := e.compressionManager.Compress(ctx, r.absBackupPathsToCompress, r.compressionPolicy); err != nil {
+		plog.Warn("Error during backup compression", "error", err)
 	}
 	return nil
 }
@@ -545,7 +547,7 @@ func (e *Engine) performSync(ctx context.Context, r *engineRunState) error {
 // performArchiving is the main entry point for archive updates.
 func (e *Engine) performArchiving(ctx context.Context, r *engineRunState) error {
 
-	if !r.doArchiving {
+	if !r.doArchiving || !r.archivingPolicy.Enabled {
 		return nil
 	}
 

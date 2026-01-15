@@ -445,12 +445,12 @@ You can define your own list of files and directories to exclude using the `user
 
 ## Retention Policy
 
-The retention policy is designed to give you a detailed short-term history and a space-efficient long-term history. `pgl-backup` supports separate retention policies for **Incremental** mode (archives) and **Snapshot** mode.
+The retention policy is designed to give you a detailed short-term history and a space-efficient long-term history. `pgl-backup` supports separate retention policies the **Incremental** mode archive and **Snapshot** mode archive.
 
-*   **Incremental Retention**: Enabled by default. It manages the lifecycle of your historical incremental archives.
-*   **Snapshot Retention**: Disabled by default. This means all snapshots are kept forever unless you explicitly enable this policy.
+*   **Incremental Retention**: Enabled by default. It manages the lifecycle of backups in the incremental archive.
+*   **Snapshot Retention**: Disabled by default. This means backups in the snapshot archive are kept forever unless you explicitly enable this policy.
 
-Both policies work using a "promotion" system. When cleaning up old backups, `pgl-backup` scans all your archives from newest to oldest and decides which ones to keep.
+Both policies work using a "promotion" system. When cleaning up old backups, `pgl-backup` scans all your archived backups from newest to oldest and decides which ones to keep.
 
 Here's how it works for each backup, in order of priority:
 1.  **Hourly**: Is there an open "hourly" slot? If yes, keep this backup and move to the next one.
@@ -641,8 +641,9 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `log-level` / `logLevel`        | `string`      | `"info"`                              | Set the logging level: `"debug"`, `"notice"`, `"info"`, `"warn"`, or `"error"`. |
 | `metrics` / `metrics`           | `bool`        | `true`                                | If true, enables detailed performance and file-counting metrics. |
 | `sync-engine` / `engine.type`   | `string`      | `"native"`                            | The sync engine to use: `"native"` or `"robocopy"` (Windows only). |
-| `archive-incremental-interval-mode` / `archive.incremental.intervalMode` | `string` | `"auto"` | Archive interval mode: `"auto"` (derives interval from retention policy) or `"manual"`. In `auto` mode, if the retention policy is disabled, archiving is also disabled. |
-| `archive-incremental-interval-seconds` / `archive.incremental.intervalSeconds` | `int` | `86400` | In `manual` mode, the interval in seconds after which a new archive is created (e.g., `86400` for 24h). Use `0` to disable archiving. |
+| `archive-incremental` / `archive.incremental.enabled` | `bool` | `true` | If true, enables archiving for incremental backups when the archiving interval has passed. |
+| `archive-incremental-interval-mode` / `archive.incremental.intervalMode` | `string` | `"auto"` | Archive interval mode: `"auto"` (derives interval from retention policy) or `"manual"`. In `auto` mode if archiving is `enabled` and the retention policy is disabled, the interval in seconds after which a backup is archived is set to the default for `manual` intervals (e.g., `86400` for 24h). |
+| `archive-incremental-interval-seconds` / `archive.incremental.intervalSeconds` | `int` | `86400` | In `manual` mode, the interval in seconds after which a backup is archived (e.g., `86400` for 24h). |
 | `retention.incremental.enabled`         | `bool`         | `true`                             | Enables the retention policy for incremental mode archives. |
 | `retention.incremental.hours`         | `int`         | `0`                                   | Number of recent hourly incremental archives to keep. |
 | `retention.incremental.days`          | `int`         | `0`                                   | Number of recent daily incremental archives to keep. |

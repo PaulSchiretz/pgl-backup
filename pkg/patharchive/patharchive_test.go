@@ -316,35 +316,6 @@ func TestArchive(t *testing.T) {
 		}
 	})
 
-	t.Run("Disabled - Interval 0 does not create archives dir", func(t *testing.T) {
-		// Arrange
-		tempDir := t.TempDir()
-		cfg := config.NewDefault("test-version")
-		cfg.Paths.TargetBase = tempDir
-		// Explicitly disable archiving by setting interval to 0 in manual mode
-		cfg.Archive.Incremental.IntervalMode = config.ManualInterval
-		cfg.Archive.Incremental.IntervalSeconds = 0
-
-		archiver := NewPathArchiver(cfg)
-
-		currentBackupTimestampUTC := time.Now().UTC().Add(-25 * time.Hour)
-		currentTimestampUTC := time.Now().UTC()
-		currentBackupPath := filepath.Join(tempDir, "current")
-		archivesDir := filepath.Join(tempDir, cfg.Paths.IncrementalSubDirs.Archive)
-		createTestMetafile(t, currentBackupPath, currentBackupTimestampUTC)
-
-		// Act
-		_, err := archiver.Archive(context.Background(), archivesDir, currentBackupPath, currentTimestampUTC, cfg.Archive.Incremental, cfg.Retention.Incremental)
-		if err != nil && err != ErrNothingToArchive {
-			t.Fatalf("Archive failed unexpectedly: %v", err)
-		}
-
-		// Assert
-		if _, err := os.Stat(archivesDir); !os.IsNotExist(err) {
-			t.Errorf("expected archives directory %s NOT to exist when interval is 0, but it does", archivesDir)
-		}
-	})
-
 	t.Run("Dry Run - Does not rename directory", func(t *testing.T) {
 		// Arrange
 		tempDir := t.TempDir()

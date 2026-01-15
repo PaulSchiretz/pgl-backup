@@ -230,6 +230,7 @@ func (rim *ArchiveIntervalMode) UnmarshalJSON(data []byte) error {
 }
 
 type ArchivePolicyConfig struct {
+	Enabled bool `json:"enabled"`
 	// IntervalMode determines if the interval is set manually or derived automatically from the retention policy.
 	IntervalMode ArchiveIntervalMode `json:"intervalMode"`
 	// IntervalSeconds is the duration in seconds after which a new backup archive is created in incremental mode.
@@ -342,28 +343,6 @@ func NewDefault(appVersion string) Config {
 		DryRun:   false,
 		FailFast: false,
 		Metrics:  true, // Default to enabled for detailed performance and file-counting metrics.
-		Compression: BackupCompressionConfig{
-			Incremental: CompressionPolicyConfig{
-				Enabled: true,
-				Format:  TarZstFormat,
-			},
-			Snapshot: CompressionPolicyConfig{
-				Enabled: true,
-				Format:  TarZstFormat,
-			},
-		},
-		Engine: BackupEngineConfig{
-			Type:                 NativeEngine,
-			RetryCount:           3, // Default retries on failure.
-			RetryWaitSeconds:     5, // Default wait time between retries.
-			ModTimeWindowSeconds: 1, // Set the default to 1 second
-			Performance: BackupEnginePerformanceConfig{ // Initialize performance settings here
-				SyncWorkers:     4,   // Default to 4. Safe for HDDs (prevents thrashing), decent for SSDs.
-				MirrorWorkers:   4,   // Default to 4.
-				DeleteWorkers:   4,   // A sensible default for deleting entire backup sets.
-				CompressWorkers: 1,   // Default to 1. Our compression libraries (pgzip, zstd) use internal parallelism to utilize all cores for a single file. Increasing this might cause oversubscription.
-				BufferSizeKB:    256, // Default to 256KB buffer. Keep it between 64KB-4MB
-			}},
 		Naming: BackupNamingConfig{
 			Prefix: "PGL_Backup_",
 		},
@@ -403,8 +382,21 @@ func NewDefault(appVersion string) Config {
 				"$Recycle.Bin",              // Windows recycle bin
 			},
 		},
+		Engine: BackupEngineConfig{
+			Type:                 NativeEngine,
+			RetryCount:           3, // Default retries on failure.
+			RetryWaitSeconds:     5, // Default wait time between retries.
+			ModTimeWindowSeconds: 1, // Set the default to 1 second
+			Performance: BackupEnginePerformanceConfig{ // Initialize performance settings here
+				SyncWorkers:     4,   // Default to 4. Safe for HDDs (prevents thrashing), decent for SSDs.
+				MirrorWorkers:   4,   // Default to 4.
+				DeleteWorkers:   4,   // A sensible default for deleting entire backup sets.
+				CompressWorkers: 1,   // Default to 1. Our compression libraries (pgzip, zstd) use internal parallelism to utilize all cores for a single file. Increasing this might cause oversubscription.
+				BufferSizeKB:    256, // Default to 256KB buffer. Keep it between 64KB-4MB
+			}},
 		Archive: BackupArchiveConfig{
 			Incremental: ArchivePolicyConfig{
+				Enabled:         true,         // Enabled by default for incremental mode.
 				IntervalMode:    AutoInterval, // Default to auto-adjusting the interval based on the retention policy.
 				IntervalSeconds: 86400,        // Interval will be calculated by the engine in 'auto' mode. Default 24h.
 				// If a user switches to 'manual' mode, they must specify an interval.
@@ -426,6 +418,16 @@ func NewDefault(appVersion string) Config {
 				Weeks:   0,
 				Months:  0,
 				Years:   0,
+			},
+		},
+		Compression: BackupCompressionConfig{
+			Incremental: CompressionPolicyConfig{
+				Enabled: true,
+				Format:  TarZstFormat,
+			},
+			Snapshot: CompressionPolicyConfig{
+				Enabled: true,
+				Format:  TarZstFormat,
 			},
 		},
 		Hooks: BackupHooksConfig{
@@ -663,9 +665,19 @@ func (c *Config) LogSummary() {
 	case IncrementalMode:
 		logArgs = append(logArgs, "current_subdir", c.Paths.IncrementalSubDirs.Current)
 		logArgs = append(logArgs, "archive_subdir", c.Paths.IncrementalSubDirs.Archive)
-		logArgs = append(logArgs, "archive_interval_mode", c.Archive.Incremental.IntervalMode)
-		if c.Archive.Incremental.IntervalMode == ManualInterval {
-			logArgs = append(logArgs, "archive_interval_seconds", c.Archive.Incremental.IntervalSeconds)
+
+		if c.Archive.Incremental.Enabled {
+			switch c.Archive.Incremental.IntervalMode {
+			case ManualInterval:
+				archiveSummary := fmt.Sprintf("enabled (m:%s i:%ds)",
+					c.Archive.Incremental.IntervalMode,
+					c.Archive.Incremental.IntervalSeconds)
+				logArgs = append(logArgs, "archive", archiveSummary)
+			default:
+				archiveSummary := fmt.Sprintf("enabled (m:%s)",
+					c.Archive.Incremental.IntervalMode)
+				logArgs = append(logArgs, "archive", archiveSummary)
+			}
 		}
 
 		if c.Compression.Incremental.Enabled {
@@ -805,6 +817,8 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 			merged.Hooks.PreBackup = value.([]string)
 		case "post-backup-hooks":
 			merged.Hooks.PostBackup = value.([]string)
+		case "archive-incremental":
+			merged.Archive.Incremental.Enabled = value.(bool)
 		case "archive-incremental-interval-mode":
 			merged.Archive.Incremental.IntervalMode = value.(ArchiveIntervalMode)
 		case "archive-incremental-interval-seconds":

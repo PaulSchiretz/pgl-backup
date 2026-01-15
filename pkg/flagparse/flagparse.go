@@ -50,6 +50,7 @@ type CmdFlags struct {
 	PreserveSourceName                *bool
 	PreBackupHooks                    *string
 	PostBackupHooks                   *string
+	ArchiveIncrementalEnabled         *bool
 	ArchiveIncrementalIntervalSeconds *int
 	ArchiveIncrementalIntervalMode    *string
 	CompressionIncrementalEnabled     *bool
@@ -86,6 +87,7 @@ func registerBackupFlags(fs *flag.FlagSet, f *CmdFlags) {
 	f.PreserveSourceName = fs.Bool("preserve-source-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
 	f.PreBackupHooks = fs.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
 	f.PostBackupHooks = fs.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
+	f.ArchiveIncrementalEnabled = fs.Bool("archive-incremental", true, "Enable archiving for incremental backups.")
 	f.ArchiveIncrementalIntervalSeconds = fs.Int("archive-incremental-interval-seconds", 0, "In 'manual' mode, the interval in seconds for creating new incremental archives (e.g., 86400 for 24h).")
 	f.ArchiveIncrementalIntervalMode = fs.String("archive-incremental-interval-mode", "", "Incremental Archive interval mode: 'auto' or 'manual'.")
 	f.CompressionIncrementalEnabled = fs.Bool("compression-incremental", true, "Enable compression for incremental backups.")
@@ -208,7 +210,10 @@ func flagsToMap(fs *flag.FlagSet, f *CmdFlags) (map[string]interface{}, error) {
 	addIfUsed(flagMap, usedFlags, "buffer-size-kb", f.BufferSizeKB)
 	addIfUsed(flagMap, usedFlags, "mod-time-window", f.ModTimeWindow)
 	addIfUsed(flagMap, usedFlags, "preserve-source-name", f.PreserveSourceName)
+
+	addIfUsed(flagMap, usedFlags, "archive-incremental", f.ArchiveIncrementalEnabled)
 	addIfUsed(flagMap, usedFlags, "archive-incremental-interval-seconds", f.ArchiveIncrementalIntervalSeconds)
+
 	addIfUsed(flagMap, usedFlags, "compression-incremental", f.CompressionIncrementalEnabled)
 	addIfUsed(flagMap, usedFlags, "compression-snapshot", f.CompressionSnapshotEnabled)
 
