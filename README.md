@@ -184,32 +184,9 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
 {
   "version": "v1.0.0",
   "mode": "incremental",
-  "engine": {
-    "type": "native",
-    "retryCount": 3,
-    "retryWaitSeconds": 5,
-    "modTimeWindowSeconds": 1,
-    "performance": {
-      "syncWorkers": 4,
-      "mirrorWorkers": 4,
-      "deleteWorkers": 4,
-      "compressWorkers": 1,
-      "bufferSizeKB": 256
-    }
-  },
   "logLevel": "info",
   "dryRun": false,
   "metrics": true,
-  "compression": {
-    "incremental": {
-      "enabled": true,
-      "format": "tar.zst"
-    },
-    "snapshot": {
-      "enabled": true,
-      "format": "tar.zst"
-    }
-  },
   "naming": {
     "prefix": "PGL_Backup_"
   },
@@ -247,6 +224,26 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
     "userExcludeFiles": [],
     "userExcludeDirs": []
   },
+  "engine": {
+    "type": "native",
+    "retryCount": 3,
+    "retryWaitSeconds": 5,
+    "modTimeWindowSeconds": 1,
+    "performance": {
+      "syncWorkers": 4,
+      "mirrorWorkers": 4,
+      "deleteWorkers": 4,
+      "compressWorkers": 1,
+      "bufferSizeKB": 256
+    }
+  },
+  "archive": {
+    "incremental": {
+      "enabled": true,
+      "intervalMode": "auto",
+      "intervalSeconds": 86400
+    }
+  },
   "retention": {
     "incremental": {
       "enabled": true,
@@ -265,10 +262,14 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
       "years": 0
     }
   },
-  "archive": {
+  "compression": {
     "incremental": {
-      "intervalMode": "auto",
-      "intervalSeconds": 86400
+      "enabled": true,
+      "format": "tar.zst"
+    },
+    "snapshot": {
+      "enabled": true,
+      "format": "tar.zst"
     }
   },
   "hooks": {}
