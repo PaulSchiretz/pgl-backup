@@ -484,8 +484,8 @@ func (e *Engine) performRetention(ctx context.Context, r *engineRunState) error 
 	}
 
 	absArchivePath := filepath.Join(r.absTargetBase, r.relArchivePath)
-	if err := e.retentionManager.Apply(ctx, r.mode.String(), absArchivePath, r.retentionPolicy, r.retentionExcludeDir); err != nil {
-		plog.Warn("Error applying retention policy", "mote", r.mode.String(), "error", err)
+	if err := e.retentionManager.Apply(ctx, absArchivePath, r.retentionPolicy, r.retentionExcludeDir); err != nil {
+		plog.Warn("Error applying retention policy", "error", err)
 		// no error is returned as our backup is still good no need to fail here
 	}
 	return nil

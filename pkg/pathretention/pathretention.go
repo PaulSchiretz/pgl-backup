@@ -42,16 +42,15 @@ const (
 // retentionRun holds the mutable state for a single execution of the retention manager.
 // This makes the RetentionEngine itself stateless and safe for concurrent use if needed.
 type retentionRun struct {
-	ctx                  context.Context
-	dirPath              string
-	retentionPolicyTitle string
-	retentionPolicy      config.RetentionPolicyConfig
-	backups              []metafile.MetafileInfo
-	dryRun               bool
-	metrics              pathretentionmetrics.Metrics
-	numWorkers           int
-	deleteTasksChan      chan metafile.MetafileInfo
-	deleteWg             sync.WaitGroup
+	ctx             context.Context
+	dirPath         string
+	retentionPolicy config.RetentionPolicyConfig
+	backups         []metafile.MetafileInfo
+	dryRun          bool
+	metrics         pathretentionmetrics.Metrics
+	numWorkers      int
+	deleteTasksChan chan metafile.MetafileInfo
+	deleteWg        sync.WaitGroup
 }
 
 type PathRetentionManager struct {
@@ -60,7 +59,7 @@ type PathRetentionManager struct {
 
 // RetentionManager defines the interface for a component that applies a retention policy to backups.
 type RetentionManager interface {
-	Apply(ctx context.Context, policyTitle string, dirPath string, retentionPolicy config.RetentionPolicyConfig, excludeDir string) error
+	Apply(ctx context.Context, dirPath string, retentionPolicy config.RetentionPolicyConfig, excludeDir string) error
 }
 
 // Statically assert that *PathRetentionManager implements the RetentionManager interface.
@@ -75,9 +74,9 @@ func NewPathRetentionManager(cfg config.Config) *PathRetentionManager {
 
 // Apply scans a given directory and deletes backups
 // that are no longer needed according to the passed retention policy.
-func (rm *PathRetentionManager) Apply(ctx context.Context, retentionPolicyTitle string, dirPath string, retentionPolicy config.RetentionPolicyConfig, excludeDir string) error {
+func (rm *PathRetentionManager) Apply(ctx context.Context, dirPath string, retentionPolicy config.RetentionPolicyConfig, excludeDir string) error {
 	if retentionPolicy.Hours <= 0 && retentionPolicy.Days <= 0 && retentionPolicy.Weeks <= 0 && retentionPolicy.Months <= 0 && retentionPolicy.Years <= 0 {
-		plog.Debug(fmt.Sprintf("Retention policy for %s is disabled (all values are zero). Skipping.", retentionPolicyTitle))
+		plog.Debug("Retention policy is disabled (all values are zero). Skipping.")
 		return nil
 	}
 
@@ -89,19 +88,18 @@ func (rm *PathRetentionManager) Apply(ctx context.Context, retentionPolicyTitle 
 	}
 
 	run := &retentionRun{
-		ctx:                  ctx,
-		dirPath:              dirPath,
-		retentionPolicyTitle: retentionPolicyTitle,
-		retentionPolicy:      retentionPolicy,
-		dryRun:               rm.config.DryRun,
-		metrics:              m,
-		numWorkers:           rm.config.Engine.Performance.DeleteWorkers,
-		deleteTasksChan:      make(chan metafile.MetafileInfo, rm.config.Engine.Performance.DeleteWorkers*2),
+		ctx:             ctx,
+		dirPath:         dirPath,
+		retentionPolicy: retentionPolicy,
+		dryRun:          rm.config.DryRun,
+		metrics:         m,
+		numWorkers:      rm.config.Engine.Performance.DeleteWorkers,
+		deleteTasksChan: make(chan metafile.MetafileInfo, rm.config.Engine.Performance.DeleteWorkers*2),
 	}
 
 	// Get a sorted list of all valid backups
 	var err error
-	run.backups, err = rm.fetchSortedBackups(ctx, dirPath, excludeDir, retentionPolicyTitle)
+	run.backups, err = rm.fetchSortedBackups(ctx, dirPath, excludeDir)
 	if err != nil {
 		return err
 	}
@@ -112,7 +110,7 @@ func (rm *PathRetentionManager) Apply(ctx context.Context, retentionPolicyTitle 
 // metadata to get an accurate timestamp, and returns them sorted from newest to oldest.
 // It relies exclusively on the `.pgl-backup.meta.json` file; directories without a
 // readable metafile are ignored for retention purposes.
-func (rm *PathRetentionManager) fetchSortedBackups(ctx context.Context, dirPath, excludeDir, policyTitle string) ([]metafile.MetafileInfo, error) {
+func (rm *PathRetentionManager) fetchSortedBackups(ctx context.Context, dirPath, excludeDir string) ([]metafile.MetafileInfo, error) {
 	prefix := rm.config.Naming.Prefix
 
 	entries, err := os.ReadDir(dirPath)
@@ -141,7 +139,7 @@ func (rm *PathRetentionManager) fetchSortedBackups(ctx context.Context, dirPath,
 		backupPath := filepath.Join(dirPath, dirName)
 		metadata, err := metafile.Read(backupPath)
 		if err != nil {
-			plog.Warn("Skipping retention check for directory; cannot read metadata", "policy", policyTitle, "directory", dirName, "reason", err)
+			plog.Warn("Skipping retention check for directory; cannot read metadata", "directory", dirName, "reason", err)
 			continue
 		}
 
@@ -160,7 +158,7 @@ func (rm *PathRetentionManager) fetchSortedBackups(ctx context.Context, dirPath,
 func (r *retentionRun) execute() error {
 
 	if len(r.backups) == 0 {
-		plog.Debug("No backups to delete", "policy", r.retentionPolicyTitle)
+		plog.Debug("No backups to delete")
 		return nil
 	}
 
@@ -169,14 +167,14 @@ func (r *retentionRun) execute() error {
 
 	if len(eligibleBackups) == 0 {
 		if r.dryRun {
-			plog.Debug("[DRY RUN] No backups need deletion", "policy", r.retentionPolicyTitle)
+			plog.Debug("[DRY RUN] No backups need deletion")
 		} else {
-			plog.Debug("No backups need deletion", "policy", r.retentionPolicyTitle)
+			plog.Debug("No backups need deletion")
 		}
 		return nil
 	}
 
-	plog.Info("Deleting outdated backups", "policy", r.retentionPolicyTitle, "count", len(eligibleBackups))
+	plog.Info("Deleting outdated backups", "count", len(eligibleBackups))
 
 	r.metrics.StartProgress("Delete progress", 10*time.Second)
 	defer func() {
@@ -225,17 +223,17 @@ func (r *retentionRun) deleteWorker() {
 		dirToDelete := filepath.Join(r.dirPath, util.DenormalizePath(b.RelPathKey))
 
 		if r.dryRun {
-			plog.Notice("[DRY RUN] DELETE", "policy", r.retentionPolicyTitle, "path", dirToDelete)
+			plog.Notice("[DRY RUN] DELETE", "path", dirToDelete)
 			continue
 		}
-		plog.Notice("DELETE", "policy", r.retentionPolicyTitle, "path", dirToDelete)
+		plog.Notice("DELETE", "path", dirToDelete)
 		if err := os.RemoveAll(dirToDelete); err != nil {
 			r.metrics.AddBackupsFailed(1)
-			plog.Warn("Failed to delete outdated backup directory", "policy", r.retentionPolicyTitle, "path", dirToDelete, "error", err)
+			plog.Warn("Failed to delete outdated backup directory", "path", dirToDelete, "error", err)
 		} else {
 			r.metrics.AddBackupsDeleted(1)
 		}
-		plog.Notice("DELETED", "policy", r.retentionPolicyTitle, "path", dirToDelete)
+		plog.Notice("DELETED", "path", dirToDelete)
 	}
 }
 
@@ -250,7 +248,7 @@ func (r *retentionRun) filterBackupsToDelete() []metafile.MetafileInfo {
 		}
 	}
 
-	plog.Debug("Total unique backups to be deleted", "policy", r.retentionPolicyTitle, "count", len(backupsToDelete))
+	plog.Debug("Total unique backups to be deleted", "count", len(backupsToDelete))
 	return backupsToDelete
 }
 
@@ -328,8 +326,8 @@ func (r *retentionRun) determineBackupsToKeep() map[string]bool {
 	if r.retentionPolicy.Years > 0 {
 		planParts = append(planParts, fmt.Sprintf("%d yearly", len(savedYearly)))
 	}
-	plog.Debug("Retention plan", "policy", r.retentionPolicyTitle, "details", strings.Join(planParts, ", "))
-	plog.Debug("Total unique backups to be kept", "policy", r.retentionPolicyTitle, "count", len(backupsToKeep))
+	plog.Debug("Retention plan", "details", strings.Join(planParts, ", "))
+	plog.Debug("Total unique backups to be kept", "count", len(backupsToKeep))
 
 	return backupsToKeep
 }

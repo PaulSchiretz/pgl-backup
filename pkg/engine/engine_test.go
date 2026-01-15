@@ -55,7 +55,7 @@ type mockRetentionManager struct {
 	err         error
 }
 
-func (m *mockRetentionManager) Apply(ctx context.Context, policyTitle, dirPath string, retentionPolicy config.RetentionPolicyConfig, excludedDir string) error {
+func (m *mockRetentionManager) Apply(ctx context.Context, dirPath string, retentionPolicy config.RetentionPolicyConfig, excludedDir string) error {
 	m.applyCalled = true
 	return m.err
 }

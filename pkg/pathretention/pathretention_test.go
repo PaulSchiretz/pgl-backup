@@ -161,7 +161,7 @@ func TestApplyRetentionPolicy(t *testing.T) {
 	}
 
 	// Act
-	err := r.Apply(context.Background(), "test", tempDir, policy, "")
+	err := r.Apply(context.Background(), tempDir, policy, "")
 	if err != nil {
 		t.Fatalf("Apply failed: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestApplyRetentionPolicy_DryRun(t *testing.T) {
 	createTestBackup(t, tempDir, "backup_to_delete", now.Add(-5*24*time.Hour))
 
 	// Act
-	err := r.Apply(context.Background(), "test", tempDir, policy, "")
+	err := r.Apply(context.Background(), tempDir, policy, "")
 	if err != nil {
 		t.Fatalf("Apply failed: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestApplyRetentionPolicy_WorkerCancellation(t *testing.T) {
 	}()
 
 	// Act
-	_ = r.Apply(ctx, "test", tempDir, policy, "")
+	_ = r.Apply(ctx, tempDir, policy, "")
 
 	// Assert
 	if _, err := os.Stat(filepath.Join(tempDir, "backup_kept")); err != nil {
@@ -271,7 +271,7 @@ func TestApplyRetentionPolicy_DisabledOptimization(t *testing.T) {
 	policy := config.RetentionPolicyConfig{}
 
 	// Act
-	err := r.Apply(context.Background(), "test", filePath, policy, "")
+	err := r.Apply(context.Background(), filePath, policy, "")
 
 	// Assert
 	if err != nil {
@@ -302,7 +302,7 @@ func TestFetchSortedBackups(t *testing.T) {
 	r := newTestRetentionManager(cfg)
 
 	// Act
-	backups, err := r.fetchSortedBackups(context.Background(), tempDir, "non_existent_current_dir", "test_policy")
+	backups, err := r.fetchSortedBackups(context.Background(), tempDir, "non_existent_current_dir")
 	if err != nil {
 		t.Fatalf("fetchSortedBackups failed: %v", err)
 	}
