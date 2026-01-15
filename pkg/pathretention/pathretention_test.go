@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/paulschiretz/pgl-backup/pkg/buildinfo"
 	"github.com/paulschiretz/pgl-backup/pkg/config"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 )
@@ -26,7 +27,7 @@ func createTestBackup(t *testing.T, baseDir, name string, timestampUTC time.Time
 	}
 
 	metadata := metafile.MetafileContent{
-		Version:      "test-version",
+		Version:      buildinfo.Version,
 		TimestampUTC: timestampUTC,
 		Source:       "/src",
 	}
@@ -140,7 +141,7 @@ func TestDetermineBackupsToKeep_Promotion(t *testing.T) {
 func TestApplyRetentionPolicy(t *testing.T) {
 	// Arrange
 	tempDir := t.TempDir()
-	cfg := config.NewDefault("test-version")
+	cfg := config.NewDefault()
 	cfg.Paths.TargetBase = tempDir
 	cfg.Naming.Prefix = "backup_"
 	policy := config.RetentionPolicyConfig{
@@ -181,7 +182,7 @@ func TestApplyRetentionPolicy(t *testing.T) {
 func TestApplyRetentionPolicy_DryRun(t *testing.T) {
 	// Arrange
 	tempDir := t.TempDir()
-	cfg := config.NewDefault("test-version")
+	cfg := config.NewDefault()
 	cfg.Paths.TargetBase = tempDir
 	cfg.Naming.Prefix = "backup_"
 	cfg.DryRun = true // Enable Dry Run
@@ -215,7 +216,7 @@ func TestApplyRetentionPolicy_DryRun(t *testing.T) {
 func TestApplyRetentionPolicy_WorkerCancellation(t *testing.T) {
 	// Arrange
 	tempDir := t.TempDir()
-	cfg := config.NewDefault("test-version")
+	cfg := config.NewDefault()
 	cfg.Paths.TargetBase = tempDir
 	cfg.Naming.Prefix = "backup_"
 	// Use 1 worker to serialize execution for predictable cancellation testing
@@ -264,7 +265,7 @@ func TestApplyRetentionPolicy_DisabledOptimization(t *testing.T) {
 		t.Fatalf("failed to create file: %v", err)
 	}
 
-	cfg := config.NewDefault("test-version")
+	cfg := config.NewDefault()
 	r := newTestRetentionManager(cfg)
 
 	// Disabled policy (all zeros)
@@ -282,7 +283,7 @@ func TestApplyRetentionPolicy_DisabledOptimization(t *testing.T) {
 func TestFetchSortedBackups(t *testing.T) {
 	// Arrange
 	tempDir := t.TempDir()
-	cfg := config.NewDefault("test-version")
+	cfg := config.NewDefault()
 	cfg.Naming.Prefix = "backup_"
 
 	now := time.Now()

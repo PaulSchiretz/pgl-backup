@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/paulschiretz/pgl-backup/pkg/buildinfo"
 	"github.com/paulschiretz/pgl-backup/pkg/config"
 	"github.com/paulschiretz/pgl-backup/pkg/lockfile"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
@@ -83,7 +84,6 @@ type engineRunState struct {
 // Engine orchestrates the entire backup process.
 type Engine struct {
 	config             config.Config
-	version            string
 	syncer             pathsync.Syncer
 	archiver           patharchive.Archiver
 	retentionManager   pathretention.RetentionManager
@@ -93,10 +93,9 @@ type Engine struct {
 }
 
 // New creates a new backup engine with the given configuration and version.
-func New(cfg config.Config, version string) *Engine {
+func New(cfg config.Config) *Engine {
 	return &Engine{
 		config:           cfg,
-		version:          version,
 		syncer:           pathsync.NewPathSyncer(cfg),
 		archiver:         patharchive.NewPathArchiver(cfg),
 		retentionManager: pathretention.NewPathRetentionManager(cfg),
@@ -532,7 +531,7 @@ func (e *Engine) performSync(ctx context.Context, r *engineRunState) error {
 		return nil
 	} else {
 		metadata := metafile.MetafileContent{
-			Version:      e.version,
+			Version:      buildinfo.Version,
 			TimestampUTC: r.timestampUTC,
 			Mode:         r.mode.String(),
 			Source:       r.absSource,

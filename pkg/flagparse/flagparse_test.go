@@ -1,10 +1,11 @@
-package flagparse
+package flagparse_test
 
 import (
 	"strings"
 	"testing"
 
 	"github.com/paulschiretz/pgl-backup/pkg/config"
+	"github.com/paulschiretz/pgl-backup/pkg/flagparse"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
 )
 
@@ -44,7 +45,7 @@ func TestParseExcludeList(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := ParseExcludeList(tc.input)
+			result := flagparse.ParseExcludeList(tc.input)
 
 			// Handle the case where an empty input should result in a nil or empty slice.
 			if len(tc.expected) == 0 && len(result) == 0 {
@@ -61,31 +62,31 @@ func TestParseExcludeList(t *testing.T) {
 
 func TestParse(t *testing.T) {
 	t.Run("No Arguments", func(t *testing.T) {
-		act, _, err := Parse("test", "v1", []string{})
+		act, _, err := flagparse.Parse([]string{})
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}
-		if act != NoCommand {
+		if act != flagparse.NoCommand {
 			t.Errorf("expected action to be NoCommand, but got %v", act)
 		}
 	})
 
 	t.Run("Help Command", func(t *testing.T) {
-		act, _, err := Parse("test", "v1", []string{"help"})
+		act, _, err := flagparse.Parse([]string{"help"})
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}
-		if act != NoCommand {
+		if act != flagparse.NoCommand {
 			t.Errorf("expected action to be NoCommand, but got %v", act)
 		}
 	})
 
 	t.Run("Version Command", func(t *testing.T) {
-		act, flagMap, err := Parse("test", "v1", []string{"version"})
+		act, flagMap, err := flagparse.Parse([]string{"version"})
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}
-		if act != VersionCommand {
+		if act != flagparse.VersionCommand {
 			t.Errorf("expected action to be VersionCommand, but got %v", act)
 		}
 		if len(flagMap) != 0 {
@@ -95,7 +96,7 @@ func TestParse(t *testing.T) {
 
 	t.Run("Override Source and Target (Explicit Subcommand)", func(t *testing.T) {
 		args := []string{"backup", "-source=/new/src", "-target=/new/dst"}
-		_, setFlags, err := Parse("test", "v1", args)
+		_, setFlags, err := flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}
@@ -114,7 +115,7 @@ func TestParse(t *testing.T) {
 
 	t.Run("Missing Command (Flags only)", func(t *testing.T) {
 		args := []string{"-source=/new/src", "-target=/new/dst"}
-		_, _, err := Parse("test", "v1", args)
+		_, _, err := flagparse.Parse(args)
 		if err == nil {
 			t.Fatal("expected error for missing command, got nil")
 		}
@@ -127,17 +128,17 @@ func TestParse(t *testing.T) {
 		testCases := []struct {
 			name           string
 			args           []string
-			expectedAction CommandFlag
+			expectedAction flagparse.CommandFlag
 		}{
-			{"Version Command", []string{"version"}, VersionCommand},
-			{"Init Command", []string{"init"}, InitCommand},
-			{"Init Default Command", []string{"init", "-default"}, InitCommand},
-			{"Prune Command", []string{"prune"}, PruneCommand},
+			{"Version Command", []string{"version"}, flagparse.VersionCommand},
+			{"Init Command", []string{"init"}, flagparse.InitCommand},
+			{"Init Default Command", []string{"init", "-default"}, flagparse.InitCommand},
+			{"Prune Command", []string{"prune"}, flagparse.PruneCommand},
 		}
 
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
-				act, _, err := Parse("test", "v1", tc.args)
+				act, _, err := flagparse.Parse(tc.args)
 				if err != nil {
 					t.Fatalf("expected no error, but got: %v", err)
 				}
@@ -152,18 +153,18 @@ func TestParse(t *testing.T) {
 		testCases := []struct {
 			name           string
 			args           []string
-			expectedAction CommandFlag
+			expectedAction flagparse.CommandFlag
 		}{
-			{"Init Uppercase", []string{"INIT"}, InitCommand},
-			{"Init Mixed", []string{"Init"}, InitCommand},
-			{"Backup Mixed", []string{"BackUp"}, BackupCommand},
-			{"Version Mixed", []string{"Version"}, VersionCommand},
-			{"Prune Mixed", []string{"Prune"}, PruneCommand},
+			{"Init Uppercase", []string{"INIT"}, flagparse.InitCommand},
+			{"Init Mixed", []string{"Init"}, flagparse.InitCommand},
+			{"Backup Mixed", []string{"BackUp"}, flagparse.BackupCommand},
+			{"Version Mixed", []string{"Version"}, flagparse.VersionCommand},
+			{"Prune Mixed", []string{"Prune"}, flagparse.PruneCommand},
 		}
 
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
-				act, _, err := Parse("test", "v1", tc.args)
+				act, _, err := flagparse.Parse(tc.args)
 				if err != nil {
 					t.Fatalf("expected no error, but got: %v", err)
 				}
@@ -177,7 +178,7 @@ func TestParse(t *testing.T) {
 	t.Run("Parse Exclude Flags", func(t *testing.T) {
 		// Using subcommand style
 		args := []string{"backup", "-user-exclude-files=*.tmp,*.log", "-user-exclude-dirs=node_modules,.cache"}
-		_, setFlags, err := Parse("test", "v1", args)
+		_, setFlags, err := flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}
@@ -195,7 +196,7 @@ func TestParse(t *testing.T) {
 
 	t.Run("Parse Hook Flags", func(t *testing.T) {
 		args := []string{"backup", "-pre-backup-hooks=cmd1, 'cmd2 with space'", "-post-backup-hooks=cmd3"}
-		_, setFlags, err := Parse("test", "v1", args)
+		_, setFlags, err := flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}
@@ -213,7 +214,7 @@ func TestParse(t *testing.T) {
 
 	t.Run("Set Mod Time Window Flag", func(t *testing.T) {
 		args := []string{"backup", "-mod-time-window=2"}
-		_, setFlags, err := Parse("test", "v1", args)
+		_, setFlags, err := flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}
@@ -228,7 +229,7 @@ func TestParse(t *testing.T) {
 
 	t.Run("Override PreserveRoot", func(t *testing.T) {
 		args := []string{"backup", "-preserve-source-name=false"}
-		_, setFlags, err := Parse("test", "v1", args)
+		_, setFlags, err := flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}
@@ -243,7 +244,7 @@ func TestParse(t *testing.T) {
 
 	t.Run("Set Log Level Flag", func(t *testing.T) {
 		args := []string{"backup", "-log-level=debug"}
-		_, setFlags, err := Parse("test", "v1", args)
+		_, setFlags, err := flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}
@@ -258,7 +259,7 @@ func TestParse(t *testing.T) {
 
 	t.Run("Set Metrics Flag", func(t *testing.T) {
 		args := []string{"backup", "-metrics"}
-		_, setFlags, err := Parse("test", "v1", args)
+		_, setFlags, err := flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}
@@ -274,18 +275,18 @@ func TestParse(t *testing.T) {
 	t.Run("Set Init Default Flag", func(t *testing.T) {
 		// New style: init -default
 		args := []string{"init", "-default"}
-		act, _, err := Parse("test", "v1", args)
+		act, _, err := flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}
-		if act != InitCommand {
+		if act != flagparse.InitCommand {
 			t.Errorf("expected action to be InitCommand, got %v", act)
 		}
 	})
 
 	t.Run("Set Force Flag", func(t *testing.T) {
 		args := []string{"init", "-force"}
-		_, setFlags, err := Parse("test", "v1", args)
+		_, setFlags, err := flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}
@@ -300,7 +301,7 @@ func TestParse(t *testing.T) {
 
 	t.Run("Invalid Mode Flag", func(t *testing.T) {
 		args := []string{"backup", "-mode=invalid-mode"}
-		_, _, err := Parse("test", "v1", args)
+		_, _, err := flagparse.Parse(args)
 		if err == nil {
 			t.Fatal("expected an error for invalid mode, but got nil")
 		}
@@ -311,7 +312,7 @@ func TestParse(t *testing.T) {
 
 	t.Run("Invalid Sync Engine Flag", func(t *testing.T) {
 		args := []string{"backup", "-sync-engine=invalid-engine"}
-		_, _, err := Parse("test", "v1", args)
+		_, _, err := flagparse.Parse(args)
 		if err == nil {
 			t.Fatal("expected an error for invalid sync engine, but got nil")
 		}
@@ -326,7 +327,7 @@ func TestParse(t *testing.T) {
 			"-compression-incremental",
 			"-compression-incremental-format=tar.gz",
 		}
-		_, setFlags, err := Parse("test", "v1", args)
+		_, setFlags, err := flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}
@@ -346,7 +347,7 @@ func TestParse(t *testing.T) {
 			"-compression-snapshot",
 			"-compression-snapshot-format=tar.gz",
 		}
-		_, setFlags, err = Parse("test", "v1", args)
+		_, setFlags, err = flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}
@@ -364,7 +365,7 @@ func TestParse(t *testing.T) {
 
 	t.Run("Set Archive Interval Flag", func(t *testing.T) {
 		args := []string{"backup", "-archive-incremental-interval-seconds=172800"} // 48h
-		_, setFlags, err := Parse("test", "v1", args)
+		_, setFlags, err := flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}
@@ -380,7 +381,7 @@ func TestParse(t *testing.T) {
 
 	t.Run("Set Archive Interval Mode Flag", func(t *testing.T) {
 		args := []string{"backup", "-archive-incremental-interval-mode=manual"}
-		_, setFlags, err := Parse("test", "v1", args)
+		_, setFlags, err := flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}
@@ -395,7 +396,7 @@ func TestParse(t *testing.T) {
 
 	t.Run("Unknown Command", func(t *testing.T) {
 		args := []string{"invalid-command", "-target=/tmp"}
-		_, _, err := Parse("test", "v1", args)
+		_, _, err := flagparse.Parse(args)
 		if err == nil {
 			t.Fatal("expected error for unknown command, got nil")
 		}
@@ -407,7 +408,7 @@ func TestParse(t *testing.T) {
 	t.Run("Invalid Flag for Subcommand", func(t *testing.T) {
 		// This test would exit the process if we were using flag.ExitOnError
 		args := []string{"backup", "-non-existent-flag"}
-		_, _, err := Parse("test", "v1", args)
+		_, _, err := flagparse.Parse(args)
 		if err == nil {
 			t.Fatal("expected error for invalid flag, got nil")
 		}
@@ -439,7 +440,7 @@ func TestParseCmdList(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := ParseCmdList(tc.input)
+			result := flagparse.ParseCmdList(tc.input)
 
 			// Handle the case where an empty input should result in a nil or empty slice.
 			if len(tc.expected) == 0 && len(result) == 0 {

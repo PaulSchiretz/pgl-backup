@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/paulschiretz/pgl-backup/pkg/buildinfo"
 	"github.com/paulschiretz/pgl-backup/pkg/config"
 	"github.com/paulschiretz/pgl-backup/pkg/engine"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
 // RunPrune handles the logic for the prune command.
-func RunPrune(ctx context.Context, flagMap map[string]interface{}, appName, appVersion string) error {
+func RunPrune(ctx context.Context, flagMap map[string]interface{}) error {
 	// For prune, the target flag is mandatory.
 	targetPath, ok := flagMap["target"].(string)
 	if !ok || targetPath == "" {
@@ -19,7 +20,7 @@ func RunPrune(ctx context.Context, flagMap map[string]interface{}, appName, appV
 	}
 
 	// Load config from the target directory.
-	loadedConfig, err := config.Load(appVersion, targetPath)
+	loadedConfig, err := config.Load(targetPath)
 	if err != nil {
 		return fmt.Errorf("failed to load configuration from target: %w", err)
 	}
@@ -33,12 +34,12 @@ func RunPrune(ctx context.Context, flagMap map[string]interface{}, appName, appV
 	runConfig.LogSummary()
 
 	startTime := time.Now()
-	pruneEngine := engine.New(runConfig, appVersion)
+	pruneEngine := engine.New(runConfig)
 	err = pruneEngine.ExecutePrune(ctx)
 	duration := time.Since(startTime).Round(time.Millisecond)
 	if err != nil {
 		return err
 	}
-	plog.Info(appName+" prune finished successfully.", "duration", duration)
+	plog.Info(buildinfo.Name+" prune finished successfully.", "duration", duration)
 	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/paulschiretz/pgl-backup/pkg/buildinfo"
 	"github.com/paulschiretz/pgl-backup/pkg/lockfile"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
@@ -281,12 +282,12 @@ type Config struct {
 
 // NewDefault creates and returns a Config struct with sensible default
 // values. It dynamically sets the sync engine based on the operating system.
-func NewDefault(appVersion string) Config {
+func NewDefault() Config {
 	// Default to the native engine on all platforms. It's highly concurrent and generally offers
 	// the best performance and consistency with no external dependencies.
 	// Power users on Windows can still opt-in to 'robocopy' as a battle-tested alternative.
 	return Config{
-		Version:  appVersion,
+		Version:  buildinfo.Version,
 		Mode:     IncrementalMode, // Default mode
 		LogLevel: "info",          // Default log level.
 		DryRun:   false,
@@ -389,13 +390,13 @@ func NewDefault(appVersion string) Config {
 // Load attempts to load a configuration from "pgl-backup.config.json".
 // If the file doesn't exist, it returns the provided default config without an error.
 // If the file exists but fails to parse, it returns an error and a zero-value config.
-func Load(appVersion string, targetBase string) (Config, error) {
+func Load(targetBase string) (Config, error) {
 	configPath := filepath.Join(targetBase, ConfigFileName)
 
 	file, err := os.Open(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return NewDefault(appVersion), nil // Config file doesn't exist, which is a normal case.
+			return NewDefault(), nil // Config file doesn't exist, which is a normal case.
 		}
 		return Config{}, fmt.Errorf("error opening config file %s: %w", configPath, err)
 	}
@@ -405,7 +406,7 @@ func Load(appVersion string, targetBase string) (Config, error) {
 	// Start with default values, then overwrite with the file's content.
 	// This makes the config loading resilient to missing fields in the JSON file.
 	// NOTE: if config.Version differes from appVersion we can add a migration step here.
-	config := NewDefault(appVersion)
+	config := NewDefault()
 	decoder := json.NewDecoder(file)
 	if err := decoder.Decode(&config); err != nil {
 		return Config{}, fmt.Errorf("error parsing config file %s: %w", configPath, err)
@@ -428,8 +429,8 @@ func Load(appVersion string, targetBase string) (Config, error) {
 	}
 
 	// At this point our config has been migrated if needed so override the version in the struct
-	if config.Version != appVersion {
-		config.Version = appVersion
+	if config.Version != buildinfo.Version {
+		config.Version = buildinfo.Version
 	}
 	return config, nil
 }

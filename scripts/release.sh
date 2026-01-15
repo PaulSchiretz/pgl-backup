@@ -122,7 +122,7 @@ write_header "Cross-compiling binaries"
 PLATFORMS=("windows/amd64" "windows/arm64" "linux/amd64" "linux/arm64" "darwin/amd64" "darwin/arm64" "freebsd/amd64")
 
 # The ldflags variable for injecting the version
-LDFLAGS="-s -w -X main.appVersion=$VERSION"
+LDFLAGS="-s -w -X github.com/paulschiretz/pgl-backup/pkg/buildinfo.Version=$VERSION"
 
 for platform in "${PLATFORMS[@]}"; do
   # Split the platform string into OS and architecture

@@ -219,7 +219,7 @@ func TestArchive(t *testing.T) {
 	t.Run("Happy Path - Archives when threshold is crossed", func(t *testing.T) {
 		// Arrange
 		tempDir := t.TempDir()
-		cfg := config.NewDefault("test-version")
+		cfg := config.NewDefault()
 		cfg.Paths.TargetBase = tempDir
 		cfg.Archive.Incremental.IntervalMode = config.ManualInterval
 		cfg.Archive.Incremental.IntervalSeconds = 86400 // 24h
@@ -257,7 +257,7 @@ func TestArchive(t *testing.T) {
 	t.Run("No-Op - Does not archive when threshold is not crossed", func(t *testing.T) {
 		// Arrange
 		tempDir := t.TempDir()
-		cfg := config.NewDefault("test-version")
+		cfg := config.NewDefault()
 		cfg.Paths.TargetBase = tempDir
 		cfg.Archive.Incremental.IntervalSeconds = 86400 // 24h
 
@@ -284,7 +284,7 @@ func TestArchive(t *testing.T) {
 	t.Run("Error - Destination already exists", func(t *testing.T) {
 		// Arrange
 		tempDir := t.TempDir()
-		cfg := config.NewDefault("test-version")
+		cfg := config.NewDefault()
 		cfg.Paths.TargetBase = tempDir
 		cfg.Archive.Incremental.IntervalMode = config.ManualInterval
 		cfg.Archive.Incremental.IntervalSeconds = 86400 // 24h
@@ -319,7 +319,7 @@ func TestArchive(t *testing.T) {
 	t.Run("Dry Run - Does not rename directory", func(t *testing.T) {
 		// Arrange
 		tempDir := t.TempDir()
-		cfg := config.NewDefault("test-version")
+		cfg := config.NewDefault()
 		cfg.Paths.TargetBase = tempDir
 		cfg.Archive.Incremental.IntervalMode = config.ManualInterval
 		cfg.Archive.Incremental.IntervalSeconds = 86400 // 24h
@@ -368,7 +368,7 @@ func TestDetermineInterval(t *testing.T) {
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
 				// Arrange
-				cfg := config.NewDefault("test-version")
+				cfg := config.NewDefault()
 				cfg.Archive.Incremental.IntervalMode = config.AutoInterval
 				cfg.Retention.Incremental = tc.retentionPolicy
 
@@ -387,7 +387,7 @@ func TestDetermineInterval(t *testing.T) {
 	t.Run("Manual Mode", func(t *testing.T) {
 		t.Run("Returns configured value", func(t *testing.T) {
 			// Arrange
-			cfg := config.NewDefault("test-version")
+			cfg := config.NewDefault()
 			cfg.Archive.Incremental.IntervalMode = config.ManualInterval
 			cfg.Archive.Incremental.IntervalSeconds = 43200 // 12h
 
@@ -407,7 +407,7 @@ func TestDetermineInterval(t *testing.T) {
 			plog.SetOutput(&logBuf)
 			t.Cleanup(func() { plog.SetOutput(os.Stderr) })
 
-			cfg := config.NewDefault("test-version")
+			cfg := config.NewDefault()
 			cfg.Archive.Incremental.IntervalMode = config.ManualInterval
 			cfg.Archive.Incremental.IntervalSeconds = 172800 // 48h
 			cfg.Retention.Incremental.Days = 7               // Daily retention is enabled
@@ -432,7 +432,7 @@ func TestDetermineInterval(t *testing.T) {
 			plog.SetOutput(&logBuf)
 			t.Cleanup(func() { plog.SetOutput(os.Stderr) })
 
-			cfg := config.NewDefault("test-version")
+			cfg := config.NewDefault()
 			cfg.Archive.Incremental.IntervalMode = config.ManualInterval
 			cfg.Archive.Incremental.IntervalSeconds = 43200 // 12h
 			cfg.Retention.Incremental.Days = 7              // Daily retention is enabled

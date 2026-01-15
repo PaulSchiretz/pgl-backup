@@ -75,7 +75,7 @@ func (m *mockCompressionManager) Compress(ctx context.Context, absPaths []string
 
 // Helper to create a dummy engine for testing.
 func newTestEngine(cfg config.Config) *Engine {
-	e := New(cfg, "test-version")
+	e := New(cfg)
 	return e //nolint:all // This is a test helper, not production code.
 }
 
@@ -85,7 +85,7 @@ func TestInitializeBackupTarget(t *testing.T) {
 		srcDir := t.TempDir()
 		targetDir := t.TempDir()
 
-		cfg := config.NewDefault("test-version")
+		cfg := config.NewDefault()
 		cfg.Paths.Source = srcDir
 		cfg.Paths.TargetBase = targetDir
 
@@ -108,7 +108,7 @@ func TestInitializeBackupTarget(t *testing.T) {
 		// Arrange
 		targetDir := t.TempDir()
 
-		cfg := config.NewDefault("test-version")
+		cfg := config.NewDefault()
 		cfg.Paths.Source = "/non/existent/path" // Invalid source to trigger preflight failure
 		cfg.Paths.TargetBase = targetDir
 
@@ -134,7 +134,7 @@ func TestExecutePrune_OnNonExistentTarget(t *testing.T) {
 	tempDir := t.TempDir()
 	targetDir := filepath.Join(tempDir, "non_existent_target")
 
-	cfg := config.NewDefault("test-version")
+	cfg := config.NewDefault()
 	cfg.Paths.TargetBase = targetDir
 	cfg.Paths.Source = t.TempDir() // Valid source
 
@@ -156,7 +156,7 @@ func TestExecutePrune_OnNonExistentTarget(t *testing.T) {
 func TestPerformCompression(t *testing.T) {
 	t.Run("Empty List", func(t *testing.T) {
 		// Arrange
-		cfg := config.NewDefault("test-version")
+		cfg := config.NewDefault()
 		e := newTestEngine(cfg)
 		mock := &mockCompressionManager{}
 		e.compressionManager = mock
@@ -181,7 +181,7 @@ func TestPerformCompression(t *testing.T) {
 
 	t.Run("Non-Empty List", func(t *testing.T) {
 		// Arrange
-		cfg := config.NewDefault("test-version")
+		cfg := config.NewDefault()
 		e := newTestEngine(cfg)
 		mock := &mockCompressionManager{}
 		e.compressionManager = mock
@@ -260,7 +260,7 @@ func TestRunHooks(t *testing.T) {
 	t.Cleanup(func() { plog.SetOutput(os.Stderr) })
 
 	t.Run("No Hooks", func(t *testing.T) {
-		cfg := config.NewDefault("test-version")
+		cfg := config.NewDefault()
 		e := newTestEngine(cfg)
 		err := e.runHooks(context.Background(), []string{}, "test")
 		if err != nil {
@@ -269,7 +269,7 @@ func TestRunHooks(t *testing.T) {
 	})
 
 	t.Run("Successful Hook", func(t *testing.T) {
-		cfg := config.NewDefault("test-version")
+		cfg := config.NewDefault()
 		e := newTestEngine(cfg)
 		e.hookCommandExecutor = mockExecCommand // Inject our mock executor
 
@@ -280,7 +280,7 @@ func TestRunHooks(t *testing.T) {
 	})
 
 	t.Run("Failing Hook", func(t *testing.T) {
-		cfg := config.NewDefault("test-version")
+		cfg := config.NewDefault()
 		e := newTestEngine(cfg)
 		e.hookCommandExecutor = mockExecCommand // Inject our mock executor
 
@@ -297,7 +297,7 @@ func TestRunHooks(t *testing.T) {
 
 	t.Run("Dry Run", func(t *testing.T) {
 		logBuf.Reset()
-		cfg := config.NewDefault("test-version")
+		cfg := config.NewDefault()
 		cfg.DryRun = true
 		e := newTestEngine(cfg)
 		e.hookCommandExecutor = mockExecCommand
@@ -314,7 +314,7 @@ func TestRunHooks(t *testing.T) {
 	})
 
 	t.Run("Context Cancellation", func(t *testing.T) {
-		cfg := config.NewDefault("test-version")
+		cfg := config.NewDefault()
 		e := newTestEngine(cfg)
 		e.hookCommandExecutor = mockExecCommand
 
@@ -339,7 +339,7 @@ func TestRunHooks(t *testing.T) {
 func TestExecuteBackup_Retention(t *testing.T) {
 	// Arrange
 	tempDir := t.TempDir()
-	cfg := config.NewDefault("test-version")
+	cfg := config.NewDefault()
 	cfg.Paths.Source = t.TempDir() // Valid source
 	cfg.Paths.TargetBase = tempDir
 	cfg.Retention.Incremental.Enabled = true // Enable retention
@@ -371,7 +371,7 @@ func TestInitBackupRun(t *testing.T) {
 	t.Run("Snapshot Mode", func(t *testing.T) {
 		// Arrange
 		tempDir := t.TempDir()
-		cfg := config.NewDefault("test-version")
+		cfg := config.NewDefault()
 		cfg.Paths.TargetBase = tempDir
 		cfg.Paths.SnapshotSubDirs.Archive = "snapshots"
 		cfg.Naming.Prefix = "snap_"
@@ -421,7 +421,7 @@ func TestInitBackupRun(t *testing.T) {
 	t.Run("Incremental Mode", func(t *testing.T) {
 		// Arrange
 		tempDir := t.TempDir()
-		cfg := config.NewDefault("test-version")
+		cfg := config.NewDefault()
 		cfg.Paths.TargetBase = tempDir
 		cfg.Paths.IncrementalSubDirs.Current = "latest"
 		cfg.Retention.Incremental.Enabled = true

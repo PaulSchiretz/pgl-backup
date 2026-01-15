@@ -1,4 +1,4 @@
-package cmd
+package cmd_test
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/paulschiretz/pgl-backup/cmd"
 )
 
 func TestPromptForConfirmation(t *testing.T) {
@@ -35,7 +37,7 @@ func TestPromptForConfirmation(t *testing.T) {
 		}()
 
 		// Run the function
-		result := promptForConfirmation(prompt, defaultYes)
+		result := cmd.PromptForConfirmation(prompt, defaultYes)
 
 		// Close writer to read output
 		_ = wOut.Close()

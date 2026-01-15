@@ -9,24 +9,17 @@ import (
 	"os/signal"
 
 	"github.com/paulschiretz/pgl-backup/cmd"
+	"github.com/paulschiretz/pgl-backup/pkg/buildinfo"
 	"github.com/paulschiretz/pgl-backup/pkg/flagparse"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
-// appName is the canonical name of the application used for logging.
-const appName = "PGL-Backup"
-
-// appVersion holds the application's version string.
-// It's a `var` so it can be set at compile time using ldflags.
-// Example: go build -ldflags="-X main.appVersion=1.0.0"
-var appVersion = "dev"
-
 // run encapsulates the main application logic and returns an error if something
 // goes wrong, allowing the main function to handle exit codes.
 func run(ctx context.Context) error {
-	plog.Info("Starting "+appName, "version", appVersion, "pid", os.Getpid())
+	plog.Info("Starting "+buildinfo.Name, "version", buildinfo.Version, "pid", os.Getpid())
 
-	appCommand, flagMap, err := flagparse.Parse(appName, appVersion, os.Args[1:])
+	appCommand, flagMap, err := flagparse.Parse(os.Args[1:])
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -38,13 +31,13 @@ func run(ctx context.Context) error {
 	case flagparse.NoCommand:
 		return nil
 	case flagparse.VersionCommand:
-		return cmd.RunVersion(appName, appVersion)
+		return cmd.RunVersion()
 	case flagparse.InitCommand:
-		return cmd.RunInit(ctx, flagMap, appName, appVersion)
+		return cmd.RunInit(ctx, flagMap)
 	case flagparse.BackupCommand:
-		return cmd.RunBackup(ctx, flagMap, appName, appVersion)
+		return cmd.RunBackup(ctx, flagMap)
 	case flagparse.PruneCommand:
-		return cmd.RunPrune(ctx, flagMap, appName, appVersion)
+		return cmd.RunPrune(ctx, flagMap)
 	default:
 		return fmt.Errorf("internal error: unknown command %d", appCommand)
 	}
@@ -64,7 +57,7 @@ func main() {
 	}()
 
 	if err := run(ctx); err != nil {
-		plog.Error(appName+" exited with error", "error", err)
+		plog.Error(buildinfo.Name+" exited with error", "error", err)
 		os.Exit(1)
 	}
 }

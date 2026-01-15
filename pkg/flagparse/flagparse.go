@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/paulschiretz/pgl-backup/pkg/buildinfo"
 	"github.com/paulschiretz/pgl-backup/pkg/config"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
 )
@@ -109,20 +110,20 @@ func registerPruneFlags(fs *flag.FlagSet, f *CmdFlags) {
 }
 
 // Parse parses the provided arguments (usually os.Args[1:]) and returns the action and config map.
-func Parse(appName, appVersion string, args []string) (CommandFlag, map[string]interface{}, error) {
+func Parse(args []string) (CommandFlag, map[string]interface{}, error) {
 	// Handle top-level help
 	// If no arguments provided, print help and exit.
 	if len(args) == 0 {
-		fs := flag.NewFlagSet(appName, flag.ContinueOnError)
-		printTopLevelUsage(appName, appVersion, fs)
+		fs := flag.NewFlagSet("main", flag.ContinueOnError)
+		printTopLevelUsage(fs)
 		return NoCommand, nil, nil
 	}
 
 	cmd := strings.ToLower(args[0])
 
 	if cmd == "help" || cmd == "-h" || cmd == "-help" || cmd == "--help" {
-		fs := flag.NewFlagSet(appName, flag.ContinueOnError)
-		printTopLevelUsage(appName, appVersion, fs)
+		fs := flag.NewFlagSet("main", flag.ContinueOnError)
+		printTopLevelUsage(fs)
 		return NoCommand, nil, nil
 	}
 
@@ -139,7 +140,7 @@ func Parse(appName, appVersion string, args []string) (CommandFlag, map[string]i
 
 		// Custom usage for the subcommand
 		fs.Usage = func() {
-			printSubcommandUsage(appName, appVersion, "init", "Initialize a new backup target directory.", fs)
+			printSubcommandUsage("init", "Initialize a new backup target directory.", fs)
 		}
 
 		if err := fs.Parse(args[1:]); err != nil {
@@ -155,7 +156,7 @@ func Parse(appName, appVersion string, args []string) (CommandFlag, map[string]i
 		registerPruneFlags(fs, f)
 
 		fs.Usage = func() {
-			printSubcommandUsage(appName, appVersion, "prune", "Apply retention policies to clean up outdated backups.", fs)
+			printSubcommandUsage("prune", "Apply retention policies to clean up outdated backups.", fs)
 		}
 
 		if err := fs.Parse(args[1:]); err != nil {
@@ -170,7 +171,7 @@ func Parse(appName, appVersion string, args []string) (CommandFlag, map[string]i
 		registerBackupFlags(fs, f)
 
 		fs.Usage = func() {
-			printSubcommandUsage(appName, appVersion, "backup", "Run the backup operation.", fs)
+			printSubcommandUsage("backup", "Run the backup operation.", fs)
 		}
 
 		if err := fs.Parse(args[1:]); err != nil {
@@ -289,10 +290,10 @@ func addParsedIfUsed(flagMap map[string]interface{}, usedFlags map[string]bool, 
 }
 
 // printTopLevelUsage prints the main help message.
-func printTopLevelUsage(appName, appVersion string, fs *flag.FlagSet) {
+func printTopLevelUsage(fs *flag.FlagSet) {
 
 	execName := filepath.Base(os.Args[0])
-	fmt.Fprintf(fs.Output(), "%s(%s) ", appName, appVersion)
+	fmt.Fprintf(fs.Output(), "%s(%s) ", buildinfo.Name, buildinfo.Version)
 	fmt.Fprintf(fs.Output(), "A simple and powerful cross-platform backup utility.\n\n")
 	fmt.Fprintf(fs.Output(), "Usage: %s <command> [flags]\n\n", execName)
 	fmt.Fprintf(fs.Output(), "Commands:\n")
@@ -304,10 +305,10 @@ func printTopLevelUsage(appName, appVersion string, fs *flag.FlagSet) {
 }
 
 // printSubcommandUsage prints the help message for a specific subcommand.
-func printSubcommandUsage(appName, appVersion, command, desc string, fs *flag.FlagSet) {
+func printSubcommandUsage(command, desc string, fs *flag.FlagSet) {
 
 	execName := filepath.Base(os.Args[0])
-	fmt.Fprintf(fs.Output(), "%s(%s) ", appName, appVersion)
+	fmt.Fprintf(fs.Output(), "%s(%s) ", buildinfo.Name, buildinfo.Version)
 	fmt.Fprintf(fs.Output(), "A simple and powerful cross-platform backup utility.\n\n")
 	fmt.Fprintf(fs.Output(), "Usage of the %s command: %s %s [flags]\n\n", command, execName, command)
 	fmt.Fprintf(fs.Output(), "%s\n\n", desc)

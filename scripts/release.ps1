@@ -132,7 +132,7 @@ $platforms = @(
 )
 
 # The ldflags variable for injecting the version
-$ldflags = "-s -w -X main.appVersion=$Version"
+$ldflags = "-s -w -X github.com/paulschiretz/pgl-backup/pkg/buildinfo.Version=$Version"
 
 foreach ($platform in $platforms) {
     $parts = $platform.Split('/')
