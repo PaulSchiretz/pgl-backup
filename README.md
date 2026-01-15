@@ -284,8 +284,8 @@ Now, simply point `pgl-backup` at the target directory. It will automatically lo
 pgl-backup backup -target="/media/backup-drive/MyDocumentsBackup"
 ```
 
-The first run will copy all files into a `PGL_Backup_Content` subdirectory inside the main `PGL_Backup_Current` directory.
-Subsequent runs will efficiently update the contents of `PGL_Backup_Current/PGL_Backup_Content`. After 1 week (by default) or your configured interval, the next run will first rename the entire PGL_Backup_Current directory to a timestamped archive (e.g., `PGL_Backup_2023-10-27-...`) inside the `PGL_Backup_Archives` sub-directory, and then create a new, clean `PGL_Backup_Current` for the next sync.
+The first run will copy all files into a `PGL_Backup_Content` subdirectory inside the main `PGL_Backup_Incremental_Current` directory.
+Subsequent runs will efficiently update the contents of `PGL_Backup_Incremental_Current/PGL_Backup_Content`. After 1 week (by default) or your configured interval, the next run will first rename the entire `PGL_Backup_Incremental_Current` directory to a timestamped archive (e.g., `PGL_Backup_2023-10-27-...`) inside the `PGL_Backup_Incremental_Archive` sub-directory, and then create a new, clean `PGL_Backup_Incremental_Current` for the next sync.
 When compression is enabled, the `PGL_Backup_Content` subdirectory within an archive is compressed, and the original subdirectory is removed, leaving the compressed file alongside the backup's metadata.
 
 Your backup target will be organized like this:
@@ -359,13 +359,13 @@ pgl-backup prune -target="/path/to/your/backup-target"
 
 Navigate to your backup target directory. You will see the following structure:
 
-*   **`PGL_Backup_Current/`**: Contains the most recent version of your files. You can browse this directory directly and copy files out using your file explorer.
-*   **`PGL_Backup_Archives/`**: Contains compressed historical backups (e.g., `PGL_Backup_2023-10-27-14-00-00...tar.zst`).
-*   **`PGL_Backup_Snapshots/`**: Contains point-in-time snapshots if you use snapshot mode.
+*   **`PGL_Backup_Incremental_Current/`**: Contains the most recent version of your files. You can browse this directory directly and copy files out using your file explorer.
+*   **`PGL_Backup_Incremental_Archive/`**: Contains compressed historical backups (e.g., `PGL_Backup_2023-10-27-14-00-00...tar.zst`).
+*   **`PGL_Backup_Snapshot_Archive/`**: Contains point-in-time snapshots if you use snapshot mode.
 
 ### 2. Extract Files from Archives
 
-If you need to restore files from a compressed archive in `PGL_Backup_Archives` or `PGL_Backup_Snapshots`, use the standard tools for your operating system.
+If you need to restore files from a compressed archive in `PGL_Backup_Incremental_Archive` or `PGL_Backup_Snapshot_Archive`, use the standard tools for your operating system.
 
 > **Tip:** For a consistent graphical experience across platforms, or if you prefer not to use the command line, tools like 7-Zip (Windows) or PeaZip (Windows, Linux, macOS) can handle `.zip`, `.tar.gz`, and `.tar.zst` archives effortlessly.
 
@@ -504,7 +504,7 @@ The best policy depends on how much data you are backing up and how much disk sp
 ```
 
 #### The "Purely Incremental" (Minimal History)
-**Goal**: You mostly care about the current state (which is always available in `PGL_Backup_Current`) but want one previous snapshot just in case.
+**Goal**: You mostly care about the current state (which is always available in `PGL_Backup_Incremental_Current`) but want one previous snapshot just in case.
 **Total Backups Stored**: ~1 (1 monthly)
 **Auto Archive Interval Sets To**: ~30 Days
 
