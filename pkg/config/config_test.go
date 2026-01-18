@@ -181,6 +181,53 @@ func TestConfig_Validate(t *testing.T) {
 			wantErr:     true,
 			errContains: "invalid glob pattern",
 		},
+		// Retention Policy Checks
+		{
+			name: "Incremental Retention Enabled with Negative Values",
+			modify: func(c *Config) {
+				c.Retention.Incremental.Enabled = true
+				c.Retention.Incremental.Days = -1
+			},
+			checkSource: false,
+			wantErr:     true,
+			errContains: "retention.incremental is enabled but contains negative values",
+		},
+		{
+			name: "Incremental Retention Enabled with Zero Values (Explicit Keep None)",
+			modify: func(c *Config) {
+				c.Retention.Incremental.Enabled = true
+				c.Retention.Incremental.Hours = 0
+				c.Retention.Incremental.Days = 0
+				c.Retention.Incremental.Weeks = 0
+				c.Retention.Incremental.Months = 0
+				c.Retention.Incremental.Years = 0
+			},
+			checkSource: false,
+			wantErr:     false,
+		},
+		{
+			name: "Snapshot Retention Enabled with Default Negative Values",
+			modify: func(c *Config) {
+				c.Retention.Snapshot.Enabled = true
+				// Defaults are -1, so this should fail validation.
+			},
+			checkSource: false,
+			wantErr:     true,
+			errContains: "retention.snapshot is enabled but contains negative values",
+		},
+		{
+			name: "Snapshot Retention Enabled with Zero Values (Explicit Keep None)",
+			modify: func(c *Config) {
+				c.Retention.Snapshot.Enabled = true
+				c.Retention.Snapshot.Hours = 0
+				c.Retention.Snapshot.Days = 0
+				c.Retention.Snapshot.Weeks = 0
+				c.Retention.Snapshot.Months = 0
+				c.Retention.Snapshot.Years = 0
+			},
+			checkSource: false,
+			wantErr:     false,
+		},
 	}
 
 	for _, tt := range tests {

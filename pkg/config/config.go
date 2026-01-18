@@ -244,11 +244,11 @@ func NewDefault() Config {
 			},
 			Snapshot: RetentionPolicyConfig{
 				Enabled: false, // Disabled by default to protect snapshots.
-				Hours:   0,
-				Days:    0,
-				Weeks:   4, // Default: Keep one backup for each of the last 4 weeks.
-				Months:  0,
-				Years:   0,
+				Hours:   -1,
+				Days:    -1,
+				Weeks:   -1,
+				Months:  -1,
+				Years:   -1,
 			},
 		},
 		Compression: BackupCompressionConfig{
@@ -507,6 +507,22 @@ func (c *Config) Validate(checkSource bool) error {
 
 	if err := validateGlobPatterns("userExcludeDirs", c.Sync.UserExcludeDirs); err != nil {
 		return err
+	}
+
+	// Validate Retention Policies
+	// We strictly enforce that if retention is enabled, all values must be non-negative.
+	// This prevents the dangerous situation where a user enables retention (e.g. for snapshots)
+	// but forgets to configure the values (leaving them at the default -1).
+	// By failing fast, we force the user to be explicit about their retention desires.
+	if c.Retention.Incremental.Enabled {
+		if c.Retention.Incremental.Hours < 0 || c.Retention.Incremental.Days < 0 || c.Retention.Incremental.Weeks < 0 || c.Retention.Incremental.Months < 0 || c.Retention.Incremental.Years < 0 {
+			return fmt.Errorf("retention.incremental is enabled but contains negative values. All values must be >= 0")
+		}
+	}
+	if c.Retention.Snapshot.Enabled {
+		if c.Retention.Snapshot.Hours < 0 || c.Retention.Snapshot.Days < 0 || c.Retention.Snapshot.Weeks < 0 || c.Retention.Snapshot.Months < 0 || c.Retention.Snapshot.Years < 0 {
+			return fmt.Errorf("retention.snapshot is enabled but contains negative values. All values must be >= 0")
+		}
 	}
 	return nil
 }

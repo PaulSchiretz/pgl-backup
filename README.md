@@ -474,7 +474,7 @@ You can define your own list of files and directories to exclude using the `user
 The retention policy is designed to give you a detailed short-term history and a space-efficient long-term history. `pgl-backup` supports separate retention policies the **Incremental** mode archive and **Snapshot** mode archive.
 
 *   **Incremental Retention**: Enabled by default. It manages the lifecycle of backups in the incremental archive.
-*   **Snapshot Retention**: Disabled by default. This means backups in the snapshot archive are kept forever unless you explicitly enable this policy.
+*   **Snapshot Retention**: Disabled by default. This means backups in the snapshot archive are kept forever unless you explicitly enable this policy. **Note:** The default values are set to `-1`. If you enable this policy, you must explicitly set all retention periods (hours, days, etc.) to `0` or greater. This ensures you don't accidentally delete data with an unconfigured policy.
 
 Both policies work using a "promotion" system. When cleaning up old backups, `pgl-backup` scans all your archived backups from newest to oldest and decides which ones to keep.
 
@@ -697,11 +697,11 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | - / `retention.incremental.months` | `int` | `0` | Monthly backups to keep. |
 | - / `retention.incremental.years` | `int` | `0` | Yearly backups to keep. |
 | - / `retention.snapshot.enabled` | `bool` | `false` | Enable retention policy for snapshot backups. |
-| - / `retention.snapshot.hours` | `int` | `0` | Hourly backups to keep. |
-| - / `retention.snapshot.days` | `int` | `0` | Daily backups to keep. |
-| - / `retention.snapshot.weeks` | `int` | `4` | Weekly backups to keep. |
-| - / `retention.snapshot.months` | `int` | `0` | Monthly backups to keep. |
-| - / `retention.snapshot.years` | `int` | `0` | Yearly backups to keep. |
+| - / `retention.snapshot.hours` | `int` | `-1` | Hourly backups to keep. |
+| - / `retention.snapshot.days` | `int` | `-1` | Daily backups to keep. |
+| - / `retention.snapshot.weeks` | `int` | `-1` | Weekly backups to keep. |
+| - / `retention.snapshot.months` | `int` | `-1` | Monthly backups to keep. |
+| - / `retention.snapshot.years` | `int` | `-1` | Yearly backups to keep. |
 | **Compression** | | | |
 | `compression-incremental` / `compression.incremental.enabled` | `bool` | `true` | Enable compression for incremental backups. |
 | `compression-incremental-format` / `compression.incremental.format` | `string` | `"tar.zst"` | `"zip"`, `"tar.gz"`, or `"tar.zst"`. |
