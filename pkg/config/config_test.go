@@ -206,6 +206,19 @@ func TestConfig_Validate(t *testing.T) {
 			wantErr:     false,
 		},
 		{
+			name: "Incremental Retention Enabled with Valid Positive Values",
+			modify: func(c *Config) {
+				c.Retention.Incremental.Enabled = true
+				c.Retention.Incremental.Hours = 24
+				c.Retention.Incremental.Days = 7
+				c.Retention.Incremental.Weeks = 0
+				c.Retention.Incremental.Months = 0
+				c.Retention.Incremental.Years = 0
+			},
+			checkSource: false,
+			wantErr:     false,
+		},
+		{
 			name: "Snapshot Retention Enabled with Default Negative Values",
 			modify: func(c *Config) {
 				c.Retention.Snapshot.Enabled = true
@@ -221,6 +234,19 @@ func TestConfig_Validate(t *testing.T) {
 				c.Retention.Snapshot.Enabled = true
 				c.Retention.Snapshot.Hours = 0
 				c.Retention.Snapshot.Days = 0
+				c.Retention.Snapshot.Weeks = 0
+				c.Retention.Snapshot.Months = 0
+				c.Retention.Snapshot.Years = 0
+			},
+			checkSource: false,
+			wantErr:     false,
+		},
+		{
+			name: "Snapshot Retention Enabled with Valid Positive Values",
+			modify: func(c *Config) {
+				c.Retention.Snapshot.Enabled = true
+				c.Retention.Snapshot.Hours = 24
+				c.Retention.Snapshot.Days = 7
 				c.Retention.Snapshot.Weeks = 0
 				c.Retention.Snapshot.Months = 0
 				c.Retention.Snapshot.Years = 0
