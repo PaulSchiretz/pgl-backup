@@ -246,7 +246,7 @@ func NewDefault() Config {
 				Enabled: false, // Disabled by default to protect snapshots.
 				Hours:   0,
 				Days:    0,
-				Weeks:   0,
+				Weeks:   4, // Default: Keep one backup for each of the last 4 weeks.
 				Months:  0,
 				Years:   0,
 			},

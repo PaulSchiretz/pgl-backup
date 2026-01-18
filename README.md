@@ -279,7 +279,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
       "enabled": false,
       "hours": 0,
       "days": 0,
-      "weeks": 0,
+      "weeks": 4,
       "months": 0,
       "years": 0
     }
@@ -490,7 +490,7 @@ If a backup doesn't fill any available slot, it is deleted. This ensures that a 
 ### Retention Policy Examples
 
 Here are a few example policies you can use in your `pgl-backup.config.json` file.
-The best policy depends on how much data you are backing up and how much disk space you have available. For many use cases, a simple policy of keeping 2 daily, 1 weekly, and perhaps 1 monthly backup is more than enough.
+The best policy depends on how much data you are backing up and how much disk space you have available. For many use cases, a simple policy of keeping 4 weekly backups is more than enough.
 
 
 #### The "Simple" (Minimal)
@@ -699,7 +699,7 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | - / `retention.snapshot.enabled` | `bool` | `false` | Enable retention policy for snapshot backups. |
 | - / `retention.snapshot.hours` | `int` | `0` | Hourly backups to keep. |
 | - / `retention.snapshot.days` | `int` | `0` | Daily backups to keep. |
-| - / `retention.snapshot.weeks` | `int` | `0` | Weekly backups to keep. |
+| - / `retention.snapshot.weeks` | `int` | `4` | Weekly backups to keep. |
 | - / `retention.snapshot.months` | `int` | `0` | Monthly backups to keep. |
 | - / `retention.snapshot.years` | `int` | `0` | Yearly backups to keep. |
 | **Compression** | | | |
