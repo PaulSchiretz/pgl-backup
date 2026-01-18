@@ -121,7 +121,7 @@ func (s *PathSyncer) Sync(ctx context.Context, absSourcePath, absTargetBasePath 
 
 	// Store the Result
 	p.ResultInfo = metafile.MetafileInfo{
-		RelPathKey: relContentPathKey,
+		RelPathKey: util.NormalizePath(relCurrentPathKey),
 		Metadata:   metadata,
 	}
 	return nil
