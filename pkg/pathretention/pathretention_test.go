@@ -23,21 +23,6 @@ func TestPrune(t *testing.T) {
 		expectKept    []string
 	}{
 		{
-			name: "No Policy (All Zeros) - Keep All",
-			plan: pathretention.Plan{
-				Enabled: true,
-				// All counts 0
-			},
-			setupBackups: func(t *testing.T, baseDir string) []metafile.MetafileInfo {
-				return []metafile.MetafileInfo{
-					createTestBackup(t, baseDir, "backup1", now.Add(-1*time.Hour)),
-					createTestBackup(t, baseDir, "backup2", now.Add(-2*time.Hour)),
-				}
-			},
-			expectKept:    []string{"backup1", "backup2"},
-			expectDeleted: []string{},
-		},
-		{
 			name: "Keep 1 Hourly - Deletes Older",
 			plan: pathretention.Plan{
 				Enabled: true,

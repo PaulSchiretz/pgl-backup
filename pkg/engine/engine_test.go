@@ -18,6 +18,7 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/pathsync"
 	"github.com/paulschiretz/pgl-backup/pkg/planner"
 	"github.com/paulschiretz/pgl-backup/pkg/preflight"
+	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 // --- Mocks ---
@@ -45,7 +46,8 @@ func (m *mockSyncer) Sync(ctx context.Context, absSourcePath, absTargetBasePath,
 }
 
 type mockArchiver struct {
-	err error
+	err        error
+	resultPath string
 }
 
 func (m *mockArchiver) Archive(ctx context.Context, absTargetBasePath, relArchivePathKey, backupDirPrefix string, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) error {
@@ -53,15 +55,21 @@ func (m *mockArchiver) Archive(ctx context.Context, absTargetBasePath, relArchiv
 		return m.err
 	}
 	// Simulate result info
-	p.ResultInfo = metafile.MetafileInfo{RelPathKey: "archived_path"}
+	path := "archived_path"
+	if m.resultPath != "" {
+		path = m.resultPath
+	}
+	p.ResultInfo = metafile.MetafileInfo{RelPathKey: path}
 	return nil
 }
 
 type mockRetainer struct {
-	err error
+	err     error
+	toPrune []metafile.MetafileInfo
 }
 
 func (m *mockRetainer) Prune(ctx context.Context, absTargetBasePath string, toPrune []metafile.MetafileInfo, p *pathretention.Plan, timestampUTC time.Time) error {
+	m.toPrune = toPrune
 	return m.err
 }
 
@@ -380,6 +388,81 @@ func TestExecuteBackup(t *testing.T) {
 				t.Errorf("expected no hooks executed in dry run, but got %v", executedHooks)
 			}
 		})
+	}
+}
+
+func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
+	// Setup
+	targetDir := t.TempDir()
+	relArchive := "archive"
+	relCurrent := "current"
+	prefix := "backup_"
+
+	// Create the archive directory
+	archivePath := filepath.Join(targetDir, relArchive)
+	os.MkdirAll(archivePath, 0755)
+
+	// Create 'current' backup so fetchBackup succeeds and Archive is called
+	currentPath := filepath.Join(targetDir, relCurrent)
+	os.MkdirAll(currentPath, 0755)
+	metafile.Write(currentPath, metafile.MetafileContent{TimestampUTC: time.Now()})
+
+	// 1. Create an OLD backup on disk (should be pruned)
+	oldBackupName := prefix + "old"
+	oldBackupPath := filepath.Join(archivePath, oldBackupName)
+	os.MkdirAll(oldBackupPath, 0755)
+	metafile.Write(oldBackupPath, metafile.MetafileContent{TimestampUTC: time.Now().Add(-24 * time.Hour)})
+
+	// 2. Create the NEW backup on disk (simulating what Archiver just did)
+	newBackupRelPath := filepath.Join(relArchive, prefix+"new")
+	newBackupPath := filepath.Join(targetDir, newBackupRelPath)
+	os.MkdirAll(newBackupPath, 0755)
+	metafile.Write(newBackupPath, metafile.MetafileContent{TimestampUTC: time.Now()})
+
+	// Plan
+	plan := &planner.BackupPlan{
+		Mode: planner.Incremental,
+		Paths: planner.PathKeys{
+			RelArchivePathKey: relArchive,
+			RelCurrentPathKey: relCurrent,
+			BackupDirPrefix:   prefix,
+		},
+		Preflight:   &preflight.Plan{},
+		Sync:        &pathsync.Plan{Enabled: true},
+		Archive:     &patharchive.Plan{Enabled: true},
+		Retention:   &pathretention.Plan{Enabled: true}, // Enabled!
+		Compression: &pathcompression.Plan{Enabled: false},
+	}
+
+	// Mocks
+	v := &mockValidator{}
+	s := &mockSyncer{}
+
+	// Mock Archiver that returns the path of the NEW backup we created
+	a := &mockArchiver{
+		resultPath: newBackupRelPath,
+	}
+
+	r := &mockRetainer{}
+	c := &mockCompressor{}
+
+	runner := engine.NewRunner(v, s, a, r, c)
+
+	// Execute
+	err := runner.ExecuteBackup(context.Background(), "src", targetDir, plan)
+	if err != nil {
+		t.Fatalf("ExecuteBackup failed: %v", err)
+	}
+
+	// Assert
+	// We expect toPrune to contain ONLY the old backup.
+	if len(r.toPrune) != 1 {
+		t.Errorf("Expected 1 backup to prune, got %d", len(r.toPrune))
+	} else {
+		expectedKey := util.NormalizePath(filepath.Join(relArchive, oldBackupName))
+		if r.toPrune[0].RelPathKey != expectedKey {
+			t.Errorf("Expected to prune %s, got %s", expectedKey, r.toPrune[0].RelPathKey)
+		}
 	}
 }
 

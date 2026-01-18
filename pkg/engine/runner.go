@@ -140,7 +140,19 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absSourcePath, absTargetBase
 
 	// Clean up outdated backups
 	if p.Retention.Enabled {
-		toRetent, err := r.fetchBackups(ctx, absTargetBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupDirPrefix, []string{})
+
+		// Add our just created sync/archive relPathKey to the exclusion list for retention so they are never pruned
+		// NOTE: This is needed in case our retention is enabled but 0,0,0,0,0 and we just created a snapshot.(otherwise we would imetialy remove it again)
+		var relPathExclusionKeys []string
+		if p.Archive.ResultInfo.RelPathKey != "" {
+			relPathExclusionKeys = append(relPathExclusionKeys, p.Archive.ResultInfo.RelPathKey)
+		}
+		if p.Sync.ResultInfo.RelPathKey != "" {
+			relPathExclusionKeys = append(relPathExclusionKeys, p.Sync.ResultInfo.RelPathKey)
+		}
+
+		// Fetch backups that might need pruning
+		toRetent, err := r.fetchBackups(ctx, absTargetBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupDirPrefix, relPathExclusionKeys)
 		if err != nil {
 			if p.FailFast {
 				return fmt.Errorf("Error reading backups for prune: %w", err)
@@ -248,22 +260,35 @@ func (r *Runner) acquireTargetLock(ctx context.Context, absTargetBasePath string
 // fetchBackups scans a directory for valid backup folders and parses their metadata
 // It relies exclusively on the `.pgl-backup.meta.json` file; directories without a
 // readable metafile are ignored.
-func (r *Runner) fetchBackups(ctx context.Context, absTargetBasePath, relPathKey, dirNamePrefix string, dirNameExclusions []string) ([]metafile.MetafileInfo, error) {
+// The relPathExclusionKeys are Relative to the absTargetBasePath, and filtered internally.
+func (r *Runner) fetchBackups(ctx context.Context, absTargetBasePath, relArchivePathKey, dirNamePrefix string, relPathExclusionKeys []string) ([]metafile.MetafileInfo, error) {
 
-	absArchivePath := util.DenormalizePath(filepath.Join(absTargetBasePath, relPathKey))
-
-	excludedDirNames := make(map[string]struct{})
-	for _, exclusion := range dirNameExclusions {
-		excludedDirNames[exclusion] = struct{}{}
-	}
-
+	absArchivePath := util.DenormalizePath(filepath.Join(absTargetBasePath, relArchivePathKey))
 	entries, err := os.ReadDir(absArchivePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			plog.Debug("Archives directory does not exist yet, no retention policy to apply.", "path", absArchivePath)
+			plog.Debug("Archives directory does not exist yet, skipping.", "path", relArchivePathKey)
 			return []metafile.MetafileInfo{}, nil // Not an error, just means no archives exist yet.
 		}
-		return []metafile.MetafileInfo{}, fmt.Errorf("failed to read archive directory %s: %w", absArchivePath, err)
+		return []metafile.MetafileInfo{}, fmt.Errorf("failed to read archive directory %s: %w", relArchivePathKey, err)
+	}
+
+	excludedDirsInArchive := make(map[string]struct{})
+	for _, relPathExclusionKey := range relPathExclusionKeys {
+		// Calculate the relative path from the archive root to the exclusion target
+		// Example: relArchivePathKey: "backups/daily"
+		//          relPathExclusionKey: "backups/daily/old_data"
+		//          relPathInArchive will be "old_data"
+		pathInArchive, err := filepath.Rel(relArchivePathKey, relPathExclusionKey)
+		if err != nil {
+			continue // Paths weren't compatible
+		}
+		relPathInArchive := util.NormalizePath(pathInArchive)
+
+		// filepath.Rel returns ".." if the path is outside the base
+		if !strings.HasPrefix(relPathInArchive, "..") && relPathInArchive != "." {
+			excludedDirsInArchive[relPathInArchive] = struct{}{}
+		}
 	}
 
 	var foundBackups []metafile.MetafileInfo
@@ -281,14 +306,14 @@ func (r *Runner) fetchBackups(ctx context.Context, absTargetBasePath, relPathKey
 		}
 
 		// Check if excluded
-		if _, ok := excludedDirNames[dirName]; ok {
+		if _, ok := excludedDirsInArchive[dirName]; ok {
 			continue
 		}
 
-		relBackupPathkey := util.NormalizePath(filepath.Join(relPathKey, dirName))
+		relBackupPathkey := util.NormalizePath(filepath.Join(relArchivePathKey, dirName))
 		foundBackup, err := r.fetchBackup(absTargetBasePath, relBackupPathkey)
 		if err != nil {
-			plog.Warn("Skipping retention check for directory; cannot read metadata", "directory", dirName, "reason", err)
+			plog.Warn("Skipping backup directory; cannot read metadata", "directory", dirName, "reason", err)
 			continue
 		}
 		foundBackups = append(foundBackups, foundBackup)

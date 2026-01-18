@@ -47,16 +47,12 @@ func NewPathRetainer(numWorkers int) *PathRetainer {
 // that are no longer needed according to the passed retention policy.
 func (r *PathRetainer) Prune(ctx context.Context, absTargetBasePath string, toPrune []metafile.MetafileInfo, p *Plan, timestampUTC time.Time) error {
 
+	// NOTE: Even if retention is 0,0,0,0,0 and enabled, the backups that we just created are filetered before a call to this func. So it is safe to simply do what we are told.
 	// Check for cancellation
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
-	}
-
-	if p.Hours <= 0 && p.Days <= 0 && p.Weeks <= 0 && p.Months <= 0 && p.Years <= 0 {
-		plog.Debug("Retention policy would delete all backups (all values are zero). Skipping.")
-		return nil
 	}
 
 	if len(toPrune) == 0 {
