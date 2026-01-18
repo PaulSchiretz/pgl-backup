@@ -90,7 +90,7 @@ func (a *PathArchiver) Archive(ctx context.Context, absTargetBasePath, relArchiv
 	// but we add the user's local offset to make the timezone clear to the user.
 	timestamp := util.FormatTimestampWithOffset(toArchive.Metadata.TimestampUTC)
 	dirName := backupDirPrefix + timestamp
-	relTargetPathKey := filepath.Join(relArchivePathKey, dirName)
+	relTargetPathKey := util.NormalizePath(filepath.Join(relArchivePathKey, dirName))
 
 	t := &task{
 		ctx:               ctx,

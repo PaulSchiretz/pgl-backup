@@ -81,7 +81,10 @@ func (t *task) execute() (metafile.MetafileInfo, error) {
 	plog.Notice("ARCHIVED", "moved", t.toArchive.RelPathKey, "to", t.relTargetPathKey)
 
 	t.metrics.AddArchivesCreated(1)
-	return metafile.MetafileInfo{RelPathKey: t.relTargetPathKey, Metadata: t.toArchive.Metadata}, nil
+	return metafile.MetafileInfo{
+		RelPathKey: util.NormalizePath(t.relTargetPathKey),
+		Metadata:   t.toArchive.Metadata,
+	}, nil
 }
 
 // shouldArchive determines if a new backup archive should be created based on the state of the current run.
