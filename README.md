@@ -192,17 +192,47 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
   },
   "paths": {
     "source": "/home/user/Documents",
-    "targetBase": "/media/backup-drive/MyDocumentsBackup",
-    "incrementalSubDirs": {
+    "incremental": {
       "current": "PGL_Backup_Incremental_Current",
-      "archive": "PGL_Backup_Incremental_Archive"
+      "archive": "PGL_Backup_Incremental_Archive",
+      "content": "PGL_Backup_Content",
+      "backupDirPrefix": "PGL_Backup_"
     },
-    "snapshotSubDirs": {
+    "snapshot": {
       "current": "PGL_Backup_Snapshot_Current",
-      "archive": "PGL_Backup_Snapshot_Archive"
+      "archive": "PGL_Backup_Snapshot_Archive",
+      "content": "PGL_Backup_Content",
+      "backupDirPrefix": "PGL_Backup_"
     },
-    "contentSubDir": "PGL_Backup_Content",
-    "preserveSourceDirectoryName": true,
+  },
+  "engine": {
+    "metrics": true,
+    "failFast": false,
+    "performance": {
+      "syncWorkers": 4,
+      "mirrorWorkers": 4,
+      "deleteWorkers": 4,
+      "compressWorkers": 1,
+      "bufferSizeKB": 256
+    }
+  },
+  "sync": {
+    "incremental": {
+      "enabled": true,
+      "PreserveSourceDirName": true,
+      "engine": "native",
+      "retryCount": 3,
+      "retryWaitSeconds": 5,
+      "modTimeWindowSeconds": 1
+    },
+    "snapshot": {
+      "enabled": true,
+      "PreserveSourceDirName": true,
+      "engine": "native",
+      "retryCount": 3,
+      "retryWaitSeconds": 5,
+      "modTimeWindowSeconds": 1
+    },
     "defaultExcludeFiles": [
       "*.tmp",
       "*.temp",
@@ -224,24 +254,16 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
     "userExcludeFiles": [],
     "userExcludeDirs": []
   },
-  "engine": {
-    "type": "native",
-    "retryCount": 3,
-    "retryWaitSeconds": 5,
-    "modTimeWindowSeconds": 1,
-    "performance": {
-      "syncWorkers": 4,
-      "mirrorWorkers": 4,
-      "deleteWorkers": 4,
-      "compressWorkers": 1,
-      "bufferSizeKB": 256
-    }
-  },
   "archive": {
     "incremental": {
       "enabled": true,
       "intervalMode": "auto",
       "intervalSeconds": 86400
+    },
+    "snapshot": {
+      "enabled": true,
+      "intervalMode": "manual",
+      "intervalSeconds": 0
     }
   },
   "retention": {
@@ -272,7 +294,10 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
       "format": "tar.zst"
     }
   },
-  "hooks": {}
+  "hooks": {
+    "preBackup": [],
+    "postBackup": []
+  }
 }
 ```
 
@@ -320,7 +345,7 @@ pgl-backup backup -target="/path/to/your/backup-target" -dry-run
 
 ### One-Off Snapshot Backup
 
-You can override any configuration setting with a command-line flag. Here's how to perform a single snapshot backup, ignoring the `incremental` mode set in the config file.
+Here's how to perform a single snapshot backup.
 
 ```sh
 pgl-backup backup -target="/path/to/your/backup-target" -mode=snapshot
@@ -624,58 +649,69 @@ The best policy depends on how much data you are backing up and how much disk sp
 
 All command-line flags can also be set in the `pgl-backup.config.json` file. Note that structural options (like directory paths) and complex policies (like retention) are only available in the configuration file to ensure consistency.
 
-| Flag / JSON Key                 | Type          | Default                               | Description                                                                                             |
-| ------------------------------- | ------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `version`                       | `string`      | `""`                                  | The `pgl-backup` version. |
-| `source` / `paths.source`       | `string`      | `""`                                  | The directory to back up. **Required**. |
-| `target` / `paths.targetBase`   | `string`      | `""`                                  | The base directory where backups are stored. **Required**. |
-| `mode` / `mode`                 | `string`      | `"incremental"`                       | Backup mode: `"incremental"` or `"snapshot"`. |
-| `paths.incrementalSubDirs.archive`          | `string`      | `"PGL_Backup_Incremental_Archive"`               | The name of the sub-directory where historical incremental backups are stored. |
-| `paths.incrementalSubDirs.current`       | `string`      | `"PGL_Backup_Incremental_Current"`                | The name of the sub-directory for the current incremental backup. |
-| `paths.snapshotSubDirs.archive`          | `string`      | `"PGL_Backup_Snapshot_Archive"`               | The name of the sub-directory where snapshot backups are stored. |
-| `paths.snapshotSubDirs.current`       | `string`      | `"PGL_Backup_Snapshot_Current"`                | The name of the sub-directory for the current snapshot backup. |
-| `paths.contentSubDir`           | `string`      | `"PGL_Backup_Content"`                | The name of the sub-directory within a backup that holds the actual synced content. |
-| `fail-fast` / `failFast`        | `bool`        | `false`                               | If true, stops the backup immediately on the first file sync error. |
-| `default`                       | `bool`        | `false`                               | Used with `init` command. Overwrite existing configuration with defaults. |
-| `force`                         | `bool`        | `false`                               | Bypass confirmation prompts (e.g., for init -default). |
-| `dry-run` / `dryRun`            | `bool`        | `false`                               | If true, simulates the backup without making changes. |
-| `log-level` / `logLevel`        | `string`      | `"info"`                              | Set the logging level: `"debug"`, `"notice"`, `"info"`, `"warn"`, or `"error"`. |
-| `metrics` / `metrics`           | `bool`        | `true`                                | If true, enables detailed performance and file-counting metrics. |
-| `sync-engine` / `engine.type`   | `string`      | `"native"`                            | The sync engine to use: `"native"` or `"robocopy"` (Windows only). |
-| `archive-incremental` / `archive.incremental.enabled` | `bool` | `true` | If true, enables archiving for incremental backups when the archiving interval has passed. |
-| `archive-incremental-interval-mode` / `archive.incremental.intervalMode` | `string` | `"auto"` | Archive interval mode: `"auto"` (derives interval from retention policy) or `"manual"`. In `auto` mode if archiving is `enabled` and the retention policy is disabled, the interval in seconds after which a backup is archived is set to the default for `manual` intervals (e.g., `86400` for 24h). |
-| `archive-incremental-interval-seconds` / `archive.incremental.intervalSeconds` | `int` | `86400` | In `manual` mode, the interval in seconds after which a backup is archived (e.g., `86400` for 24h). |
-| `retention.incremental.enabled`         | `bool`         | `true`                             | Enables the retention policy for incremental mode archives. |
-| `retention.incremental.hours`         | `int`         | `0`                                   | Number of recent hourly incremental archives to keep. |
-| `retention.incremental.days`          | `int`         | `0`                                   | Number of recent daily incremental archives to keep. |
-| `retention.incremental.weeks`         | `int`         | `4`                                   | Number of recent weekly incremental archives to keep. |
-| `retention.incremental.months`        | `int`         | `0`                                   | Number of recent monthly incremental archives to keep. |
-| `retention.incremental.years`         | `int`         | `0`                                   | Number of recent yearly incremental archives to keep. |
-| `retention.snapshot.enabled`         | `bool`         | `false`                               | Set to true to enable the retention policy for snapshot mode backups. Disabled by default. |
-| `retention.snapshot.hours`         | `int`         | `0`                                      | Number of recent hourly snapshots to keep. |
-| `retention.snapshot.days`          | `int`         | `0`                                      | Number of recent daily snapshots to keep. |
-| `retention.snapshot.weeks`         | `int`         | `0`                                      | Number of recent weekly snapshots to keep. |
-| `retention.snapshot.months`        | `int`         | `0`                                      | Number of recent monthly snapshots to keep. |
-| `retention.snapshot.years`         | `int`         | `0`                                      | Number of recent yearly snapshots to keep. |
-| `compression-incremental` / `compression.incremental.enabled` | `bool` | `true` | If true, enables compression for incremental backups that are not already compressed. |
-| `compression-incremental-format` / `compression.incremental.format` | `string` | `"tar.zst"` | The archive format to use for incremental backups: `"zip"`, `"tar.gz"`, or `"tar.zst"`. |
-| `compression-snapshot` / `compression.snapshot.enabled` | `bool` | `true` | If true, enables compression for snapshot backups that are not already compressed. |
-| `compression-snapshot-format` / `compression.snapshot.format` | `string` | `"tar.zst"` | The archive format to use for snapshot backups: `"zip"`, `"tar.gz"`, or `"tar.zst"`. |
-| `paths.defaultExcludeFiles` | `[]string`    | `[*.tmp, *.temp, *.swp, *.lnk, ~*, desktop.ini, .DS_Store, Thumbs.db, Icon\r]`                     | The list of default file patterns to exclude. Can be customized. |
-| `paths.defaultExcludeDirs` | `[]string`    | `[@tmp, @eadir, .SynologyWorkingDirectory, #recycle, $Recycle.Bin]`                     | The list of default directory patterns to exclude. Can be customized. |
-| `user-exclude-files` / `paths.userExcludeFiles`| `[]string`    | `[]`                                  | List of file patterns to exclude. |
-| `user-exclude-dirs` / `paths.userExcludeDirs`  | `[]string`    | `[]`                                  | List of directory patterns to exclude. |
-| `pre-backup-hooks` / `hooks.preBackup`| `[]string`    | `[]`                                  | List of shell commands to run before the backup. |
-| `post-backup-hooks` / `hooks.postBackup`| `[]string`    | `[]`                                  | List of shell commands to run after the backup. |
-| `preserve-source-name` / `paths.preserveSourceDirectoryName` | `bool` | `true` | If true, creates a subdirectory in the destination named after the source directory. If false, syncs contents directly. |
-| **Performance Tuning** | | | | 
+| Flag / JSON Key | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `version`| `version` | `""` | The `pgl-backup` version. |
+| `source` / `source` | `string` | `""` | The directory to back up. **Required**. |
+| `target` / `target` (internal) | `string` | `""` | The base directory where backups are stored. **Required**. |
+| `mode` / `runtime.mode` (internal) | `"incremental"` | Backup mode: `"incremental"` or `"snapshot"`. |
+| `fail-fast` / `engine.failFast` | `bool` | `false` | If true, stops the backup immediately on the first file sync error. |
+| `default` / - | `false` | Used with `init` command. Overwrite existing configuration with defaults. |
+| `force` / - | `false` | Bypass confirmation prompts (e.g., for init -default). |
+| `dry-run` / `runtime.dryRun` (internal) | `false` | If true, simulates the backup without making changes. |
+| `log-level` / `logLevel` | `string` | `"info"` | Set the logging level: `"debug"`, `"notice"`, `"info"`, `"warn"`, or `"error"`. |
+| `metrics` / `engine.metrics` | `bool` | `true` | If true, enables detailed performance and file-counting metrics. |
+| `sync-engine` / `sync.incremental.engine` | `"native"` | The sync engine to use: `"native"` or `"robocopy"` (Windows only). |
+| **Paths** | | | |
+| - / `paths.incremental.archive` | `"PGL_Backup_Incremental_Archive"` | Sub-directory for historical incremental backups. |
+| - / `paths.incremental.current` | `"PGL_Backup_Incremental_Current"` | Sub-directory for the current incremental backup. |
+| - / `paths.snapshot.archive` | `"PGL_Backup_Snapshot_Archive"` | Sub-directory for snapshot backups. |
+| - / `paths.snapshot.current` | `"PGL_Backup_Snapshot_Current"` | Sub-directory for the current snapshot backup. |
+| **Sync Settings** | | | |
+| `sync-incremental-retry-count` / `sync.incremental.retryCount` | `int` | `3` | Number of retries for failed file copies (incremental). |
+| `sync-incremental-retry-wait` / `sync.incremental.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries (incremental). |
+| `sync-incremental-mod-time-window` / `sync.incremental.modTimeWindowSeconds` | `int` | `1` | Time window in seconds to consider file modification times equal (incremental). |
+| `sync-incremental-preserve-source-dir-name` / `sync.incremental.PreserveSourceDirName` | `bool` | `true` | If true, creates a subdirectory in the destination named after the source directory (incremental). |
+| `sync-snapshot-retry-count` / `sync.snapshot.retryCount` | `int` | `3` | Number of retries for failed file copies (snapshot). |
+| `sync-snapshot-retry-wait` / `sync.snapshot.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries (snapshot). |
+| `sync-snapshot-mod-time-window` / `sync.snapshot.modTimeWindowSeconds` | `int` | `1` | Time window in seconds to consider file modification times equal (snapshot). |
+| `sync-snapshot-preserve-source-dir-name` / `sync.snapshot.PreserveSourceDirName` | `bool` | `true` | If true, creates a subdirectory in the destination named after the source directory (snapshot). |
+| **Exclusions & Hooks** | | | |
+| `user-exclude-files` / `sync.userExcludeFiles` | `[]string` | `[]` | List of file patterns to exclude. |
+| `user-exclude-dirs` / `sync.userExcludeDirs` | `[]string` | `[]` | List of directory patterns to exclude. |
+| - / `sync.defaultExcludeFiles` | `[...]` | Default file patterns to exclude. |
+| - / `sync.defaultExcludeDirs` | `[...]` | Default directory patterns to exclude. |
+| `pre-backup-hooks` / `hooks.preBackup` | `[]string` | `[]` | List of shell commands to run before the backup. |
+| `post-backup-hooks` / `hooks.postBackup` | `[]string` | `[]` | List of shell commands to run after the backup. |
+| **Archive & Retention** | | | |
+| `archive-incremental` / `archive.incremental.enabled` | `bool` | `true` | Enable archiving for incremental backups. |
+| `archive-incremental-interval-mode` / `archive.incremental.intervalMode` | `string` | `"auto"` | `"auto"` or `"manual"`. |
+| `archive-incremental-interval-seconds` / `archive.incremental.intervalSeconds` | `int` | `86400` | Interval in seconds for manual mode. |
+| `archive-snapshot` / `archive.snapshot.enabled` | `bool` | `true` | Enable archiving for snapshot backups. |
+| `archive-snapshot-interval-mode` / `archive.snapshot.intervalMode` | `string` | `"manual"` | `"auto"` or `"manual"`. |
+| `archive-snapshot-interval-seconds` / `archive.snapshot.intervalSeconds` | `int` | `0` | Interval in seconds for manual mode. |
+| - / `retention.incremental.enabled` | `bool` | `true` | Enable retention policy for incremental backups. |
+| - / `retention.incremental.hours` | `int` | `0` | Hourly backups to keep. |
+| - / `retention.incremental.days` | `int` | `0` | Daily backups to keep. |
+| - / `retention.incremental.weeks` | `int` | `4` | Weekly backups to keep. |
+| - / `retention.incremental.months` | `int` | `0` | Monthly backups to keep. |
+| - / `retention.incremental.years` | `int` | `0` | Yearly backups to keep. |
+| - / `retention.snapshot.enabled` | `bool` | `false` | Enable retention policy for snapshot backups. |
+| - / `retention.snapshot.hours` | `int` | `0` | Hourly backups to keep. |
+| - / `retention.snapshot.days` | `int` | `0` | Daily backups to keep. |
+| - / `retention.snapshot.weeks` | `int` | `0` | Weekly backups to keep. |
+| - / `retention.snapshot.months` | `int` | `0` | Monthly backups to keep. |
+| - / `retention.snapshot.years` | `int` | `0` | Yearly backups to keep. |
+| **Compression** | | | |
+| `compression-incremental` / `compression.incremental.enabled` | `bool` | `true` | Enable compression for incremental backups. |
+| `compression-incremental-format` / `compression.incremental.format` | `string` | `"tar.zst"` | `"zip"`, `"tar.gz"`, or `"tar.zst"`. |
+| `compression-snapshot` / `compression.snapshot.enabled` | `bool` | `true` | Enable compression for snapshot backups. |
+| `compression-snapshot-format` / `compression.snapshot.format` | `string` | `"tar.zst"` | `"zip"`, `"tar.gz"`, or `"tar.zst"`. |
+| **Performance Tuning** | | | |
 | `sync-workers` / `engine.performance.syncWorkers` | `int` | `4` | Number of concurrent workers for file synchronization. |
 | `mirror-workers` / `engine.performance.mirrorWorkers` | `int` | `4` | Number of concurrent workers for file deletions in mirror mode. |
 | `delete-workers` / `engine.performance.deleteWorkers` | `int` | `4` | Number of concurrent workers for deleting outdated backups. |
 | `compress-workers` / `engine.performance.compressWorkers` | `int` | `1` | Number of concurrent workers for compressing backups. |
-| `retry-count` / `engine.retryCount` | `int` | `3` | Number of retries for failed file copies. |
-| `retry-wait` / `engine.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries. |
-| `mod-time-window` / `engine.modTimeWindowSeconds` | `int` | `1` | Time window in seconds to consider file modification times equal (default 1s). |
 | `buffer-size-kb` / `engine.performance.bufferSizeKB` | `int` | `256` | Size of the I/O buffer in kilobytes for file copies and compression. |
 
 ## Troubleshooting

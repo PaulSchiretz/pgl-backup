@@ -15,19 +15,12 @@ package pathretention
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
-	"strings"
-	"sync"
 	"time"
 
-	"github.com/paulschiretz/pgl-backup/pkg/config"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/pathretentionmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
-	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 // Constants for time formats used in retention bucketing
@@ -39,295 +32,68 @@ const (
 	yearFormat  = "2006"          // YYYY
 )
 
-// retentionRun holds the mutable state for a single execution of the retention manager.
-// This makes the RetentionEngine itself stateless and safe for concurrent use if needed.
-type retentionRun struct {
-	ctx             context.Context
-	dirPath         string
-	retentionPolicy config.RetentionPolicyConfig
-	backups         []metafile.MetafileInfo
-	dryRun          bool
-	metrics         pathretentionmetrics.Metrics
-	numWorkers      int
-	deleteTasksChan chan metafile.MetafileInfo
-	deleteWg        sync.WaitGroup
+type PathRetainer struct {
+	numWorkers int
 }
 
-type PathRetentionManager struct {
-	config config.Config
-}
-
-// RetentionManager defines the interface for a component that applies a retention policy to backups.
-type RetentionManager interface {
-	Apply(ctx context.Context, dirPath string, retentionPolicy config.RetentionPolicyConfig, excludeDir string) error
-}
-
-// Statically assert that *PathRetentionManager implements the RetentionManager interface.
-var _ RetentionManager = (*PathRetentionManager)(nil)
-
-// NewPathRetentionManager creates a new PathRetentionManager with the given configuration.
-func NewPathRetentionManager(cfg config.Config) *PathRetentionManager {
-	return &PathRetentionManager{
-		config: cfg,
+// NewPathRetainer creates a new PathRetainer with the given configuration.
+func NewPathRetainer(numWorkers int) *PathRetainer {
+	return &PathRetainer{
+		numWorkers: numWorkers,
 	}
 }
 
-// Apply scans a given directory and deletes backups
+// Prune scans a given backups and deletes backups
 // that are no longer needed according to the passed retention policy.
-func (rm *PathRetentionManager) Apply(ctx context.Context, dirPath string, retentionPolicy config.RetentionPolicyConfig, excludeDir string) error {
-	if retentionPolicy.Hours <= 0 && retentionPolicy.Days <= 0 && retentionPolicy.Weeks <= 0 && retentionPolicy.Months <= 0 && retentionPolicy.Years <= 0 {
-		plog.Debug("Retention policy is disabled (all values are zero). Skipping.")
+func (r *PathRetainer) Prune(ctx context.Context, absTargetBasePath string, toPrune []metafile.MetafileInfo, p *Plan, timestampUTC time.Time) error {
+
+	// Check for cancellation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	if p.Hours <= 0 && p.Days <= 0 && p.Weeks <= 0 && p.Months <= 0 && p.Years <= 0 {
+		plog.Debug("Retention policy would delete all backups (all values are zero). Skipping.")
 		return nil
 	}
 
+	if len(toPrune) == 0 {
+		if p.DryRun {
+			plog.Debug("[DRY RUN] No backups found for retention")
+		} else {
+			plog.Debug("No backups found for retention")
+		}
+		return nil
+	}
+
+	// Sort all backups from newest to oldest for consistent processing.
+	sort.Slice(toPrune, func(i, j int) bool {
+		return toPrune[i].Metadata.TimestampUTC.After(toPrune[j].Metadata.TimestampUTC)
+	})
+
 	var m pathretentionmetrics.Metrics
-	if rm.config.Metrics {
+	if p.Metrics {
 		m = &pathretentionmetrics.RetentionMetrics{}
 	} else {
 		m = &pathretentionmetrics.NoopMetrics{}
 	}
 
-	run := &retentionRun{
-		ctx:             ctx,
-		dirPath:         dirPath,
-		retentionPolicy: retentionPolicy,
-		dryRun:          rm.config.DryRun,
-		metrics:         m,
-		numWorkers:      rm.config.Engine.Performance.DeleteWorkers,
-		deleteTasksChan: make(chan metafile.MetafileInfo, rm.config.Engine.Performance.DeleteWorkers*2),
+	t := &task{
+		PathRetainer:      r,
+		ctx:               ctx,
+		absTargetBasePath: absTargetBasePath,
+		keepHours:         p.Hours,
+		keepDays:          p.Days,
+		keepWeeks:         p.Weeks,
+		keepMonths:        p.Months,
+		keepYears:         p.Years,
+		toPrune:           toPrune,
+		timestampUTC:      timestampUTC,
+		metrics:           m,
+		dryRun:            p.DryRun,
+		deleteTasksChan:   make(chan metafile.MetafileInfo, r.numWorkers*2),
 	}
-
-	// Get a sorted list of all valid backups
-	var err error
-	run.backups, err = rm.fetchSortedBackups(ctx, dirPath, excludeDir)
-	if err != nil {
-		return err
-	}
-	return run.execute()
-}
-
-// fetchSortedBackups scans a directory for valid backup folders, parses their
-// metadata to get an accurate timestamp, and returns them sorted from newest to oldest.
-// It relies exclusively on the `.pgl-backup.meta.json` file; directories without a
-// readable metafile are ignored for retention purposes.
-func (rm *PathRetentionManager) fetchSortedBackups(ctx context.Context, dirPath, excludeDir string) ([]metafile.MetafileInfo, error) {
-	prefix := rm.config.Naming.Prefix
-
-	entries, err := os.ReadDir(dirPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			plog.Debug("Archives directory does not exist yet, no retention policy to apply.", "path", dirPath)
-			return []metafile.MetafileInfo{}, nil // Not an error, just means no archives exist yet.
-		}
-		return []metafile.MetafileInfo{}, fmt.Errorf("failed to read backup directory %s: %w", dirPath, err)
-	}
-
-	var foundBackups []metafile.MetafileInfo
-	for _, entry := range entries {
-		// Check for cancellation during the directory scan.
-		select {
-		case <-ctx.Done():
-			return []metafile.MetafileInfo{}, ctx.Err()
-		default:
-		}
-
-		dirName := entry.Name()
-		if !entry.IsDir() || !strings.HasPrefix(dirName, prefix) || dirName == excludeDir {
-			continue
-		}
-
-		backupPath := filepath.Join(dirPath, dirName)
-		metadata, err := metafile.Read(backupPath)
-		if err != nil {
-			plog.Warn("Skipping retention check for directory; cannot read metadata", "directory", dirName, "reason", err)
-			continue
-		}
-
-		// The metafile is the sole source of truth for the backup time.
-		foundBackups = append(foundBackups, metafile.MetafileInfo{RelPathKey: util.NormalizePath(dirName), Metadata: metadata})
-	}
-
-	// Sort all backups from newest to oldest for consistent processing.
-	sort.Slice(foundBackups, func(i, j int) bool {
-		return foundBackups[i].Metadata.TimestampUTC.After(foundBackups[j].Metadata.TimestampUTC)
-	})
-	return foundBackups, nil
-}
-
-// execute runs the retention logic.
-func (r *retentionRun) execute() error {
-
-	if len(r.backups) == 0 {
-		plog.Debug("No backups to delete")
-		return nil
-	}
-
-	// Filter the list of all backups to get only those that should be deleted.
-	eligibleBackups := r.filterBackupsToDelete()
-
-	if len(eligibleBackups) == 0 {
-		if r.dryRun {
-			plog.Debug("[DRY RUN] No backups need deletion")
-		} else {
-			plog.Debug("No backups need deletion")
-		}
-		return nil
-	}
-
-	plog.Info("Deleting outdated backups", "count", len(eligibleBackups))
-
-	r.metrics.StartProgress("Delete progress", 10*time.Second)
-	defer func() {
-		r.metrics.StopProgress()
-		r.metrics.LogSummary("Delete finished")
-	}()
-
-	// Start workers
-	for i := 0; i < r.numWorkers; i++ {
-		r.deleteWg.Add(1)
-		go r.deleteWorker()
-	}
-
-	// Start producer
-	go r.deleteTaskProducer(eligibleBackups)
-
-	r.deleteWg.Wait()
-
-	return nil
-}
-
-// deleteTaskProducer feeds the eligible backups into the channel for workers.
-func (r *retentionRun) deleteTaskProducer(eligibleBackups []metafile.MetafileInfo) {
-	defer close(r.deleteTasksChan)
-	for _, b := range eligibleBackups {
-		select {
-		case <-r.ctx.Done():
-			plog.Debug("Cancellation received, stopping retention job feeding.")
-			return // Stop feeding on cancel.
-		case r.deleteTasksChan <- b:
-		}
-	}
-}
-
-// deleteWorker consumes tasks from the channel and deletes the backups.
-func (r *retentionRun) deleteWorker() {
-	defer r.deleteWg.Done()
-	for b := range r.deleteTasksChan {
-		// Check for cancellation before each deletion.
-		select {
-		case <-r.ctx.Done():
-			return
-		default:
-		}
-
-		dirToDelete := filepath.Join(r.dirPath, util.DenormalizePath(b.RelPathKey))
-
-		if r.dryRun {
-			plog.Notice("[DRY RUN] DELETE", "path", dirToDelete)
-			continue
-		}
-		plog.Notice("DELETE", "path", dirToDelete)
-		if err := os.RemoveAll(dirToDelete); err != nil {
-			r.metrics.AddBackupsFailed(1)
-			plog.Warn("Failed to delete outdated backup directory", "path", dirToDelete, "error", err)
-		} else {
-			r.metrics.AddBackupsDeleted(1)
-		}
-		plog.Notice("DELETED", "path", dirToDelete)
-	}
-}
-
-// filterBackupsToDelete identifies which backups should be deleted based on the retention policy.
-func (r *retentionRun) filterBackupsToDelete() []metafile.MetafileInfo {
-	backupsToKeep := r.determineBackupsToKeep()
-
-	var backupsToDelete []metafile.MetafileInfo
-	for _, backup := range r.backups {
-		if _, shouldKeep := backupsToKeep[backup.RelPathKey]; !shouldKeep {
-			backupsToDelete = append(backupsToDelete, backup)
-		}
-	}
-
-	plog.Debug("Total unique backups to be deleted", "count", len(backupsToDelete))
-	return backupsToDelete
-}
-
-// determineBackupsToKeep applies the retention policy to a sorted list of backups.
-func (r *retentionRun) determineBackupsToKeep() map[string]bool {
-	backupsToKeep := make(map[string]bool)
-
-	// Keep track of which periods we've already saved a backup for.
-	savedHourly := make(map[string]bool)
-	savedDaily := make(map[string]bool)
-	savedWeekly := make(map[string]bool)
-	savedMonthly := make(map[string]bool)
-	savedYearly := make(map[string]bool)
-
-	for _, b := range r.backups {
-		// The rules are processed from shortest to longest duration.
-		// Once a backup is kept, it's not considered for longer-duration rules.
-		// This "promotes" a backup to the highest-frequency slot it qualifies for.
-
-		// Rule: Keep N hourly backups.
-		hourKey := b.Metadata.TimestampUTC.Format(hourFormat)
-		if r.retentionPolicy.Hours > 0 && len(savedHourly) < r.retentionPolicy.Hours && !savedHourly[hourKey] {
-			backupsToKeep[b.RelPathKey] = true
-			savedHourly[hourKey] = true
-			continue // Promoted to hourly, skip other rules
-		}
-
-		// Rule: Keep N daily backups.
-		dayKey := b.Metadata.TimestampUTC.Format(dayFormat)
-		if r.retentionPolicy.Days > 0 && len(savedDaily) < r.retentionPolicy.Days && !savedDaily[dayKey] {
-			backupsToKeep[b.RelPathKey] = true
-			savedDaily[dayKey] = true
-			continue // Promoted to daily
-		}
-
-		// Rule: Keep N weekly backups.
-		year, week := b.Metadata.TimestampUTC.ISOWeek()
-		weekKey := fmt.Sprintf(weekFormat, year, week)
-		if r.retentionPolicy.Weeks > 0 && len(savedWeekly) < r.retentionPolicy.Weeks && !savedWeekly[weekKey] {
-			backupsToKeep[b.RelPathKey] = true
-			savedWeekly[weekKey] = true
-			continue // Promoted to weekly
-		}
-
-		// Rule: Keep N monthly backups
-		monthKey := b.Metadata.TimestampUTC.Format(monthFormat)
-		if r.retentionPolicy.Months > 0 && len(savedMonthly) < r.retentionPolicy.Months && !savedMonthly[monthKey] {
-			backupsToKeep[b.RelPathKey] = true
-			savedMonthly[monthKey] = true
-			continue // Promoted to monthly
-		}
-
-		// Rule: Keep N yearly backups.
-		yearKey := b.Metadata.TimestampUTC.Format(yearFormat)
-		if r.retentionPolicy.Years > 0 && len(savedYearly) < r.retentionPolicy.Years && !savedYearly[yearKey] {
-			backupsToKeep[b.RelPathKey] = true
-			savedYearly[yearKey] = true
-		}
-	}
-
-	// Build a descriptive log message for the retention plan
-	var planParts []string
-	if r.retentionPolicy.Hours > 0 {
-		planParts = append(planParts, fmt.Sprintf("%d hourly", len(savedHourly)))
-	}
-	if r.retentionPolicy.Days > 0 {
-		planParts = append(planParts, fmt.Sprintf("%d daily", len(savedDaily)))
-	}
-	if r.retentionPolicy.Weeks > 0 {
-		planParts = append(planParts, fmt.Sprintf("%d weekly", len(savedWeekly)))
-	}
-	if r.retentionPolicy.Months > 0 {
-		planParts = append(planParts, fmt.Sprintf("%d monthly", len(savedMonthly)))
-	}
-	if r.retentionPolicy.Years > 0 {
-		planParts = append(planParts, fmt.Sprintf("%d yearly", len(savedYearly)))
-	}
-	plog.Debug("Retention plan", "details", strings.Join(planParts, ", "))
-	plog.Debug("Total unique backups to be kept", "count", len(backupsToKeep))
-
-	return backupsToKeep
+	return t.execute()
 }

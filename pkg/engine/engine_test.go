@@ -1,10 +1,8 @@
-package engine
+package engine_test
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,454 +10,470 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulschiretz/pgl-backup/pkg/config"
-	"github.com/paulschiretz/pgl-backup/pkg/lockfile"
+	"github.com/paulschiretz/pgl-backup/pkg/engine"
+	"github.com/paulschiretz/pgl-backup/pkg/metafile"
+	"github.com/paulschiretz/pgl-backup/pkg/patharchive"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
-	"github.com/paulschiretz/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/pathretention"
+	"github.com/paulschiretz/pgl-backup/pkg/pathsync"
+	"github.com/paulschiretz/pgl-backup/pkg/planner"
+	"github.com/paulschiretz/pgl-backup/pkg/preflight"
 )
 
-// mockSyncer is a mock implementation of pathsync.Syncer for testing.
-type mockSyncer struct {
-	// Store the arguments that Sync was called with.
-	calledWith struct {
-		source, target string
-		enableMetrics  bool
-	}
+// --- Mocks ---
+
+type mockValidator struct {
+	err error
 }
 
-// Sync records the src and dst paths it was called with and returns nil.
-func (m *mockSyncer) Sync(ctx context.Context, source, target string, preserveSourceDirName, mirror bool, excludeFiles, excludeDirs []string, enableMetrics bool) error {
-	m.calledWith.source = source
-	m.calledWith.target = target
-	m.calledWith.enableMetrics = enableMetrics
-	// To make the test more realistic, we need to simulate the real syncer's
-	// behavior of creating the destination directory.
-	if err := os.MkdirAll(target, 0755); err != nil {
-		return err
+func (m *mockValidator) Run(ctx context.Context, absSourcePath, absTargetBasePath string, p *preflight.Plan, timestampUTC time.Time) error {
+	return m.err
+}
+
+type mockSyncer struct {
+	err        error
+	resultInfo metafile.MetafileInfo
+}
+
+func (m *mockSyncer) Sync(ctx context.Context, absSourcePath, absTargetBasePath, relCurrentPathKey, relContentPathKey string, p *pathsync.Plan, timestampUTC time.Time) error {
+	if m.err != nil {
+		return m.err
 	}
+	// Simulate setting result info
+	p.ResultInfo = m.resultInfo
 	return nil
 }
 
-// mockArchiver is a mock implementation of patharchive.Archiver for testing.
 type mockArchiver struct {
-	archiveCalled bool
-	err           error
+	err error
 }
 
-func (m *mockArchiver) Archive(ctx context.Context, archivesDir, currentBackupPath string, currentBackupUTC time.Time, archivePolicy config.ArchivePolicyConfig, retentionPolicy config.RetentionPolicyConfig) (string, error) {
-	m.archiveCalled = true
-	return "", m.err
+func (m *mockArchiver) Archive(ctx context.Context, absTargetBasePath, relArchivePathKey, backupDirPrefix string, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) error {
+	if m.err != nil {
+		return m.err
+	}
+	// Simulate result info
+	p.ResultInfo = metafile.MetafileInfo{RelPathKey: "archived_path"}
+	return nil
 }
 
-// mockRetentionManager is a mock implementation of pathretention.RetentionManager for testing.
-type mockRetentionManager struct {
-	applyCalled bool
-	err         error
+type mockRetainer struct {
+	err error
 }
 
-func (m *mockRetentionManager) Apply(ctx context.Context, dirPath string, retentionPolicy config.RetentionPolicyConfig, excludedDir string) error {
-	m.applyCalled = true
+func (m *mockRetainer) Prune(ctx context.Context, absTargetBasePath string, toPrune []metafile.MetafileInfo, p *pathretention.Plan, timestampUTC time.Time) error {
 	return m.err
 }
 
-// mockCompressionManager is a mock implementation of pathcompression.CompressionManager for testing.
-type mockCompressionManager struct {
-	compressCalled bool
-	err            error
+type mockCompressor struct {
+	err error
 }
 
-func (m *mockCompressionManager) Compress(ctx context.Context, absPaths []string, format pathcompression.Format) error {
-	m.compressCalled = true
+func (m *mockCompressor) Compress(ctx context.Context, absTargetBasePath, relContentPathKey string, toCompress []metafile.MetafileInfo, p *pathcompression.Plan, timestampUTC time.Time) error {
 	return m.err
-}
-
-// Helper to create a dummy engine for testing.
-func newTestEngine(cfg config.Config) *Engine {
-	e := New(cfg)
-	return e //nolint:all // This is a test helper, not production code.
-}
-
-func TestInitializeBackupTarget(t *testing.T) {
-	t.Run("Happy Path - Creates config file", func(t *testing.T) {
-		// Arrange
-		srcDir := t.TempDir()
-		targetDir := t.TempDir()
-
-		cfg := config.NewDefault()
-		cfg.Paths.Source = srcDir
-		cfg.Paths.TargetBase = targetDir
-
-		e := newTestEngine(cfg)
-
-		// Act
-		err := e.InitializeBackupTarget(context.Background())
-		if err != nil {
-			t.Fatalf("InitializeBackupTarget failed: %v", err)
-		}
-
-		// Assert
-		configPath := filepath.Join(targetDir, config.ConfigFileName)
-		if _, err := os.Stat(configPath); os.IsNotExist(err) {
-			t.Error("expected config file to be created, but it was not")
-		}
-	})
-
-	t.Run("Failure - Preflight check fails", func(t *testing.T) {
-		// Arrange
-		targetDir := t.TempDir()
-
-		cfg := config.NewDefault()
-		cfg.Paths.Source = "/non/existent/path" // Invalid source to trigger preflight failure
-		cfg.Paths.TargetBase = targetDir
-
-		e := newTestEngine(cfg)
-
-		// Act
-		err := e.InitializeBackupTarget(context.Background())
-		if err == nil {
-			t.Fatal("expected an error from preflight check, but got nil")
-		}
-
-		// Assert
-		configPath := filepath.Join(targetDir, config.ConfigFileName)
-		if _, err := os.Stat(configPath); !os.IsNotExist(err) {
-			t.Error("expected config file NOT to be created on failure, but it was")
-		}
-	})
-}
-
-// TestExecutePrune_OnNonExistentTarget verifies that ExecutePrune fails and does not create the target
-func TestExecutePrune_OnNonExistentTarget(t *testing.T) {
-	// Arrange
-	tempDir := t.TempDir()
-	targetDir := filepath.Join(tempDir, "non_existent_target")
-
-	cfg := config.NewDefault()
-	cfg.Paths.TargetBase = targetDir
-	cfg.Paths.Source = t.TempDir() // Valid source
-
-	e := newTestEngine(cfg)
-
-	// Act
-	err := e.ExecutePrune(context.Background())
-
-	// Assert
-	if err == nil {
-		t.Error("expected ExecutePrune to fail when target does not exist, but it succeeded")
-	}
-
-	if _, err := os.Stat(targetDir); !os.IsNotExist(err) {
-		t.Error("expected target directory NOT to be created, but it was")
-	}
-}
-
-func TestPerformCompression(t *testing.T) {
-	t.Run("Empty List", func(t *testing.T) {
-		// Arrange
-		cfg := config.NewDefault()
-		e := newTestEngine(cfg)
-		mock := &mockCompressionManager{}
-		e.compressionManager = mock
-
-		// Act
-		runState := &engineRunState{
-			doCompression:            true,
-			compressionPolicy:        config.CompressionPolicyConfig{Enabled: true, Format: pathcompression.TarZst},
-			absBackupPathsToCompress: []string{},
-		}
-		// The new performCompression takes the runState.
-		err := e.performCompression(context.Background(), runState)
-
-		// Assert
-		if err != nil {
-			t.Errorf("expected no error, but got: %v", err)
-		}
-		if mock.compressCalled {
-			t.Error("expected compressionManager.Compress NOT to be called for empty list, but it was")
-		}
-	})
-
-	t.Run("Non-Empty List", func(t *testing.T) {
-		// Arrange
-		cfg := config.NewDefault()
-		e := newTestEngine(cfg)
-		mock := &mockCompressionManager{}
-		e.compressionManager = mock
-
-		backups := []string{"/path/to/backup1", "/path/to/backup2"}
-
-		// Act
-		runState := &engineRunState{
-			doCompression:            true,
-			compressionPolicy:        config.CompressionPolicyConfig{Enabled: true, Format: pathcompression.TarZst},
-			absBackupPathsToCompress: backups,
-		}
-		err := e.performCompression(context.Background(), runState)
-
-		// Assert
-		if err != nil {
-			t.Errorf("expected no error, but got: %v", err)
-		}
-		if !mock.compressCalled {
-			t.Error("expected compressionManager.Compress to be called, but it was not")
-		}
-	})
 }
 
 // TestHelperProcess isn't a real test. It's a helper process that the exec-based
 // tests can run. It's a standard pattern for testing code that uses os/exec.
 func TestHelperProcess(t *testing.T) {
-	// Check if the special environment variable is set. If not, this is a normal
-	// test run, so we do nothing.
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
 	}
-
 	// The arguments passed to the command are available in os.Args.
-	// The command structure is: `... -test.run=TestHelperProcess -- <shell> <shell_arg> <command>`
-	// The actual hook command we want to check is at index 5.
-	if len(os.Args) < 6 {
+	// The command structure is: `... -test.run=TestHelperProcess -- <command_line>`
+	args := os.Args
+	for i, arg := range args {
+		if arg == "--" {
+			args = args[i+1:]
+			break
+		}
+	}
+	if len(args) > 0 && strings.Contains(args[0], "fail") {
 		os.Exit(1)
 	}
-	command := os.Args[5]
+	os.Exit(0)
+}
 
-	switch command {
-	case "hook_success":
-		fmt.Fprintln(os.Stdout, "success output")
-		os.Exit(0)
-	case "hook_fail":
-		fmt.Fprintln(os.Stderr, "failure output")
-		os.Exit(1)
-	case "hook_sleep":
-		time.Sleep(2 * time.Second)
-		os.Exit(0)
-	default:
-		os.Exit(1)
+// --- Tests ---
+
+func TestExecuteBackup(t *testing.T) {
+	const (
+		relCurrent = "current"
+		relArchive = "archive"
+		relContent = "content"
+		prefix     = "backup_"
+	)
+
+	tests := []struct {
+		name string
+		mode planner.Mode
+
+		// Plan configuration
+		archiveEnabled     bool
+		syncEnabled        bool
+		retentionEnabled   bool
+		compressionEnabled bool
+		failFast           bool
+		preBackupHooks     []string
+		postBackupHooks    []string
+		dryRun             bool
+
+		// Mock behaviors
+		preflightErr error
+		syncErr      error
+		archiveErr   error
+		retentionErr error
+		compressErr  error
+
+		// Filesystem setup
+		setupFS func(t *testing.T, targetDir string)
+
+		// Expectations
+		expectError   bool
+		errorContains string
+		expectedHooks []string // Substrings to match against executed hooks
+	}{
+		{
+			name:               "Incremental Happy Path",
+			mode:               planner.Incremental,
+			archiveEnabled:     true,
+			syncEnabled:        true,
+			retentionEnabled:   true,
+			compressionEnabled: true,
+			setupFS: func(t *testing.T, targetDir string) {
+				// Create 'current' backup for archiving
+				currentPath := filepath.Join(targetDir, relCurrent)
+				if err := os.MkdirAll(currentPath, 0755); err != nil {
+					t.Fatal(err)
+				}
+				meta := metafile.MetafileContent{TimestampUTC: time.Now()}
+				if err := metafile.Write(currentPath, meta); err != nil {
+					t.Fatal(err)
+				}
+			},
+			expectError: false,
+		},
+		{
+			name:               "Snapshot Happy Path",
+			mode:               planner.Snapshot,
+			archiveEnabled:     true,
+			syncEnabled:        true,
+			retentionEnabled:   true,
+			compressionEnabled: true,
+			expectError:        false,
+		},
+		{
+			name:          "Preflight Failure",
+			mode:          planner.Incremental,
+			preflightErr:  errors.New("preflight failed"),
+			expectError:   true,
+			errorContains: "preflight failed",
+		},
+		{
+			name:          "Sync Failure",
+			mode:          planner.Incremental,
+			syncEnabled:   true,
+			syncErr:       errors.New("sync failed"),
+			expectError:   true,
+			errorContains: "error during sync",
+		},
+		{
+			name:           "Incremental Archive Failure (FailFast=True)",
+			mode:           planner.Incremental,
+			archiveEnabled: true,
+			failFast:       true,
+			archiveErr:     errors.New("archive failed"),
+			setupFS: func(t *testing.T, targetDir string) {
+				// Create 'current' backup so fetchBackup succeeds
+				currentPath := filepath.Join(targetDir, relCurrent)
+				os.MkdirAll(currentPath, 0755)
+				metafile.Write(currentPath, metafile.MetafileContent{})
+			},
+			expectError:   true,
+			errorContains: "Error during archive",
+		},
+		{
+			name:           "Incremental Archive Failure (FailFast=False)",
+			mode:           planner.Incremental,
+			archiveEnabled: true,
+			failFast:       false,
+			archiveErr:     errors.New("archive failed"),
+			setupFS: func(t *testing.T, targetDir string) {
+				currentPath := filepath.Join(targetDir, relCurrent)
+				os.MkdirAll(currentPath, 0755)
+				metafile.Write(currentPath, metafile.MetafileContent{})
+			},
+			expectError: false, // Should continue
+		},
+		{
+			name:             "Retention Failure (FailFast=True)",
+			mode:             planner.Incremental,
+			retentionEnabled: true,
+			failFast:         true,
+			retentionErr:     errors.New("retention failed"),
+			expectError:      true,
+			errorContains:    "Error during prune",
+		},
+		{
+			name:             "Retention Failure (FailFast=False)",
+			mode:             planner.Incremental,
+			retentionEnabled: true,
+			failFast:         false,
+			retentionErr:     errors.New("retention failed"),
+			expectError:      false, // Should continue
+		},
+		{
+			name:               "Compression Failure (FailFast=True)",
+			mode:               planner.Incremental,
+			compressionEnabled: true,
+			failFast:           true,
+			compressErr:        errors.New("compression failed"),
+			expectError:        true,
+			errorContains:      "Error during compress",
+		},
+		{
+			name:               "Compression Failure (FailFast=False)",
+			mode:               planner.Incremental,
+			compressionEnabled: true,
+			failFast:           false,
+			compressErr:        errors.New("compression failed"),
+			expectError:        false, // Should continue
+		},
+		{
+			name:            "Hooks Execution Success",
+			mode:            planner.Incremental,
+			preBackupHooks:  []string{"echo pre"},
+			postBackupHooks: []string{"echo post"},
+			expectedHooks:   []string{"echo pre", "echo post"},
+			expectError:     false,
+		},
+		{
+			name:           "Pre-Backup Hook Failure",
+			mode:           planner.Incremental,
+			preBackupHooks: []string{"fail_hook"},
+			expectedHooks:  []string{"fail_hook"},
+			expectError:    true,
+			errorContains:  "pre-backup hook failed",
+		},
+		{
+			name:            "Post-Backup Hook Failure (Non-Fatal)",
+			mode:            planner.Incremental,
+			postBackupHooks: []string{"fail_hook"},
+			expectedHooks:   []string{"fail_hook"},
+			expectError:     false, // Post-backup hooks shouldn't fail the run
+		},
+		{
+			name:            "Dry Run Hooks",
+			mode:            planner.Incremental,
+			dryRun:          true,
+			preBackupHooks:  []string{"echo pre"},
+			postBackupHooks: []string{"echo post"},
+			expectedHooks:   []string{}, // Hooks are NOT executed in dry run (just logged)
+			expectError:     false,
+		},
+		{
+			name:            "Post-Backup Hooks Run After Sync Failure",
+			mode:            planner.Incremental,
+			syncEnabled:     true,
+			syncErr:         errors.New("sync failed"),
+			postBackupHooks: []string{"echo post"},
+			expectedHooks:   []string{"echo post"},
+			expectError:     true,
+			errorContains:   "error during sync",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srcDir := t.TempDir()
+			targetDir := t.TempDir()
+
+			if tc.setupFS != nil {
+				tc.setupFS(t, targetDir)
+			}
+
+			// Construct Plan
+			plan := &planner.BackupPlan{
+				Mode:     tc.mode,
+				DryRun:   tc.dryRun,
+				FailFast: tc.failFast,
+				Paths: planner.PathKeys{
+					RelCurrentPathKey: relCurrent,
+					RelArchivePathKey: relArchive,
+					RelContentPathKey: relContent,
+					BackupDirPrefix:   prefix,
+				},
+				Preflight: &preflight.Plan{},
+				Sync: &pathsync.Plan{
+					Enabled: tc.syncEnabled,
+				},
+				Archive: &patharchive.Plan{
+					Enabled: tc.archiveEnabled,
+				},
+				Retention: &pathretention.Plan{
+					Enabled: tc.retentionEnabled,
+				},
+				Compression: &pathcompression.Plan{
+					Enabled: tc.compressionEnabled,
+				},
+				PreBackupHooks:  tc.preBackupHooks,
+				PostBackupHooks: tc.postBackupHooks,
+			}
+
+			// Mocks
+			v := &mockValidator{err: tc.preflightErr}
+			s := &mockSyncer{err: tc.syncErr, resultInfo: metafile.MetafileInfo{RelPathKey: "synced_path"}}
+			a := &mockArchiver{err: tc.archiveErr}
+			r := &mockRetainer{err: tc.retentionErr}
+			c := &mockCompressor{err: tc.compressErr}
+
+			runner := engine.NewRunner(v, s, a, r, c)
+
+			// Mock Hook Executor
+			var executedHooks []string
+			mockExecutor := func(ctx context.Context, name string, arg ...string) *exec.Cmd {
+				cmdLine := name
+				if len(arg) > 0 {
+					cmdLine += " " + strings.Join(arg, " ")
+				}
+				executedHooks = append(executedHooks, cmdLine)
+
+				cs := []string{"-test.run=TestHelperProcess", "--", cmdLine}
+				cmd := exec.CommandContext(ctx, os.Args[0], cs...)
+				cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
+				return cmd
+			}
+			runner.SetHookCommandExecutor(mockExecutor)
+
+			err := runner.ExecuteBackup(context.Background(), srcDir, targetDir, plan)
+
+			if tc.expectError {
+				if err == nil {
+					t.Fatal("expected error, but got nil")
+				}
+				if tc.errorContains != "" && !strings.Contains(err.Error(), tc.errorContains) {
+					t.Errorf("expected error to contain %q, but got: %v", tc.errorContains, err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			}
+
+			// Verify hooks
+			if len(tc.expectedHooks) > 0 {
+				// Check if expected hooks are present in executedHooks
+				// Note: This is a simple containment check.
+				for _, expected := range tc.expectedHooks {
+					found := false
+					for _, executed := range executedHooks {
+						if strings.Contains(executed, expected) {
+							found = true
+							break
+						}
+					}
+					if !found {
+						t.Errorf("expected hook execution containing %q, but got %v", expected, executedHooks)
+					}
+				}
+			} else if len(executedHooks) > 0 && tc.dryRun {
+				t.Errorf("expected no hooks executed in dry run, but got %v", executedHooks)
+			}
+		})
 	}
 }
 
-func TestRunHooks(t *testing.T) {
-	// This helper function sets up the command execution to call our TestHelperProcess.
-	// It's a crucial part of mocking os/exec.
-	mockExecCommand := func(ctx context.Context, command string, args ...string) *exec.Cmd {
-		cs := []string{"-test.run=TestHelperProcess", "--", command}
-		cs = append(cs, args...)
-		cmd := exec.CommandContext(ctx, os.Args[0], cs...)
-		// This is the crucial fix: The real `createHookCommand` sets SysProcAttr
-		// on the command it creates. Our mock must preserve this setting when it
-		// creates its own command that calls the test helper process.
-		originalCmd := exec.CommandContext(ctx, command, args...)
-		cmd.SysProcAttr = originalCmd.SysProcAttr
-		cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
-		return cmd
+func TestExecutePrune(t *testing.T) {
+	const (
+		relArchiveInc  = "archive_inc"
+		relArchiveSnap = "archive_snap"
+		prefix         = "backup_"
+	)
+
+	tests := []struct {
+		name string
+
+		// Plan
+		retentionIncEnabled  bool
+		retentionSnapEnabled bool
+
+		// Mocks
+		preflightErr error
+		retentionErr error
+
+		// Expectations
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name:                 "Happy Path - Both Enabled",
+			retentionIncEnabled:  true,
+			retentionSnapEnabled: true,
+			expectError:          false,
+		},
+		{
+			name:          "Preflight Failure",
+			preflightErr:  errors.New("preflight failed"),
+			expectError:   true,
+			errorContains: "preflight failed",
+		},
+		{
+			name:                "Retention Failure",
+			retentionIncEnabled: true,
+			retentionErr:        errors.New("retention failed"),
+			expectError:         true,
+			errorContains:       "fatal error during prune",
+		},
 	}
 
-	// Suppress log output for this test to keep the test output clean.
-	var logBuf bytes.Buffer
-	plog.SetOutput(&logBuf)
-	t.Cleanup(func() { plog.SetOutput(os.Stderr) })
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			targetDir := t.TempDir()
 
-	t.Run("No Hooks", func(t *testing.T) {
-		cfg := config.NewDefault()
-		e := newTestEngine(cfg)
-		err := e.runHooks(context.Background(), []string{}, "test")
-		if err != nil {
-			t.Errorf("expected no error for empty hooks, but got: %v", err)
-		}
-	})
+			// Ensure archive directories exist for fetchBackups
+			os.MkdirAll(filepath.Join(targetDir, relArchiveInc), 0755)
+			os.MkdirAll(filepath.Join(targetDir, relArchiveSnap), 0755)
 
-	t.Run("Successful Hook", func(t *testing.T) {
-		cfg := config.NewDefault()
-		e := newTestEngine(cfg)
-		e.hookCommandExecutor = mockExecCommand // Inject our mock executor
+			plan := &planner.PrunePlan{
+				Preflight: &preflight.Plan{},
+				PathsIncremental: planner.PathKeys{
+					RelArchivePathKey: relArchiveInc,
+					BackupDirPrefix:   prefix,
+				},
+				PathsSnapshot: planner.PathKeys{
+					RelArchivePathKey: relArchiveSnap,
+					BackupDirPrefix:   prefix,
+				},
+				RetentionIncremental: &pathretention.Plan{
+					Enabled: tc.retentionIncEnabled,
+				},
+				RetentionSnapshot: &pathretention.Plan{
+					Enabled: tc.retentionSnapEnabled,
+				},
+			}
 
-		err := e.runHooks(context.Background(), []string{"hook_success"}, "test")
-		if err != nil {
-			t.Errorf("expected no error for successful hook, but got: %v", err)
-		}
-	})
+			v := &mockValidator{err: tc.preflightErr}
+			s := &mockSyncer{}
+			a := &mockArchiver{}
+			r := &mockRetainer{err: tc.retentionErr}
+			c := &mockCompressor{}
 
-	t.Run("Failing Hook", func(t *testing.T) {
-		cfg := config.NewDefault()
-		e := newTestEngine(cfg)
-		e.hookCommandExecutor = mockExecCommand // Inject our mock executor
+			runner := engine.NewRunner(v, s, a, r, c)
 
-		err := e.runHooks(context.Background(), []string{"hook_fail"}, "test")
-		if err == nil {
-			t.Fatal("expected an error for failing hook, but got nil")
-		}
-		// Check that the error is of the specific type *exec.ExitError.
-		var exitErr *exec.ExitError
-		if !errors.As(err, &exitErr) {
-			t.Errorf("expected error to be of type *exec.ExitError, but got %T", err)
-		}
-	})
+			err := runner.ExecutePrune(context.Background(), targetDir, plan)
 
-	t.Run("Dry Run", func(t *testing.T) {
-		logBuf.Reset()
-		cfg := config.NewDefault()
-		cfg.DryRun = true
-		e := newTestEngine(cfg)
-		e.hookCommandExecutor = mockExecCommand
-
-		err := e.runHooks(context.Background(), []string{"hook_success"}, "test")
-		if err != nil {
-			t.Errorf("expected no error in dry run, but got: %v", err)
-		}
-
-		logOutput := logBuf.String()
-		if !strings.Contains(logOutput, "[DRY RUN] Would execute command") {
-			t.Errorf("expected dry run log message, but got: %q", logOutput)
-		}
-	})
-
-	t.Run("Context Cancellation", func(t *testing.T) {
-		cfg := config.NewDefault()
-		e := newTestEngine(cfg)
-		e.hookCommandExecutor = mockExecCommand
-
-		ctx, cancel := context.WithCancel(context.Background())
-		// Cancel the context almost immediately
-		time.AfterFunc(50*time.Millisecond, cancel)
-
-		// Use a hook that sleeps, so it will be interrupted by the cancellation.
-		err := e.runHooks(ctx, []string{"hook_sleep"}, "test")
-
-		if err == nil {
-			t.Fatal("expected a context cancellation error, but got nil")
-		}
-		// When a command is killed due to context cancellation, the error returned by cmd.Run()
-		// will wrap context.Canceled. We use errors.Is to check for this.
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			t.Errorf("expected error to wrap context.Canceled, but got: %v", err)
-		}
-	})
-}
-
-func TestExecuteBackup_Retention(t *testing.T) {
-	// Arrange
-	tempDir := t.TempDir()
-	cfg := config.NewDefault()
-	cfg.Paths.Source = t.TempDir() // Valid source
-	cfg.Paths.TargetBase = tempDir
-	cfg.Retention.Incremental.Enabled = true // Enable retention
-	cfg.Retention.Snapshot.Enabled = true    // Enable retention
-
-	e := newTestEngine(cfg)
-
-	// Inject mocks for all components to isolate the test
-	mockSyncer := &mockSyncer{}
-	mockArchiver := &mockArchiver{}
-	mockRetention := &mockRetentionManager{}
-	e.syncer = mockSyncer
-	e.archiver = mockArchiver
-	e.retentionManager = mockRetention
-
-	// Act
-	// We don't care about the error, only that the retention manager was called.
-	// We also ignore the lock file error for this test.
-	_ = os.Remove(filepath.Join(tempDir, lockfile.LockFileName))
-	_ = e.ExecuteBackup(context.Background())
-
-	// Assert
-	if !mockRetention.applyCalled {
-		t.Error("expected retentionManager.Apply to be called, but it was not")
+			if tc.expectError {
+				if err == nil {
+					t.Fatal("expected error, but got nil")
+				}
+				if tc.errorContains != "" && !strings.Contains(err.Error(), tc.errorContains) {
+					t.Errorf("expected error to contain %q, but got: %v", tc.errorContains, err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			}
+		})
 	}
-}
-
-func TestInitBackupRun(t *testing.T) {
-	t.Run("Snapshot Mode", func(t *testing.T) {
-		// Arrange
-		tempDir := t.TempDir()
-		cfg := config.NewDefault()
-		cfg.Paths.TargetBase = tempDir
-		cfg.Paths.SnapshotSubDirs.Archive = "snapshots"
-		cfg.Naming.Prefix = "snap_"
-		cfg.Retention.Snapshot.Enabled = true
-		cfg.Compression.Snapshot.Enabled = true
-
-		e := newTestEngine(cfg)
-
-		// Act
-		runState, err := e.initBackupRun(config.SnapshotMode)
-		if err != nil {
-			t.Fatalf("initBackupRun failed: %v", err)
-		}
-
-		// Assert
-		// Check run state properties
-		if runState.mode != config.SnapshotMode {
-			t.Errorf("expected mode to be Snapshot, got %v", runState.mode)
-		}
-
-		if !runState.doSync {
-			t.Error("expected doSync to be true for snapshot mode")
-		}
-		if !runState.doRetention {
-			t.Error("expected doRetention to be true for snapshot mode")
-		}
-		if !runState.doCompression {
-			t.Error("expected doCompression to be true for snapshot mode")
-		}
-		if runState.doArchiving {
-			t.Error("expected doArchiving to be false for snapshot mode")
-		}
-
-		actualSyncTargetPath := filepath.Join(tempDir, runState.relSyncTargetPath)
-
-		// Check target path
-		snapshotsDir := filepath.Join(tempDir, cfg.Paths.SnapshotSubDirs.Archive)
-		if !strings.HasPrefix(actualSyncTargetPath, snapshotsDir) {
-			t.Errorf("expected target path to be in snapshots dir %q, but got %q", snapshotsDir, actualSyncTargetPath)
-		}
-		backupName := filepath.Base(actualSyncTargetPath)
-		if !strings.HasPrefix(backupName, cfg.Naming.Prefix) {
-			t.Errorf("expected backup name to have prefix %q, but got %q", cfg.Naming.Prefix, backupName)
-		}
-	})
-
-	t.Run("Incremental Mode", func(t *testing.T) {
-		// Arrange
-		tempDir := t.TempDir()
-		cfg := config.NewDefault()
-		cfg.Paths.TargetBase = tempDir
-		cfg.Paths.IncrementalSubDirs.Current = "latest"
-		cfg.Retention.Incremental.Enabled = true
-		cfg.Compression.Incremental.Enabled = true
-
-		e := newTestEngine(cfg)
-
-		// Act
-		runState, err := e.initBackupRun(config.IncrementalMode)
-		if err != nil {
-			t.Fatalf("initBackupRun failed: %v", err)
-		}
-
-		// Assert
-		// Check run state properties
-		if runState.mode != config.IncrementalMode {
-			t.Errorf("expected mode to be Incremental, got %v", runState.mode)
-		}
-
-		if !runState.doSync {
-			t.Error("expected doSync to be true for incremental mode")
-		}
-
-		if !runState.doRetention {
-			t.Error("expected doRetention to be true for incremental mode")
-		}
-		if !runState.doCompression {
-			t.Error("expected doCompression to be true for incremental mode")
-		}
-		if !runState.doArchiving {
-			t.Error("expected doArchiving to be true for incremental mode")
-		}
-
-		// Check target path
-		actualSyncTargetPath := filepath.Join(tempDir, runState.relSyncTargetPath)
-		expectedPath := filepath.Join(tempDir, cfg.Paths.IncrementalSubDirs.Current)
-		if expectedPath != actualSyncTargetPath {
-			t.Errorf("expected target path %q, but got %q", expectedPath, actualSyncTargetPath)
-		}
-	})
 }

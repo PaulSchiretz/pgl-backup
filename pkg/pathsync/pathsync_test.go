@@ -2,12 +2,12 @@ package pathsync
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
-
-	"github.com/paulschiretz/pgl-backup/pkg/config"
+	"time"
 )
 
 func TestSync_Dispatch(t *testing.T) {
@@ -15,12 +15,12 @@ func TestSync_Dispatch(t *testing.T) {
 		srcDir := t.TempDir()
 		dstDir := t.TempDir()
 
-		cfg := config.NewDefault()
-		// Set an invalid engine type
-		cfg.Engine.Type = config.SyncEngine(99)
+		plan := &Plan{
+			Engine: Engine(99),
+		}
 
-		syncer := NewPathSyncer(cfg)
-		err := syncer.Sync(context.Background(), srcDir, dstDir, false, false, nil, nil, true)
+		syncer := NewPathSyncer(256, 1, 1)
+		err := syncer.Sync(context.Background(), srcDir, dstDir, "current", "content", plan, time.Now())
 
 		if err == nil {
 			t.Fatal("expected an error for unknown sync engine, but got nil")
@@ -35,11 +35,12 @@ func TestSync_Dispatch(t *testing.T) {
 		srcDir := t.TempDir()
 		dstDir := t.TempDir()
 
-		cfg := config.NewDefault()
-		cfg.Engine.Type = config.RobocopyEngine
+		plan := &Plan{
+			Engine: Robocopy,
+		}
 
-		syncer := NewPathSyncer(cfg)
-		err := syncer.Sync(context.Background(), srcDir, dstDir, false, false, nil, nil, true)
+		syncer := NewPathSyncer(256, 1, 1)
+		err := syncer.Sync(context.Background(), srcDir, dstDir, "current", "content", plan, time.Now())
 
 		if err == nil {
 			t.Fatal("expected an error when using robocopy on a non-windows OS, but got nil")
@@ -48,6 +49,40 @@ func TestSync_Dispatch(t *testing.T) {
 		expectedError := "robocopy is not supported"
 		if !strings.Contains(err.Error(), expectedError) {
 			t.Errorf("expected error to contain %q, but got: %v", expectedError, err)
+		}
+	})
+
+	t.Run("Success Native Stores Result", func(t *testing.T) {
+		srcDir := t.TempDir()
+		dstDir := t.TempDir()
+
+		// Create a dummy file in src so there is something to sync
+		if err := os.WriteFile(filepath.Join(srcDir, "test.txt"), []byte("content"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		plan := &Plan{
+			Engine: Native,
+		}
+
+		syncer := NewPathSyncer(256, 1, 1)
+		relCurrent := "current"
+		relContent := "content"
+		timestamp := time.Now().UTC()
+
+		err := syncer.Sync(context.Background(), srcDir, dstDir, relCurrent, relContent, plan, timestamp)
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+
+		if plan.ResultInfo.RelPathKey != relContent {
+			t.Errorf("expected ResultInfo.RelPathKey to be %q, got %q", relContent, plan.ResultInfo.RelPathKey)
+		}
+		if !plan.ResultInfo.Metadata.TimestampUTC.Equal(timestamp) {
+			t.Errorf("expected ResultInfo.Metadata.TimestampUTC to be %v, got %v", timestamp, plan.ResultInfo.Metadata.TimestampUTC)
+		}
+		if plan.ResultInfo.Metadata.Source != srcDir {
+			t.Errorf("expected ResultInfo.Metadata.Source to be %q, got %q", srcDir, plan.ResultInfo.Metadata.Source)
 		}
 	})
 }
@@ -106,7 +141,8 @@ func TestResolveTargetDirectory(t *testing.T) {
 				t.Skipf("Skipping platform-specific test case %q on %s", tc.name, runtime.GOOS)
 			}
 
-			got := resolveTargetDirectory(tc.source, targetBase, tc.preserveSourceDirectoryName)
+			syncer := &PathSyncer{}
+			got := syncer.resolveTargetDirectory(tc.source, targetBase, tc.preserveSourceDirectoryName)
 			if got != tc.expectedTarget {
 				t.Errorf("resolveTargetDirectory(%q, %q, %v) = %q; want %q", tc.source, targetBase, tc.preserveSourceDirectoryName, got, tc.expectedTarget)
 			}

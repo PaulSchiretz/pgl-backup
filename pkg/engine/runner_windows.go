@@ -10,8 +10,8 @@ import (
 )
 
 // createHookCommand creates an exec.Cmd for a hook on Windows.
-func (e *Engine) createHookCommand(ctx context.Context, command string) *exec.Cmd {
-	cmd := e.hookCommandExecutor(ctx, "cmd", "/C", command)
+func (r *Runner) createHookCommand(ctx context.Context, command string) *exec.Cmd {
+	cmd := r.hookCommandExecutor(ctx, "cmd", "/C", command)
 	// On Windows, create a new process group to ensure that when the context is
 	// canceled, the entire process tree is terminated, not just the parent cmd.
 	// This is crucial for killing child processes spawned by the hook command.

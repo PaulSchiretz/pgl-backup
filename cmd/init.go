@@ -10,8 +10,10 @@ import (
 
 	"github.com/paulschiretz/pgl-backup/pkg/buildinfo"
 	"github.com/paulschiretz/pgl-backup/pkg/config"
-	"github.com/paulschiretz/pgl-backup/pkg/engine"
+	"github.com/paulschiretz/pgl-backup/pkg/flagparse"
+	"github.com/paulschiretz/pgl-backup/pkg/lockfile"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/preflight"
 )
 
 // RunInit handles the logic for the 'init' command.
@@ -63,20 +65,56 @@ func RunInit(ctx context.Context, flagMap map[string]interface{}) error {
 	}
 
 	// Create a config from base merged with user flags.
-	runConfig := config.MergeConfigWithFlags(baseConfig, flagMap)
+	runConfig := config.MergeConfigWithFlags(flagparse.Init, baseConfig, flagMap)
 
 	// Ensure source is set (either from existing config or flags).
-	if runConfig.Paths.Source == "" {
+	if runConfig.Source == "" {
 		return fmt.Errorf("the -source flag is required for the init operation (unless updating an existing config)")
 	}
 
-	startTime := time.Now()
-	initEngine := engine.New(runConfig)
-	err := initEngine.InitializeBackupTarget(ctx)
-	duration := time.Since(startTime).Round(time.Millisecond)
-	if err != nil {
-		return err // The error will be logged with full details by main()
+	// CRITICAL: Validate the config for the run
+	if err := runConfig.Validate(true); err != nil {
+		return err
 	}
+
+	startTime := time.Now()
+
+	// 1. Preflight Checks
+	// Ensure the target directory exists (or can be created) and is writable.
+	validator := preflight.NewValidator()
+	pfPlan := &preflight.Plan{
+		SourceAccessible:   true,
+		TargetAccessible:   true,
+		TargetWriteable:    true,
+		EnsureTargetExists: true,
+		PathNesting:        true,
+		DryRun:             runConfig.Runtime.DryRun,
+	}
+
+	if err := validator.Run(ctx, runConfig.Source, runConfig.TargetBase, pfPlan, time.Now().UTC()); err != nil {
+		return fmt.Errorf("initialization preflight failed: %w", err)
+	}
+
+	if runConfig.Runtime.DryRun {
+		plog.Info("[DRY RUN] Initialization complete. No changes made.")
+		return nil
+	}
+
+	// 2. Acquire Lock
+	// Ensure exclusive access to the target directory.
+	appID := fmt.Sprintf("pgl-backup-init:%s", runConfig.TargetBase)
+	lock, err := lockfile.Acquire(ctx, runConfig.TargetBase, appID)
+	if err != nil {
+		return fmt.Errorf("failed to acquire lock on target directory: %w", err)
+	}
+	defer lock.Release()
+
+	// 3. Generate Config
+	if err := config.Generate(runConfig); err != nil {
+		return fmt.Errorf("failed to generate config file: %w", err)
+	}
+
+	duration := time.Since(startTime).Round(time.Millisecond)
 	plog.Info(buildinfo.Name+" target successfully initialized.", "duration", duration)
 	return nil
 }

@@ -38,7 +38,7 @@ func TestRun(t *testing.T) {
 		{
 			name:          "Invalid Command",
 			args:          []string{"pgl-backup", "invalid"},
-			expectedError: "unknown command: invalid",
+			expectedError: "invalid command",
 		},
 		{
 			name:          "Prune Missing Target",

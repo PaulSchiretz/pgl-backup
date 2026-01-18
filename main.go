@@ -19,7 +19,7 @@ import (
 func run(ctx context.Context) error {
 	plog.Info("Starting "+buildinfo.Name, "version", buildinfo.Version, "pid", os.Getpid())
 
-	appCommand, flagMap, err := flagparse.Parse(os.Args[1:])
+	command, flagMap, err := flagparse.Parse(os.Args[1:])
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -27,19 +27,19 @@ func run(ctx context.Context) error {
 		return err
 	}
 
-	switch appCommand {
-	case flagparse.NoCommand:
+	switch command {
+	case flagparse.None:
 		return nil
-	case flagparse.VersionCommand:
+	case flagparse.Version:
 		return cmd.RunVersion()
-	case flagparse.InitCommand:
+	case flagparse.Init:
 		return cmd.RunInit(ctx, flagMap)
-	case flagparse.BackupCommand:
+	case flagparse.Backup:
 		return cmd.RunBackup(ctx, flagMap)
-	case flagparse.PruneCommand:
+	case flagparse.Prune:
 		return cmd.RunPrune(ctx, flagMap)
 	default:
-		return fmt.Errorf("internal error: unknown command %d", appCommand)
+		return fmt.Errorf("internal error: unknown command %d", command)
 	}
 }
 

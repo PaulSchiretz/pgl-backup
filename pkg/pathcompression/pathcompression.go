@@ -23,48 +23,25 @@ import (
 	"bufio"
 	"context"
 	"io"
-	"os"
 	"sync"
+	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompressionmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
-type PathCompressionManager struct {
-	ioWriterPool   *sync.Pool
-	ioBufferPool   *sync.Pool
-	metricsEnabled bool
-	numWorkers     int
-	contentSubDir  string
-	dryRun         bool
+type PathCompressor struct {
+	ioWriterPool *sync.Pool
+	ioBufferPool *sync.Pool
+	numWorkers   int
 }
 
-// CompressionManager defines the interface for a component that applies a compression policy to backups.
-type CompressionManager interface {
-	Compress(ctx context.Context, absPaths []string, format Format) error
-}
-
-// Statically assert that *PathCompressionManager implements the CompressionManager interface.
-var _ CompressionManager = (*PathCompressionManager)(nil)
-
-type Config struct {
-	MetricsEnabled bool
-	ContentSubDir  string
-	DryRun         bool
-	BufferSizeKB   int
-	NumWorkers     int
-}
-
-// NewPathCompressionManager creates a new PathCompressionManager with the given configuration.
-func NewPathCompressionManager(cfg Config) *PathCompressionManager {
-	bufferSize := cfg.BufferSizeKB * 1024
-
-	return &PathCompressionManager{
-		metricsEnabled: cfg.MetricsEnabled,
-		numWorkers:     cfg.NumWorkers,
-		contentSubDir:  cfg.ContentSubDir,
-		dryRun:         cfg.DryRun,
+// NewPathCompressor creates a new PathCompressor with the given configuration.
+func NewPathCompressor(bufferSizeKB int, numWorkers int) *PathCompressor {
+	bufferSize := bufferSizeKB * 1024
+	return &PathCompressor{
+		numWorkers: numWorkers,
 		ioWriterPool: &sync.Pool{
 			New: func() interface{} {
 				return bufio.NewWriterSize(io.Discard, bufferSize)
@@ -80,11 +57,17 @@ func NewPathCompressionManager(cfg Config) *PathCompressionManager {
 }
 
 // Compress processes the specific list of paths provided by the engine.
-func (c *PathCompressionManager) Compress(ctx context.Context, absBackupPaths []string, format Format) error {
+func (c *PathCompressor) Compress(ctx context.Context, absTargetBasePath, relContentPathKey string, toCompress []metafile.MetafileInfo, p *Plan, timestampUTC time.Time) error {
 
-	eligibleBackups := c.IdentifyEligibleBackups(ctx, absBackupPaths)
-	if len(eligibleBackups) == 0 {
-		if c.dryRun {
+	// Check for cancellation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	if len(toCompress) == 0 {
+		if p.DryRun {
 			plog.Debug("[DRY RUN] No backups need compressing")
 		} else {
 			plog.Debug("No backups need compressing")
@@ -93,50 +76,24 @@ func (c *PathCompressionManager) Compress(ctx context.Context, absBackupPaths []
 	}
 
 	var m pathcompressionmetrics.Metrics
-	if c.metricsEnabled {
+	if p.Metrics {
 		m = &pathcompressionmetrics.CompressionMetrics{}
 	} else {
 		// Use the No-op implementation if metrics are disabled.
 		m = &pathcompressionmetrics.NoopMetrics{}
 	}
 
-	j := &job{
-		PathCompressionManager: c, // Just pass the manager pointer once
-		ctx:                    ctx,
-		format:                 format,
-		metrics:                m,
-		eligibleBackups:        eligibleBackups,
-		compressTasksChan:      make(chan metafile.MetafileInfo, c.numWorkers*2),
+	t := &task{
+		PathCompressor:    c, // Just pass the compressor pointer
+		absTargetBasePath: absTargetBasePath,
+		relContentPathKey: relContentPathKey,
+		ctx:               ctx,
+		format:            p.Format,
+		toCompress:        toCompress,
+		timestampUTC:      timestampUTC,
+		metrics:           m,
+		dryRun:            p.DryRun,
+		compressTasksChan: make(chan metafile.MetafileInfo, c.numWorkers*2),
 	}
-	return j.execute()
-}
-
-// IdentifyEligibleBackups scans the provided absolute backupPaths and returns a list of those
-// that have not yet been compressed, based on their metadata.
-func (c *PathCompressionManager) IdentifyEligibleBackups(ctx context.Context, absBackupPaths []string) []metafile.MetafileInfo {
-	var eligible []metafile.MetafileInfo
-	for _, absBackupPath := range absBackupPaths {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-			// Check if the backup directory still exists. It might have been removed by retention policy.
-			if _, err := os.Stat(absBackupPath); os.IsNotExist(err) {
-				continue
-			}
-
-			// Read metadata
-			metadata, err := metafile.Read(absBackupPath)
-			if err != nil {
-				plog.Warn("Skipping compression check; cannot read metadata", "path", absBackupPath, "reason", err)
-				continue
-			}
-
-			if !metadata.IsCompressed {
-				// Store full path in RelPathKey.... FIX THIS!
-				eligible = append(eligible, metafile.MetafileInfo{RelPathKey: absBackupPath, Metadata: metadata})
-			}
-		}
-	}
-	return eligible
+	return t.execute()
 }

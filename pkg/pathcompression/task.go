@@ -22,78 +22,86 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
-// job holds the mutable state for a single execution.
+// task holds the mutable state for a single execution.
 // This makes the PathCompressionManager itself stateless and safe for concurrent use if needed.
-type job struct {
-	*PathCompressionManager
+type task struct {
+	*PathCompressor
+	absTargetBasePath string
+	relContentPathKey string
 	ctx               context.Context
+	toCompress        []metafile.MetafileInfo
 	format            Format
-	eligibleBackups   []metafile.MetafileInfo
+	timestampUTC      time.Time
 	metrics           pathcompressionmetrics.Metrics
+	dryRun            bool
 	compressTasksChan chan metafile.MetafileInfo
 	compressWg        sync.WaitGroup
 }
 
 // execute runs the compression tasks in parallel.
-func (j *job) execute() error {
+func (t *task) execute() error {
 
-	plog.Info("Compressing backups", "count", len(j.eligibleBackups))
+	plog.Info("Compressing backups", "count", len(t.toCompress))
 
 	// Start progress reporting
-	j.metrics.StartProgress("Compression progress", 10*time.Second)
+	t.metrics.StartProgress("Compression progress", 10*time.Second)
 	defer func() {
-		j.metrics.StopProgress()
-		j.metrics.LogSummary("Compression finished")
+		t.metrics.StopProgress()
+		t.metrics.LogSummary("Compression finished")
 	}()
 
 	// Start workers
-	for i := 0; i < j.numWorkers; i++ {
-		j.compressWg.Add(1)
-		go j.compressWorker()
+	for i := 0; i < t.numWorkers; i++ {
+		t.compressWg.Add(1)
+		go t.compressWorker()
 	}
 
 	// Start producer
-	go j.compressTaskProducer()
+	go t.compressTaskProducer()
 
-	j.compressWg.Wait()
+	t.compressWg.Wait()
 
 	return nil
 }
 
 // compressTaskProducer feeds the eligible backups into the channel for workers.
-func (j *job) compressTaskProducer() {
-	defer close(j.compressTasksChan)
-	for _, b := range j.eligibleBackups {
+func (t *task) compressTaskProducer() {
+	defer close(t.compressTasksChan)
+	for _, b := range t.toCompress {
 		select {
-		case <-j.ctx.Done():
+		case <-t.ctx.Done():
 			plog.Debug("Cancellation received, stopping compression job feeding.")
 			return // Stop feeding on cancel.
-		case j.compressTasksChan <- b:
+		case t.compressTasksChan <- b:
 		}
 	}
 }
 
 // compressWorker consumes tasks from the channel and compresses the backups.
-func (j *job) compressWorker() {
-	defer j.compressWg.Done()
+func (t *task) compressWorker() {
+	defer t.compressWg.Done()
 
-	for b := range j.compressTasksChan {
+	for b := range t.compressTasksChan {
 		// Check for cancellation before processing.
 		select {
-		case <-j.ctx.Done():
+		case <-t.ctx.Done():
 			return
 		default:
 		}
 
-		fullPathToCompress := b.RelPathKey
-
-		if j.dryRun {
-			plog.Notice("[DRY RUN] COMPRESS", "path", fullPathToCompress)
+		if t.dryRun {
+			plog.Notice("[DRY RUN] COMPRESS", "path", b.RelPathKey)
 			continue
 		}
 
-		plog.Notice("COMPRESS", "path", fullPathToCompress)
-		if err := j.compressDirectory(fullPathToCompress); err != nil {
+		absPathToCompress := util.DenormalizePath(filepath.Join(t.absTargetBasePath, b.RelPathKey))
+		// Check if the backup directory still exists.
+		if _, err := os.Stat(absPathToCompress); os.IsNotExist(err) {
+			continue
+		}
+
+		plog.Notice("COMPRESS", "path", b.RelPathKey)
+		if err := t.compressDirectory(absPathToCompress); err != nil {
 			// If the error is a cancellation, we should not treat it as a failure.
 			if err == context.Canceled {
 				return
@@ -101,41 +109,41 @@ func (j *job) compressWorker() {
 
 			// A failure to compress a single backup is logged as a warning but does not
 			// stop the overall process.
-			j.metrics.AddArchivesFailed(1)
-			plog.Warn("Failed to compress directory", "path", fullPathToCompress, "error", err)
+			t.metrics.AddArchivesFailed(1)
+			plog.Warn("Failed to compress directory", "path", b.RelPathKey, "error", err)
 		} else {
-			j.metrics.AddArchivesCreated(1)
+			t.metrics.AddArchivesCreated(1)
 			// On successful archive creation, we first update the metafile.
 			b.Metadata.IsCompressed = true
-			if writeErr := metafile.Write(fullPathToCompress, b.Metadata); writeErr != nil {
-				plog.Error("Failed to write updated metafile after compression success. Original content has been preserved.", "path", fullPathToCompress, "error", writeErr)
+			if writeErr := metafile.Write(absPathToCompress, b.Metadata); writeErr != nil {
+				plog.Error("Failed to write updated metafile after compression success. Original content has been preserved.", "path", b.RelPathKey, "error", writeErr)
 			} else {
 				// Only after the metafile is successfully updated do we remove the original content.
-				contentDir := filepath.Join(fullPathToCompress, j.contentSubDir)
-				if err := os.RemoveAll(contentDir); err != nil {
-					plog.Error("Failed to remove original content directory after successful compression. Manual cleanup may be required.", "path", contentDir, "error", err)
+				absContentPathToCompress := util.DenormalizePath(filepath.Join(absPathToCompress, t.relContentPathKey))
+				if err := os.RemoveAll(absContentPathToCompress); err != nil {
+					plog.Error("Failed to remove original content directory after successful compression. Manual cleanup may be required.", "path", b.RelPathKey, "error", err)
 				}
 			}
 		}
-		plog.Notice("COMPRESSED", "path", fullPathToCompress)
+		plog.Notice("COMPRESSED", "path", b.RelPathKey)
 	}
 }
 
 // compressDirectory creates an archive of the directory's contents,
 // then deletes the original files, leaving only the archive and essential metadata.
 // It does NOT modify metadata or delete the original content, leaving that to the caller.
-func (j *job) compressDirectory(dirPath string) error {
-	contentDir := filepath.Join(dirPath, j.contentSubDir)
+func (t *task) compressDirectory(dirPath string) error {
+	contentDir := filepath.Join(dirPath, t.relContentPathKey)
 	// The archive is named after its parent backup directory (e.g., "PGL_Backup_2023-10-27...zip").
 	// This makes the archive file easily identifiable and self-describing even if it's
 	// moved out of its original context.
-	archiveFileName := filepath.Base(dirPath) + "." + j.format.String()
+	archiveFileName := filepath.Base(dirPath) + "." + t.format.String()
 	finalArchivePath := filepath.Join(dirPath, archiveFileName)
 
 	// Cleanup stale tmp files from previous crashed runs
 	// We do this first to ensure we aren't wasting disk space or
 	// potentially confusing os.CreateTemp.
-	j.cleanupStaleTempFiles(dirPath)
+	t.cleanupStaleTempFiles(dirPath)
 
 	// Safety check: Handle the "Half-Finished" state
 	// If the content directory is gone but the archive exists, just update metadata.
@@ -149,7 +157,7 @@ func (j *job) compressDirectory(dirPath string) error {
 	}
 
 	// 1. Create the archive in a temporary file.
-	tempArchivePath, err := j.createArchive(contentDir)
+	tempArchivePath, err := t.createArchive(contentDir)
 	if err != nil {
 		if err == context.Canceled {
 			plog.Debug("Compression was canceled during archive creation", "path", dirPath)
@@ -161,7 +169,7 @@ func (j *job) compressDirectory(dirPath string) error {
 
 	// Capture compressed size
 	if info, err := os.Stat(tempArchivePath); err == nil {
-		j.metrics.AddCompressedBytes(info.Size())
+		t.metrics.AddCompressedBytes(info.Size())
 	}
 
 	// 2. Move the completed temporary archive into the parent backup directory.
@@ -175,9 +183,9 @@ func (j *job) compressDirectory(dirPath string) error {
 
 // createArchive provides a generic, robust, and atomic way to compress a directory.
 // It uses a temporary file and an atomic rename to prevent partial/corrupt archives.
-func (j *job) createArchive(sourceDir string) (tempPath string, err error) {
+func (t *task) createArchive(sourceDir string) (tempPath string, err error) {
 	// 1. Create a temporary file in the destination directory to ensure atomic rename is possible.
-	tempFile, err := os.CreateTemp(filepath.Dir(sourceDir), "pgl-backup-*."+j.format.String()+".tmp")
+	tempFile, err := os.CreateTemp(filepath.Dir(sourceDir), "pgl-backup-*."+t.format.String()+".tmp")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temporary archive file: %w", err)
 	}
@@ -186,16 +194,16 @@ func (j *job) createArchive(sourceDir string) (tempPath string, err error) {
 	// 1. Get a Buffer from the pool (The "Middleman")
 	// This sits between the compressor and the disk to reduce syscalls.
 	// We reuse buffers to reduce GC pressure.
-	bufWriter := j.ioWriterPool.Get().(*bufio.Writer)
+	bufWriter := t.ioWriterPool.Get().(*bufio.Writer)
 	bufWriter.Reset(tempFile)
 	defer func() {
 		bufWriter.Reset(io.Discard)
-		j.ioWriterPool.Put(bufWriter)
+		t.ioWriterPool.Put(bufWriter)
 	}()
 
 	// 2. Set up the appropriate archive writer based on the format.
 	var archiver archiveWriter
-	switch j.format {
+	switch t.format {
 	case Zip:
 		zipWriter := zip.NewWriter(bufWriter)
 		zipWriter.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
@@ -217,7 +225,7 @@ func (j *job) createArchive(sourceDir string) (tempPath string, err error) {
 		// This should be caught earlier, but we handle it here for safety.
 		tempFile.Close()
 		os.Remove(tempPath)
-		return "", fmt.Errorf("unsupported compression format: %s", j.format)
+		return "", fmt.Errorf("unsupported compression format: %s", t.format)
 	}
 
 	// Defer a function to handle cleanup. It checks the named return `err`.
@@ -247,7 +255,7 @@ func (j *job) createArchive(sourceDir string) (tempPath string, err error) {
 	// Walk the directory and add files to the archive.
 	walkErr := filepath.Walk(sourceDir, func(absSrcPath string, info os.FileInfo, walkErr error) error {
 		select {
-		case <-j.ctx.Done():
+		case <-t.ctx.Done():
 			return context.Canceled
 		default:
 		}
@@ -268,8 +276,8 @@ func (j *job) createArchive(sourceDir string) (tempPath string, err error) {
 		relPath = util.NormalizePath(relPath)
 
 		plog.Notice("ADD", "source", sourceDir, "file", relPath)
-		j.metrics.AddEntriesProcessed(1)
-		j.metrics.AddOriginalBytes(info.Size())
+		t.metrics.AddEntriesProcessed(1)
+		t.metrics.AddOriginalBytes(info.Size())
 
 		// Handle Symlinks
 		if info.Mode()&os.ModeSymlink != 0 {
@@ -281,8 +289,8 @@ func (j *job) createArchive(sourceDir string) (tempPath string, err error) {
 		// Use a closure to ensure the buffer is returned to the pool
 		// immediately after the file is processed, NOT after the walk ends.
 		return func() error {
-			bufPtr := j.ioBufferPool.Get().(*[]byte)
-			defer j.ioBufferPool.Put(bufPtr)
+			bufPtr := t.ioBufferPool.Get().(*[]byte)
+			defer t.ioBufferPool.Put(bufPtr)
 			return archiver.AddFile(absSrcPath, relPath, info, *bufPtr)
 		}()
 	})
@@ -296,7 +304,7 @@ func (j *job) createArchive(sourceDir string) (tempPath string, err error) {
 	return tempPath, nil
 }
 
-func (j *job) cleanupStaleTempFiles(dirPath string) {
+func (t *task) cleanupStaleTempFiles(dirPath string) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		return
