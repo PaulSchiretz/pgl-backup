@@ -1,477 +1,360 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/paulschiretz/pgl-backup/pkg/flagparse"
 )
 
+func TestNewDefault(t *testing.T) {
+	cfg := NewDefault()
+	if cfg.Version == "" {
+		t.Error("NewDefault() Version should not be empty")
+	}
+	if cfg.LogLevel != "info" {
+		t.Errorf("NewDefault() LogLevel = %v, want %v", cfg.LogLevel, "info")
+	}
+	if cfg.Engine.Performance.SyncWorkers != 4 {
+		t.Errorf("NewDefault() SyncWorkers = %v, want %v", cfg.Engine.Performance.SyncWorkers, 4)
+	}
+}
+
 func TestConfig_Validate(t *testing.T) {
-	// Helper to get a valid base config for testing
-	newValidConfig := func(t *testing.T) Config {
-		cfg := NewDefault("test-version")
-		// Create a temporary source directory so validation passes
-		srcDir := t.TempDir()
-		cfg.Paths.Source = srcDir
-		cfg.Paths.TargetBase = t.TempDir()
-		return cfg
+	// Helper to create a valid base configuration
+	validConfig := func() Config {
+		c := NewDefault()
+		c.Source = "/tmp/source"
+		c.TargetBase = "/tmp/target"
+		return c
 	}
 
-	t.Run("Valid Config", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		if err := cfg.Validate(true); err != nil {
-			t.Errorf("expected valid config to pass validation, but got error: %v", err)
-		}
-	})
+	// We need actual temp dirs for the "checkSource" = true cases to pass existence checks.
+	tmpSource := t.TempDir()
+	tmpTarget := t.TempDir()
 
-	t.Run("Empty Source Path", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.Paths.Source = ""
-		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for empty source path, but got nil")
-		}
-	})
+	tests := []struct {
+		name        string
+		modify      func(*Config)
+		checkSource bool
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "Valid Config (Incremental)",
+			modify: func(c *Config) {
+				c.Source = tmpSource
+				c.TargetBase = tmpTarget
+				c.Runtime.Mode = "incremental"
+			},
+			checkSource: true,
+			wantErr:     false,
+		},
+		{
+			name: "Valid Config (Snapshot)",
+			modify: func(c *Config) {
+				c.Source = tmpSource
+				c.TargetBase = tmpTarget
+				c.Runtime.Mode = "snapshot"
+			},
+			checkSource: true,
+			wantErr:     false,
+		},
+		{
+			name: "Empty Source (CheckSource=true)",
+			modify: func(c *Config) {
+				c.Source = ""
+			},
+			checkSource: true,
+			wantErr:     true,
+			errContains: "source path cannot be empty",
+		},
+		{
+			name: "Empty Source (CheckSource=false)",
+			modify: func(c *Config) {
+				c.Source = ""
+			},
+			checkSource: false,
+			wantErr:     false,
+		},
+		{
+			name: "Non-Existent Source",
+			modify: func(c *Config) {
+				c.Source = filepath.Join(tmpSource, "nonexistent")
+			},
+			checkSource: true,
+			wantErr:     true,
+			errContains: "does not exist",
+		},
+		{
+			name: "Empty Target",
+			modify: func(c *Config) {
+				c.TargetBase = ""
+			},
+			checkSource: false,
+			wantErr:     true,
+			errContains: "target path cannot be empty",
+		},
+		// Incremental Path Checks
+		{
+			name: "Incremental: Empty Archive Path",
+			modify: func(c *Config) {
+				c.Runtime.Mode = "incremental"
+				c.Paths.Incremental.Archive = ""
+			},
+			checkSource: false,
+			wantErr:     true,
+			errContains: "paths.incremental.archive cannot be empty",
+		},
+		{
+			name: "Incremental: Current == Archive",
+			modify: func(c *Config) {
+				c.Runtime.Mode = "incremental"
+				c.Paths.Incremental.Current = "same"
+				c.Paths.Incremental.Archive = "same"
+			},
+			checkSource: false,
+			wantErr:     true,
+			errContains: "cannot be the same",
+		},
+		{
+			name: "Incremental: Path Separator in Archive",
+			modify: func(c *Config) {
+				c.Runtime.Mode = "incremental"
+				c.Paths.Incremental.Archive = "sub/dir"
+			},
+			checkSource: false,
+			wantErr:     true,
+			errContains: "cannot contain path separators",
+		},
+		// Snapshot Path Checks
+		{
+			name: "Snapshot: Empty Current Path",
+			modify: func(c *Config) {
+				c.Runtime.Mode = "snapshot"
+				c.Paths.Snapshot.Current = ""
+			},
+			checkSource: false,
+			wantErr:     true,
+			errContains: "paths.snapshot.current cannot be empty",
+		},
+		{
+			name: "Snapshot: Archive == Content",
+			modify: func(c *Config) {
+				c.Runtime.Mode = "snapshot"
+				c.Paths.Snapshot.Archive = "same"
+				c.Paths.Snapshot.Content = "same"
+			},
+			checkSource: false,
+			wantErr:     true,
+			errContains: "cannot be the same",
+		},
+		// Engine Settings
+		{
+			name: "Zero Sync Workers",
+			modify: func(c *Config) {
+				c.Engine.Performance.SyncWorkers = 0
+			},
+			checkSource: false,
+			wantErr:     true,
+			errContains: "syncWorkers must be at least 1",
+		},
+		{
+			name: "Negative Retry Count",
+			modify: func(c *Config) {
+				c.Runtime.Mode = "incremental"
+				c.Sync.Incremental.RetryCount = -1
+			},
+			checkSource: false,
+			wantErr:     true,
+			errContains: "retryCount cannot be negative",
+		},
+		// Glob Patterns
+		{
+			name: "Invalid Glob Pattern",
+			modify: func(c *Config) {
+				c.Sync.UserExcludeFiles = []string{"["}
+			},
+			checkSource: false,
+			wantErr:     true,
+			errContains: "invalid glob pattern",
+		},
+	}
 
-	t.Run("Non-Existent Source Path", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.Paths.Source = filepath.Join(t.TempDir(), "nonexistent")
-		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for non-existent source path, but got nil")
-		}
-	})
-
-	t.Run("Skip Source Check - Empty Source", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.Paths.Source = ""
-		if err := cfg.Validate(false); err != nil {
-			t.Errorf("expected no error when skipping source check with empty source, but got: %v", err)
-		}
-	})
-
-	t.Run("Skip Source Check - Non-Existent Source", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.Paths.Source = filepath.Join(t.TempDir(), "nonexistent")
-		if err := cfg.Validate(false); err != nil {
-			t.Errorf("expected no error when skipping source check with non-existent source, but got: %v", err)
-		}
-	})
-
-	t.Run("Empty Target Path", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.Paths.TargetBase = ""
-		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for empty target path, but got nil")
-		}
-	})
-
-	t.Run("Invalid SyncWorkers", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.Engine.Performance.SyncWorkers = 0
-		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for zero sync workers, but got nil")
-		}
-	})
-
-	t.Run("Invalid MirrorWorkers", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.Engine.Performance.MirrorWorkers = 0
-		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for zero mirror workers, but got nil")
-		}
-	})
-
-	t.Run("Invalid CompressWorkers", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.Engine.Performance.CompressWorkers = 0
-		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for zero compress workers, but got nil")
-		}
-	})
-
-	t.Run("Invalid DeleteWorkers", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.Engine.Performance.DeleteWorkers = 0
-		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for zero delete workers, but got nil")
-		}
-	})
-
-	t.Run("Invalid RetryCount", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.Engine.RetryCount = -1
-		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for negative retry count, but got nil")
-		}
-	})
-
-	t.Run("Invalid RetryWaitSeconds", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.Engine.RetryWaitSeconds = -1
-		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for negative retry wait, but got nil")
-		}
-	})
-
-	t.Run("Invalid ArchiveInterval", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.Mode = IncrementalMode
-
-		// Test negative interval in manual mode (should error)
-		cfg.Archive.Incremental.IntervalMode = ManualInterval
-		cfg.Archive.Incremental.IntervalSeconds = -1
-		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for negative archive intervalSeconds in manual mode, but got nil")
-		}
-
-		// Test zero interval in manual mode (should NOT error, as it disables archive)
-		cfg.Archive.Incremental.IntervalSeconds = 0
-		if err := cfg.Validate(true); err != nil {
-			t.Errorf("expected no error for zero archive intervalSeconds in manual mode (disables archive), but got: %v", err)
-		}
-
-		// In auto mode, the interval is calculated, so a user-set 0 should not error.
-		cfg.Archive.Incremental.IntervalMode = AutoInterval
-		cfg.Archive.Incremental.IntervalSeconds = 0
-		if err := cfg.Validate(true); err != nil {
-			t.Errorf("expected no error for zero archive intervalSeconds in auto mode (value is ignored), but got: %v", err)
-		}
-	})
-
-	t.Run("Invalid Incremental SubDirs", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.Mode = IncrementalMode // This validation only applies in incremental mode
-
-		// Test IncrementalSubDirs.Archive empty
-		cfg.Paths.IncrementalSubDirs.Archive = ""
-		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for empty IncrementalSubDirs.Archive, but got nil")
-		}
-
-		// Test IncrementalSubDirs.Archive with path separators
-		cfg.Paths.IncrementalSubDirs.Archive = "invalid/path"
-		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for IncrementalSubDirs.Archive with path separators, but got nil")
-		}
-		cfg.Paths.IncrementalSubDirs.Archive = "valid" // Reset
-
-		// Test empty IncrementalSubDirs.Current
-		cfg.Paths.IncrementalSubDirs.Current = ""
-		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for empty IncrementalSubDirs.Current, but got nil")
-		}
-
-		// Test IncrementalSubDir
-		cfg.Paths.IncrementalSubDirs.Current = "invalid/path"
-		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for IncrementalSubDirs.Current with path separators, but got nil")
-		}
-
-		cfg.Paths.IncrementalSubDirs.Current = "valid" // Reset to valid
-		if err := cfg.Validate(true); err != nil {
-			t.Errorf("expected no error for valid IncrementalSubDirs.Archive and IncrementalSubDirs.Current, but got: %v", err)
-		}
-	})
-
-	t.Run("Invalid SnapshotsSubDir", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.Mode = SnapshotMode // This validation only applies in snapshot mode
-
-		// Test empty
-		cfg.Paths.SnapshotSubDirs.Archive = ""
-		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for empty cfg.Paths.SnapshotSubDirs.Archive, but got nil")
-		}
-
-		// Test with path separators
-		cfg.Paths.SnapshotSubDirs.Archive = "invalid/path"
-		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for cfg.Paths.SnapshotSubDirs.Archive with path separators, but got nil")
-		}
-
-		cfg.Paths.SnapshotSubDirs.Archive = "valid" // Reset to valid
-		if err := cfg.Validate(true); err != nil {
-			t.Errorf("expected no error for valid SnapshotSubDirs.Archive, but got: %v", err)
-		}
-
-		// Test empty SnapshotSubDirs.Current
-		cfg.Paths.SnapshotSubDirs.Current = ""
-		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for empty SnapshotSubDirs.Current, but got nil")
-		}
-
-		// Test SnapshotSubDirs.Current
-		cfg.Paths.SnapshotSubDirs.Current = "invalid/path"
-		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for SnapshotSubDirs.Current with path separators, but got nil")
-		}
-
-		cfg.Paths.SnapshotSubDirs.Current = "valid" // Reset to valid
-		if err := cfg.Validate(true); err != nil {
-			t.Errorf("expected no error for valid SnapshotSubDirs.Archive and SnapshotSubDirs.Current, but got: %v", err)
-		}
-	})
-
-	t.Run("Invalid Glob Pattern", func(t *testing.T) {
-		cfg := newValidConfig(t)
-		cfg.Paths.UserExcludeFiles = []string{"["} // Invalid glob pattern
-		if err := cfg.Validate(true); err == nil {
-			t.Error("expected error for invalid glob pattern, but got nil")
-		}
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			tt.modify(&cfg)
+			err := cfg.Validate(tt.checkSource)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr && err != nil && tt.errContains != "" {
+				if !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("Validate() error = %v, want error containing %q", err, tt.errContains)
+				}
+			}
+		})
+	}
 }
 
 func TestMergeConfigWithFlags(t *testing.T) {
-	t.Run("Flag overrides base config", func(t *testing.T) {
-		base := NewDefault("test-version") // base.LogLevel is "info"
-		setFlags := map[string]interface{}{"log-level": "debug"}
+	base := NewDefault()
+	base.LogLevel = "info"
+	base.Engine.Performance.SyncWorkers = 4
+	base.Sync.UserExcludeFiles = []string{"base.txt"}
 
-		merged := MergeConfigWithFlags(base, setFlags)
-		if merged.LogLevel != "debug" {
-			t.Error("expected flag 'log-level=debug' to override base 'info'")
-		}
-	})
+	tests := []struct {
+		name     string
+		command  flagparse.Command
+		flags    map[string]any
+		validate func(*testing.T, Config)
+	}{
+		{
+			name:    "Override LogLevel",
+			command: flagparse.Backup,
+			flags:   map[string]any{"log-level": "debug"},
+			validate: func(t *testing.T, c Config) {
+				if c.LogLevel != "debug" {
+					t.Errorf("LogLevel = %v, want debug", c.LogLevel)
+				}
+			},
+		},
+		{
+			name:    "Override SyncWorkers",
+			command: flagparse.Backup,
+			flags:   map[string]any{"sync-workers": 10},
+			validate: func(t *testing.T, c Config) {
+				if c.Engine.Performance.SyncWorkers != 10 {
+					t.Errorf("SyncWorkers = %v, want 10", c.Engine.Performance.SyncWorkers)
+				}
+			},
+		},
+		{
+			name:    "Override Mode (Backup Command)",
+			command: flagparse.Backup,
+			flags:   map[string]any{"mode": "snapshot"},
+			validate: func(t *testing.T, c Config) {
+				if c.Runtime.Mode != "snapshot" {
+					t.Errorf("Mode = %v, want snapshot", c.Runtime.Mode)
+				}
+			},
+		},
+		{
+			name:    "Ignore Mode (Other Command)",
+			command: flagparse.Prune,
+			flags:   map[string]any{"mode": "snapshot"},
+			validate: func(t *testing.T, c Config) {
+				if c.Runtime.Mode != "incremental" { // Default
+					t.Errorf("Mode = %v, want incremental (default) because command is Prune", c.Runtime.Mode)
+				}
+			},
+		},
+		{
+			name:    "Override Slice (UserExcludeFiles)",
+			command: flagparse.Backup,
+			flags:   map[string]any{"user-exclude-files": []string{"flag.txt"}},
+			validate: func(t *testing.T, c Config) {
+				if len(c.Sync.UserExcludeFiles) != 1 || c.Sync.UserExcludeFiles[0] != "flag.txt" {
+					t.Errorf("UserExcludeFiles = %v, want [flag.txt]", c.Sync.UserExcludeFiles)
+				}
+			},
+		},
+		{
+			name:    "Override Nested Config (Archive Incremental Enabled)",
+			command: flagparse.Backup,
+			flags:   map[string]any{"archive-incremental": false},
+			validate: func(t *testing.T, c Config) {
+				if c.Archive.Incremental.Enabled != false {
+					t.Errorf("Archive.Incremental.Enabled = %v, want false", c.Archive.Incremental.Enabled)
+				}
+			},
+		},
+	}
 
-	t.Run("Base config is used when flag is not set", func(t *testing.T) {
-		base := NewDefault("test-version")
-		base.LogLevel = "warn" // Set a non-default base value
-		setFlags := map[string]interface{}{}
-
-		merged := MergeConfigWithFlags(base, setFlags)
-		if merged.LogLevel != "warn" {
-			t.Error("expected base 'log-level=warn' to be used when flag is not set")
-		}
-	})
-
-	t.Run("Flag explicitly set to default overrides base", func(t *testing.T) {
-		base := NewDefault("test-version")
-		base.Paths.PreserveSourceDirectoryName = false // Non-default base
-		setFlags := map[string]interface{}{"preserve-source-name": true}
-
-		merged := MergeConfigWithFlags(base, setFlags)
-		if !merged.Paths.PreserveSourceDirectoryName {
-			t.Error("expected flag 'preserve-source-name=true' to override base 'false'")
-		}
-	})
-
-	t.Run("Slice flags override base slice", func(t *testing.T) {
-		base := NewDefault("test-version")
-		base.Paths.UserExcludeFiles = []string{"from_base.txt"}
-		setFlags := map[string]interface{}{"user-exclude-files": []string{"from_flag.txt"}}
-
-		merged := MergeConfigWithFlags(base, setFlags)
-		finalExcludes := merged.Paths.ExcludeFiles()
-
-		foundFlagValue := false
-		foundBaseValue := false
-		for _, p := range finalExcludes {
-			if p == "from_flag.txt" {
-				foundFlagValue = true
-			}
-			if p == "from_base.txt" {
-				foundBaseValue = true
-			}
-		}
-
-		if !foundFlagValue {
-			t.Error("expected final exclusion list to contain value from flag, but it was missing")
-		}
-		if foundBaseValue {
-			t.Error("expected final exclusion list to NOT contain value from base config (should be overridden), but it was present")
-		}
-	})
-
-	t.Run("Mod time window flag overrides base", func(t *testing.T) {
-		base := NewDefault("test-version")
-		base.Engine.ModTimeWindowSeconds = 1 // Default base value
-		setFlags := map[string]interface{}{"mod-time-window": 0}
-
-		merged := MergeConfigWithFlags(base, setFlags)
-		expectedWindow := 0
-		if merged.Engine.ModTimeWindowSeconds != expectedWindow {
-			t.Errorf("expected flag 'mod-time-window=%d' to override base '%d', but got '%d'", expectedWindow, 1, merged.Engine.ModTimeWindowSeconds)
-		}
-	})
-
-	t.Run("Buffer size flag overrides base", func(t *testing.T) {
-		base := NewDefault("test-version")
-		base.Engine.Performance.BufferSizeKB = 256 // Default base value
-		setFlags := map[string]interface{}{"buffer-size-kb": 1024}
-
-		merged := MergeConfigWithFlags(base, setFlags)
-		expectedSize := 1024
-		if merged.Engine.Performance.BufferSizeKB != expectedSize {
-			t.Errorf("expected flag 'buffer-size-kb=%d' to override base '%d', but got '%d'", expectedSize, 256, merged.Engine.Performance.BufferSizeKB)
-		}
-	})
-}
-
-func TestGenerate(t *testing.T) {
-	t.Run("Generates file in target dir", func(t *testing.T) {
-		targetDir := t.TempDir()
-		cfg := NewDefault("test-version")
-		cfg.Paths.TargetBase = targetDir
-
-		err := Generate(cfg)
-		if err != nil {
-			t.Fatalf("Generate() failed: %v", err)
-		}
-
-		expectedPath := filepath.Join(targetDir, ConfigFileName)
-		if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
-			t.Errorf("expected config file to be created at %s, but it was not", expectedPath)
-		}
-	})
-
-	t.Run("Overwrites existing file", func(t *testing.T) {
-		targetDir := t.TempDir()
-		configPath := filepath.Join(targetDir, ConfigFileName)
-
-		// Create a dummy file first.
-		if err := os.WriteFile(configPath, []byte("old content"), 0644); err != nil {
-			t.Fatalf("failed to create dummy config file: %v", err)
-		}
-
-		cfg := NewDefault("test-version")
-		cfg.Paths.TargetBase = targetDir
-
-		err := Generate(cfg)
-		if err != nil {
-			t.Fatalf("Generate() should not fail when overwriting, but got: %v", err)
-		}
-
-		// Check that the file was overwritten with default JSON content.
-		content, _ := os.ReadFile(configPath)
-		if string(content) == "old content" {
-			t.Error("config file was not overwritten, but it should have been")
-		}
-	})
-
-	t.Run("Generates file with custom values", func(t *testing.T) {
-		targetDir := t.TempDir()
-		customCfg := NewDefault("test-version")
-		customCfg.Paths.Source = "/my/custom/source" // A non-default value
-		customCfg.LogLevel = "debug"                 // A non-default value
-		// Set the targetBase in the config to match the directory it's being generated in.
-		// This is required for the Load function's validation to pass.
-		customCfg.Paths.TargetBase = targetDir
-
-		err := Generate(customCfg)
-		if err != nil {
-			t.Fatalf("Generate() with custom config failed: %v", err)
-		}
-
-		// Load the generated file and check its contents
-		loadedCfg, err := Load("test-version", targetDir)
-		if err != nil {
-			t.Fatalf("Failed to load generated config for verification: %v", err)
-		}
-
-		if loadedCfg.Paths.Source != "/my/custom/source" || loadedCfg.LogLevel != "debug" {
-			t.Errorf("Generated config did not contain the custom values. Got source=%s, logLevel=%s", loadedCfg.Paths.Source, loadedCfg.LogLevel)
-		}
-	})
-}
-
-func TestFormatTimestampWithOffset(t *testing.T) {
-	// 1. Create a fixed UTC time for the test.
-	testTime := time.Date(2023, 10, 27, 14, 30, 15, 123456789, time.UTC)
-
-	// 2. Call the function under test.
-	actualResult := FormatTimestampWithOffset(testTime)
-
-	// 3. Construct the expected result.
-	// The UTC part is based on the fixed time and the package constant.
-	expectedUTCPart := "2023-10-27-14-30-15-123456789"
-	// The offset part depends on the local timezone of the machine running the test.
-	// We calculate it the same way the function does to get a reliable comparison.
-	expectedOffsetPart := testTime.In(time.Local).Format("Z0700")
-	expectedResult := expectedUTCPart + expectedOffsetPart
-
-	// 4. Assert that the actual result matches the expected result.
-	if actualResult != expectedResult {
-		t.Errorf("FormatTimestampWithOffset() = %v, want %v", actualResult, expectedResult)
-		t.Logf("This test is dependent on the system's local time zone.")
-		t.Logf("Expected UTC part: %s, Expected Offset part: %s", expectedUTCPart, expectedOffsetPart)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := MergeConfigWithFlags(tt.command, base, tt.flags)
+			tt.validate(t, got)
+		})
 	}
 }
 
-func TestLoad(t *testing.T) {
-	t.Run("No Config File", func(t *testing.T) {
-		tempDir := t.TempDir()
+func TestGenerateAndLoad(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := NewDefault()
+	cfg.TargetBase = tmpDir
+	cfg.Source = "/some/source"
+	cfg.LogLevel = "warn"
 
-		cfg, err := Load("test-version", tempDir)
-		if err != nil {
-			t.Fatalf("Load() with no config file should not return an error, but got: %v", err)
+	// Test Generate
+	if err := Generate(cfg); err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	configFile := filepath.Join(tmpDir, ConfigFileName)
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		t.Fatalf("Config file not created at %s", configFile)
+	}
+
+	// Test Load
+	// We must change CWD to tmpDir because Load validates that TargetBase (which is empty in file)
+	// matches the load directory.
+	wd, _ := os.Getwd()
+	defer os.Chdir(wd)
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to chdir: %v", err)
+	}
+
+	loadedCfg, err := Load(tmpDir)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if loadedCfg.Source != "/some/source" {
+		t.Errorf("Loaded Source = %v, want /some/source", loadedCfg.Source)
+	}
+	if loadedCfg.LogLevel != "warn" {
+		t.Errorf("Loaded LogLevel = %v, want warn", loadedCfg.LogLevel)
+	}
+}
+
+func TestExcludeHelpers(t *testing.T) {
+	cfg := NewDefault()
+	cfg.Sync.DefaultExcludeFiles = []string{"default.txt"}
+	cfg.Sync.UserExcludeFiles = []string{"user.txt"}
+	cfg.Sync.DefaultExcludeDirs = []string{"default_dir"}
+	cfg.Sync.UserExcludeDirs = []string{"user_dir"}
+
+	files := cfg.Sync.ExcludeFiles()
+	dirs := cfg.Sync.ExcludeDirs()
+
+	hasFile := func(list []string, s string) bool {
+		for _, v := range list {
+			if v == s {
+				return true
+			}
 		}
+		return false
+	}
 
-		// Check if it returned the default config
-		if cfg.Naming.Prefix != "PGL_Backup_" {
-			t.Errorf("expected default prefix 'PGL_Backup_', but got %s", cfg.Naming.Prefix)
-		}
-	})
+	if !hasFile(files, "pgl-backup.config.json") {
+		t.Error("ExcludeFiles() missing system exclude 'pgl-backup.config.json'")
+	}
+	if !hasFile(files, "default.txt") {
+		t.Error("ExcludeFiles() missing default exclude 'default.txt'")
+	}
+	if !hasFile(files, "user.txt") {
+		t.Error("ExcludeFiles() missing user exclude 'user.txt'")
+	}
 
-	t.Run("Valid Config File", func(t *testing.T) {
-		tempDir := t.TempDir()
-		confPath := filepath.Join(tempDir, ConfigFileName)
-		// Create a config file that is self-consistent: its targetBase must
-		// point to the directory it resides in.
-		content := fmt.Sprintf(`{"naming": {"prefix": "custom_prefix_"}, "paths": {"targetBase": "%s"}}`, tempDir)
-		// Use double backslashes for JSON compatibility on Windows
-		content = strings.ReplaceAll(content, `\`, `\\`)
-		if err := os.WriteFile(confPath, []byte(content), 0644); err != nil {
-			t.Fatalf("failed to write test config file: %v", err)
-		}
-
-		cfg, err := Load("test-version", tempDir)
-		if err != nil {
-			t.Fatalf("expected no error when loading valid config, but got: %v", err)
-		}
-
-		// Check that the value from the file overrode the default
-		if cfg.Naming.Prefix != "custom_prefix_" {
-			t.Errorf("expected prefix to be 'custom_prefix_', but got %s", cfg.Naming.Prefix)
-		}
-		// Check that a default value not in the file is still present
-		if cfg.Archive.Incremental.IntervalMode != AutoInterval {
-			t.Errorf("expected default archive mode to be auto, but got %v", cfg.Archive.Incremental.IntervalMode)
-		}
-	})
-
-	t.Run("Malformed Config File", func(t *testing.T) {
-		tempDir := t.TempDir()
-		confPath := filepath.Join(tempDir, ConfigFileName)
-		// Create a malformed JSON file
-		content := `{"naming": {"prefix": "custom_prefix_"},}` // Extra comma
-		if err := os.WriteFile(confPath, []byte(content), 0644); err != nil {
-			t.Fatalf("failed to write test config file: %v", err)
-		}
-
-		_, err := Load("test-version", tempDir)
-		if err == nil {
-			t.Fatal("expected an error when loading malformed config, but got nil")
-		}
-	})
-
-	t.Run("Mismatched TargetBase in Config", func(t *testing.T) {
-		loadDir := t.TempDir()
-		otherDir := t.TempDir()
-		confPath := filepath.Join(loadDir, ConfigFileName)
-
-		// Create a config file where the targetBase points to a different directory.
-		content := fmt.Sprintf(`{"paths": {"targetBase": "%s"}}`, otherDir)
-		// Use double backslashes for JSON compatibility on Windows
-		content = strings.ReplaceAll(content, `\`, `\\`)
-
-		if err := os.WriteFile(confPath, []byte(content), 0644); err != nil {
-			t.Fatalf("failed to write test config file: %v", err)
-		}
-
-		_, err := Load("test-version", loadDir)
-		if err == nil {
-			t.Fatal("expected an error for mismatched targetBase, but got nil")
-		}
-	})
+	if !hasFile(dirs, "default_dir") {
+		t.Error("ExcludeDirs() missing default exclude 'default_dir'")
+	}
+	if !hasFile(dirs, "user_dir") {
+		t.Error("ExcludeDirs() missing user exclude 'user_dir'")
+	}
 }

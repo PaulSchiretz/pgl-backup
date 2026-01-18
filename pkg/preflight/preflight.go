@@ -5,72 +5,65 @@
 package preflight
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
-	"github.com/paulschiretz/pgl-backup/pkg/config"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
-// PreflightChecks defines which preflight checks to run.
-type PreflightChecks struct {
-	SourceAccessible   bool
-	TargetAccessible   bool
-	TargetWriteable    bool
-	CaseMismatch       bool
-	PathNesting        bool
-	EnsureTargetExists bool
+type Validator struct {
 }
 
-// RunChecks performs all necessary validations and setup before a backup operation.
-// It's an orchestrator function that calls other checks in a specific order.
-func RunChecks(c *config.Config, checks PreflightChecks) error {
-	// 1. Validate the configuration itself. This is the first and most critical check.
-	// It also cleans and normalizes paths within the config struct.
-	if err := c.Validate(checks.SourceAccessible); err != nil {
-		return fmt.Errorf("invalid configuration: %w", err)
-	}
+// NewChecker creates a new PathArchiver with the given configuration.
+func NewValidator() *Validator {
+	return &Validator{}
+}
 
-	// 2. Perform non-destructive checks on source and target paths.
-	if checks.TargetAccessible {
-		if err := checkBackupTargetAccessible(c.Paths.TargetBase); err != nil {
+// Run performs all necessary validations and setup before a backup operation.
+// It's an orchestrator function that calls other checks in a specific order.
+func (v *Validator) Run(ctx context.Context, absSourcePath, absTargetBasePath string, p *Plan, timestampUTC time.Time) error {
+
+	if p.TargetAccessible {
+		if err := checkBackupTargetAccessible(absTargetBasePath); err != nil {
 			return fmt.Errorf("target path accessibility check failed: %w", err)
 		}
 	}
-	if checks.SourceAccessible {
-		if err := checkBackupSourceAccessible(c.Paths.Source); err != nil {
+	if p.SourceAccessible {
+		if err := checkBackupSourceAccessible(absSourcePath); err != nil {
 			return fmt.Errorf("source path validation failed: %w", err)
 		}
 	}
 
 	// 3. If not a dry run, perform state-changing checks (create dir, check writability).
-	if !c.DryRun {
-		if checks.EnsureTargetExists {
-			if err := os.MkdirAll(c.Paths.TargetBase, util.UserWritableDirPerms); err != nil {
+	if !p.DryRun {
+		if p.EnsureTargetExists {
+			if err := os.MkdirAll(absTargetBasePath, util.UserWritableDirPerms); err != nil {
 				return fmt.Errorf("failed to create target directory: %w", err)
 			}
 		}
-		if checks.TargetWriteable {
-			if err := checkBackupTargetWritable(c.Paths.TargetBase); err != nil {
+		if p.TargetWriteable {
+			if err := checkBackupTargetWritable(absTargetBasePath); err != nil {
 				return fmt.Errorf("target path writable check failed: %w", err)
 			}
 		}
 	}
 
 	// 4. Perform cross-platform safety checks.
-	if checks.CaseMismatch {
-		if err := checkCaseSensitivityMismatch(c.Paths.Source); err != nil {
+	if p.CaseMismatch {
+		if err := checkCaseSensitivityMismatch(absSourcePath); err != nil {
 			return err // This returns a warning as an error to halt execution.
 		}
 	}
 
 	// 5. Check for path nesting.
-	if checks.PathNesting {
-		if err := checkPathNesting(c.Paths.Source, c.Paths.TargetBase); err != nil {
+	if p.PathNesting {
+		if err := checkPathNesting(absSourcePath, absTargetBasePath); err != nil {
 			return err
 		}
 	}

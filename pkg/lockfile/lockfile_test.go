@@ -15,16 +15,17 @@ import (
 
 // TestAcquireAndRelease verifies the basic functionality of acquiring and releasing a lock.
 func TestAcquireAndRelease(t *testing.T) {
-	lockPath := filepath.Join(t.TempDir(), "test.lock")
+	dir := t.TempDir()
+	expectedLockPath := filepath.Join(dir, LockFileName)
 
 	// Acquire the lock
-	lock, err := Acquire(context.Background(), lockPath, "test-app")
+	lock, err := Acquire(context.Background(), dir, "test-app")
 	if err != nil {
 		t.Fatalf("expected to acquire lock, but got error: %v", err)
 	}
 
 	// Check that the lock file was created
-	if _, err := os.Stat(lockPath); os.IsNotExist(err) {
+	if _, err := os.Stat(expectedLockPath); os.IsNotExist(err) {
 		t.Fatal("lock file was not created after acquiring lock")
 	}
 
@@ -32,24 +33,24 @@ func TestAcquireAndRelease(t *testing.T) {
 	lock.Release()
 
 	// Check that the lock file was removed
-	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+	if _, err := os.Stat(expectedLockPath); !os.IsNotExist(err) {
 		t.Fatal("lock file was not removed after releasing lock")
 	}
 }
 
 // TestContention ensures that a second process cannot acquire an active lock.
 func TestContention(t *testing.T) {
-	lockPath := filepath.Join(t.TempDir(), "test.lock")
+	dir := t.TempDir()
 
 	// Process 1 acquires the lock
-	lock1, err := Acquire(context.Background(), lockPath, "app-1")
+	lock1, err := Acquire(context.Background(), dir, "app-1")
 	if err != nil {
 		t.Fatalf("Process 1 failed to acquire lock: %v", err)
 	}
 	defer lock1.Release()
 
 	// Process 2 attempts to acquire the same lock
-	_, err = Acquire(context.Background(), lockPath, "app-2")
+	_, err = Acquire(context.Background(), dir, "app-2")
 	if err == nil {
 		t.Fatal("Process 2 unexpectedly acquired an active lock")
 	}
@@ -67,7 +68,8 @@ func TestContention(t *testing.T) {
 
 // TestStaleLockCleanup verifies that a stale lock can be acquired.
 func TestStaleLockCleanup(t *testing.T) {
-	lockPath := filepath.Join(t.TempDir(), "test.lock")
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, LockFileName)
 
 	// Manually create a stale lock file
 	staleTimeVal := time.Now().Add(-(staleTimeout + time.Minute)) // Well past the stale timeout
@@ -84,7 +86,7 @@ func TestStaleLockCleanup(t *testing.T) {
 	}
 
 	// Attempt to acquire the stale lock
-	lock, err := Acquire(context.Background(), lockPath, "new-app")
+	lock, err := Acquire(context.Background(), dir, "new-app")
 	if err != nil {
 		t.Fatalf("failed to acquire stale lock: %v", err)
 	}
@@ -104,7 +106,8 @@ func TestStaleLockCleanup(t *testing.T) {
 // TestStaleLockContention simulates a race condition where two processes
 // try to acquire the same stale lock simultaneously.
 func TestStaleLockContention(t *testing.T) {
-	lockPath := filepath.Join(t.TempDir(), "stale-contention.lock")
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, LockFileName)
 
 	// 1. Create a stale lock file that both processes will try to acquire.
 	staleTimeVal := time.Now().Add(-(staleTimeout + time.Minute))
@@ -129,7 +132,7 @@ func TestStaleLockContention(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			lock, err := Acquire(context.Background(), lockPath, "contender")
+			lock, err := Acquire(context.Background(), dir, "contender")
 			if err != nil {
 				results <- err
 				return
@@ -170,10 +173,10 @@ func TestHeartbeatEffect(t *testing.T) {
 		staleTimeout = originalStale
 	})
 
-	lockPath := filepath.Join(t.TempDir(), "test.lock")
+	dir := t.TempDir()
 
 	// Acquire the lock, which starts the heartbeat
-	lock1, err := Acquire(context.Background(), lockPath, "app-1")
+	lock1, err := Acquire(context.Background(), dir, "app-1")
 	if err != nil {
 		t.Fatalf("failed to acquire initial lock: %v", err)
 	}
@@ -183,7 +186,7 @@ func TestHeartbeatEffect(t *testing.T) {
 	time.Sleep(heartbeatInterval + 25*time.Millisecond)
 
 	// Attempt to acquire the lock again. It should fail because the heartbeat kept it fresh.
-	_, err = Acquire(context.Background(), lockPath, "app-2")
+	_, err = Acquire(context.Background(), dir, "app-2")
 	if err == nil {
 		t.Fatal("expected lock acquisition to fail, but it succeeded")
 	}
@@ -196,9 +199,10 @@ func TestHeartbeatEffect(t *testing.T) {
 
 // TestReleaseIdempotency verifies that calling Release multiple times is safe.
 func TestReleaseIdempotency(t *testing.T) {
-	lockPath := filepath.Join(t.TempDir(), "test.lock")
+	dir := t.TempDir()
+	expectedLockPath := filepath.Join(dir, LockFileName)
 
-	lock, err := Acquire(context.Background(), lockPath, "test-app")
+	lock, err := Acquire(context.Background(), dir, "test-app")
 	if err != nil {
 		t.Fatalf("failed to acquire lock: %v", err)
 	}
@@ -208,7 +212,7 @@ func TestReleaseIdempotency(t *testing.T) {
 	lock.Release() // This should not panic or cause an error
 
 	// Check that the lock file is gone
-	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+	if _, err := os.Stat(expectedLockPath); !os.IsNotExist(err) {
 		t.Fatal("lock file still exists after multiple releases")
 	}
 }

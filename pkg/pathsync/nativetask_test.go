@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulschiretz/pgl-backup/pkg/config"
 	"github.com/paulschiretz/pgl-backup/pkg/pathsyncmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
@@ -737,16 +736,25 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			}
 			runner.setup()
 
-			// The public Sync method now handles metrics enablement.
-			cfg := config.NewDefault("test-version")
-			cfg.DryRun = tc.dryRun
-			cfg.FailFast = tc.failFast
-			cfg.Engine.Type = config.NativeEngine
-			if tc.modTimeWindow != nil {
-				cfg.Engine.ModTimeWindowSeconds = *tc.modTimeWindow
+			plan := &Plan{
+				Enabled:               true,
+				Engine:                Native,
+				PreserveSourceDirName: tc.preserveSourceDirName,
+				RetryCount:            3,
+				RetryWait:             5 * time.Second,
+				ExcludeFiles:          tc.excludeFiles,
+				ExcludeDirs:           tc.excludeDirs,
+				DryRun:                tc.dryRun,
+				FailFast:              tc.failFast,
+				Metrics:               tc.enableMetrics,
 			}
-			syncer := NewPathSyncer(cfg)
-			err := syncer.Sync(context.Background(), runner.srcDir, runner.dstDir, tc.preserveSourceDirName, tc.mirror, tc.excludeFiles, tc.excludeDirs, tc.enableMetrics)
+			if tc.modTimeWindow != nil {
+				plan.ModTimeWindow = time.Duration(*tc.modTimeWindow) * time.Second
+			} else {
+				plan.ModTimeWindow = 1 * time.Second
+			}
+			syncer := NewPathSyncer(256, 4, 4)
+			err := syncer.Sync(context.Background(), runner.srcDir, runner.dstDir, "", "", plan, time.Now())
 
 			// Assert on error
 			if tc.expectedErrorContains != "" {
@@ -762,9 +770,9 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 
 			// HACK: To inspect the metrics instance, we need to get the last run from the syncer.
 			// This is a test-only pattern.
-			lastRunMetrics := syncer.lastRun.metrics
-			if syncer.lastRun == nil {
-				t.Fatal("syncer.lastRun was nil, cannot inspect test state")
+			lastRunMetrics := syncer.lastNativeTask.metrics
+			if syncer.lastNativeTask == nil {
+				t.Fatal("syncer.lastNativeTask was nil, cannot inspect test state")
 			}
 
 			// Assert
@@ -802,7 +810,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 					t.Errorf("expected content for %s to be %q, but got %q", relPathKey, expectedFile.content, content)
 				}
 				// For mod time comparison, use the same window as the syncer.
-				window := syncer.lastRun.modTimeWindow
+				window := plan.ModTimeWindow
 				if tc.modTimeWindow != nil {
 					window = time.Duration(*tc.modTimeWindow) * time.Second
 				}
@@ -908,10 +916,11 @@ func TestNativeSync_WorkerCancellation(t *testing.T) {
 		}
 	}
 
-	cfg := config.NewDefault("test-version")
-	// Use 1 worker to serialize execution and make it easier to interrupt
-	cfg.Engine.Performance.SyncWorkers = 1
-	syncer := NewPathSyncer(cfg)
+	plan := &Plan{
+		Enabled: true,
+		Engine:  Native,
+	}
+	syncer := NewPathSyncer(256, 1, 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -922,7 +931,7 @@ func TestNativeSync_WorkerCancellation(t *testing.T) {
 	}()
 
 	// Act
-	err := syncer.Sync(ctx, srcDir, dstDir, false, false, nil, nil, false)
+	err := syncer.Sync(ctx, srcDir, dstDir, "", "", plan, time.Now())
 
 	// Assert
 	if err != nil && !strings.Contains(err.Error(), "context canceled") && !strings.Contains(err.Error(), "critical sync error") {
@@ -952,10 +961,11 @@ func TestNativeSync_MirrorCancellation(t *testing.T) {
 		}
 	}
 
-	cfg := config.NewDefault("test-version")
-	// Use 1 worker to serialize execution and make it easier to interrupt
-	cfg.Engine.Performance.MirrorWorkers = 1
-	syncer := NewPathSyncer(cfg)
+	plan := &Plan{
+		Enabled: true,
+		Engine:  Native,
+	}
+	syncer := NewPathSyncer(256, 1, 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -966,7 +976,7 @@ func TestNativeSync_MirrorCancellation(t *testing.T) {
 	}()
 
 	// Act
-	err := syncer.Sync(ctx, srcDir, dstDir, false, true, nil, nil, false)
+	err := syncer.Sync(ctx, srcDir, dstDir, "", "", plan, time.Now())
 
 	// Assert
 	if err != nil && !strings.Contains(err.Error(), "context canceled") && !strings.Contains(err.Error(), "critical mirror error") {

@@ -6,8 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
+	"github.com/paulschiretz/pgl-backup/pkg/buildinfo"
+	"github.com/paulschiretz/pgl-backup/pkg/flagparse"
+	"github.com/paulschiretz/pgl-backup/pkg/lockfile"
+	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
@@ -15,46 +18,24 @@ import (
 // ConfigFileName is the name of the configuration file.
 const ConfigFileName = "pgl-backup.config.json"
 
-// MetaFileName is the name of the backup metadata file.
-const MetaFileName = ".pgl-backup.meta.json"
-
-// LockFileName is the name of the lock file created in the target directory.
-// The '~' prefix marks it as temporary.
-const LockFileName = ".~pgl-backup.lock"
-
-// backupTimeFormat defines the standard, non-configurable time format for backup directory names.
-const backupTimeFormat = "2006-01-02-15-04-05"
-
 // systemExcludeFilePatterns is a slice of file patterns that should
 // always be excluded from synchronization for the system to function correctly.
-var systemExcludeFilePatterns = []string{MetaFileName, LockFileName, ConfigFileName}
+var systemExcludeFilePatterns = []string{metafile.MetaFileName, lockfile.LockFileName, ConfigFileName}
 
 // systemExcludeDirPatterns is a slice of directory patterns that should
 // always be excluded from synchronization for the system to function correctly.
 var systemExcludeDirPatterns = []string{}
 
-type BackupNamingConfig struct {
-	Prefix string `json:"prefix"`
+type PathsPolicyConfig struct {
+	Current         string `json:"current"`
+	Archive         string `json:"archive"`
+	Content         string `json:"content"`
+	BackupDirPrefix string `json:"backupDirPrefix"`
 }
 
-type BackupPathSubDirConfig struct {
-	Current string `json:"current"`
-	Archive string `json:"archive"`
-}
-
-type BackupPathConfig struct {
-	Source                      string                 `json:"source"`
-	TargetBase                  string                 `json:"targetBase"`
-	IncrementalSubDirs          BackupPathSubDirConfig `json:"incrementalSubDirs"`
-	SnapshotSubDirs             BackupPathSubDirConfig `json:"snapshotSubDirs"`
-	ContentSubDir               string                 `json:"contentSubDir"`
-	PreserveSourceDirectoryName bool                   `json:"preserveSourceDirectoryName"`
-	DefaultExcludeFiles         []string               `json:"defaultExcludeFiles,omitempty"`
-	DefaultExcludeDirs          []string               `json:"defaultExcludeDirs,omitempty"`
-	// Note: omitempty is intentionally not used for user-configurable slices
-	// so that they appear in the generated config file for better discoverability.
-	UserExcludeFiles []string `json:"userExcludeFiles"`
-	UserExcludeDirs  []string `json:"userExcludeDirs"`
+type BackupPathsConfig struct {
+	Incremental PathsPolicyConfig `json:"incremental,omitempty"`
+	Snapshot    PathsPolicyConfig `json:"snapshot,omitempty"`
 }
 
 type BackupHooksConfig struct {
@@ -68,112 +49,7 @@ type BackupHooksConfig struct {
 	PostBackup []string `json:"postBackup"`
 }
 
-// BackupMode represents the operational mode of the backup (incremental or snapshot).
-type BackupMode int
-
-// Constants for BackupMode, acting as an enum.
-const (
-	IncrementalMode BackupMode = iota // 0
-	SnapshotMode                      // 1
-)
-
-var backupModeToString = map[BackupMode]string{IncrementalMode: "incremental", SnapshotMode: "snapshot"}
-var stringToBackupMode = util.InvertMap(backupModeToString)
-
-// String returns the string representation of a BackupMode.
-func (bm BackupMode) String() string {
-	if str, ok := backupModeToString[bm]; ok {
-		return str
-	}
-	return fmt.Sprintf("unknown_backup_mode(%d)", bm)
-}
-
-// BackupModeFromString parses a string and returns the corresponding BackupMode.
-func BackupModeFromString(s string) (BackupMode, error) {
-	if mode, ok := stringToBackupMode[s]; ok {
-		return mode, nil
-	}
-	return 0, fmt.Errorf("invalid BackupMode: %q. Must be 'incremental' or 'snapshot'", s)
-}
-
-// MarshalJSON implements the json.Marshaler interface for BackupMode.
-func (bm BackupMode) MarshalJSON() ([]byte, error) {
-	return json.Marshal(bm.String())
-}
-
-// UnmarshalJSON implements the json.Unmarshaler interface for BackupMode.
-func (bm *BackupMode) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return fmt.Errorf("BackupMode should be a string, got %s", data)
-	}
-
-	mode, err := BackupModeFromString(s) // Use the helper for parsing
-	if err != nil {
-		return err
-	}
-	*bm = mode
-	return nil
-}
-
-// SyncEngine represents the file synchronization engine to use.
-type SyncEngine int
-
-const (
-	// NativeEngine uses the cross-platform Go implementation.
-	NativeEngine SyncEngine = iota
-	// RobocopyEngine uses the Windows-specific robocopy utility.
-	RobocopyEngine
-)
-
-var syncEngineToString = map[SyncEngine]string{NativeEngine: "native", RobocopyEngine: "robocopy"}
-var stringToSyncEngine = util.InvertMap(syncEngineToString)
-
-// String returns the string representation of a SyncEngine.
-func (se SyncEngine) String() string {
-	if str, ok := syncEngineToString[se]; ok {
-		return str
-	}
-	return fmt.Sprintf("unknown_sync_engine(%d)", se)
-}
-
-// SyncEngineFromString parses a string and returns the corresponding SyncEngine.
-func SyncEngineFromString(s string) (SyncEngine, error) {
-	if engine, ok := stringToSyncEngine[s]; ok {
-		return engine, nil
-	}
-	return 0, fmt.Errorf("invalid SyncEngine: %q. Must be 'native' or 'robocopy'", s)
-}
-
-// MarshalJSON implements the json.Marshaler interface for SyncEngine.
-func (se SyncEngine) MarshalJSON() ([]byte, error) {
-	return json.Marshal(se.String())
-}
-
-// UnmarshalJSON implements the json.Unmarshaler interface for SyncEngine.
-func (se *SyncEngine) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return fmt.Errorf("SyncEngine should be a string, got %s", data)
-	}
-
-	engine, err := SyncEngineFromString(s) // Use the helper for parsing
-	if err != nil {
-		return err
-	}
-	*se = engine
-	return nil
-}
-
-type BackupEngineConfig struct {
-	Type                 SyncEngine                    `json:"type"`
-	RetryCount           int                           `json:"retryCount"`
-	RetryWaitSeconds     int                           `json:"retryWaitSeconds"`
-	ModTimeWindowSeconds int                           `json:"modTimeWindowSeconds" comment:"Time window in seconds to consider file modification times equal. Handles filesystem timestamp precision differences. Default is 1s. 0 means exact match."`
-	Performance          BackupEnginePerformanceConfig `json:"performance,omitempty"`
-}
-
-type BackupEnginePerformanceConfig struct {
+type EnginePerformanceConfig struct {
 	SyncWorkers     int `json:"syncWorkers"`
 	MirrorWorkers   int `json:"mirrorWorkers"`
 	DeleteWorkers   int `json:"deleteWorkers"`
@@ -181,118 +57,49 @@ type BackupEnginePerformanceConfig struct {
 	BufferSizeKB    int `json:"bufferSizeKB" comment:"Size of the I/O buffer in kilobytes for file copies and compression. Default is 256 (256KB)."`
 }
 
-// ArchiveIntervalMode represents how the archive interval is determined.
-type ArchiveIntervalMode int
-
-const (
-	// ManualInterval uses the user-specified interval value directly.
-	ManualInterval ArchiveIntervalMode = iota // 0
-	// AutoInterval calculates the interval based on the finest-grained retention policy.
-	AutoInterval // 1
-)
-
-var archiveIntervalModeToString = map[ArchiveIntervalMode]string{ManualInterval: "manual", AutoInterval: "auto"}
-var stringToArchiveIntervalMode = util.InvertMap(archiveIntervalModeToString)
-
-// String returns the string representation of a ArchiveIntervalMode.
-func (rim ArchiveIntervalMode) String() string {
-	if str, ok := archiveIntervalModeToString[rim]; ok {
-		return str
-	}
-	return fmt.Sprintf("unknown_interval_mode(%d)", rim)
+type BackupEngineConfig struct {
+	Metrics     bool                    `json:"metrics"`
+	FailFast    bool                    `json:"failFast"`
+	Performance EnginePerformanceConfig `json:"performance"`
 }
 
-// ArchiveIntervalModeFromString parses a string and returns the corresponding ArchiveIntervalMode.
-func ArchiveIntervalModeFromString(s string) (ArchiveIntervalMode, error) {
-	if mode, ok := stringToArchiveIntervalMode[s]; ok {
-		return mode, nil
-	}
-	return 0, fmt.Errorf("invalid ArchiveIntervalMode: %q. Must be 'manual' or 'auto'", s)
+type SyncPolicyConfig struct {
+	Enabled               bool   `json:"enabled"`
+	PreserveSourceDirName bool   `json:"PreserveSourceDirName"`
+	Engine                string `json:"engine"`
+	RetryCount            int    `json:"retryCount"`
+	RetryWaitSeconds      int    `json:"retryWaitSeconds"`
+	ModTimeWindowSeconds  int    `json:"modTimeWindowSeconds" comment:"Time window in seconds to consider file modification times equal. Handles filesystem timestamp precision differences. Default is 1s. 0 means exact match."`
 }
 
-// MarshalJSON implements the json.Marshaler interface for ArchiveIntervalMode.
-func (rim ArchiveIntervalMode) MarshalJSON() ([]byte, error) {
-	return json.Marshal(rim.String())
-}
-
-// UnmarshalJSON implements the json.Unmarshaler interface for ArchiveIntervalMode.
-func (rim *ArchiveIntervalMode) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return fmt.Errorf("ArchiveIntervalMode should be a string, got %s", data)
-	}
-	mode, err := ArchiveIntervalModeFromString(s)
-	if err != nil {
-		return err
-	}
-	*rim = mode
-	return nil
+type BackupSyncConfig struct {
+	Incremental         SyncPolicyConfig `json:"incremental,omitempty"`
+	Snapshot            SyncPolicyConfig `json:"snapshot,omitempty"`
+	DefaultExcludeFiles []string         `json:"defaultExcludeFiles,omitempty"`
+	DefaultExcludeDirs  []string         `json:"defaultExcludeDirs,omitempty"`
+	// Note: omitempty is intentionally not used for user-configurable slices
+	// so that they appear in the generated config file for better discoverability.
+	UserExcludeFiles []string `json:"userExcludeFiles"`
+	UserExcludeDirs  []string `json:"userExcludeDirs"`
 }
 
 type ArchivePolicyConfig struct {
 	Enabled bool `json:"enabled"`
 	// IntervalMode determines if the interval is set manually or derived automatically from the retention policy.
-	IntervalMode ArchiveIntervalMode `json:"intervalMode"`
+	IntervalMode string `json:"intervalMode"`
 	// IntervalSeconds is the duration in seconds after which a new backup archive is created in incremental mode.
 	// This is only used when Mode is 'manual'.
 	IntervalSeconds int `json:"intervalSeconds,omitempty"`
 }
 
 type BackupArchiveConfig struct {
-	// Incremental holds the archive policy specific to the incremental backup mode.
 	Incremental ArchivePolicyConfig `json:"incremental,omitempty"`
-}
-
-// CompressionFormat represents the archive format for compression.
-type CompressionFormat string
-
-const (
-	ZipFormat    CompressionFormat = "zip"
-	TarGzFormat  CompressionFormat = "tar.gz"
-	TarZstFormat CompressionFormat = "tar.zst"
-)
-
-var compressionFormatToString = map[CompressionFormat]string{ZipFormat: "zip", TarGzFormat: "tar.gz", TarZstFormat: "tar.zst"}
-var stringToCompressionFormat = util.InvertMap(compressionFormatToString)
-
-// String returns the string representation of a CompressionFormat.
-func (cf CompressionFormat) String() string {
-	if str, ok := compressionFormatToString[cf]; ok {
-		return str
-	}
-	return fmt.Sprintf("unknown_compression_format(%s)", string(cf))
-}
-
-// CompressionFormatFromString parses a string and returns the corresponding CompressionFormat.
-func CompressionFormatFromString(s string) (CompressionFormat, error) {
-	if format, ok := stringToCompressionFormat[s]; ok {
-		return format, nil
-	}
-	return "", fmt.Errorf("invalid CompressionFormat: %q. Must be 'zip', 'tar.gz', or 'tar.zst'", s)
-}
-
-// MarshalJSON implements the json.Marshaler interface for CompressionFormat.
-func (cf CompressionFormat) MarshalJSON() ([]byte, error) {
-	return json.Marshal(cf.String())
-}
-
-// UnmarshalJSON implements the json.Unmarshaler interface for CompressionFormat.
-func (cf *CompressionFormat) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return fmt.Errorf("CompressionFormat should be a string, got %s", data)
-	}
-	format, err := CompressionFormatFromString(s)
-	if err != nil {
-		return err
-	}
-	*cf = format
-	return nil
+	Snapshot    ArchivePolicyConfig `json:"snapshot,omitempty"`
 }
 
 type CompressionPolicyConfig struct {
-	Enabled bool              `json:"enabled"`
-	Format  CompressionFormat `json:"format,omitempty"`
+	Enabled bool   `json:"enabled"`
+	Format  string `json:"format"`
 }
 
 type BackupCompressionConfig struct {
@@ -314,53 +121,84 @@ type BackupRetentionConfig struct {
 	Snapshot    RetentionPolicyConfig `json:"snapshot,omitempty"`
 }
 
+type RuntimeConfig struct {
+	Mode   string
+	DryRun bool
+}
+
 type Config struct {
 	Version     string                  `json:"version"`
-	Mode        BackupMode              `json:"mode"`
-	Engine      BackupEngineConfig      `json:"engine"` // Keep this for engine-specific settings
+	Source      string                  `json:"source"`
+	TargetBase  string                  `json:"-"` // Never added to config file
+	Runtime     RuntimeConfig           `json:"-"` // Never added to config file
 	LogLevel    string                  `json:"logLevel"`
-	DryRun      bool                    `json:"dryRun"`
-	FailFast    bool                    `json:"failFast"`
-	Metrics     bool                    `json:"metrics,omitempty"`
-	Compression BackupCompressionConfig `json:"compression,omitempty"`
-	Naming      BackupNamingConfig      `json:"naming"`
-	Paths       BackupPathConfig        `json:"paths"`
-	Retention   BackupRetentionConfig   `json:"retention,omitempty"`
-	Archive     BackupArchiveConfig     `json:"archive,omitempty"`
-	Hooks       BackupHooksConfig       `json:"hooks,omitempty"`
+	Paths       BackupPathsConfig       `json:"paths"`
+	Engine      BackupEngineConfig      `json:"engine"`
+	Sync        BackupSyncConfig        `json:"sync"`
+	Archive     BackupArchiveConfig     `json:"archive"`
+	Retention   BackupRetentionConfig   `json:"retention"`
+	Compression BackupCompressionConfig `json:"compression"`
+	Hooks       BackupHooksConfig       `json:"hooks"`
 }
 
 // NewDefault creates and returns a Config struct with sensible default
 // values. It dynamically sets the sync engine based on the operating system.
-func NewDefault(appVersion string) Config {
+func NewDefault() Config {
 	// Default to the native engine on all platforms. It's highly concurrent and generally offers
 	// the best performance and consistency with no external dependencies.
 	// Power users on Windows can still opt-in to 'robocopy' as a battle-tested alternative.
 	return Config{
-		Version:  appVersion,
-		Mode:     IncrementalMode, // Default mode
-		LogLevel: "info",          // Default log level.
-		DryRun:   false,
-		FailFast: false,
-		Metrics:  true, // Default to enabled for detailed performance and file-counting metrics.
-		Naming: BackupNamingConfig{
-			Prefix: "PGL_Backup_",
+		Version:    buildinfo.Version,
+		Source:     "",     // Intentionally empty to force user configuration.
+		TargetBase: "",     // Intentionally empty to force user configuration.
+		LogLevel:   "info", // Default log level.
+		Runtime: RuntimeConfig{
+			Mode:   "incremental", // Default mode
+			DryRun: false,
 		},
-		Paths: BackupPathConfig{
-			Source:     "", // Intentionally empty to force user configuration.
-			TargetBase: "", // Intentionally empty to force user configuration.
-			IncrementalSubDirs: BackupPathSubDirConfig{
-				Current: "PGL_Backup_Incremental_Current", // Default name for the incremental current sub-directory.
-				Archive: "PGL_Backup_Incremental_Archive", // Default name for the incremental archive sub-directory.
+		Paths: BackupPathsConfig{
+			Incremental: PathsPolicyConfig{
+				Current:         "PGL_Backup_Incremental_Current", // Default name for the incremental current sub-directory.
+				Archive:         "PGL_Backup_Incremental_Archive", // Default name for the incremental archive sub-directory.
+				Content:         "PGL_Backup_Content",             // Default name for the incremental content sub-directory.
+				BackupDirPrefix: "PGL_Backup_",
 			},
-			SnapshotSubDirs: BackupPathSubDirConfig{
-				Current: "PGL_Backup_Snapshot_Current", // Default name for the snapshot current sub-directory.
-				Archive: "PGL_Backup_Snapshot_Archive", // Default name for the snapshot archive sub-directory.
+			Snapshot: PathsPolicyConfig{
+				Current:         "PGL_Backup_Snapshot_Current", // Default name for the snapshot current sub-directory.
+				Archive:         "PGL_Backup_Snapshot_Archive", // Default name for the snapshot archive sub-directory.
+				Content:         "PGL_Backup_Content",          // Default name for the snapshot content sub-directory.
+				BackupDirPrefix: "PGL_Backup_",
 			},
-			ContentSubDir:               "PGL_Backup_Content", // Default name for the content sub-directory.
-			PreserveSourceDirectoryName: true,                 // Default to preserving the source folder name in the destination.
-			UserExcludeFiles:            []string{},           // User-defined list of files to exclude.
-			UserExcludeDirs:             []string{},           // User-defined list of directories to exclude.
+		},
+		Engine: BackupEngineConfig{
+			FailFast: false,
+			Metrics:  true, // Default to enabled for detailed performance and file-counting metrics.
+			Performance: EnginePerformanceConfig{ // Initialize performance settings here
+				SyncWorkers:     4,   // Default to 4. Safe for HDDs (prevents thrashing), decent for SSDs.
+				MirrorWorkers:   4,   // Default to 4.
+				DeleteWorkers:   4,   // A sensible default for deleting entire backup sets.
+				CompressWorkers: 1,   // Default to 1. Our compression libraries (pgzip, zstd) use internal parallelism to utilize all cores for a single file. Increasing this might cause oversubscription.
+				BufferSizeKB:    256, // Default to 256KB buffer. Keep it between 64KB-4MB
+			}},
+		Sync: BackupSyncConfig{
+			Incremental: SyncPolicyConfig{
+				Enabled:               true, // Enabled by default.
+				Engine:                "native",
+				RetryCount:            3,    // Default retries on failure.
+				RetryWaitSeconds:      5,    // Default wait time between retries.
+				ModTimeWindowSeconds:  1,    // Set the default to 1 second
+				PreserveSourceDirName: true, // Default to preserving the source folder name in the destination.
+			},
+			Snapshot: SyncPolicyConfig{
+				Enabled:               true, // Enabled by default.
+				Engine:                "native",
+				RetryCount:            3,    // Default retries on failure.
+				RetryWaitSeconds:      5,    // Default wait time between retries.
+				ModTimeWindowSeconds:  1,    // Set the default to 1 second
+				PreserveSourceDirName: true, // Default to preserving the source folder name in the destination.
+			},
+			UserExcludeFiles: []string{}, // User-defined list of files to exclude.
+			UserExcludeDirs:  []string{}, // User-defined list of directories to exclude.
 			DefaultExcludeFiles: []string{
 				// Common temporary and system files across platforms.
 				"*.tmp",       // Temporary files
@@ -382,24 +220,17 @@ func NewDefault(appVersion string) Config {
 				"$Recycle.Bin",              // Windows recycle bin
 			},
 		},
-		Engine: BackupEngineConfig{
-			Type:                 NativeEngine,
-			RetryCount:           3, // Default retries on failure.
-			RetryWaitSeconds:     5, // Default wait time between retries.
-			ModTimeWindowSeconds: 1, // Set the default to 1 second
-			Performance: BackupEnginePerformanceConfig{ // Initialize performance settings here
-				SyncWorkers:     4,   // Default to 4. Safe for HDDs (prevents thrashing), decent for SSDs.
-				MirrorWorkers:   4,   // Default to 4.
-				DeleteWorkers:   4,   // A sensible default for deleting entire backup sets.
-				CompressWorkers: 1,   // Default to 1. Our compression libraries (pgzip, zstd) use internal parallelism to utilize all cores for a single file. Increasing this might cause oversubscription.
-				BufferSizeKB:    256, // Default to 256KB buffer. Keep it between 64KB-4MB
-			}},
 		Archive: BackupArchiveConfig{
 			Incremental: ArchivePolicyConfig{
-				Enabled:         true,         // Enabled by default for incremental mode.
-				IntervalMode:    AutoInterval, // Default to auto-adjusting the interval based on the retention policy.
-				IntervalSeconds: 86400,        // Interval will be calculated by the engine in 'auto' mode. Default 24h.
+				Enabled:         true,   // Enabled by default for incremental mode.
+				IntervalMode:    "auto", // Default to auto-adjusting the interval based on the retention policy.
+				IntervalSeconds: 86400,  // Interval will be calculated by the engine in 'auto' mode. Default 24h.
 				// If a user switches to 'manual' mode, they must specify an interval.
+			},
+			Snapshot: ArchivePolicyConfig{
+				Enabled:         true,     // Enabled by default for snapshot mode.
+				IntervalMode:    "manual", // Manual mode per default.
+				IntervalSeconds: 0,        // Always move to archive
 			},
 		},
 		Retention: BackupRetentionConfig{
@@ -423,11 +254,11 @@ func NewDefault(appVersion string) Config {
 		Compression: BackupCompressionConfig{
 			Incremental: CompressionPolicyConfig{
 				Enabled: true,
-				Format:  TarZstFormat,
+				Format:  "tar.zst",
 			},
 			Snapshot: CompressionPolicyConfig{
 				Enabled: true,
-				Format:  TarZstFormat,
+				Format:  "tar.zst",
 			},
 		},
 		Hooks: BackupHooksConfig{
@@ -440,13 +271,19 @@ func NewDefault(appVersion string) Config {
 // Load attempts to load a configuration from "pgl-backup.config.json".
 // If the file doesn't exist, it returns the provided default config without an error.
 // If the file exists but fails to parse, it returns an error and a zero-value config.
-func Load(appVersion string, targetBase string) (Config, error) {
-	configPath := filepath.Join(targetBase, ConfigFileName)
+func Load(targetBase string) (Config, error) {
+
+	absTargetBasePath, err := filepath.Abs(targetBase)
+	if err != nil {
+		return Config{}, fmt.Errorf("could not determine absolute path for load directory %s: %w", targetBase, err)
+	}
+
+	configPath := filepath.Join(absTargetBasePath, ConfigFileName)
 
 	file, err := os.Open(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return NewDefault(appVersion), nil // Config file doesn't exist, which is a normal case.
+			return NewDefault(), nil // Config file doesn't exist, which is a normal case.
 		}
 		return Config{}, fmt.Errorf("error opening config file %s: %w", configPath, err)
 	}
@@ -456,31 +293,32 @@ func Load(appVersion string, targetBase string) (Config, error) {
 	// Start with default values, then overwrite with the file's content.
 	// This makes the config loading resilient to missing fields in the JSON file.
 	// NOTE: if config.Version differes from appVersion we can add a migration step here.
-	config := NewDefault(appVersion)
+	config := NewDefault()
 	decoder := json.NewDecoder(file)
 	if err := decoder.Decode(&config); err != nil {
 		return Config{}, fmt.Errorf("error parsing config file %s: %w", configPath, err)
 	}
 
-	// After loading, validate that the targetBase in the config file matches the
+	// After loading, validate that if there is a targetBase in the config file it matches the
 	// directory it was loaded from. This prevents using a config file in the wrong directory.
-	absLoadDir, err := filepath.Abs(targetBase)
-	if err != nil {
-		return Config{}, fmt.Errorf("could not determine absolute path for load directory %s: %w", targetBase, err)
-	}
+	// NOTE: there should never be a targetBase in the config!
+	if config.TargetBase != "" {
+		absTargetInConfig, err := filepath.Abs(config.TargetBase)
+		if err != nil {
+			return Config{}, fmt.Errorf("could not determine absolute path for targetBase in config %s: %w", config.TargetBase, err)
+		}
 
-	absTargetInConfig, err := filepath.Abs(config.Paths.TargetBase)
-	if err != nil {
-		return Config{}, fmt.Errorf("could not determine absolute path for targetBase in config %s: %w", config.Paths.TargetBase, err)
-	}
-
-	if absLoadDir != absTargetInConfig {
-		return Config{}, fmt.Errorf("targetBase in config file (%s) does not match the directory it was loaded from (%s)", absTargetInConfig, absLoadDir)
+		if absTargetBasePath != absTargetInConfig {
+			return Config{}, fmt.Errorf("targetBase in config file (%s) does not match the directory it was loaded from (%s)", absTargetInConfig, absTargetBasePath)
+		}
+	} else {
+		// Set the target base
+		config.TargetBase = absTargetBasePath
 	}
 
 	// At this point our config has been migrated if needed so override the version in the struct
-	if config.Version != appVersion {
-		config.Version = appVersion
+	if config.Version != buildinfo.Version {
+		config.Version = buildinfo.Version
 	}
 	return config, nil
 }
@@ -488,7 +326,7 @@ func Load(appVersion string, targetBase string) (Config, error) {
 // Generate creates or overwrites a default pgl-backup.config.json file in the specified
 // target directory.
 func Generate(configToGenerate Config) error {
-	configPath := filepath.Join(configToGenerate.Paths.TargetBase, ConfigFileName)
+	configPath := filepath.Join(configToGenerate.TargetBase, ConfigFileName)
 	// Marshal the default config into nicely formatted JSON.
 	jsonData, err := json.MarshalIndent(configToGenerate, "", "  ")
 	if err != nil {
@@ -509,10 +347,10 @@ func Generate(configToGenerate Config) error {
 // and exists.
 func (c *Config) Validate(checkSource bool) error {
 	// --- Strict Path Validation (Fail-Fast) ---
-	if checkSource && c.Paths.Source == "" {
+	if checkSource && c.Source == "" {
 		return fmt.Errorf("source path cannot be empty")
 	}
-	if c.Paths.TargetBase == "" {
+	if c.TargetBase == "" {
 		return fmt.Errorf("target path cannot be empty")
 	}
 
@@ -520,124 +358,154 @@ func (c *Config) Validate(checkSource bool) error {
 	var err error
 
 	// --- Validate Source Path ---
-	if c.Paths.Source != "" {
-		c.Paths.Source, err = util.ExpandPath(c.Paths.Source)
+	if c.Source != "" {
+		c.Source, err = util.ExpandPath(c.Source)
 		if err != nil {
 			return fmt.Errorf("could not expand source path: %w", err)
 		}
-		c.Paths.Source = filepath.Clean(c.Paths.Source)
+		c.Source = filepath.Clean(c.Source)
 
 		// After cleaning and expanding the path, check for existence.
 		if checkSource {
-			if _, err := os.Stat(c.Paths.Source); os.IsNotExist(err) {
-				return fmt.Errorf("source path '%s' does not exist", c.Paths.Source)
+			if _, err := os.Stat(c.Source); os.IsNotExist(err) {
+				return fmt.Errorf("source path '%s' does not exist", c.Source)
 			}
 		}
 	}
 
 	// --- Validate Target Path ---
-	if c.Paths.TargetBase != "" {
-		c.Paths.TargetBase, err = util.ExpandPath(c.Paths.TargetBase)
+	if c.TargetBase != "" {
+		c.TargetBase, err = util.ExpandPath(c.TargetBase)
 		if err != nil {
 			return fmt.Errorf("could not expand target path: %w", err)
 		}
-		c.Paths.TargetBase = filepath.Clean(c.Paths.TargetBase)
+		c.TargetBase = filepath.Clean(c.TargetBase)
 	}
 
-	// --- Validate SubDirs ---
-	switch c.Mode {
-	case IncrementalMode:
-		if c.Paths.IncrementalSubDirs.Archive == "" {
-			return fmt.Errorf("incrementalSubDirs.archive cannot be empty in incremental mode")
+	switch c.Runtime.Mode {
+	case "incremental":
+		if c.Paths.Incremental.Archive == "" {
+			return fmt.Errorf("paths.incremental.archive cannot be empty")
 		}
-		if c.Paths.IncrementalSubDirs.Current == "" {
-			return fmt.Errorf("incrementalSubDirs.current cannot be empty in incremental mode")
+		if c.Paths.Incremental.Current == "" {
+			return fmt.Errorf("paths.incremental.current cannot be empty")
+		}
+		if c.Paths.Incremental.Content == "" {
+			return fmt.Errorf("paths.incremental.content cannot be empty")
+		}
+		if c.Paths.Incremental.Current == c.Paths.Incremental.Archive {
+			return fmt.Errorf("paths.incremental.current and paths.incremental.archive cannot be the same")
+		}
+		if c.Paths.Incremental.Current == c.Paths.Incremental.Content {
+			return fmt.Errorf("paths.incremental.current and paths.incremental.content cannot be the same")
+		}
+		if c.Paths.Incremental.Archive == c.Paths.Incremental.Content {
+			return fmt.Errorf("paths.incremental.archive and paths.incremental.content cannot be the same")
 		}
 		// Disallow path separators to ensure the archives directory is a direct child of the target.
 		// This is critical for guaranteeing that the atomic `os.Rename` operation during archive
 		// works correctly, as it requires the source and destination to be on the same filesystem.
-		if strings.ContainsAny(c.Paths.IncrementalSubDirs.Archive, `\/`) {
-			return fmt.Errorf("incrementalSubDirs.archive cannot contain path separators ('/' or '\\')")
+		if strings.ContainsAny(c.Paths.Incremental.Archive, `\/`) {
+			return fmt.Errorf("paths.incremental.archive cannot contain path separators ('/' or '\\')")
 		}
-		if strings.ContainsAny(c.Paths.IncrementalSubDirs.Current, `\/`) {
-			return fmt.Errorf("incrementalSubDirs.current cannot contain path separators ('/' or '\\')")
+		if strings.ContainsAny(c.Paths.Incremental.Current, `\/`) {
+			return fmt.Errorf("paths.incremental.current cannot contain path separators ('/' or '\\')")
 		}
-	case SnapshotMode:
-		// Disallow path separators to ensure the snapshots directory is a direct child of the target.
-		// This is critical for guaranteeing that the atomic `os.Rename` operation during
-		// works correctly, as it requires the source and destination to be on the same filesystem.
-		if c.Paths.SnapshotSubDirs.Archive == "" {
-			return fmt.Errorf("snapshotSubDirs.archive cannot be empty in snapshot mode")
+		if strings.ContainsAny(c.Paths.Incremental.Content, `\/`) {
+			return fmt.Errorf("paths.incremental.content cannot contain path separators ('/' or '\\')")
 		}
-		if c.Paths.SnapshotSubDirs.Current == "" {
-			return fmt.Errorf("snapshotSubDirs.current cannot be empty in snapshot mode")
+
+		if c.Sync.Incremental.RetryCount < 0 {
+			return fmt.Errorf("sync.incremental.retryCount cannot be negative")
+		}
+		if c.Sync.Incremental.RetryWaitSeconds < 0 {
+			return fmt.Errorf("sync.incremental.retryWaitSeconds cannot be negative")
+		}
+		if c.Sync.Incremental.ModTimeWindowSeconds < 0 {
+			return fmt.Errorf("sync.incremental.modTimeWindowSeconds cannot be negative")
+		}
+
+		if c.Archive.Incremental.IntervalMode == "manual" && c.Archive.Incremental.IntervalSeconds < 0 {
+			return fmt.Errorf("archive.incremental.intervalSeconds cannot be negative when mode is 'manual'.")
+		}
+
+	case "snapshot":
+		if c.Paths.Snapshot.Archive == "" {
+			return fmt.Errorf("paths.snapshot.archive cannot be empty")
+		}
+		if c.Paths.Snapshot.Current == "" {
+			return fmt.Errorf("paths.snapshot.current cannot be empty")
+		}
+		if c.Paths.Snapshot.Content == "" {
+			return fmt.Errorf("paths.snapshot.content cannot be empty")
+		}
+		if c.Paths.Snapshot.Current == c.Paths.Snapshot.Archive {
+			return fmt.Errorf("paths.snapshot.current and paths.snapshot.archive cannot be the same")
+		}
+		if c.Paths.Snapshot.Current == c.Paths.Snapshot.Content {
+			return fmt.Errorf("paths.snapshot.current and paths.snapshot.content cannot be the same")
+		}
+		if c.Paths.Snapshot.Archive == c.Paths.Snapshot.Content {
+			return fmt.Errorf("paths.snapshot.archive and paths.snapshot.content cannot be the same")
 		}
 		// Disallow path separators to ensure the archives directory is a direct child of the target.
 		// This is critical for guaranteeing that the atomic `os.Rename` operation during archive
 		// works correctly, as it requires the source and destination to be on the same filesystem.
-		if strings.ContainsAny(c.Paths.SnapshotSubDirs.Archive, `\/`) {
-			return fmt.Errorf("snapshotSubDirs.archive cannot contain path separators ('/' or '\\')")
+		if strings.ContainsAny(c.Paths.Snapshot.Archive, `\/`) {
+			return fmt.Errorf("paths.snapshot.archive cannot contain path separators ('/' or '\\')")
 		}
-		if strings.ContainsAny(c.Paths.SnapshotSubDirs.Current, `\/`) {
-			return fmt.Errorf("snapshotSubDirs.current cannot contain path separators ('/' or '\\')")
+		if strings.ContainsAny(c.Paths.Snapshot.Current, `\/`) {
+			return fmt.Errorf("paths.snapshot.current cannot contain path separators ('/' or '\\')")
+		}
+		if strings.ContainsAny(c.Paths.Snapshot.Content, `\/`) {
+			return fmt.Errorf("paths.snapshot.content cannot contain path separators ('/' or '\\')")
+		}
+
+		if c.Sync.Snapshot.RetryCount < 0 {
+			return fmt.Errorf("sync.snapshot.retryCount cannot be negative")
+		}
+		if c.Sync.Snapshot.RetryWaitSeconds < 0 {
+			return fmt.Errorf("sync.snapshot.retryWaitSeconds cannot be negative")
+		}
+		if c.Sync.Snapshot.ModTimeWindowSeconds < 0 {
+			return fmt.Errorf("sync.snapshot.modTimeWindowSeconds cannot be negative")
+		}
+
+		if c.Archive.Snapshot.IntervalMode == "manual" && c.Archive.Incremental.IntervalSeconds < 0 {
+			return fmt.Errorf("archive.snapshot.intervalSeconds cannot be negative when mode is 'manual'.")
 		}
 	}
 
-	// Validate ContentSubDir for all modes
-	if c.Paths.ContentSubDir == "" {
-		return fmt.Errorf("contentSubDir cannot be empty")
-	}
-	if strings.ContainsAny(c.Paths.ContentSubDir, `\/`) {
-		return fmt.Errorf("contentSubDir cannot contain path separators ('/' or '\\')")
-	}
 	// --- Validate Engine and Mode Settings ---
 	if c.Engine.Performance.SyncWorkers < 1 {
-		return fmt.Errorf("syncWorkers must be at least 1")
+		return fmt.Errorf("engine.performance.syncWorkers must be at least 1")
 	}
 	if c.Engine.Performance.MirrorWorkers < 1 {
-		return fmt.Errorf("mirrorWorkers must be at least 1")
+		return fmt.Errorf("engine.performance.mirrorWorkers must be at least 1")
 	}
 	if c.Engine.Performance.CompressWorkers < 1 {
-		return fmt.Errorf("compressWorkers must be at least 1")
+		return fmt.Errorf("engine.performance.compressWorkers must be at least 1")
 	}
 	if c.Engine.Performance.DeleteWorkers < 1 {
-		return fmt.Errorf("deleteWorkers must be at least 1")
+		return fmt.Errorf("engine.performance.deleteWorkers must be at least 1")
 	}
 	if c.Engine.Performance.BufferSizeKB <= 0 {
-		return fmt.Errorf("bufferSizeKB must be greater than 0")
+		return fmt.Errorf("engine.performance.bufferSizeKB must be greater than 0")
 	}
 
-	if c.Engine.RetryCount < 0 {
-		return fmt.Errorf("retryCount cannot be negative")
-	}
-	if c.Engine.RetryWaitSeconds < 0 {
-		return fmt.Errorf("retryWaitSeconds cannot be negative")
-	}
-	if c.Engine.ModTimeWindowSeconds < 0 {
-		return fmt.Errorf("modTimeWindowSeconds cannot be negative")
-	}
-
-	switch c.Mode {
-	case IncrementalMode:
-		if c.Archive.Incremental.IntervalMode == ManualInterval && c.Archive.Incremental.IntervalSeconds < 0 {
-			return fmt.Errorf("archive.incremental.intervalSeconds cannot be negative when mode is 'manual'. Use '0' to disable archive")
-		}
-	case SnapshotMode:
-	}
-
-	if err := validateGlobPatterns("defaultExcludeFiles", c.Paths.DefaultExcludeFiles); err != nil {
+	if err := validateGlobPatterns("defaultExcludeFiles", c.Sync.DefaultExcludeFiles); err != nil {
 		return err
 	}
 
-	if err := validateGlobPatterns("userExcludeFiles", c.Paths.UserExcludeFiles); err != nil {
+	if err := validateGlobPatterns("userExcludeFiles", c.Sync.UserExcludeFiles); err != nil {
 		return err
 	}
 
-	if err := validateGlobPatterns("defaultExcludeDirs", c.Paths.DefaultExcludeDirs); err != nil {
+	if err := validateGlobPatterns("defaultExcludeDirs", c.Sync.DefaultExcludeDirs); err != nil {
 		return err
 	}
 
-	if err := validateGlobPatterns("userExcludeDirs", c.Paths.UserExcludeDirs); err != nil {
+	if err := validateGlobPatterns("userExcludeDirs", c.Sync.UserExcludeDirs); err != nil {
 		return err
 	}
 	return nil
@@ -647,28 +515,32 @@ func (c *Config) Validate(checkSource bool) error {
 // provided logger. It respects the 'Quiet' setting.
 func (c *Config) LogSummary() {
 	logArgs := []interface{}{
-		"mode", c.Mode,
+		"mode", c.Runtime.Mode,
 		"log_level", c.LogLevel,
-		"source", c.Paths.Source,
-		"target", c.Paths.TargetBase,
-		"sync_engine", c.Engine.Type,
-		"dry_run", c.DryRun,
+		"source", c.Source,
+		"target", c.TargetBase,
+		"dry_run", c.Runtime.DryRun,
 		"sync_workers", c.Engine.Performance.SyncWorkers,
 		"mirror_workers", c.Engine.Performance.MirrorWorkers,
-		"metrics", c.Metrics,
+		"metrics", c.Engine.Metrics,
 		"compress_workers", c.Engine.Performance.CompressWorkers,
 		"delete_workers", c.Engine.Performance.DeleteWorkers,
 		"buffer_size_kb", c.Engine.Performance.BufferSizeKB,
-		"content_subdir", c.Paths.ContentSubDir,
 	}
-	switch c.Mode {
-	case IncrementalMode:
-		logArgs = append(logArgs, "current_subdir", c.Paths.IncrementalSubDirs.Current)
-		logArgs = append(logArgs, "archive_subdir", c.Paths.IncrementalSubDirs.Archive)
+	switch c.Runtime.Mode {
+	case "incremental":
+		logArgs = append(logArgs, "current_subdir", c.Paths.Incremental.Current)
+		logArgs = append(logArgs, "archive_subdir", c.Paths.Incremental.Archive)
+		logArgs = append(logArgs, "content_subdir", c.Paths.Incremental.Content)
+		if c.Sync.Incremental.Enabled {
+			syncSummary := fmt.Sprintf("enabled (e:%s)",
+				c.Sync.Incremental.Engine)
+			logArgs = append(logArgs, "sync", syncSummary)
+		}
 
 		if c.Archive.Incremental.Enabled {
 			switch c.Archive.Incremental.IntervalMode {
-			case ManualInterval:
+			case "manual":
 				archiveSummary := fmt.Sprintf("enabled (m:%s i:%ds)",
 					c.Archive.Incremental.IntervalMode,
 					c.Archive.Incremental.IntervalSeconds)
@@ -692,9 +564,29 @@ func (c *Config) LogSummary() {
 			logArgs = append(logArgs, "retention", retentionSummary)
 		}
 
-	case SnapshotMode:
-		logArgs = append(logArgs, "current_subdir", c.Paths.SnapshotSubDirs.Current)
-		logArgs = append(logArgs, "archive_subdir", c.Paths.SnapshotSubDirs.Archive)
+	case "snapshot":
+		logArgs = append(logArgs, "current_subdir", c.Paths.Snapshot.Current)
+		logArgs = append(logArgs, "archive_subdir", c.Paths.Snapshot.Archive)
+		logArgs = append(logArgs, "content_subdir", c.Paths.Snapshot.Content)
+		if c.Sync.Snapshot.Enabled {
+			syncSummary := fmt.Sprintf("enabled (e:%s)",
+				c.Sync.Snapshot.Engine)
+			logArgs = append(logArgs, "sync", syncSummary)
+		}
+
+		if c.Archive.Snapshot.Enabled {
+			switch c.Archive.Snapshot.IntervalMode {
+			case "manual":
+				archiveSummary := fmt.Sprintf("enabled (m:%s i:%ds)",
+					c.Archive.Snapshot.IntervalMode,
+					c.Archive.Snapshot.IntervalSeconds)
+				logArgs = append(logArgs, "archive", archiveSummary)
+			default:
+				archiveSummary := fmt.Sprintf("enabled (m:%s)",
+					c.Archive.Snapshot.IntervalMode)
+				logArgs = append(logArgs, "archive", archiveSummary)
+			}
+		}
 
 		if c.Compression.Snapshot.Enabled {
 			compressionSummary := fmt.Sprintf("enabled (f:%s)", c.Compression.Snapshot.Format)
@@ -709,17 +601,17 @@ func (c *Config) LogSummary() {
 		}
 
 	}
-	if finalExcludeFiles := c.Paths.ExcludeFiles(); len(finalExcludeFiles) > 0 {
+	if finalExcludeFiles := c.Sync.ExcludeFiles(); len(finalExcludeFiles) > 0 {
 		logArgs = append(logArgs, "exclude_files", strings.Join(finalExcludeFiles, ", "))
 	}
-	if finalExcludeDirs := c.Paths.ExcludeDirs(); len(finalExcludeDirs) > 0 {
+	if finalExcludeDirs := c.Sync.ExcludeDirs(); len(finalExcludeDirs) > 0 {
 		logArgs = append(logArgs, "exclude_dirs", strings.Join(finalExcludeDirs, ", "))
 	}
-	if len(c.Paths.DefaultExcludeFiles) > 0 {
-		logArgs = append(logArgs, "default_exclude_files", strings.Join(c.Paths.DefaultExcludeFiles, ", "))
+	if len(c.Sync.DefaultExcludeFiles) > 0 {
+		logArgs = append(logArgs, "default_exclude_files", strings.Join(c.Sync.DefaultExcludeFiles, ", "))
 	}
-	if len(c.Paths.DefaultExcludeDirs) > 0 {
-		logArgs = append(logArgs, "default_exclude_dirs", strings.Join(c.Paths.DefaultExcludeDirs, ", "))
+	if len(c.Sync.DefaultExcludeDirs) > 0 {
+		logArgs = append(logArgs, "default_exclude_dirs", strings.Join(c.Sync.DefaultExcludeDirs, ", "))
 	}
 	if len(c.Hooks.PreBackup) > 0 {
 		logArgs = append(logArgs, "pre_backup_hooks", strings.Join(c.Hooks.PreBackup, "; "))
@@ -743,54 +635,43 @@ func validateGlobPatterns(fieldName string, patterns []string) error {
 // ExcludeFiles returns the final, combined slice of file exclusion patterns, including
 // non-overridable system patterns, default patterns, and user-configured patterns.
 // It automatically handles deduplication.
-func (p *BackupPathConfig) ExcludeFiles() []string {
-	return util.MergeAndDeduplicate(systemExcludeFilePatterns, p.DefaultExcludeFiles, p.UserExcludeFiles)
+func (s *BackupSyncConfig) ExcludeFiles() []string {
+	return util.MergeAndDeduplicate(systemExcludeFilePatterns, s.DefaultExcludeFiles, s.UserExcludeFiles)
 }
 
 // ExcludeDirs returns the final, combined slice of directory exclusion patterns, including
 // non-overridable system patterns, default patterns, and user-configured patterns.
 // It automatically handles deduplication.
-func (p *BackupPathConfig) ExcludeDirs() []string {
-	return util.MergeAndDeduplicate(systemExcludeDirPatterns, p.DefaultExcludeDirs, p.UserExcludeDirs)
-}
-
-// FormatTimestampWithOffset formats a UTC timestamp into a string that includes
-// the local timezone offset for user-friendliness, while keeping the base time in UTC.
-// Example: 2023-10-27-14-00-00-123456789-0400
-func FormatTimestampWithOffset(timestampUTC time.Time) string {
-	// We format the UTC time for the timestamp, then format it again in the local
-	// timezone just to get the offset string, and combine them.
-	mainPartUTC := timestampUTC.Format(backupTimeFormat)
-	nanoPartUTC := fmt.Sprintf("%09d", timestampUTC.Nanosecond())
-	offsetPartLocal := timestampUTC.In(time.Local).Format("Z0700")
-
-	return fmt.Sprintf("%s-%s%s", mainPartUTC, nanoPartUTC, offsetPartLocal)
+func (s *BackupSyncConfig) ExcludeDirs() []string {
+	return util.MergeAndDeduplicate(systemExcludeDirPatterns, s.DefaultExcludeDirs, s.UserExcludeDirs)
 }
 
 // MergeConfigWithFlags overlays the configuration values from flags on top of a base
 // configuration. It iterates over the setFlags map, which contains only the flags
 // explicitly provided by the user on the command line.
-func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
+func MergeConfigWithFlags(command flagparse.Command, base Config, setFlags map[string]any) Config {
 	merged := base
 
 	for name, value := range setFlags {
 		switch name {
 		case "source":
-			merged.Paths.Source = value.(string)
+			merged.Source = value.(string)
 		case "target":
-			merged.Paths.TargetBase = value.(string)
-		case "mode":
-			merged.Mode = value.(BackupMode)
+			merged.TargetBase = value.(string)
 		case "log-level":
 			merged.LogLevel = value.(string)
 		case "fail-fast":
-			merged.FailFast = value.(bool)
+			merged.Engine.FailFast = value.(bool)
 		case "metrics":
-			merged.Metrics = value.(bool)
+			merged.Engine.Metrics = value.(bool)
+		case "mode":
+			switch command {
+			case flagparse.Backup:
+				merged.Runtime.Mode = value.(string)
+			default:
+			}
 		case "dry-run":
-			merged.DryRun = value.(bool)
-		case "sync-engine":
-			merged.Engine.Type = value.(SyncEngine)
+			merged.Runtime.DryRun = value.(bool)
 		case "sync-workers":
 			merged.Engine.Performance.SyncWorkers = value.(int)
 		case "mirror-workers":
@@ -799,20 +680,32 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 			merged.Engine.Performance.DeleteWorkers = value.(int)
 		case "compress-workers":
 			merged.Engine.Performance.CompressWorkers = value.(int)
-		case "retry-count":
-			merged.Engine.RetryCount = value.(int)
-		case "retry-wait":
-			merged.Engine.RetryWaitSeconds = value.(int)
 		case "buffer-size-kb":
 			merged.Engine.Performance.BufferSizeKB = value.(int)
-		case "mod-time-window":
-			merged.Engine.ModTimeWindowSeconds = value.(int)
+		case "sync-incremental-engine":
+			merged.Sync.Incremental.Engine = value.(string)
+		case "sync-incremental-retry-count":
+			merged.Sync.Incremental.RetryCount = value.(int)
+		case "sync-incremental-retry-wait":
+			merged.Sync.Incremental.RetryWaitSeconds = value.(int)
+		case "sync-incremental-mod-time-window":
+			merged.Sync.Incremental.ModTimeWindowSeconds = value.(int)
+		case "sync-incremental-preserve-source-dir-name":
+			merged.Sync.Incremental.PreserveSourceDirName = value.(bool)
+		case "sync-snapshot-engine":
+			merged.Sync.Snapshot.Engine = value.(string)
+		case "sync-snapshot-retry-count":
+			merged.Sync.Snapshot.RetryCount = value.(int)
+		case "sync-snapshot-retry-wait":
+			merged.Sync.Snapshot.RetryWaitSeconds = value.(int)
+		case "sync-snapshot-mod-time-window":
+			merged.Sync.Snapshot.ModTimeWindowSeconds = value.(int)
+		case "sync-snapshot-preserve-source-dir-name":
+			merged.Sync.Snapshot.PreserveSourceDirName = value.(bool)
 		case "user-exclude-files":
-			merged.Paths.UserExcludeFiles = value.([]string)
+			merged.Sync.UserExcludeFiles = value.([]string)
 		case "user-exclude-dirs":
-			merged.Paths.UserExcludeDirs = value.([]string)
-		case "preserve-source-name":
-			merged.Paths.PreserveSourceDirectoryName = value.(bool)
+			merged.Sync.UserExcludeDirs = value.([]string)
 		case "pre-backup-hooks":
 			merged.Hooks.PreBackup = value.([]string)
 		case "post-backup-hooks":
@@ -820,17 +713,23 @@ func MergeConfigWithFlags(base Config, setFlags map[string]interface{}) Config {
 		case "archive-incremental":
 			merged.Archive.Incremental.Enabled = value.(bool)
 		case "archive-incremental-interval-mode":
-			merged.Archive.Incremental.IntervalMode = value.(ArchiveIntervalMode)
+			merged.Archive.Incremental.IntervalMode = value.(string)
 		case "archive-incremental-interval-seconds":
 			merged.Archive.Incremental.IntervalSeconds = value.(int)
+		case "archive-snapshot":
+			merged.Archive.Snapshot.Enabled = value.(bool)
+		case "archive-snapshot-interval-mode":
+			merged.Archive.Snapshot.IntervalMode = value.(string)
+		case "archive-snapshot-interval-seconds":
+			merged.Archive.Snapshot.IntervalSeconds = value.(int)
 		case "compression-incremental":
 			merged.Compression.Incremental.Enabled = value.(bool)
 		case "compression-incremental-format":
-			merged.Compression.Incremental.Format = value.(CompressionFormat)
+			merged.Compression.Incremental.Format = value.(string)
 		case "compression-snapshot":
 			merged.Compression.Snapshot.Enabled = value.(bool)
 		case "compression-snapshot-format":
-			merged.Compression.Snapshot.Format = value.(CompressionFormat)
+			merged.Compression.Snapshot.Format = value.(string)
 		default:
 			plog.Debug("unhandled flag in MergeConfigWithFlags", "flag", name)
 		}

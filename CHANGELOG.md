@@ -8,7 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v1.2.0] - 2026-XX-XX
 
 ### Changed
-- BREAKING CHANGE: Restructured configuration structure and engine architecture completely.
+- **BREAKING CHANGE**: Completely rewrote the core engine architecture to use a modular "Leaf Package" orchestration pattern. The `Runner` now coordinates distinct `Validator`, `Syncer`, `Archiver`, `Retainer`, and `Compressor` components.
+- **BREAKING CHANGE**: Redesigned the configuration structure (`pgl-backup.config.json`) to be more hierarchical and logical. Settings are now grouped by domain (e.g., `sync`, `archive`, `retention`, `compression`).
+- Introduced a new `planner` package to generate immutable execution plans from configuration before runtime.
+- Refactored `flagparse` to map CLI flags to the new configuration structure.
 
 ## [v1.1.0] - 2026-01-10
 

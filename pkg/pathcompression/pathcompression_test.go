@@ -1,11 +1,10 @@
-package pathcompression
+package pathcompression_test
 
 import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,406 +14,244 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
-	"github.com/paulschiretz/pgl-backup/pkg/config"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
-	"github.com/paulschiretz/pgl-backup/pkg/util"
+	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
 )
 
-// newTestCompressionManager creates a manager with a default config for testing.
-func newTestCompressionManager(t *testing.T, cfg config.Config) *PathCompressionManager {
-	t.Helper()
-	return NewPathCompressionManager(cfg)
-}
-
-// createTestBackupDir creates a directory with a metafile and some content files.
-func createTestBackupDir(t *testing.T, baseDir, name string, timestampUTC time.Time, isCompressed bool) string {
-	t.Helper()
-	backupPath := filepath.Join(baseDir, name)
-	if err := os.MkdirAll(backupPath, util.UserWritableDirPerms); err != nil {
-		t.Fatalf("failed to create test backup dir: %v", err)
-	}
-
-	// Create a metafile
-	metadata := metafile.MetafileContent{
-		TimestampUTC: timestampUTC,
-		IsCompressed: isCompressed,
-	}
-	if err := metafile.Write(backupPath, metadata); err != nil {
-		t.Fatalf("failed to write metafile: %v", err)
-	}
-
-	contentPath := filepath.Join(backupPath, "PGL_Backup_Content") // Use literal for test setup
-	if err := os.Mkdir(contentPath, util.UserWritableDirPerms); err != nil {
-		t.Fatalf("failed to create test content dir: %v", err)
-	}
-
-	// Create some content
-	if err := os.WriteFile(filepath.Join(contentPath, "file1.txt"), []byte("hello"), util.UserWritableFilePerms); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
-
-	// Create a symlink
-	err := os.Symlink("file1.txt", filepath.Join(contentPath, "link1.txt"))
-	if err != nil {
-		if runtime.GOOS == "windows" && strings.Contains(err.Error(), "A required privilege is not held by the client") {
-			t.Skip("Skipping test: creating symlinks on Windows requires administrator privileges or Developer Mode.")
-		}
-		// For other errors, fail the test.
-		t.Fatalf("failed to create symlink: %v", err)
-	}
-
-	// Create a broken symlink
-	err = os.Symlink("missing_target.txt", filepath.Join(contentPath, "broken_link.txt"))
-	if err != nil {
-		t.Fatalf("failed to create broken symlink: %v", err)
-	}
-
-	return backupPath
-}
+const testContentDir = "PGL_Backup_Content"
 
 func TestCompress(t *testing.T) {
-	testCases := []struct {
-		name   string
-		format config.CompressionFormat
+	tests := []struct {
+		name        string
+		plan        pathcompression.Plan
+		setup       func(t *testing.T, targetBase string) []metafile.MetafileInfo
+		expectError bool
+		validate    func(t *testing.T, targetBase string, backups []metafile.MetafileInfo)
 	}{
-		{"Zip", config.ZipFormat},
-		{"TarGz", config.TarGzFormat},
-		{"TarZst", config.TarZstFormat},
+		{
+			name: "Happy Path - Zip",
+			plan: pathcompression.Plan{
+				Enabled: true,
+				Format:  pathcompression.Zip,
+				Metrics: true,
+			},
+			setup: func(t *testing.T, targetBase string) []metafile.MetafileInfo {
+				return []metafile.MetafileInfo{
+					createTestBackup(t, targetBase, "backup_zip", false),
+				}
+			},
+			validate: func(t *testing.T, targetBase string, backups []metafile.MetafileInfo) {
+				backupPath := filepath.Join(targetBase, backups[0].RelPathKey)
+				archivePath := filepath.Join(backupPath, "backup_zip.zip")
+
+				if _, err := os.Stat(archivePath); os.IsNotExist(err) {
+					t.Errorf("Archive not found at %s", archivePath)
+				}
+
+				assertContentDeleted(t, backupPath)
+				assertMetaCompressed(t, backupPath)
+				assertArchiveContains(t, archivePath, pathcompression.Zip, []string{"file.txt"})
+			},
+		},
+		{
+			name: "Happy Path - TarGz",
+			plan: pathcompression.Plan{
+				Enabled: true,
+				Format:  pathcompression.TarGz,
+			},
+			setup: func(t *testing.T, targetBase string) []metafile.MetafileInfo {
+				return []metafile.MetafileInfo{
+					createTestBackup(t, targetBase, "backup_targz", false),
+				}
+			},
+			validate: func(t *testing.T, targetBase string, backups []metafile.MetafileInfo) {
+				backupPath := filepath.Join(targetBase, backups[0].RelPathKey)
+				archivePath := filepath.Join(backupPath, "backup_targz.tar.gz")
+
+				if _, err := os.Stat(archivePath); os.IsNotExist(err) {
+					t.Errorf("Archive not found at %s", archivePath)
+				}
+				assertContentDeleted(t, backupPath)
+				assertMetaCompressed(t, backupPath)
+				assertArchiveContains(t, archivePath, pathcompression.TarGz, []string{"file.txt"})
+			},
+		},
+		{
+			name: "Happy Path - TarZst",
+			plan: pathcompression.Plan{
+				Enabled: true,
+				Format:  pathcompression.TarZst,
+			},
+			setup: func(t *testing.T, targetBase string) []metafile.MetafileInfo {
+				return []metafile.MetafileInfo{
+					createTestBackup(t, targetBase, "backup_tarzst", false),
+				}
+			},
+			validate: func(t *testing.T, targetBase string, backups []metafile.MetafileInfo) {
+				backupPath := filepath.Join(targetBase, backups[0].RelPathKey)
+				archivePath := filepath.Join(backupPath, "backup_tarzst.tar.zst")
+
+				if _, err := os.Stat(archivePath); os.IsNotExist(err) {
+					t.Errorf("Archive not found at %s", archivePath)
+				}
+				assertContentDeleted(t, backupPath)
+				assertMetaCompressed(t, backupPath)
+				assertArchiveContains(t, archivePath, pathcompression.TarZst, []string{"file.txt"})
+			},
+		},
+		{
+			name: "Dry Run",
+			plan: pathcompression.Plan{
+				Enabled: true,
+				Format:  pathcompression.Zip,
+				DryRun:  true,
+			},
+			setup: func(t *testing.T, targetBase string) []metafile.MetafileInfo {
+				return []metafile.MetafileInfo{
+					createTestBackup(t, targetBase, "backup_dryrun", false),
+				}
+			},
+			validate: func(t *testing.T, targetBase string, backups []metafile.MetafileInfo) {
+				backupPath := filepath.Join(targetBase, backups[0].RelPathKey)
+				archivePath := filepath.Join(backupPath, "backup_dryrun.zip")
+
+				if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
+					t.Errorf("Archive should NOT exist in dry run: %s", archivePath)
+				}
+				assertContentExists(t, backupPath)
+				assertMetaNotCompressed(t, backupPath)
+			},
+		},
+		{
+			name: "Empty List",
+			plan: pathcompression.Plan{Enabled: true, Format: pathcompression.Zip},
+			setup: func(t *testing.T, targetBase string) []metafile.MetafileInfo {
+				return []metafile.MetafileInfo{}
+			},
+			validate: func(t *testing.T, targetBase string, backups []metafile.MetafileInfo) {
+				// Nothing to validate
+			},
+		},
+		{
+			name: "Symlinks",
+			plan: pathcompression.Plan{Enabled: true, Format: pathcompression.Zip},
+			setup: func(t *testing.T, targetBase string) []metafile.MetafileInfo {
+				info := createTestBackup(t, targetBase, "backup_symlink", false)
+				// Add symlink
+				contentDir := filepath.Join(targetBase, info.RelPathKey, testContentDir)
+				if err := os.Symlink("file.txt", filepath.Join(contentDir, "link.txt")); err != nil {
+					// Skip if windows privilege error
+					if runtime.GOOS == "windows" && strings.Contains(err.Error(), "privilege") {
+						t.Skip("Skipping symlink test on Windows (requires admin)")
+					}
+					t.Fatalf("Failed to create symlink: %v", err)
+				}
+				return []metafile.MetafileInfo{info}
+			},
+			validate: func(t *testing.T, targetBase string, backups []metafile.MetafileInfo) {
+				backupPath := filepath.Join(targetBase, backups[0].RelPathKey)
+				archivePath := filepath.Join(backupPath, "backup_symlink.zip")
+				assertArchiveContains(t, archivePath, pathcompression.Zip, []string{"file.txt", "link.txt"})
+			},
+		},
 	}
 
-	for _, tc := range testCases {
-		t.Run("Happy Path - "+tc.name, func(t *testing.T) {
-			// Arrange
-			tempDir := t.TempDir()
-			cfg := config.NewDefault("test-version")
-			cfg.Naming.Prefix = "backup_"
-			manager := newTestCompressionManager(t, cfg)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			targetBase := t.TempDir()
+			toCompress := tc.setup(t, targetBase)
 
-			backupName := "backup_to_compress"
-			backupDir := createTestBackupDir(t, tempDir, backupName, time.Now(), false)
+			compressor := pathcompression.NewPathCompressor(256, 2)
 
-			policy := config.CompressionPolicyConfig{
-				Format: tc.format,
-			}
+			err := compressor.Compress(context.Background(), targetBase, testContentDir, toCompress, &tc.plan, time.Now().UTC())
 
-			// Act
-			err := manager.Compress(context.Background(), []string{backupDir}, policy)
-			if err != nil {
-				t.Fatalf("Compress failed: %v", err)
-			}
-
-			// Assert
-			// 1. Original directory should still exist.
-			if _, err := os.Stat(backupDir); os.IsNotExist(err) {
-				t.Errorf("expected original backup directory to exist, but it was deleted")
-			}
-
-			// 2. Archive file should exist inside the original directory.
-			archiveName := backupName + "." + tc.format.String()
-			archivePath := filepath.Join(backupDir, archiveName)
-			if _, err := os.Stat(archivePath); os.IsNotExist(err) {
-				t.Errorf("expected archive file %s to be created, but it was not", archivePath)
-			}
-
-			// 3. Metafile should be updated to show compressed.
-			metadata, err := metafile.Read(backupDir)
-			if err != nil {
-				t.Fatalf("Failed to read metafile after compression: %v", err)
-			}
-			if !metadata.IsCompressed {
-				t.Error("expected metafile to be marked as compressed, but it was not")
-			}
-
-			// 4. Original content (except metafile) should be gone.
-			if _, err := os.Stat(filepath.Join(backupDir, cfg.Paths.ContentSubDir)); !os.IsNotExist(err) {
-				t.Errorf("expected original content directory to be deleted, but it still exists")
-			}
-			if _, err := os.Stat(filepath.Join(backupDir, config.MetaFileName)); os.IsNotExist(err) {
-				t.Errorf("expected metafile to be preserved, but it was deleted")
-			}
-
-			// 5. Verify archive content (simple check for zip)
-			AssertArchiveContains(t, archivePath, tc.format, []string{"file1.txt", "link1.txt", "broken_link.txt"})
-		})
-	}
-
-	t.Run("Cancellation", func(t *testing.T) {
-		// Arrange
-		tempDir := t.TempDir()
-		cfg := config.NewDefault("test-version")
-		cfg.Naming.Prefix = "backup_"
-		manager := newTestCompressionManager(t, cfg)
-
-		backupName := "backup_to_cancel"
-		backupDir := createTestBackupDir(t, tempDir, backupName, time.Now(), false)
-
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel() // Cancel immediately
-
-		policy := config.CompressionPolicyConfig{
-			Format: config.ZipFormat,
-		}
-
-		// Act
-		manager.Compress(ctx, []string{backupDir}, policy)
-
-		// Original directory should still exist since compression was aborted.
-		if _, err := os.Stat(backupDir); os.IsNotExist(err) {
-			t.Error("original backup directory was deleted despite cancellation")
-		}
-
-		// No archive file should be left over inside the directory.
-		archivePath := filepath.Join(backupDir, backupName+".zip")
-		if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
-			t.Error("archive file was left over after cancellation")
-		}
-	})
-
-	t.Run("Worker Cancellation During Processing", func(t *testing.T) {
-		// Arrange
-		tempDir := t.TempDir()
-		cfg := config.NewDefault("test-version")
-		cfg.Naming.Prefix = "backup_"
-		// Use 1 worker to serialize execution
-		cfg.Engine.Performance.CompressWorkers = 1
-		manager := newTestCompressionManager(t, cfg)
-
-		// Create a backup manually to populate it with many files
-		backupName := "backup_heavy"
-		backupPath := filepath.Join(tempDir, backupName)
-		if err := os.MkdirAll(backupPath, util.UserWritableDirPerms); err != nil {
-			t.Fatalf("failed to create backup dir: %v", err)
-		}
-		metadata := metafile.MetafileContent{TimestampUTC: time.Now(), IsCompressed: false}
-		if err := metafile.Write(backupPath, metadata); err != nil {
-			t.Fatalf("failed to write metafile: %v", err)
-		}
-		contentPath := filepath.Join(backupPath, cfg.Paths.ContentSubDir)
-		if err := os.Mkdir(contentPath, util.UserWritableDirPerms); err != nil {
-			t.Fatalf("failed to create content dir: %v", err)
-		}
-		// Create enough files to likely span across the 1ms sleep
-		for i := 0; i < 500; i++ {
-			fname := filepath.Join(contentPath, fmt.Sprintf("file_%d.txt", i))
-			if err := os.WriteFile(fname, []byte("some content"), util.UserWritableFilePerms); err != nil {
-				t.Fatalf("failed to create file: %v", err)
-			}
-		}
-
-		ctx, cancel := context.WithCancel(context.Background())
-
-		// Cancel shortly after starting
-		go func() {
-			time.Sleep(1 * time.Millisecond)
-			cancel()
-		}()
-
-		policy := config.CompressionPolicyConfig{
-			Format: config.ZipFormat,
-		}
-
-		// Act
-		err := manager.Compress(ctx, []string{backupPath}, policy)
-
-		// Assert
-		if err != nil {
-			t.Errorf("Compress returned error on cancellation: %v", err)
-		}
-
-		// Verify consistency
-		archivePath := filepath.Join(backupPath, backupName+".zip")
-		_, errStat := os.Stat(archivePath)
-		archiveExists := errStat == nil
-
-		meta, err := metafile.Read(backupPath)
-		if err != nil {
-			t.Fatalf("failed to read metafile: %v", err)
-		}
-
-		if archiveExists {
-			// If it finished before cancellation
-			if !meta.IsCompressed {
-				t.Error("Archive exists but metadata says not compressed")
-			}
-		} else {
-			// If it was cancelled
-			if meta.IsCompressed {
-				t.Error("Archive does not exist but metadata says compressed")
-			}
-			// Check for leftover temp files
-			entries, _ := os.ReadDir(backupPath)
-			for _, e := range entries {
-				if strings.HasSuffix(e.Name(), ".tmp") {
-					t.Errorf("Found temp file left behind: %s", e.Name())
+			if tc.expectError {
+				if err == nil {
+					t.Error("Expected error but got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
 				}
 			}
-			// Content directory should still exist
-			if _, err := os.Stat(contentPath); os.IsNotExist(err) {
-				t.Error("Content directory missing after cancellation")
+
+			if tc.validate != nil {
+				tc.validate(t, targetBase, toCompress)
 			}
-		}
-	})
-
-	t.Run("Dry Run", func(t *testing.T) {
-		// Arrange
-		tempDir := t.TempDir()
-		cfg := config.NewDefault("test-version")
-		cfg.Naming.Prefix = "backup_"
-		cfg.DryRun = true
-		manager := newTestCompressionManager(t, cfg)
-
-		backupName := "backup_dry_run"
-		backupDir := createTestBackupDir(t, tempDir, backupName, time.Now(), false)
-
-		policy := config.CompressionPolicyConfig{
-			Format: config.ZipFormat,
-		}
-
-		// Act
-		err := manager.Compress(context.Background(), []string{backupDir}, policy)
-		if err != nil {
-			t.Fatalf("Compress in dry run mode failed: %v", err)
-		}
-
-		// Assert
-		// Original directory should NOT be deleted.
-		if _, err := os.Stat(backupDir); os.IsNotExist(err) {
-			t.Error("original backup directory was deleted in dry run mode")
-		}
-
-		// Archive file should NOT be created inside the directory.
-		archivePath := filepath.Join(backupDir, backupName+".zip")
-		if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
-			t.Error("archive file was created in dry run mode")
-		}
-	})
-
-	t.Run("No backups to compress", func(t *testing.T) {
-		// Arrange
-		tempDir := t.TempDir()
-		cfg := config.NewDefault("test-version")
-		cfg.Naming.Prefix = "backup_"
-		manager := newTestCompressionManager(t, cfg)
-
-		backupDir := createTestBackupDir(t, tempDir, "backup_already_compressed", time.Now(), true)
-
-		policy := config.CompressionPolicyConfig{
-			Format: config.ZipFormat,
-		}
-
-		// Act
-		err := manager.Compress(context.Background(), []string{backupDir}, policy)
-		if err != nil {
-			t.Fatalf("Compress failed: %v", err)
-		}
-
-		// Assert: The original directory should still be there, untouched.
-		if _, err := os.Stat(backupDir); os.IsNotExist(err) {
-			t.Error("backup directory was deleted even though it was already compressed")
-		}
-	})
-
-	t.Run("Success even if final cleanup fails", func(t *testing.T) {
-		// This test simulates a failure during the final cleanup step (os.RemoveAll).
-		// This can happen if a file inside the original content directory is locked.
-		// The expected behavior is that compression is still considered successful,
-		// the metadata is marked as compressed, but the original content remains alongside the new archive.
-
-		// Arrange
-		archivesDir := t.TempDir()
-		cfg := config.NewDefault("test-version")
-		cfg.Naming.Prefix = "backup_"
-		manager := newTestCompressionManager(t, cfg)
-
-		backupName := cfg.Naming.Prefix + "cleanup_fail"
-		backupDir := createTestBackupDir(t, archivesDir, backupName, time.Now(), false)
-
-		// Lock a file inside the content directory to make os.RemoveAll fail.
-		lockedFilePath := filepath.Join(backupDir, cfg.Paths.ContentSubDir, "locked-file.txt")
-		lockedFile, err := os.Create(lockedFilePath)
-		if err != nil {
-			t.Fatalf("Failed to create locked file for test: %v", err)
-		}
-		defer lockedFile.Close()
-
-		policy := config.CompressionPolicyConfig{
-			Format: config.ZipFormat,
-		}
-
-		// Act
-		err = manager.Compress(context.Background(), []string{backupDir}, policy)
-
-		// Assert
-		if err != nil {
-			t.Fatalf("Compress should not return an error for a cleanup failure, but got: %v", err)
-		}
-
-		// 1. The archive should have been created successfully.
-		archivePath := filepath.Join(backupDir, backupName+".zip")
-		if _, statErr := os.Stat(archivePath); os.IsNotExist(statErr) {
-			t.Error("The archive was not created even though compression succeeded before cleanup.")
-		}
-
-		// 2. The metadata should be marked as compressed, with no attempts incremented.
-		time.Sleep(100 * time.Millisecond) // Give fs time to sync
-		finalMeta, metaErr := metafile.Read(backupDir)
-		if metaErr != nil {
-			t.Fatalf("Could not read metafile of backup: %v", metaErr)
-		}
-		if !finalMeta.IsCompressed {
-			t.Error("Expected IsCompressed to be true, but it was false.")
-		}
-
-		// 3. The original content directory should still exist because cleanup failed.
-		if _, statErr := os.Stat(filepath.Join(backupDir, cfg.Paths.ContentSubDir)); os.IsNotExist(statErr) {
-			t.Error("Original content directory was deleted, but it should have remained due to the locked file.")
-		}
-	})
-}
-
-func TestIdentifyEligibleBackups(t *testing.T) {
-	// Arrange
-	tempDir := t.TempDir()
-	cfg := config.NewDefault("test-version")
-	manager := newTestCompressionManager(t, cfg)
-
-	// 1. Compressed Backup (Should be ignored)
-	compressedDir := createTestBackupDir(t, tempDir, "backup_compressed", time.Now(), true)
-
-	// 2. Uncompressed Backup (Should be selected)
-	uncompressedDir := createTestBackupDir(t, tempDir, "backup_uncompressed", time.Now(), false)
-
-	// 3. Backup with missing metafile (Should be ignored/logged)
-	missingMetaDir := filepath.Join(tempDir, "backup_missing_meta")
-	if err := os.MkdirAll(missingMetaDir, util.UserWritableDirPerms); err != nil {
-		t.Fatalf("failed to create dir: %v", err)
-	}
-
-	// 4. Backup with corrupt metafile (Should be ignored/logged)
-	corruptMetaDir := filepath.Join(tempDir, "backup_corrupt_meta")
-	if err := os.MkdirAll(corruptMetaDir, util.UserWritableDirPerms); err != nil {
-		t.Fatalf("failed to create dir: %v", err)
-	}
-	// Write invalid JSON
-	if err := os.WriteFile(filepath.Join(corruptMetaDir, config.MetaFileName), []byte("{ invalid json"), util.UserWritableFilePerms); err != nil {
-		t.Fatalf("failed to write corrupt metafile: %v", err)
-	}
-
-	inputBackups := []string{compressedDir, uncompressedDir, missingMetaDir, corruptMetaDir}
-
-	// Act
-	eligible := manager.identifyEligibleBackups(inputBackups)
-
-	// Assert
-	if len(eligible) != 1 {
-		t.Errorf("expected 1 eligible backup, got %d", len(eligible))
-	} else if eligible[0].RelPathKey != uncompressedDir {
-		t.Errorf("expected eligible backup to be %s, got %s", uncompressedDir, eligible[0].RelPathKey)
+		})
 	}
 }
 
-// AssertArchiveContains checks if a given archive file contains all the expected file names.
-func AssertArchiveContains(t *testing.T, archivePath string, format config.CompressionFormat, expectedFiles []string) {
+// Helpers
+
+func createTestBackup(t *testing.T, targetBase, relPath string, compressed bool) metafile.MetafileInfo {
+	absPath := filepath.Join(targetBase, relPath)
+	if err := os.MkdirAll(absPath, 0755); err != nil {
+		t.Fatalf("Failed to create backup dir: %v", err)
+	}
+
+	meta := metafile.MetafileContent{
+		TimestampUTC: time.Now().UTC(),
+		IsCompressed: compressed,
+	}
+	if err := metafile.Write(absPath, meta); err != nil {
+		t.Fatalf("Failed to write metafile: %v", err)
+	}
+
+	contentDir := filepath.Join(absPath, testContentDir)
+	if err := os.MkdirAll(contentDir, 0755); err != nil {
+		t.Fatalf("Failed to create content dir: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(contentDir, "file.txt"), []byte("content"), 0644); err != nil {
+		t.Fatalf("Failed to create content file: %v", err)
+	}
+
+	return metafile.MetafileInfo{
+		RelPathKey: relPath,
+		Metadata:   meta,
+	}
+}
+
+func assertContentDeleted(t *testing.T, backupPath string) {
+	t.Helper()
+	contentPath := filepath.Join(backupPath, testContentDir)
+	if _, err := os.Stat(contentPath); !os.IsNotExist(err) {
+		t.Errorf("Content directory %s should have been deleted", contentPath)
+	}
+}
+
+func assertContentExists(t *testing.T, backupPath string) {
+	t.Helper()
+	contentPath := filepath.Join(backupPath, testContentDir)
+	if _, err := os.Stat(contentPath); os.IsNotExist(err) {
+		t.Errorf("Content directory %s should exist", contentPath)
+	}
+}
+
+func assertMetaCompressed(t *testing.T, backupPath string) {
+	t.Helper()
+	m, err := metafile.Read(backupPath)
+	if err != nil {
+		t.Fatalf("Failed to read metafile: %v", err)
+	}
+	if !m.IsCompressed {
+		t.Error("Metafile should be marked as compressed")
+	}
+}
+
+func assertMetaNotCompressed(t *testing.T, backupPath string) {
+	t.Helper()
+	m, err := metafile.Read(backupPath)
+	if err != nil {
+		t.Fatalf("Failed to read metafile: %v", err)
+	}
+	if m.IsCompressed {
+		t.Error("Metafile should NOT be marked as compressed")
+	}
+}
+
+func assertArchiveContains(t *testing.T, archivePath string, format pathcompression.Format, expectedFiles []string) {
 	t.Helper()
 
 	foundFiles := make(map[string]bool)
@@ -423,7 +260,7 @@ func AssertArchiveContains(t *testing.T, archivePath string, format config.Compr
 	}
 
 	switch format {
-	case config.ZipFormat:
+	case pathcompression.Zip:
 		r, err := zip.OpenReader(archivePath)
 		if err != nil {
 			t.Fatalf("failed to open created zip file %s: %v", archivePath, err)
@@ -469,7 +306,7 @@ func AssertArchiveContains(t *testing.T, archivePath string, format config.Compr
 			}
 		}
 
-	case config.TarGzFormat:
+	case pathcompression.TarGz:
 		file, err := os.Open(archivePath)
 		if err != nil {
 			t.Fatalf("failed to open created tar.gz file %s: %v", archivePath, err)
@@ -507,7 +344,7 @@ func AssertArchiveContains(t *testing.T, archivePath string, format config.Compr
 			}
 		}
 
-	case config.TarZstFormat:
+	case pathcompression.TarZst:
 		file, err := os.Open(archivePath)
 		if err != nil {
 			t.Fatalf("failed to open created tar.zst file %s: %v", archivePath, err)

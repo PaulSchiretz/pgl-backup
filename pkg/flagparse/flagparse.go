@@ -5,70 +5,68 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
-	"github.com/paulschiretz/pgl-backup/pkg/config"
+	"github.com/paulschiretz/pgl-backup/pkg/buildinfo"
 )
 
-// CommandFlag defines a special command to execute instead of a backup.
-type CommandFlag int
-
-const (
-	NoCommand CommandFlag = iota
-	BackupCommand
-	VersionCommand
-	InitCommand
-	PruneCommand
-)
-
-// CmdFlags holds pointers to all possible command-line flags.
+// cliFlags holds pointers to all possible command-line flags.
 // Fields are pointers so we can distinguish between "not registered for this command" (nil)
 // and "registered but not set by user" (non-nil pointer to zero value).
-type CmdFlags struct {
+type cliFlags struct {
 	// Global
 	LogLevel *string
 	DryRun   *bool
 	Metrics  *bool
 
 	// Common / Backup / Init
-	Source                            *string
-	Target                            *string
-	Mode                              *string
-	FailFast                          *bool
-	SyncEngine                        *string
-	SyncWorkers                       *int
-	MirrorWorkers                     *int
-	DeleteWorkers                     *int
-	CompressWorkers                   *int
-	RetryCount                        *int
-	RetryWait                         *int
-	BufferSizeKB                      *int
-	ModTimeWindow                     *int
-	UserExcludeFiles                  *string
-	UserExcludeDirs                   *string
-	PreserveSourceName                *bool
-	PreBackupHooks                    *string
-	PostBackupHooks                   *string
-	ArchiveIncrementalEnabled         *bool
-	ArchiveIncrementalIntervalSeconds *int
-	ArchiveIncrementalIntervalMode    *string
-	CompressionIncrementalEnabled     *bool
-	CompressionIncrementalFormat      *string
-	CompressionSnapshotEnabled        *bool
-	CompressionSnapshotFormat         *string
+	Source                               *string
+	Target                               *string
+	FailFast                             *bool
+	SyncEngine                           *string
+	SyncWorkers                          *int
+	MirrorWorkers                        *int
+	DeleteWorkers                        *int
+	CompressWorkers                      *int
+	BufferSizeKB                         *int
+	SyncIncrementalRetryCount            *int
+	SyncIncrementalRetryWait             *int
+	SyncIncrementalModTimeWindow         *int
+	SyncIncrementalPreserveSourceDirName *bool
+	SyncSnapshotRetryCount               *int
+	SyncSnapshotRetryWait                *int
+	SyncSnapshotModTimeWindow            *int
+	SyncSnapshotPreserveSourceDirName    *bool
+	UserExcludeFiles                     *string
+	UserExcludeDirs                      *string
+	PreBackupHooks                       *string
+	PostBackupHooks                      *string
+	ArchiveIncrementalEnabled            *bool
+	ArchiveIncrementalIntervalSeconds    *int
+	ArchiveIncrementalIntervalMode       *string
+	ArchiveSnapshotEnabled               *bool
+	ArchiveSnapshotIntervalSeconds       *int
+	ArchiveSnapshotIntervalMode          *string
+	CompressionIncrementalEnabled        *bool
+	CompressionIncrementalFormat         *string
+	CompressionSnapshotEnabled           *bool
+	CompressionSnapshotFormat            *string
+
+	// Backup specific
+	Mode *string
+
 	// Init specific
 	Force   *bool
 	Default *bool
 }
 
-func registerGlobalFlags(fs *flag.FlagSet, f *CmdFlags) {
+func registerGlobalFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.LogLevel = fs.String("log-level", "info", "Set the logging level: 'debug', 'notice', 'info', 'warn', 'error'.")
 	f.DryRun = fs.Bool("dry-run", false, "Show what would be done without making any changes.")
 	f.Metrics = fs.Bool("metrics", false, "Enable detailed performance and file-counting metrics.")
 }
 
-func registerBackupFlags(fs *flag.FlagSet, f *CmdFlags) {
+func registerBackupFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.Source = fs.String("source", "", "Source directory to copy from")
 	f.Target = fs.String("target", "", "Base destination directory for backups")
 	f.Mode = fs.String("mode", "incremental", "Backup mode: 'incremental' or 'snapshot'.")
@@ -78,115 +76,158 @@ func registerBackupFlags(fs *flag.FlagSet, f *CmdFlags) {
 	f.MirrorWorkers = fs.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
 	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
 	f.CompressWorkers = fs.Int("compress-workers", 0, "Number of worker goroutines for compressing backups.")
-	f.RetryCount = fs.Int("retry-count", 0, "Number of retries for failed file copies.")
-	f.RetryWait = fs.Int("retry-wait", 0, "Seconds to wait between retries.")
 	f.BufferSizeKB = fs.Int("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression.")
-	f.ModTimeWindow = fs.Int("mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
+	f.SyncIncrementalRetryCount = fs.Int("sync-incremental-retry-count", 0, "Number of retries for failed file copies.")
+	f.SyncIncrementalRetryWait = fs.Int("sync-incremental-retry-wait", 0, "Seconds to wait between retries.")
+	f.SyncIncrementalModTimeWindow = fs.Int("sync-incremental-mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
+	f.SyncIncrementalPreserveSourceDirName = fs.Bool("sync-incremental-preserve-source-dir-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
+	f.SyncSnapshotRetryCount = fs.Int("sync-snapshot-retry-count", 0, "Number of retries for failed file copies.")
+	f.SyncSnapshotRetryWait = fs.Int("sync-snapshot-retry-wait", 0, "Seconds to wait between retries.")
+	f.SyncSnapshotModTimeWindow = fs.Int("sync-snapshot-mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
+	f.SyncSnapshotPreserveSourceDirName = fs.Bool("sync-snapshot-preserve-source-dir-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
 	f.UserExcludeFiles = fs.String("user-exclude-files", "", "Comma-separated list of case-insensitive file names to exclude (supports glob patterns).")
 	f.UserExcludeDirs = fs.String("user-exclude-dirs", "", "Comma-separated list of case-insensitive directory names to exclude (supports glob patterns).")
-	f.PreserveSourceName = fs.Bool("preserve-source-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
 	f.PreBackupHooks = fs.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
 	f.PostBackupHooks = fs.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
 	f.ArchiveIncrementalEnabled = fs.Bool("archive-incremental", true, "Enable archiving for incremental backups.")
 	f.ArchiveIncrementalIntervalSeconds = fs.Int("archive-incremental-interval-seconds", 0, "In 'manual' mode, the interval in seconds for creating new incremental archives (e.g., 86400 for 24h).")
 	f.ArchiveIncrementalIntervalMode = fs.String("archive-incremental-interval-mode", "", "Incremental Archive interval mode: 'auto' or 'manual'.")
+	f.ArchiveSnapshotEnabled = fs.Bool("archive-snapshot", true, "Enable archiving for snapshot backups.")
+	f.ArchiveSnapshotIntervalSeconds = fs.Int("archive-snapshot-interval-seconds", 0, "In 'manual' mode, the interval in seconds for creating new snapshot archives (e.g., 86400 for 24h).")
+	f.ArchiveSnapshotIntervalMode = fs.String("archive-snapshot-interval-mode", "", "Snapshot Archive interval mode: 'auto' or 'manual'.")
 	f.CompressionIncrementalEnabled = fs.Bool("compression-incremental", true, "Enable compression for incremental backups.")
 	f.CompressionIncrementalFormat = fs.String("compression-incremental-format", "", "Compression format for incremental backups: 'zip', 'tar.gz', or 'tar.zst'.")
 	f.CompressionSnapshotEnabled = fs.Bool("compression-snapshot", true, "Enable compression for snapshot backups.")
 	f.CompressionSnapshotFormat = fs.String("compression-snapshot-format", "", "Compression format for snapshot backups: 'zip', 'tar.gz', or 'tar.zst'.")
 }
 
-func registerInitFlags(fs *flag.FlagSet, f *CmdFlags) {
+func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
 	// Init supports all backup flags (to generate config) plus 'force' and 'default'.
 	f.Force = fs.Bool("force", false, "Bypass confirmation prompts.")
 	f.Default = fs.Bool("default", false, "Overwrite existing configuration with defaults.")
+
+	f.Source = fs.String("source", "", "Source directory to copy from")
+	f.Target = fs.String("target", "", "Base destination directory for backups")
+	f.FailFast = fs.Bool("fail-fast", false, "Stop the backup immediately on the first file sync error.")
+	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
+	f.SyncWorkers = fs.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
+	f.MirrorWorkers = fs.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
+	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
+	f.CompressWorkers = fs.Int("compress-workers", 0, "Number of worker goroutines for compressing backups.")
+	f.BufferSizeKB = fs.Int("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression.")
+	f.SyncIncrementalRetryCount = fs.Int("sync-incremental-retry-count", 0, "Number of retries for failed file copies.")
+	f.SyncIncrementalRetryWait = fs.Int("sync-incremental-retry-wait", 0, "Seconds to wait between retries.")
+	f.SyncIncrementalModTimeWindow = fs.Int("sync-incremental-mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
+	f.SyncIncrementalPreserveSourceDirName = fs.Bool("sync-incremental-preserve-source-dir-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
+	f.SyncSnapshotRetryCount = fs.Int("sync-snapshot-retry-count", 0, "Number of retries for failed file copies.")
+	f.SyncSnapshotRetryWait = fs.Int("sync-snapshot-retry-wait", 0, "Seconds to wait between retries.")
+	f.SyncSnapshotModTimeWindow = fs.Int("sync-snapshot-mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
+	f.SyncSnapshotPreserveSourceDirName = fs.Bool("sync-snapshot-preserve-source-dir-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
+	f.UserExcludeFiles = fs.String("user-exclude-files", "", "Comma-separated list of case-insensitive file names to exclude (supports glob patterns).")
+	f.UserExcludeDirs = fs.String("user-exclude-dirs", "", "Comma-separated list of case-insensitive directory names to exclude (supports glob patterns).")
+	f.PreBackupHooks = fs.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
+	f.PostBackupHooks = fs.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
+	f.ArchiveIncrementalEnabled = fs.Bool("archive-incremental", true, "Enable archiving for incremental backups.")
+	f.ArchiveIncrementalIntervalSeconds = fs.Int("archive-incremental-interval-seconds", 0, "In 'manual' mode, the interval in seconds for creating new incremental archives (e.g., 86400 for 24h).")
+	f.ArchiveIncrementalIntervalMode = fs.String("archive-incremental-interval-mode", "", "Incremental Archive interval mode: 'auto' or 'manual'.")
+	f.ArchiveSnapshotEnabled = fs.Bool("archive-snapshot", true, "Enable archiving for snapshot backups.")
+	f.ArchiveSnapshotIntervalSeconds = fs.Int("archive-snapshot-interval-seconds", 0, "In 'manual' mode, the interval in seconds for creating new snapshot archives (e.g., 86400 for 24h).")
+	f.ArchiveSnapshotIntervalMode = fs.String("archive-snapshot-interval-mode", "", "Snapshot Archive interval mode: 'auto' or 'manual'.")
+	f.CompressionIncrementalEnabled = fs.Bool("compression-incremental", true, "Enable compression for incremental backups.")
+	f.CompressionIncrementalFormat = fs.String("compression-incremental-format", "", "Compression format for incremental backups: 'zip', 'tar.gz', or 'tar.zst'.")
+	f.CompressionSnapshotEnabled = fs.Bool("compression-snapshot", true, "Enable compression for snapshot backups.")
+	f.CompressionSnapshotFormat = fs.String("compression-snapshot-format", "", "Compression format for snapshot backups: 'zip', 'tar.gz', or 'tar.zst'.")
 }
 
-func registerPruneFlags(fs *flag.FlagSet, f *CmdFlags) {
-	f.Target = fs.String("target", "", "Base destination directory for backups")
+func registerPruneFlags(fs *flag.FlagSet, f *cliFlags) {
+	f.Target = fs.String("target", "", "Base destination directory for backups to prune")
 	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
 }
 
 // Parse parses the provided arguments (usually os.Args[1:]) and returns the action and config map.
-func Parse(appName, appVersion string, args []string) (CommandFlag, map[string]interface{}, error) {
+func Parse(args []string) (Command, map[string]interface{}, error) {
 	// Handle top-level help
 	// If no arguments provided, print help and exit.
 	if len(args) == 0 {
-		fs := flag.NewFlagSet(appName, flag.ContinueOnError)
-		printTopLevelUsage(appName, appVersion, fs)
-		return NoCommand, nil, nil
+		fs := flag.NewFlagSet("main", flag.ContinueOnError)
+		printTopLevelUsage(fs)
+		return None, nil, nil
 	}
 
-	cmd := strings.ToLower(args[0])
+	cmdStr := strings.ToLower(args[0])
 
-	if cmd == "help" || cmd == "-h" || cmd == "-help" || cmd == "--help" {
-		fs := flag.NewFlagSet(appName, flag.ContinueOnError)
-		printTopLevelUsage(appName, appVersion, fs)
-		return NoCommand, nil, nil
+	if cmdStr == "help" || cmdStr == "-h" || cmdStr == "-help" || cmdStr == "--help" {
+		fs := flag.NewFlagSet("main", flag.ContinueOnError)
+		printTopLevelUsage(fs)
+		return None, nil, nil
 	}
 
-	f := &CmdFlags{}
+	f := &cliFlags{}
+
+	command, err := ParseCommand(cmdStr)
+	if err != nil {
+		return None, nil, err
+	}
 
 	// Check for subcommand
-	switch cmd {
-	case "init":
-		fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	switch command {
+	case Init:
+		fs := flag.NewFlagSet(command.String(), flag.ContinueOnError)
 
 		registerGlobalFlags(fs, f)
-		registerBackupFlags(fs, f) // Init also supports all backup flags (to generate config)
 		registerInitFlags(fs, f)
 
 		// Custom usage for the subcommand
 		fs.Usage = func() {
-			printSubcommandUsage(appName, appVersion, "init", "Initialize a new backup target directory.", fs)
+			printSubcommandUsage(command, "Initialize a new backup target directory.", fs)
 		}
 
 		if err := fs.Parse(args[1:]); err != nil {
-			return InitCommand, nil, err
+			return Init, nil, err
 		}
 
-		flagMap, err := flagsToMap(fs, f)
-		return InitCommand, flagMap, err
+		flagMap, err := flagsToMap(command, fs, f)
+		return Init, flagMap, err
 
-	case "prune":
-		fs := flag.NewFlagSet("prune", flag.ContinueOnError)
+	case Prune:
+		fs := flag.NewFlagSet(command.String(), flag.ContinueOnError)
 		registerGlobalFlags(fs, f)
 		registerPruneFlags(fs, f)
 
 		fs.Usage = func() {
-			printSubcommandUsage(appName, appVersion, "prune", "Apply retention policies to clean up outdated backups.", fs)
+			printSubcommandUsage(command, "Apply retention policies to clean up outdated backups.", fs)
 		}
 
 		if err := fs.Parse(args[1:]); err != nil {
-			return PruneCommand, nil, err
+			return Prune, nil, err
 		}
-		flagMap, err := flagsToMap(fs, f)
-		return PruneCommand, flagMap, err
+		flagMap, err := flagsToMap(command, fs, f)
+		return Prune, flagMap, err
 
-	case "backup":
-		fs := flag.NewFlagSet("backup", flag.ContinueOnError)
+	case Backup:
+		fs := flag.NewFlagSet(command.String(), flag.ContinueOnError)
 		registerGlobalFlags(fs, f)
 		registerBackupFlags(fs, f)
 
 		fs.Usage = func() {
-			printSubcommandUsage(appName, appVersion, "backup", "Run the backup operation.", fs)
+			printSubcommandUsage(command, "Run the backup operation.", fs)
 		}
 
 		if err := fs.Parse(args[1:]); err != nil {
-			return BackupCommand, nil, err
+			return command, nil, err
 		}
-		flagMap, err := flagsToMap(fs, f)
-		return BackupCommand, flagMap, err
+		flagMap, err := flagsToMap(command, fs, f)
+		return command, flagMap, err
 
-	case "version":
-		return VersionCommand, nil, nil
+	case Version:
+		return command, nil, nil
 
 	default:
-		return BackupCommand, nil, fmt.Errorf("unknown command: %s", args[0])
+		return None, nil, fmt.Errorf("unknown command: %s", args[0])
 	}
 }
 
-func flagsToMap(fs *flag.FlagSet, f *CmdFlags) (map[string]interface{}, error) {
+func flagsToMap(c Command, fs *flag.FlagSet, f *cliFlags) (map[string]interface{}, error) {
 	// Create a map of the flags that were explicitly set by the user, along with their values.
 	// This map is used to selectively override the base configuration.
 	usedFlags := make(map[string]bool)
@@ -198,6 +239,10 @@ func flagsToMap(fs *flag.FlagSet, f *CmdFlags) (map[string]interface{}, error) {
 	addIfUsed(flagMap, usedFlags, "dry-run", f.DryRun)
 	addIfUsed(flagMap, usedFlags, "metrics", f.Metrics)
 
+	addIfUsed(flagMap, usedFlags, "mode", f.Mode)
+	addIfUsed(flagMap, usedFlags, "sync-engine", f.SyncEngine)
+	addIfUsed(flagMap, usedFlags, "metrics", f.Metrics)
+
 	addIfUsed(flagMap, usedFlags, "source", f.Source)
 	addIfUsed(flagMap, usedFlags, "target", f.Target)
 	addIfUsed(flagMap, usedFlags, "fail-fast", f.FailFast)
@@ -205,19 +250,30 @@ func flagsToMap(fs *flag.FlagSet, f *CmdFlags) (map[string]interface{}, error) {
 	addIfUsed(flagMap, usedFlags, "mirror-workers", f.MirrorWorkers)
 	addIfUsed(flagMap, usedFlags, "delete-workers", f.DeleteWorkers)
 	addIfUsed(flagMap, usedFlags, "compress-workers", f.CompressWorkers)
-	addIfUsed(flagMap, usedFlags, "retry-count", f.RetryCount)
-	addIfUsed(flagMap, usedFlags, "retry-wait", f.RetryWait)
 	addIfUsed(flagMap, usedFlags, "buffer-size-kb", f.BufferSizeKB)
-	addIfUsed(flagMap, usedFlags, "mod-time-window", f.ModTimeWindow)
-	addIfUsed(flagMap, usedFlags, "preserve-source-name", f.PreserveSourceName)
+
+	addIfUsed(flagMap, usedFlags, "sync-incremental-retry-count", f.SyncIncrementalRetryCount)
+	addIfUsed(flagMap, usedFlags, "sync-incremental-retry-wait", f.SyncIncrementalRetryWait)
+	addIfUsed(flagMap, usedFlags, "sync-incremental-mod-time-window", f.SyncIncrementalModTimeWindow)
+	addIfUsed(flagMap, usedFlags, "sync-incremental-preserve-source-dir-name", f.SyncIncrementalPreserveSourceDirName)
+
+	addIfUsed(flagMap, usedFlags, "sync-snapshot-retry-count", f.SyncSnapshotRetryCount)
+	addIfUsed(flagMap, usedFlags, "sync-snapshot-retry-wait", f.SyncSnapshotRetryWait)
+	addIfUsed(flagMap, usedFlags, "sync-snapshot-mod-time-window", f.SyncSnapshotModTimeWindow)
+	addIfUsed(flagMap, usedFlags, "sync-snapshot-preserve-source-dir-name", f.SyncSnapshotPreserveSourceDirName)
 
 	addIfUsed(flagMap, usedFlags, "archive-incremental", f.ArchiveIncrementalEnabled)
 	addIfUsed(flagMap, usedFlags, "archive-incremental-interval-seconds", f.ArchiveIncrementalIntervalSeconds)
+	addIfUsed(flagMap, usedFlags, "archive-incremental-interval-mode", f.ArchiveIncrementalIntervalMode)
+	addIfUsed(flagMap, usedFlags, "archive-snapshot", f.ArchiveSnapshotEnabled)
+	addIfUsed(flagMap, usedFlags, "archive-snapshot-interval-seconds", f.ArchiveSnapshotIntervalSeconds)
+	addIfUsed(flagMap, usedFlags, "archive-snapshot-interval-mode", f.ArchiveSnapshotIntervalMode)
 
 	addIfUsed(flagMap, usedFlags, "compression-incremental", f.CompressionIncrementalEnabled)
+	addIfUsed(flagMap, usedFlags, "compression-incremental-format", f.CompressionIncrementalFormat)
 	addIfUsed(flagMap, usedFlags, "compression-snapshot", f.CompressionSnapshotEnabled)
+	addIfUsed(flagMap, usedFlags, "compression-snapshot-format", f.CompressionSnapshotFormat)
 
-	// Init specific flags
 	addIfUsed(flagMap, usedFlags, "force", f.Force)
 	addIfUsed(flagMap, usedFlags, "default", f.Default)
 
@@ -227,49 +283,6 @@ func flagsToMap(fs *flag.FlagSet, f *CmdFlags) (map[string]interface{}, error) {
 	addParsedIfUsed(flagMap, usedFlags, "pre-backup-hooks", f.PreBackupHooks, ParseCmdList)
 	addParsedIfUsed(flagMap, usedFlags, "post-backup-hooks", f.PostBackupHooks, ParseCmdList)
 
-	if f.Mode != nil && usedFlags["mode"] {
-		mode, err := config.BackupModeFromString(*f.Mode)
-		if err != nil {
-			return nil, err
-		}
-		flagMap["mode"] = mode
-	}
-	if f.SyncEngine != nil && usedFlags["sync-engine"] {
-		engineType, err := config.SyncEngineFromString(*f.SyncEngine)
-		if err != nil {
-			return nil, err
-		}
-
-		// Final sanity check: if robocopy was requested on a non-windows OS, force native.
-		if runtime.GOOS != "windows" && engineType == config.RobocopyEngine {
-			flagMap["sync-engine"] = config.NativeEngine
-		} else {
-			flagMap["sync-engine"] = engineType
-		}
-	}
-	if f.ArchiveIncrementalIntervalMode != nil && usedFlags["archive-incremental-interval-mode"] {
-		mode, err := config.ArchiveIntervalModeFromString(*f.ArchiveIncrementalIntervalMode)
-		if err != nil {
-			return nil, err
-		}
-		flagMap["archive-incremental-interval-mode"] = mode
-	}
-
-	if f.CompressionIncrementalFormat != nil && usedFlags["compression-incremental-format"] {
-		format, err := config.CompressionFormatFromString(*f.CompressionIncrementalFormat)
-		if err != nil {
-			return nil, err
-		}
-		flagMap["compression-incremental-format"] = format
-	}
-
-	if f.CompressionSnapshotFormat != nil && usedFlags["compression-snapshot-format"] {
-		format, err := config.CompressionFormatFromString(*f.CompressionSnapshotFormat)
-		if err != nil {
-			return nil, err
-		}
-		flagMap["compression-snapshot-format"] = format
-	}
 	return flagMap, nil
 }
 
@@ -288,10 +301,10 @@ func addParsedIfUsed(flagMap map[string]interface{}, usedFlags map[string]bool, 
 }
 
 // printTopLevelUsage prints the main help message.
-func printTopLevelUsage(appName, appVersion string, fs *flag.FlagSet) {
+func printTopLevelUsage(fs *flag.FlagSet) {
 
 	execName := filepath.Base(os.Args[0])
-	fmt.Fprintf(fs.Output(), "%s(%s) ", appName, appVersion)
+	fmt.Fprintf(fs.Output(), "%s(%s) ", buildinfo.Name, buildinfo.Version)
 	fmt.Fprintf(fs.Output(), "A simple and powerful cross-platform backup utility.\n\n")
 	fmt.Fprintf(fs.Output(), "Usage: %s <command> [flags]\n\n", execName)
 	fmt.Fprintf(fs.Output(), "Commands:\n")
@@ -303,10 +316,10 @@ func printTopLevelUsage(appName, appVersion string, fs *flag.FlagSet) {
 }
 
 // printSubcommandUsage prints the help message for a specific subcommand.
-func printSubcommandUsage(appName, appVersion, command, desc string, fs *flag.FlagSet) {
+func printSubcommandUsage(command Command, desc string, fs *flag.FlagSet) {
 
 	execName := filepath.Base(os.Args[0])
-	fmt.Fprintf(fs.Output(), "%s(%s) ", appName, appVersion)
+	fmt.Fprintf(fs.Output(), "%s(%s) ", buildinfo.Name, buildinfo.Version)
 	fmt.Fprintf(fs.Output(), "A simple and powerful cross-platform backup utility.\n\n")
 	fmt.Fprintf(fs.Output(), "Usage of the %s command: %s %s [flags]\n\n", command, execName, command)
 	fmt.Fprintf(fs.Output(), "%s\n\n", desc)

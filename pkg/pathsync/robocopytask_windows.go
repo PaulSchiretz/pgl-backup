@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
@@ -27,7 +28,7 @@ func isRobocopySuccessHelper(err error) bool {
 // handleSyncRobocopy uses the Windows `robocopy` utility to perform a highly
 // efficient and robust directory mirror. It is much faster for incremental
 // backups than a manual walk. It returns a list of copied files.
-func (s *PathSyncer) handleRobocopy(ctx context.Context, src, dst string, mirror bool, excludeFiles, excludeDirs []string, enableMetrics bool) error {
+func (t *robocopyTask) execute() error {
 	// Robocopy command arguments:
 	// /MIR :: MIRror a directory tree (equivalent to /E plus /PURGE).
 	// /E :: copy subdirectories, including Empty ones.
@@ -40,18 +41,18 @@ func (s *PathSyncer) handleRobocopy(ctx context.Context, src, dst string, mirror
 	// /NJS :: No Job Summary.
 	// /SL :: Copy symbolic links instead of the target (matches native engine behavior).
 	// /A-:R :: Remove Read-Only attribute from copied files (matches native engine's WithUserWritePermission).
-	args := []string{src, dst, "/V", "/TEE", "/NP", "/NJH", "/SL", "/A-:R"}
-	args = append(args, "/R:"+strconv.Itoa(s.engine.RetryCount))
-	args = append(args, "/W:"+strconv.Itoa(s.engine.RetryWaitSeconds))
+	args := []string{t.src, t.trg, "/V", "/TEE", "/NP", "/NJH", "/SL", "/A-:R"}
+	args = append(args, "/R:"+strconv.Itoa(t.retryCount))
+	args = append(args, "/W:"+strconv.Itoa(int(t.retryWait/time.Second)))
 
-	if mirror {
+	if t.mirror {
 		args = append(args, "/MIR")
 	} else {
 		args = append(args, "/E")
 	}
 
 	// If metrics are disabled, suppress Robocopy's job summary.
-	if !enableMetrics {
+	if !t.metrics {
 		args = append(args, "/NJS")
 	}
 
@@ -61,23 +62,23 @@ func (s *PathSyncer) handleRobocopy(ctx context.Context, src, dst string, mirror
 		args = append(args, "/NDL") // No Directory List - don't log individual directories.
 	}
 
-	if s.dryRun {
+	if t.dryRun {
 		args = append(args, "/L") // /L :: List only - don't copy, delete, or timestamp files.
 	}
 
 	// Add files to exclude.
-	if len(excludeFiles) > 0 {
+	if len(t.fileExcludes) > 0 {
 		args = append(args, "/XF")
-		args = append(args, excludeFiles...)
+		args = append(args, t.fileExcludes...)
 	}
 	// Add directories to exclude.
-	if len(excludeDirs) > 0 {
+	if len(t.dirExcludes) > 0 {
 		args = append(args, "/XD")
-		args = append(args, excludeDirs...)
+		args = append(args, t.dirExcludes...)
 	}
 
 	plog.Info("Starting sync with robocopy")
-	cmd := exec.CommandContext(ctx, "robocopy", args...)
+	cmd := exec.CommandContext(t.ctx, "robocopy", args...)
 
 	// Pipe robocopy's stdout and stderr directly to our program's stdout/stderr
 	// This provides real-time logging.

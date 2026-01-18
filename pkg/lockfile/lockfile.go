@@ -16,6 +16,10 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
+// LockFileName is the name of the lock file created in the target directory.
+// The '~' prefix marks it as temporary.
+const LockFileName = ".~pgl-backup.lock"
+
 // LockContent defines the structure of the data written to the lock file.
 type LockContent struct {
 	PID        int64     `json:"pid"`
@@ -69,7 +73,9 @@ var (
 // It returns a non-nil Lock on success.
 // It returns (nil, *ErrLockActive) if the lock is already held.
 // It returns (nil, error) for any other failure.
-func Acquire(ctx context.Context, lockFilePath string, appID string) (*Lock, error) {
+func Acquire(ctx context.Context, dirPath string, appID string) (*Lock, error) {
+
+	absLockFilePath := filepath.Join(dirPath, LockFileName)
 	// We will attempt to acquire multiple times in case of race conditions during cleanup
 	maxAttempts := 3
 
@@ -80,10 +86,10 @@ func Acquire(ctx context.Context, lockFilePath string, appID string) (*Lock, err
 		}
 
 		// --- 1. Attempt Atomic Acquisition ---
-		lock, err := tryAcquire(lockFilePath, appID)
+		lock, err := tryAcquire(absLockFilePath, appID)
 		if err == nil {
 			// Synchronously clean up any old temp files before starting the heartbeat.
-			cleanupTempLockFiles(lockFilePath)
+			cleanupTempLockFiles(absLockFilePath)
 			go lock.heartbeat()
 			return lock, nil
 		}
@@ -94,11 +100,11 @@ func Acquire(ctx context.Context, lockFilePath string, appID string) (*Lock, err
 		}
 
 		// --- 2. Lock is Held, Check for Staleness ---
-		content, staleErr := readLockContentSafely(lockFilePath)
+		content, staleErr := readLockContentSafely(absLockFilePath)
 		if staleErr != nil {
 			// If the file is persistently corrupt or empty, we can treat it as stale and attempt a takeover.
 			if errors.Is(staleErr, ErrCorruptLockFile) {
-				plog.Warn("Found corrupt lock file, treating as stale", "path", lockFilePath, "error", staleErr)
+				plog.Warn("Found corrupt lock file, treating as stale", "path", absLockFilePath, "error", staleErr)
 				// Fall through to the takeover logic below.
 			} else {
 				// A different read error occurred (e.g., permissions), so retry.
@@ -120,7 +126,7 @@ func Acquire(ctx context.Context, lockFilePath string, appID string) (*Lock, err
 		}
 
 		// 3. Lock is Stale or Corrupt, Attempt Takeover
-		lock, takeoverErr := attemptStaleLockTakeover(lockFilePath, appID)
+		lock, takeoverErr := attemptStaleLockTakeover(absLockFilePath, appID)
 		if takeoverErr != nil {
 			if errors.Is(takeoverErr, ErrLostRace) {
 				plog.Debug("Lock takeover race lost, retrying acquisition")
@@ -132,7 +138,7 @@ func Acquire(ctx context.Context, lockFilePath string, appID string) (*Lock, err
 		}
 
 		// Synchronously clean up any old temp files before starting the heartbeat.
-		cleanupTempLockFiles(lockFilePath)
+		cleanupTempLockFiles(absLockFilePath)
 		go lock.heartbeat()
 		return lock, nil
 	}
@@ -141,9 +147,9 @@ func Acquire(ctx context.Context, lockFilePath string, appID string) (*Lock, err
 }
 
 // tryAcquire attempts atomic creation using O_EXCL to guarantee "I created this file first".
-func tryAcquire(path string, appID string) (*Lock, error) {
+func tryAcquire(absLockFilePath string, appID string) (*Lock, error) {
 	// O_CREATE|O_EXCL guarantees we only succeed if file doesn't exist
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, util.UserWritableFilePerms)
+	f, err := os.OpenFile(absLockFilePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, util.UserWritableFilePerms)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +175,7 @@ func tryAcquire(path string, appID string) (*Lock, error) {
 	}
 
 	// Create the lock object and start its lifecycle.
-	l := newLock(path, content)
+	l := newLock(absLockFilePath, content)
 
 	// Write initial data immediately.
 	// If this fails, we must clean up the empty file we just created.
@@ -182,11 +188,11 @@ func tryAcquire(path string, appID string) (*Lock, error) {
 }
 
 // newLock creates a new Lock object and sets up its context for the heartbeat.
-func newLock(path string, content LockContent) *Lock {
+func newLock(absLockFilePath string, content LockContent) *Lock {
 	// Setup context for the heartbeat
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Lock{
-		path:    path,
+		path:    absLockFilePath,
 		content: content,
 		ctx:     ctx,
 		cancel:  cancel,
@@ -211,7 +217,7 @@ func (l *Lock) Release() {
 // attemptStaleLockTakeover uses an atomic rename strategy to seize a stale or
 // corrupt lock. It writes new lock content to a temporary file and then renames
 // it over the existing lock file, guaranteeing an atomic update.
-func attemptStaleLockTakeover(lockFilePath, appID string) (*Lock, error) {
+func attemptStaleLockTakeover(absLockFilePath, appID string) (*Lock, error) {
 	// Generate a unique nonce for this specific takeover attempt. This is the key
 	nonce, err := generateNonce()
 	if err != nil {
@@ -233,19 +239,19 @@ func attemptStaleLockTakeover(lockFilePath, appID string) (*Lock, error) {
 	}
 
 	// This ensures that if we crash during takeover, we don't leave a 0-byte file.
-	if err := updateLockFileAtomic(lockFilePath, takeoverContent); err != nil {
+	if err := updateLockFileAtomic(absLockFilePath, takeoverContent); err != nil {
 		return nil, err
 	}
 
 	// Read back immediately to verify we won the race.
-	readbackContent, readbackErr := readLockContentSafely(lockFilePath)
+	readbackContent, readbackErr := readLockContentSafely(absLockFilePath)
 	if readbackErr != nil {
 		return nil, fmt.Errorf("failed to read back lock file after takeover: %w", readbackErr)
 	}
 
 	if readbackContent.PID == myPID && readbackContent.Nonce == nonce {
 		plog.Debug("Successfully took over stale lock")
-		l := newLock(lockFilePath, takeoverContent)
+		l := newLock(absLockFilePath, takeoverContent)
 		return l, nil
 	}
 	return nil, ErrLostRace
@@ -283,13 +289,13 @@ func (l *Lock) heartbeat() {
 
 // updateLockFileAtomic writes the content to a temporary file and then renames it
 // over the target path. This ensures the file at 'path' is never empty/corrupt.
-func updateLockFileAtomic(targetPath string, content LockContent) error {
+func updateLockFileAtomic(absLockFilePath string, content LockContent) error {
 	// 1. Create a temp file in the SAME DIRECTORY as the target.
 	// This is crucial: os.Rename ensures atomicity only within the same filesystem.
-	dir := filepath.Dir(targetPath)
+	dir := filepath.Dir(absLockFilePath)
 
 	// Pattern "lock.*.tmp" helps identify these if they get left behind (unlikely)
-	tmpF, err := os.CreateTemp(dir, filepath.Base(targetPath)+".*.tmp")
+	tmpF, err := os.CreateTemp(dir, filepath.Base(absLockFilePath)+".*.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create temp lock file: %w", err)
 	}
@@ -323,7 +329,7 @@ func updateLockFileAtomic(targetPath string, content LockContent) error {
 
 	// 4. Atomic Rename
 	// This replaces 'targetPath' with 'tmpF.Name()' atomically.
-	if err := os.Rename(tmpF.Name(), targetPath); err != nil {
+	if err := os.Rename(tmpF.Name(), absLockFilePath); err != nil {
 		return fmt.Errorf("failed to rename temp file to lock file: %w", err)
 	}
 
@@ -333,9 +339,9 @@ func updateLockFileAtomic(targetPath string, content LockContent) error {
 // cleanupTempLockFiles scans the lock directory for any leftover temporary files
 // from previous crashed runs. It only deletes files older than the staleTimeout
 // to avoid deleting temp files currently being written by active processes.
-func cleanupTempLockFiles(lockFilePath string) {
-	dir := filepath.Dir(lockFilePath)
-	pattern := filepath.Join(dir, filepath.Base(lockFilePath)+".*.tmp")
+func cleanupTempLockFiles(absLockFilePath string) {
+	dir := filepath.Dir(absLockFilePath)
+	pattern := filepath.Join(dir, filepath.Base(absLockFilePath)+".*.tmp")
 
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
@@ -389,13 +395,13 @@ func writeLockContent(w io.Writer, content LockContent) error {
 // where the file exists but is currently being truncated/written to (empty or partial).
 // NOTE: Even with an atomic rename strategy for writes, filesystems can have
 // transient states. This retry logic provides a robust defense against such edge cases.
-func readLockContentSafely(path string) (LockContent, error) {
+func readLockContentSafely(absLockFilePath string) (LockContent, error) {
 	var lastErr error
 	var lastEmptyOrCorruptErr error
 	// Try reading a few times if we encounter JSON syntax errors or empty files
 	// which happen during the updateContent() write cycle.
 	for i := 0; i < 3; i++ {
-		f, err := os.Open(path)
+		f, err := os.Open(absLockFilePath)
 		if err != nil {
 			return LockContent{}, err
 		}

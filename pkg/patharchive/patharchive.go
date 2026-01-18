@@ -41,7 +41,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/paulschiretz/pgl-backup/pkg/config"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/patharchivemetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
@@ -50,236 +49,101 @@ import (
 
 var ErrNothingToArchive = errors.New("nothing to archive")
 
-// archiveRun holds the mutable state for a single execution of the archiver.
-// This makes the ArchiveEngine itself stateless and safe for concurrent use if needed.
-type archiveRun struct {
-	ctx                       context.Context
-	dirPath                   string // path of the archive
-	archiveBackupPath         string
-	interval                  time.Duration // interval holds the final interval for the current run.
-	currentBackupPath         string
-	currentBackupTimestampUTC time.Time
-	currentTimestampUTC       time.Time
-	dryRun                    bool
-	metrics                   patharchivemetrics.Metrics
-	location                  *time.Location
-}
-
-type PathArchiver struct {
-	config config.Config
-}
-
-// Archiver defines the interface for a component that archives a backup, turning the
-// 'current' state into a permanent historical record.
-type Archiver interface {
-	Archive(ctx context.Context, dirPath, currentBackupPath string, currentTimestampUTC time.Time, archivePolicy config.ArchivePolicyConfig, retentionPolicy config.RetentionPolicyConfig) (string, error)
-}
-
-// Statically assert that *PathArchiver implements the Archiver interface.
-var _ Archiver = (*PathArchiver)(nil)
+type PathArchiver struct{}
 
 // NewPathArchiver creates a new PathArchiver with the given configuration.
-func NewPathArchiver(cfg config.Config) *PathArchiver {
-	return &PathArchiver{
-		config: cfg,
-	}
+func NewPathArchiver() *PathArchiver {
+	return &PathArchiver{}
 }
 
 // Archive checks if the time since the last backup has crossed the configured interval.
 // If it has, it renames the current backup directory to a permanent, timestamped archive directory. It also
 // prepares the archive interval before checking. It is now responsible for reading its own metadata.
-func (a *PathArchiver) Archive(ctx context.Context, dirPath, currentBackupPath string, currentTimestampUTC time.Time, archivePolicy config.ArchivePolicyConfig, retentionPolicy config.RetentionPolicyConfig) (string, error) {
-	metadata, err := metafile.Read(currentBackupPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// This is a normal condition on the first run; no previous backup to archive.
-			return "", ErrNothingToArchive
-		}
-		// Any other error (e.g., corrupt file, permissions) is a problem.
-		return "", fmt.Errorf("could not read previous backup metadata for archive check: %w", err)
+func (a *PathArchiver) Archive(ctx context.Context, absTargetBasePath, relArchivePathKey, backupDirPrefix string, toArchive metafile.MetafileInfo, p *Plan, timestampUTC time.Time) error {
+
+	// Check for cancellation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
 	}
 
-	// A valid metafile was found, so we can proceed with archiving.
-	currentBackupTimestampUTC := metadata.TimestampUTC
-
-	// Determine the archiving interval
-	interval := a.determineInterval(archivePolicy, retentionPolicy)
-
-	// The directory name must remain uniquely based on UTC time to avoid DST conflicts,
-	// but we add the user's local offset to make the timezone clear to the user.
-	archiveTimestamp := config.FormatTimestampWithOffset(currentBackupTimestampUTC)
-	archiveDirName := a.config.Naming.Prefix + archiveTimestamp
-	archiveBackupPath := filepath.Join(dirPath, archiveDirName)
-
-	// Ensure the archives directory exists.
-	if !a.config.DryRun {
-		if err := os.MkdirAll(dirPath, util.UserWritableDirPerms); err != nil {
-			return "", fmt.Errorf("failed to create archives subdirectory %s: %w", dirPath, err)
-		}
-	}
+	// Resolve the actual archiving interval
+	interval := a.resolveInterval(p)
 
 	var m patharchivemetrics.Metrics
-	if a.config.Metrics {
+	if p.Metrics {
 		m = &patharchivemetrics.ArchiveMetrics{}
 	} else {
 		m = &patharchivemetrics.NoopMetrics{}
 	}
 
-	run := &archiveRun{
-		ctx:                       ctx,
-		archiveBackupPath:         archiveBackupPath,
-		interval:                  interval,
-		currentBackupPath:         currentBackupPath,
-		currentBackupTimestampUTC: currentBackupTimestampUTC,
-		currentTimestampUTC:       currentTimestampUTC,
-		dryRun:                    a.config.DryRun,
-		metrics:                   m,
-		location:                  time.Local,
+	// Ensure the archives directory exists.
+	if !p.DryRun {
+		absArchivePath := util.DenormalizePath(filepath.Join(absTargetBasePath, relArchivePathKey))
+		if err := os.MkdirAll(absArchivePath, util.UserWritableDirPerms); err != nil {
+			return fmt.Errorf("failed to create archive directory %s: %w", relArchivePathKey, err)
+		}
 	}
 
-	return run.execute()
+	// The directory name must remain uniquely based on UTC time to avoid DST conflicts,
+	// but we add the user's local offset to make the timezone clear to the user.
+	timestamp := util.FormatTimestampWithOffset(toArchive.Metadata.TimestampUTC)
+	dirName := backupDirPrefix + timestamp
+	relTargetPathKey := util.NormalizePath(filepath.Join(relArchivePathKey, dirName))
+
+	t := &task{
+		ctx:               ctx,
+		absTargetBasePath: absTargetBasePath,
+		relTargetPathKey:  relTargetPathKey,
+		toArchive:         toArchive,
+		interval:          interval,
+		location:          time.Local,
+		metrics:           m,
+		timestampUTC:      timestampUTC,
+		dryRun:            p.DryRun,
+	}
+
+	result, err := t.execute()
+	if err != nil {
+		return err
+	}
+
+	// Store the Result
+	p.ResultInfo = result
+	return nil
 }
 
-// execute runs the archive logic.
-func (r *archiveRun) execute() (string, error) {
-
-	if !r.shouldArchive() {
-		return "", ErrNothingToArchive
-	}
-
-	plog.Info("Archiving backup",
-		"backup_time", r.currentBackupTimestampUTC,
-		"current_time", r.currentTimestampUTC,
-		"archive_interval", r.interval)
-
-	r.metrics.StartProgress("Archive progress", 10*time.Second)
-	defer func() {
-		r.metrics.StopProgress()
-		r.metrics.LogSummary("Archive finished")
-	}()
-
-	// Check for cancellation before performing the rename.
-	select {
-	case <-r.ctx.Done():
-		return "", r.ctx.Err()
-	default:
-	}
-
-	if r.dryRun {
-		action := "moved"
-		plog.Notice("[DRY RUN] ARCHIVE", "action", action, "from", r.currentBackupPath, "to", r.archiveBackupPath)
-		return r.archiveBackupPath, nil
-	}
-
-	// Log the intent before starting the operation
-	plog.Info("Starting archive operation", "from", r.currentBackupPath, "to", r.archiveBackupPath)
-
-	// Sanity check: ensure the destination for the archive does not already exist.
-	if _, err := os.Stat(r.archiveBackupPath); err == nil {
-		return "", fmt.Errorf("archive destination %s already exists", r.archiveBackupPath)
-	} else if !os.IsNotExist(err) {
-		// The error is not "file does not exist", so it might be a permissions issue
-		// or the archives subdir doesn't exist. Let's try to create it.
-		return "", fmt.Errorf("could not check archive destination %s: %w", r.archiveBackupPath, err)
-	}
-
-	// Strategy: Rename (Move)
-	if err := os.Rename(r.currentBackupPath, r.archiveBackupPath); err != nil {
-		return "", fmt.Errorf("failed to archive current backup (directory might be in use): %w", err)
-	}
-	plog.Notice("ARCHIVED", "moved", r.currentBackupPath, "to", r.archiveBackupPath)
-
-	r.metrics.AddArchivesCreated(1)
-	return r.archiveBackupPath, nil
-}
-
-// shouldArchive determines if a new backup archive should be created based on the state of the current run.
-//
-// DESIGN NOTE on time zones:
-// For intervals of 24 hours or longer, this function intentionally calculates
-// archive boundaries based on the **local system's midnight** (`time.Local`).
-// This ensures that archives align with a user's calendar day ("start a new
-// weekly backup on Sunday night"), even though all stored timestamps are UTC.
-// The conversion handles Daylight Saving Time (DST) shifts correctly by checking
-// for midnight-to-midnight boundary crossings (epoch day counting).
-func (r *archiveRun) shouldArchive() bool {
-	if r.interval == 0 {
-		return true // Archive interval check is explicitly disabled, always create an archive.
-	}
-
-	// For intervals of 24 hours or longer, this function intentionally calculates
-	// archive boundaries based on the local system's midnight to align with a
-	// user's calendar day, even though all stored timestamps are UTC.
-	if r.interval >= 24*time.Hour {
-		loc := r.location
-
-		lastDayNum := calculateEpochDays(r.currentBackupTimestampUTC, loc)
-		currentDayNum := calculateEpochDays(r.currentTimestampUTC, loc)
-
-		// Calculate the Bucket Size in Days
-		daysInBucket := int64(r.interval / (24 * time.Hour))
-
-		// Check if we have crossed a bucket boundary
-		// Example: Interval = 7 days.
-		// Day 10 / 7 = 1.  Day 12 / 7 = 1.  (No Archive)
-		// Day 13 / 7 = 1.  Day 14 / 7 = 2.  (Archive!)
-		return (currentDayNum / daysInBucket) != (lastDayNum / daysInBucket)
-	}
-
-	// Sub-Daily Intervals (Hourly, 6-Hourly)
-	// Use standard truncation for clean UTC time buckets.
-	lastBackupBoundary := r.currentBackupTimestampUTC.Truncate(r.interval)
-	currentBackupBoundary := r.currentTimestampUTC.Truncate(r.interval)
-
-	return !currentBackupBoundary.Equal(lastBackupBoundary)
-}
-
-// calculateEpochDays calculates the number of days since the Unix Epoch (1970-01-01)
-// for a given time in a specific location. It normalizes the time to midnight
-// and adds a 12-hour buffer to handle DST transitions (23h/25h days) robustly.
-func calculateEpochDays(t time.Time, loc *time.Location) int64 {
-	y, m, d := t.In(loc).Date()
-	midnight := time.Date(y, m, d, 0, 0, 0, 0, loc)
-	anchor := time.Date(1970, 1, 1, 0, 0, 0, 0, loc)
-	// Add 12 hours to center the calculation in the day, avoiding DST jitter (23h vs 25h days).
-	return int64(midnight.Sub(anchor).Hours()+12) / 24
-}
-
-// determineInterval calculates the effective archive interval based on configuration.
+// resolveInterval calculates the effective archive interval based on configuration.
 // If the mode is 'auto', it calculates the optimal interval based on the retention policy.
 // If the mode is 'manual', it validates the user-configured interval.
-func (a *PathArchiver) determineInterval(archivePolicy config.ArchivePolicyConfig, retentionPolicy config.RetentionPolicyConfig) time.Duration {
-	if archivePolicy.IntervalMode == config.ManualInterval {
-		interval := time.Duration(archivePolicy.IntervalSeconds) * time.Second
-		a.checkInterval(interval, retentionPolicy)
+func (a *PathArchiver) resolveInterval(p *Plan) time.Duration {
+	switch p.IntervalMode {
+	case Manual:
+		interval := time.Duration(p.IntervalSeconds) * time.Second
+		a.checkInterval(interval, p)
 		return interval
+	default:
+		return a.adjustInterval(p)
 	}
-	return a.adjustInterval(retentionPolicy)
 }
 
 // adjustInterval calculates the optimal archive interval based on the retention
 // policy. This is only called when the archive policy mode is 'auto'.
-func (a *PathArchiver) adjustInterval(retentionPolicy config.RetentionPolicyConfig) time.Duration {
+func (a *PathArchiver) adjustInterval(p *Plan) time.Duration {
 	var suggestedInterval time.Duration
-
-	// If the retention policy is explicitly disabled, auto-mode should also disable archiving.
-	if !retentionPolicy.Enabled {
-		suggestedInterval = 24 * time.Hour
-		plog.Debug("Retention policy is disabled; Auto-determined archive interval", "interval", suggestedInterval)
-		return suggestedInterval
-	}
 
 	// Pick the shortest duration required to satisfy the configured retention slots.
 	switch {
-	case retentionPolicy.Hours > 0:
+	case p.Constraints.Hours > 0:
 		suggestedInterval = 1 * time.Hour
-	case retentionPolicy.Days > 0:
+	case p.Constraints.Days > 0:
 		suggestedInterval = 24 * time.Hour
-	case retentionPolicy.Weeks > 0:
+	case p.Constraints.Weeks > 0:
 		suggestedInterval = 7 * 24 * time.Hour
-	case retentionPolicy.Months > 0:
+	case p.Constraints.Months > 0:
 		suggestedInterval = 30 * 24 * time.Hour // Approximation
-	case retentionPolicy.Years > 0:
+	case p.Constraints.Years > 0:
 		suggestedInterval = 365 * 24 * time.Hour // Approximation
 	default:
 		// Fallback if retention is disabled but mode is auto.
@@ -291,7 +155,7 @@ func (a *PathArchiver) adjustInterval(retentionPolicy config.RetentionPolicyConf
 }
 
 // checkInterval validates the interval against the retention policy.
-func (a *PathArchiver) checkInterval(interval time.Duration, retentionPolicy config.RetentionPolicyConfig) {
+func (a *PathArchiver) checkInterval(interval time.Duration, p *Plan) {
 
 	// Shortcut for always archive interval
 	if interval == 0 {
@@ -300,26 +164,26 @@ func (a *PathArchiver) checkInterval(interval time.Duration, retentionPolicy con
 	}
 
 	var mismatchedPeriods []string
-	if retentionPolicy.Hours > 0 && interval > 1*time.Hour {
+	if p.Constraints.Hours > 0 && interval > 1*time.Hour {
 		mismatchedPeriods = append(mismatchedPeriods, "Hourly")
 	}
-	if retentionPolicy.Days > 0 && interval > 24*time.Hour {
+	if p.Constraints.Days > 0 && interval > 24*time.Hour {
 		mismatchedPeriods = append(mismatchedPeriods, "Daily")
 	}
-	if retentionPolicy.Weeks > 0 && interval > 168*time.Hour {
+	if p.Constraints.Weeks > 0 && interval > 168*time.Hour {
 		mismatchedPeriods = append(mismatchedPeriods, "Weekly")
 	}
 	avgMonth := 30 * 24 * time.Hour
-	if retentionPolicy.Months > 0 && interval > avgMonth {
+	if p.Constraints.Months > 0 && interval > avgMonth {
 		mismatchedPeriods = append(mismatchedPeriods, "Monthly")
 	}
 	avgYear := 365 * 24 * time.Hour
-	if retentionPolicy.Years > 0 && interval > avgYear {
+	if p.Constraints.Years > 0 && interval > avgYear {
 		mismatchedPeriods = append(mismatchedPeriods, "Yearly")
 	}
 
 	if len(mismatchedPeriods) > 0 {
-		plog.Warn("Configuration Mismatch: The 'manual' archive interval is slower than the enabled retention period(s).",
+		plog.Warn("Configuration Mismatch: The 'manual' archive interval is slower than your retention period(s).",
 			"mismatched_periods", strings.Join(mismatchedPeriods, ", "),
 			"archive_interval", interval,
 			"impact", "Retention slots for these periods will fill at the rate of the archive interval, not the retention period.")

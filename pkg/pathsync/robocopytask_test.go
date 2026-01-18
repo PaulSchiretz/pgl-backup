@@ -10,8 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
-	"github.com/paulschiretz/pgl-backup/pkg/config"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
@@ -83,7 +83,7 @@ func TestIsRobocopySuccessHelper(t *testing.T) {
 	}
 }
 
-func TestHandleRobocopy_Integration(t *testing.T) {
+func TestRobocopySync_Integration(t *testing.T) {
 	// This is an integration test that requires robocopy.exe to be in the system's PATH.
 	if _, err := exec.LookPath("robocopy"); err != nil {
 		t.Skip("robocopy.exe not found in PATH, skipping integration test")
@@ -100,14 +100,17 @@ func TestHandleRobocopy_Integration(t *testing.T) {
 		}
 
 		// Create the syncer
-		cfg := config.NewDefault("test-version")
 		plog.SetLevel(plog.LevelWarn) // Keep test logs clean
-		syncer := NewPathSyncer(cfg)
+		syncer := NewPathSyncer(256, 1, 1)
+
+		plan := &Plan{
+			Engine: Robocopy,
+		}
 
 		// Act
-		err := syncer.handleRobocopy(context.Background(), srcDir, dstDir, false, nil, nil, true)
+		err := syncer.Sync(context.Background(), srcDir, dstDir, "", "", plan, time.Now())
 		if err != nil {
-			t.Fatalf("handleRobocopy failed: %v", err)
+			t.Fatalf("Sync failed: %v", err)
 		}
 
 		// Assert

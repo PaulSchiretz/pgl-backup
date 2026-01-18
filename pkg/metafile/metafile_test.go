@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/paulschiretz/pgl-backup/pkg/config"
 )
 
 func TestWriteAndReadMetafile(t *testing.T) {
@@ -26,7 +24,7 @@ func TestWriteAndReadMetafile(t *testing.T) {
 		t.Fatalf("Write() failed: %v", err)
 	}
 
-	metaFilePath := filepath.Join(tempDir, config.MetaFileName)
+	metaFilePath := filepath.Join(tempDir, MetaFileName)
 	if _, err := os.Stat(metaFilePath); os.IsNotExist(err) {
 		t.Fatalf("Metafile was not created at %s", metaFilePath)
 	}
@@ -64,7 +62,7 @@ func TestReadNonExistentMetafile(t *testing.T) {
 
 func TestReadCorruptMetafile(t *testing.T) {
 	tempDir := t.TempDir()
-	metaFilePath := filepath.Join(tempDir, config.MetaFileName)
+	metaFilePath := filepath.Join(tempDir, MetaFileName)
 	// Write some invalid JSON to simulate corruption
 	if err := os.WriteFile(metaFilePath, []byte("{invalid json"), 0644); err != nil {
 		t.Fatalf("Failed to write corrupt metafile: %v", err)

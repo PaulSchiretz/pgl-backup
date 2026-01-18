@@ -1,9 +1,13 @@
 package cmd
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/paulschiretz/pgl-backup/pkg/buildinfo"
+)
 
 // RunVersion prints the application version.
-func RunVersion(appName, appVersion string) error {
-	fmt.Printf("%s version %s\n", appName, appVersion)
+func RunVersion() error {
+	fmt.Printf("%s version %s\n", buildinfo.Name, buildinfo.Version)
 	return nil
 }

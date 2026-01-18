@@ -1,11 +1,17 @@
-package cmd
+package cmd_test
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/paulschiretz/pgl-backup/cmd"
+	"github.com/paulschiretz/pgl-backup/pkg/config"
+	"github.com/paulschiretz/pgl-backup/pkg/lockfile"
 )
 
 func TestPromptForConfirmation(t *testing.T) {
@@ -35,7 +41,7 @@ func TestPromptForConfirmation(t *testing.T) {
 		}()
 
 		// Run the function
-		result := promptForConfirmation(prompt, defaultYes)
+		result := cmd.PromptForConfirmation(prompt, defaultYes)
 
 		// Close writer to read output
 		_ = wOut.Close()
@@ -69,6 +75,227 @@ func TestPromptForConfirmation(t *testing.T) {
 			}
 			if !strings.Contains(output, tt.wantPrompt) {
 				t.Errorf("Output = %q, want substring %q", output, tt.wantPrompt)
+			}
+		})
+	}
+}
+
+func TestRunInit(t *testing.T) {
+	// Create a valid source directory for all tests to use
+	srcDir := t.TempDir()
+
+	tests := []struct {
+		name          string
+		flags         map[string]interface{}
+		preSetup      func(t *testing.T, targetDir string) context.CancelFunc
+		stdinInput    string
+		expectError   bool
+		errorContains string
+		validate      func(t *testing.T, targetDir string)
+	}{
+		{
+			name: "Happy Path - Success",
+			flags: map[string]interface{}{
+				"source": srcDir,
+			},
+			validate: func(t *testing.T, targetDir string) {
+				// Verify config file created
+				confPath := filepath.Join(targetDir, config.ConfigFileName)
+				if _, err := os.Stat(confPath); os.IsNotExist(err) {
+					t.Error("expected config file to be created, but it was not")
+				}
+				// Verify lock file removed
+				lockPath := filepath.Join(targetDir, lockfile.LockFileName)
+				if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+					t.Error("expected lock file to be removed, but it exists")
+				}
+			},
+		},
+		{
+			name: "Failure - Locked Directory",
+			flags: map[string]interface{}{
+				"source": srcDir,
+			},
+			preSetup: func(t *testing.T, targetDir string) context.CancelFunc {
+				// Ensure target exists
+				if err := os.MkdirAll(targetDir, 0755); err != nil {
+					t.Fatalf("failed to create target dir: %v", err)
+				}
+				// Acquire lock externally to simulate another process
+				ctx, cancel := context.WithCancel(context.Background())
+				_, err := lockfile.Acquire(ctx, targetDir, "external-process")
+				if err != nil {
+					cancel()
+					t.Fatalf("failed to acquire setup lock: %v", err)
+				}
+				return cancel
+			},
+			expectError:   true,
+			errorContains: "failed to acquire lock",
+		},
+		{
+			name: "Dry Run - No Changes",
+			flags: map[string]interface{}{
+				"source":  srcDir,
+				"dry-run": true,
+			},
+			validate: func(t *testing.T, targetDir string) {
+				// Verify config file NOT created
+				confPath := filepath.Join(targetDir, config.ConfigFileName)
+				if _, err := os.Stat(confPath); !os.IsNotExist(err) {
+					t.Error("expected config file NOT to be created in dry run")
+				}
+				// Verify lock file NOT present
+				lockPath := filepath.Join(targetDir, lockfile.LockFileName)
+				if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+					t.Error("expected lock file not to exist")
+				}
+			},
+		},
+		{
+			name: "Failure - Source Does Not Exist",
+			flags: map[string]interface{}{
+				"source": filepath.Join(srcDir, "nonexistent"),
+			},
+			expectError:   true,
+			errorContains: "does not exist",
+		},
+		{
+			name: "Overwrite with Default + Force",
+			flags: map[string]interface{}{
+				"source":  srcDir,
+				"default": true,
+				"force":   true,
+			},
+			preSetup: func(t *testing.T, targetDir string) context.CancelFunc {
+				if err := os.MkdirAll(targetDir, 0755); err != nil {
+					t.Fatalf("failed to create target dir: %v", err)
+				}
+				cfg := config.NewDefault()
+				cfg.LogLevel = "debug"
+				cfg.TargetBase = targetDir
+				if err := config.Generate(cfg); err != nil {
+					t.Fatalf("failed to create existing config: %v", err)
+				}
+				return nil
+			},
+			validate: func(t *testing.T, targetDir string) {
+				cfg, err := config.Load(targetDir)
+				if err != nil {
+					t.Fatalf("failed to load config: %v", err)
+				}
+				if cfg.LogLevel != "info" {
+					t.Errorf("expected LogLevel to be 'info' (default), got '%s'", cfg.LogLevel)
+				}
+			},
+		},
+		{
+			name: "Overwrite with Default (Interactive Yes)",
+			flags: map[string]interface{}{
+				"source":  srcDir,
+				"default": true,
+			},
+			stdinInput: "y\n",
+			preSetup: func(t *testing.T, targetDir string) context.CancelFunc {
+				if err := os.MkdirAll(targetDir, 0755); err != nil {
+					t.Fatalf("failed to create target dir: %v", err)
+				}
+				cfg := config.NewDefault()
+				cfg.LogLevel = "debug"
+				cfg.TargetBase = targetDir
+				if err := config.Generate(cfg); err != nil {
+					t.Fatalf("failed to create existing config: %v", err)
+				}
+				return nil
+			},
+			validate: func(t *testing.T, targetDir string) {
+				cfg, err := config.Load(targetDir)
+				if err != nil {
+					t.Fatalf("failed to load config: %v", err)
+				}
+				if cfg.LogLevel != "info" {
+					t.Errorf("expected LogLevel to be 'info' (overwritten), got '%s'", cfg.LogLevel)
+				}
+			},
+		},
+		{
+			name: "Overwrite with Default (Interactive No)",
+			flags: map[string]interface{}{
+				"source":  srcDir,
+				"default": true,
+			},
+			stdinInput: "n\n",
+			preSetup: func(t *testing.T, targetDir string) context.CancelFunc {
+				if err := os.MkdirAll(targetDir, 0755); err != nil {
+					t.Fatalf("failed to create target dir: %v", err)
+				}
+				cfg := config.NewDefault()
+				cfg.LogLevel = "debug"
+				cfg.TargetBase = targetDir
+				if err := config.Generate(cfg); err != nil {
+					t.Fatalf("failed to create existing config: %v", err)
+				}
+				return nil
+			},
+			validate: func(t *testing.T, targetDir string) {
+				cfg, err := config.Load(targetDir)
+				if err != nil {
+					t.Fatalf("failed to load config: %v", err)
+				}
+				if cfg.LogLevel != "debug" {
+					t.Errorf("expected LogLevel to remain 'debug', got '%s'", cfg.LogLevel)
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			targetDir := t.TempDir()
+			// Inject target into flags
+			if tc.flags == nil {
+				tc.flags = make(map[string]interface{})
+			}
+			tc.flags["target"] = targetDir
+
+			if tc.stdinInput != "" {
+				r, w, err := os.Pipe()
+				if err != nil {
+					t.Fatalf("failed to create pipe: %v", err)
+				}
+				origStdin := os.Stdin
+				os.Stdin = r
+				defer func() { os.Stdin = origStdin }()
+
+				go func() {
+					defer w.Close()
+					io.WriteString(w, tc.stdinInput)
+				}()
+			}
+
+			if tc.preSetup != nil {
+				cancel := tc.preSetup(t, targetDir)
+				if cancel != nil {
+					defer cancel()
+				}
+			}
+
+			err := cmd.RunInit(context.Background(), tc.flags)
+
+			if tc.expectError {
+				if err == nil {
+					t.Error("expected error, but got nil")
+				} else if tc.errorContains != "" && !strings.Contains(err.Error(), tc.errorContains) {
+					t.Errorf("expected error to contain %q, but got: %v", tc.errorContains, err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+
+			if tc.validate != nil {
+				tc.validate(t, targetDir)
 			}
 		})
 	}

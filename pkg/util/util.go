@@ -6,7 +6,24 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
+
+// timestampFormat defines the standard, non-configurable time format for backup directory names.
+const timestampFormat = "2006-01-02-15-04-05"
+
+// FormatTimestampWithOffset formats a UTC timestamp into a string that includes
+// the local timezone offset for user-friendliness, while keeping the base time in UTC.
+// Example: 2023-10-27-14-00-00-123456789-0400
+func FormatTimestampWithOffset(timestampUTC time.Time) string {
+	// We format the UTC time for the timestamp, then format it again in the local
+	// timezone just to get the offset string, and combine them.
+	mainPartUTC := timestampUTC.Format(timestampFormat)
+	nanoPartUTC := fmt.Sprintf("%09d", timestampUTC.Nanosecond())
+	offsetPartLocal := timestampUTC.In(time.Local).Format("Z0700")
+
+	return fmt.Sprintf("%s-%s%s", mainPartUTC, nanoPartUTC, offsetPartLocal)
+}
 
 // Permission constants for file and directory modes.
 const (
