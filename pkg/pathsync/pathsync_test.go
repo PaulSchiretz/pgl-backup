@@ -75,7 +75,7 @@ func TestSync_Dispatch(t *testing.T) {
 			t.Fatalf("expected no error, got %v", err)
 		}
 
-		if plan.ResultInfo.RelPathKey != relContent {
+		if plan.ResultInfo.RelPathKey != relCurrent {
 			t.Errorf("expected ResultInfo.RelPathKey to be %q, got %q", relContent, plan.ResultInfo.RelPathKey)
 		}
 		if !plan.ResultInfo.Metadata.TimestampUTC.Equal(timestamp) {
