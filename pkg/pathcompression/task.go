@@ -253,7 +253,7 @@ func (t *task) createArchive(sourceDir string) (tempPath string, err error) {
 	}()
 
 	// Walk the directory and add files to the archive.
-	walkErr := filepath.Walk(sourceDir, func(absSrcPath string, info os.FileInfo, walkErr error) error {
+	walkErr := filepath.WalkDir(sourceDir, func(absSrcPath string, d os.DirEntry, walkErr error) error {
 		select {
 		case <-t.ctx.Done():
 			return context.Canceled
@@ -263,8 +263,14 @@ func (t *task) createArchive(sourceDir string) (tempPath string, err error) {
 		if walkErr != nil {
 			return walkErr
 		}
-		if info.IsDir() || absSrcPath == tempPath {
+		if d.IsDir() || absSrcPath == tempPath {
 			return nil
+		}
+
+		// We need FileInfo for the archive headers (permissions, timestamps).
+		info, err := d.Info()
+		if err != nil {
+			return fmt.Errorf("failed to get file info for %s: %w", absSrcPath, err)
 		}
 
 		// Calculate the relative path for the archive entry.
