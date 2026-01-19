@@ -65,7 +65,7 @@ type BackupEngineConfig struct {
 
 type SyncPolicyConfig struct {
 	Enabled               bool   `json:"enabled"`
-	PreserveSourceDirName bool   `json:"PreserveSourceDirName"`
+	PreserveSourceDirName bool   `json:"preserveSourceDirName"`
 	Engine                string `json:"engine"`
 	RetryCount            int    `json:"retryCount"`
 	RetryWaitSeconds      int    `json:"retryWaitSeconds"`
@@ -514,6 +514,7 @@ func (c *Config) Validate(checkSource bool) error {
 	// This prevents the dangerous situation where a user enables retention (e.g. for snapshots)
 	// but forgets to configure the values (leaving them at the default -1).
 	// By failing fast, we force the user to be explicit about their retention desires.
+	// NOTE: We always validate snapshot and incremental policies regardless of the mode, cause the prune command uses both
 	if c.Retention.Incremental.Enabled {
 		if c.Retention.Incremental.Hours < 0 || c.Retention.Incremental.Days < 0 || c.Retention.Incremental.Weeks < 0 || c.Retention.Incremental.Months < 0 || c.Retention.Incremental.Years < 0 {
 			return fmt.Errorf("retention.incremental is enabled but contains negative values. All values must be >= 0")
@@ -617,18 +618,14 @@ func (c *Config) LogSummary() {
 		}
 
 	}
+
 	if finalExcludeFiles := c.Sync.ExcludeFiles(); len(finalExcludeFiles) > 0 {
 		logArgs = append(logArgs, "exclude_files", strings.Join(finalExcludeFiles, ", "))
 	}
 	if finalExcludeDirs := c.Sync.ExcludeDirs(); len(finalExcludeDirs) > 0 {
 		logArgs = append(logArgs, "exclude_dirs", strings.Join(finalExcludeDirs, ", "))
 	}
-	if len(c.Sync.DefaultExcludeFiles) > 0 {
-		logArgs = append(logArgs, "default_exclude_files", strings.Join(c.Sync.DefaultExcludeFiles, ", "))
-	}
-	if len(c.Sync.DefaultExcludeDirs) > 0 {
-		logArgs = append(logArgs, "default_exclude_dirs", strings.Join(c.Sync.DefaultExcludeDirs, ", "))
-	}
+
 	if len(c.Hooks.PreBackup) > 0 {
 		logArgs = append(logArgs, "pre_backup_hooks", strings.Join(c.Hooks.PreBackup, "; "))
 	}
@@ -738,6 +735,30 @@ func MergeConfigWithFlags(command flagparse.Command, base Config, setFlags map[s
 			merged.Archive.Snapshot.IntervalMode = value.(string)
 		case "archive-snapshot-interval-seconds":
 			merged.Archive.Snapshot.IntervalSeconds = value.(int)
+		case "retention-incremental":
+			merged.Retention.Incremental.Enabled = value.(bool)
+		case "retention-incremental-hours":
+			merged.Retention.Incremental.Hours = value.(int)
+		case "retention-incremental-days":
+			merged.Retention.Incremental.Days = value.(int)
+		case "retention-incremental-weeks":
+			merged.Retention.Incremental.Weeks = value.(int)
+		case "retention-incremental-months":
+			merged.Retention.Incremental.Months = value.(int)
+		case "retention-incremental-years":
+			merged.Retention.Incremental.Years = value.(int)
+		case "retention-snapshot":
+			merged.Retention.Snapshot.Enabled = value.(bool)
+		case "retention-snapshot-hours":
+			merged.Retention.Snapshot.Hours = value.(int)
+		case "retention-snapshot-days":
+			merged.Retention.Snapshot.Days = value.(int)
+		case "retention-snapshot-weeks":
+			merged.Retention.Snapshot.Weeks = value.(int)
+		case "retention-snapshot-months":
+			merged.Retention.Snapshot.Months = value.(int)
+		case "retention-snapshot-years":
+			merged.Retention.Snapshot.Years = value.(int)
 		case "compression-incremental":
 			merged.Compression.Incremental.Enabled = value.(bool)
 		case "compression-incremental-format":

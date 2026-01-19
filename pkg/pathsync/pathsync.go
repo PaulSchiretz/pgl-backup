@@ -106,7 +106,7 @@ func (s *PathSyncer) Sync(ctx context.Context, absSourcePath, absTargetBasePath 
 	metadata := metafile.MetafileContent{
 		Version:      buildinfo.Version,
 		TimestampUTC: timestampUTC,
-		Mode:         p.ModeIdenifier,
+		Mode:         p.ModeIdentifier,
 		Source:       absSourcePath,
 	}
 	if p.DryRun {

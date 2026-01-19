@@ -157,7 +157,7 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 		},
 		Sync: &pathsync.Plan{
 			Enabled:               syncCfg.Enabled,
-			ModeIdenifier:         mode.String(),
+			ModeIdentifier:        mode.String(),
 			Engine:                syncEngine,
 			ExcludeDirs:           syncExcludeDirs,
 			ExcludeFiles:          syncExcludeFiles,

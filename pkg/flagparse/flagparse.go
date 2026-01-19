@@ -20,37 +20,56 @@ type cliFlags struct {
 	Metrics  *bool
 
 	// Common / Backup / Init
-	Source                               *string
-	Target                               *string
-	FailFast                             *bool
-	SyncEngine                           *string
-	SyncWorkers                          *int
-	MirrorWorkers                        *int
-	DeleteWorkers                        *int
-	CompressWorkers                      *int
-	BufferSizeKB                         *int
+	Source          *string
+	Target          *string
+	FailFast        *bool
+	SyncWorkers     *int
+	MirrorWorkers   *int
+	DeleteWorkers   *int
+	CompressWorkers *int
+	BufferSizeKB    *int
+
+	SyncIncrementalEngine                *string
 	SyncIncrementalRetryCount            *int
 	SyncIncrementalRetryWait             *int
 	SyncIncrementalModTimeWindow         *int
 	SyncIncrementalPreserveSourceDirName *bool
-	SyncSnapshotRetryCount               *int
-	SyncSnapshotRetryWait                *int
-	SyncSnapshotModTimeWindow            *int
-	SyncSnapshotPreserveSourceDirName    *bool
-	UserExcludeFiles                     *string
-	UserExcludeDirs                      *string
-	PreBackupHooks                       *string
-	PostBackupHooks                      *string
-	ArchiveIncrementalEnabled            *bool
-	ArchiveIncrementalIntervalSeconds    *int
-	ArchiveIncrementalIntervalMode       *string
-	ArchiveSnapshotEnabled               *bool
-	ArchiveSnapshotIntervalSeconds       *int
-	ArchiveSnapshotIntervalMode          *string
-	CompressionIncrementalEnabled        *bool
-	CompressionIncrementalFormat         *string
-	CompressionSnapshotEnabled           *bool
-	CompressionSnapshotFormat            *string
+
+	SyncSnapshotEngine                *string
+	SyncSnapshotRetryCount            *int
+	SyncSnapshotRetryWait             *int
+	SyncSnapshotModTimeWindow         *int
+	SyncSnapshotPreserveSourceDirName *bool
+
+	UserExcludeFiles *string
+	UserExcludeDirs  *string
+	PreBackupHooks   *string
+	PostBackupHooks  *string
+
+	ArchiveIncrementalEnabled         *bool
+	ArchiveIncrementalIntervalSeconds *int
+	ArchiveIncrementalIntervalMode    *string
+	ArchiveSnapshotEnabled            *bool
+	ArchiveSnapshotIntervalSeconds    *int
+	ArchiveSnapshotIntervalMode       *string
+
+	CompressionIncrementalEnabled *bool
+	CompressionIncrementalFormat  *string
+	CompressionSnapshotEnabled    *bool
+	CompressionSnapshotFormat     *string
+
+	RetentionIncrementalEnabled *bool
+	RetentionIncrementalHours   *int
+	RetentionIncrementalDays    *int
+	RetentionIncrementalWeeks   *int
+	RetentionIncrementalMonths  *int
+	RetentionIncrementalYears   *int
+	RetentionSnapshotEnabled    *bool
+	RetentionSnapshotHours      *int
+	RetentionSnapshotDays       *int
+	RetentionSnapshotWeeks      *int
+	RetentionSnapshotMonths     *int
+	RetentionSnapshotYears      *int
 
 	// Backup specific
 	Mode *string
@@ -71,30 +90,49 @@ func registerBackupFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.Target = fs.String("target", "", "Base destination directory for backups")
 	f.Mode = fs.String("mode", "incremental", "Backup mode: 'incremental' or 'snapshot'.")
 	f.FailFast = fs.Bool("fail-fast", false, "Stop the backup immediately on the first file sync error.")
-	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
 	f.SyncWorkers = fs.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
 	f.MirrorWorkers = fs.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
 	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
 	f.CompressWorkers = fs.Int("compress-workers", 0, "Number of worker goroutines for compressing backups.")
 	f.BufferSizeKB = fs.Int("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression.")
+
+	f.SyncIncrementalEngine = fs.String("sync-incremental-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
 	f.SyncIncrementalRetryCount = fs.Int("sync-incremental-retry-count", 0, "Number of retries for failed file copies.")
 	f.SyncIncrementalRetryWait = fs.Int("sync-incremental-retry-wait", 0, "Seconds to wait between retries.")
 	f.SyncIncrementalModTimeWindow = fs.Int("sync-incremental-mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
 	f.SyncIncrementalPreserveSourceDirName = fs.Bool("sync-incremental-preserve-source-dir-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
+
+	f.SyncSnapshotEngine = fs.String("sync-snapshot-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
 	f.SyncSnapshotRetryCount = fs.Int("sync-snapshot-retry-count", 0, "Number of retries for failed file copies.")
 	f.SyncSnapshotRetryWait = fs.Int("sync-snapshot-retry-wait", 0, "Seconds to wait between retries.")
 	f.SyncSnapshotModTimeWindow = fs.Int("sync-snapshot-mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
 	f.SyncSnapshotPreserveSourceDirName = fs.Bool("sync-snapshot-preserve-source-dir-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
+
 	f.UserExcludeFiles = fs.String("user-exclude-files", "", "Comma-separated list of case-insensitive file names to exclude (supports glob patterns).")
 	f.UserExcludeDirs = fs.String("user-exclude-dirs", "", "Comma-separated list of case-insensitive directory names to exclude (supports glob patterns).")
 	f.PreBackupHooks = fs.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
 	f.PostBackupHooks = fs.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
+
 	f.ArchiveIncrementalEnabled = fs.Bool("archive-incremental", true, "Enable archiving for incremental backups.")
 	f.ArchiveIncrementalIntervalSeconds = fs.Int("archive-incremental-interval-seconds", 0, "In 'manual' mode, the interval in seconds for creating new incremental archives (e.g., 86400 for 24h).")
 	f.ArchiveIncrementalIntervalMode = fs.String("archive-incremental-interval-mode", "", "Incremental Archive interval mode: 'auto' or 'manual'.")
 	f.ArchiveSnapshotEnabled = fs.Bool("archive-snapshot", true, "Enable archiving for snapshot backups.")
 	f.ArchiveSnapshotIntervalSeconds = fs.Int("archive-snapshot-interval-seconds", 0, "In 'manual' mode, the interval in seconds for creating new snapshot archives (e.g., 86400 for 24h).")
 	f.ArchiveSnapshotIntervalMode = fs.String("archive-snapshot-interval-mode", "", "Snapshot Archive interval mode: 'auto' or 'manual'.")
+
+	f.RetentionIncrementalEnabled = fs.Bool("retention-incremental", true, "Enable retention policy for incremental backups.")
+	f.RetentionIncrementalHours = fs.Int("retention-incremental-hours", 0, "Number of hourly backups to keep (incremental).")
+	f.RetentionIncrementalDays = fs.Int("retention-incremental-days", 0, "Number of daily backups to keep (incremental).")
+	f.RetentionIncrementalWeeks = fs.Int("retention-incremental-weeks", 0, "Number of weekly backups to keep (incremental).")
+	f.RetentionIncrementalMonths = fs.Int("retention-incremental-months", 0, "Number of monthly backups to keep (incremental).")
+	f.RetentionIncrementalYears = fs.Int("retention-incremental-years", 0, "Number of yearly backups to keep (incremental).")
+	f.RetentionSnapshotEnabled = fs.Bool("retention-snapshot", false, "Enable retention policy for snapshot backups.")
+	f.RetentionSnapshotHours = fs.Int("retention-snapshot-hours", -1, "Number of hourly backups to keep (snapshot).")
+	f.RetentionSnapshotDays = fs.Int("retention-snapshot-days", -1, "Number of daily backups to keep (snapshot).")
+	f.RetentionSnapshotWeeks = fs.Int("retention-snapshot-weeks", -1, "Number of weekly backups to keep (snapshot).")
+	f.RetentionSnapshotMonths = fs.Int("retention-snapshot-months", -1, "Number of monthly backups to keep (snapshot).")
+	f.RetentionSnapshotYears = fs.Int("retention-snapshot-years", -1, "Number of yearly backups to keep (snapshot).")
+
 	f.CompressionIncrementalEnabled = fs.Bool("compression-incremental", true, "Enable compression for incremental backups.")
 	f.CompressionIncrementalFormat = fs.String("compression-incremental-format", "", "Compression format for incremental backups: 'zip', 'tar.gz', or 'tar.zst'.")
 	f.CompressionSnapshotEnabled = fs.Bool("compression-snapshot", true, "Enable compression for snapshot backups.")
@@ -109,16 +147,19 @@ func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.Source = fs.String("source", "", "Source directory to copy from")
 	f.Target = fs.String("target", "", "Base destination directory for backups")
 	f.FailFast = fs.Bool("fail-fast", false, "Stop the backup immediately on the first file sync error.")
-	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
 	f.SyncWorkers = fs.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
 	f.MirrorWorkers = fs.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
 	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
 	f.CompressWorkers = fs.Int("compress-workers", 0, "Number of worker goroutines for compressing backups.")
 	f.BufferSizeKB = fs.Int("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression.")
+
+	f.SyncIncrementalEngine = fs.String("sync-incremental-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
 	f.SyncIncrementalRetryCount = fs.Int("sync-incremental-retry-count", 0, "Number of retries for failed file copies.")
 	f.SyncIncrementalRetryWait = fs.Int("sync-incremental-retry-wait", 0, "Seconds to wait between retries.")
 	f.SyncIncrementalModTimeWindow = fs.Int("sync-incremental-mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
 	f.SyncIncrementalPreserveSourceDirName = fs.Bool("sync-incremental-preserve-source-dir-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
+
+	f.SyncSnapshotEngine = fs.String("sync-snapshot-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
 	f.SyncSnapshotRetryCount = fs.Int("sync-snapshot-retry-count", 0, "Number of retries for failed file copies.")
 	f.SyncSnapshotRetryWait = fs.Int("sync-snapshot-retry-wait", 0, "Seconds to wait between retries.")
 	f.SyncSnapshotModTimeWindow = fs.Int("sync-snapshot-mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
@@ -127,12 +168,27 @@ func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.UserExcludeDirs = fs.String("user-exclude-dirs", "", "Comma-separated list of case-insensitive directory names to exclude (supports glob patterns).")
 	f.PreBackupHooks = fs.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
 	f.PostBackupHooks = fs.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
+
 	f.ArchiveIncrementalEnabled = fs.Bool("archive-incremental", true, "Enable archiving for incremental backups.")
 	f.ArchiveIncrementalIntervalSeconds = fs.Int("archive-incremental-interval-seconds", 0, "In 'manual' mode, the interval in seconds for creating new incremental archives (e.g., 86400 for 24h).")
 	f.ArchiveIncrementalIntervalMode = fs.String("archive-incremental-interval-mode", "", "Incremental Archive interval mode: 'auto' or 'manual'.")
 	f.ArchiveSnapshotEnabled = fs.Bool("archive-snapshot", true, "Enable archiving for snapshot backups.")
 	f.ArchiveSnapshotIntervalSeconds = fs.Int("archive-snapshot-interval-seconds", 0, "In 'manual' mode, the interval in seconds for creating new snapshot archives (e.g., 86400 for 24h).")
 	f.ArchiveSnapshotIntervalMode = fs.String("archive-snapshot-interval-mode", "", "Snapshot Archive interval mode: 'auto' or 'manual'.")
+
+	f.RetentionIncrementalEnabled = fs.Bool("retention-incremental", true, "Enable retention policy for incremental backups.")
+	f.RetentionIncrementalHours = fs.Int("retention-incremental-hours", 0, "Number of hourly backups to keep (incremental).")
+	f.RetentionIncrementalDays = fs.Int("retention-incremental-days", 0, "Number of daily backups to keep (incremental).")
+	f.RetentionIncrementalWeeks = fs.Int("retention-incremental-weeks", 0, "Number of weekly backups to keep (incremental).")
+	f.RetentionIncrementalMonths = fs.Int("retention-incremental-months", 0, "Number of monthly backups to keep (incremental).")
+	f.RetentionIncrementalYears = fs.Int("retention-incremental-years", 0, "Number of yearly backups to keep (incremental).")
+	f.RetentionSnapshotEnabled = fs.Bool("retention-snapshot", false, "Enable retention policy for snapshot backups.")
+	f.RetentionSnapshotHours = fs.Int("retention-snapshot-hours", -1, "Number of hourly backups to keep (snapshot).")
+	f.RetentionSnapshotDays = fs.Int("retention-snapshot-days", -1, "Number of daily backups to keep (snapshot).")
+	f.RetentionSnapshotWeeks = fs.Int("retention-snapshot-weeks", -1, "Number of weekly backups to keep (snapshot).")
+	f.RetentionSnapshotMonths = fs.Int("retention-snapshot-months", -1, "Number of monthly backups to keep (snapshot).")
+	f.RetentionSnapshotYears = fs.Int("retention-snapshot-years", -1, "Number of yearly backups to keep (snapshot).")
+
 	f.CompressionIncrementalEnabled = fs.Bool("compression-incremental", true, "Enable compression for incremental backups.")
 	f.CompressionIncrementalFormat = fs.String("compression-incremental-format", "", "Compression format for incremental backups: 'zip', 'tar.gz', or 'tar.zst'.")
 	f.CompressionSnapshotEnabled = fs.Bool("compression-snapshot", true, "Enable compression for snapshot backups.")
@@ -240,7 +296,6 @@ func flagsToMap(c Command, fs *flag.FlagSet, f *cliFlags) (map[string]interface{
 	addIfUsed(flagMap, usedFlags, "metrics", f.Metrics)
 
 	addIfUsed(flagMap, usedFlags, "mode", f.Mode)
-	addIfUsed(flagMap, usedFlags, "sync-engine", f.SyncEngine)
 	addIfUsed(flagMap, usedFlags, "metrics", f.Metrics)
 
 	addIfUsed(flagMap, usedFlags, "source", f.Source)
@@ -252,11 +307,13 @@ func flagsToMap(c Command, fs *flag.FlagSet, f *cliFlags) (map[string]interface{
 	addIfUsed(flagMap, usedFlags, "compress-workers", f.CompressWorkers)
 	addIfUsed(flagMap, usedFlags, "buffer-size-kb", f.BufferSizeKB)
 
+	addIfUsed(flagMap, usedFlags, "sync-incremental-engine", f.SyncIncrementalEngine)
 	addIfUsed(flagMap, usedFlags, "sync-incremental-retry-count", f.SyncIncrementalRetryCount)
 	addIfUsed(flagMap, usedFlags, "sync-incremental-retry-wait", f.SyncIncrementalRetryWait)
 	addIfUsed(flagMap, usedFlags, "sync-incremental-mod-time-window", f.SyncIncrementalModTimeWindow)
 	addIfUsed(flagMap, usedFlags, "sync-incremental-preserve-source-dir-name", f.SyncIncrementalPreserveSourceDirName)
 
+	addIfUsed(flagMap, usedFlags, "sync-snapshot-engine", f.SyncSnapshotEngine)
 	addIfUsed(flagMap, usedFlags, "sync-snapshot-retry-count", f.SyncSnapshotRetryCount)
 	addIfUsed(flagMap, usedFlags, "sync-snapshot-retry-wait", f.SyncSnapshotRetryWait)
 	addIfUsed(flagMap, usedFlags, "sync-snapshot-mod-time-window", f.SyncSnapshotModTimeWindow)
@@ -273,6 +330,19 @@ func flagsToMap(c Command, fs *flag.FlagSet, f *cliFlags) (map[string]interface{
 	addIfUsed(flagMap, usedFlags, "compression-incremental-format", f.CompressionIncrementalFormat)
 	addIfUsed(flagMap, usedFlags, "compression-snapshot", f.CompressionSnapshotEnabled)
 	addIfUsed(flagMap, usedFlags, "compression-snapshot-format", f.CompressionSnapshotFormat)
+
+	addIfUsed(flagMap, usedFlags, "retention-incremental", f.RetentionIncrementalEnabled)
+	addIfUsed(flagMap, usedFlags, "retention-incremental-hours", f.RetentionIncrementalHours)
+	addIfUsed(flagMap, usedFlags, "retention-incremental-days", f.RetentionIncrementalDays)
+	addIfUsed(flagMap, usedFlags, "retention-incremental-weeks", f.RetentionIncrementalWeeks)
+	addIfUsed(flagMap, usedFlags, "retention-incremental-months", f.RetentionIncrementalMonths)
+	addIfUsed(flagMap, usedFlags, "retention-incremental-years", f.RetentionIncrementalYears)
+	addIfUsed(flagMap, usedFlags, "retention-snapshot", f.RetentionSnapshotEnabled)
+	addIfUsed(flagMap, usedFlags, "retention-snapshot-hours", f.RetentionSnapshotHours)
+	addIfUsed(flagMap, usedFlags, "retention-snapshot-days", f.RetentionSnapshotDays)
+	addIfUsed(flagMap, usedFlags, "retention-snapshot-weeks", f.RetentionSnapshotWeeks)
+	addIfUsed(flagMap, usedFlags, "retention-snapshot-months", f.RetentionSnapshotMonths)
+	addIfUsed(flagMap, usedFlags, "retention-snapshot-years", f.RetentionSnapshotYears)
 
 	addIfUsed(flagMap, usedFlags, "force", f.Force)
 	addIfUsed(flagMap, usedFlags, "default", f.Default)

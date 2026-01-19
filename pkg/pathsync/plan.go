@@ -8,7 +8,7 @@ import (
 
 type Plan struct {
 	Enabled               bool
-	ModeIdenifier         string
+	ModeIdentifier        string
 	Engine                Engine
 	PreserveSourceDirName bool
 
