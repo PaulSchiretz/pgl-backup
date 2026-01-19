@@ -292,7 +292,7 @@ func Load(targetBase string) (Config, error) {
 	plog.Info("Loading configuration", "path", configPath)
 	// Start with default values, then overwrite with the file's content.
 	// This makes the config loading resilient to missing fields in the JSON file.
-	// NOTE: if config.Version differes from appVersion we can add a migration step here.
+	// NOTE: if config.Version differs from appVersion we can add a migration step here.
 	config := NewDefault()
 	decoder := json.NewDecoder(file)
 	if err := decoder.Decode(&config); err != nil {

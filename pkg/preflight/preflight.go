@@ -29,11 +29,13 @@ func NewValidator() *Validator {
 // It's an orchestrator function that calls other checks in a specific order.
 func (v *Validator) Run(ctx context.Context, absSourcePath, absTargetBasePath string, p *Plan, timestampUTC time.Time) error {
 
+	// 1. Check target accessibility.
 	if p.TargetAccessible {
 		if err := checkBackupTargetAccessible(absTargetBasePath); err != nil {
 			return fmt.Errorf("target path accessibility check failed: %w", err)
 		}
 	}
+	// 2. Check source accessibility.
 	if p.SourceAccessible {
 		if err := checkBackupSourceAccessible(absSourcePath); err != nil {
 			return fmt.Errorf("source path validation failed: %w", err)

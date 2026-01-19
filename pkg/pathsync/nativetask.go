@@ -181,6 +181,7 @@ func (t *nativeTask) copyFileHelper(absSrcPath, absTrgPath string, task *syncTas
 		}
 
 		lastErr = func() (err error) {
+			// 1. Open source file.
 			in, err := os.Open(absSrcPath)
 			if err != nil {
 				return fmt.Errorf("failed to open source file %s: %w", absSrcPath, err)
@@ -680,7 +681,7 @@ func (t *nativeTask) ensureParentDirectoryExists(relPathKey string) error {
 	}
 	dirInfo := val.(compactPathInfo)
 
-	// 2. Create a synthetic directory task for the parent.
+	// 3. Create a synthetic directory task for the parent.
 	parentTask := syncTask{
 		RelPathKey: relPathKey, // The relative path key of the parent directory
 		PathInfo:   dirInfo,    // The cached PathInfo for the parent directory
@@ -754,7 +755,7 @@ func (t *nativeTask) syncTaskProducer() {
 		// to prevent it from being deleted during the mirror phase.
 		t.discoveredPaths.Store(relPathKey)
 
-		// 3. Get Info for worker
+		// Get Info for worker
 		// WalkDir gives us a DirEntry. We need the FileInfo for timestamps/sizes later.
 		// Doing it here saves the worker from doing an Lstat.
 		info, err := d.Info()
@@ -921,7 +922,7 @@ func (t *nativeTask) handleSync() error {
 		go t.syncWorker()
 	}
 
-	// 3. Start the syncTaskProducer (Producer)
+	// 2. Start the syncTaskProducer (Producer)
 	// This goroutine walks the file tree and feeds paths into 'syncTasks'.
 	go t.syncTaskProducer()
 

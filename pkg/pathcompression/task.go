@@ -191,7 +191,7 @@ func (t *task) createArchive(sourceDir string) (tempPath string, err error) {
 	}
 	tempPath = tempFile.Name()
 
-	// 1. Get a Buffer from the pool (The "Middleman")
+	// 2. Get a Buffer from the pool (The "Middleman")
 	// This sits between the compressor and the disk to reduce syscalls.
 	// We reuse buffers to reduce GC pressure.
 	bufWriter := t.ioWriterPool.Get().(*bufio.Writer)
@@ -201,7 +201,7 @@ func (t *task) createArchive(sourceDir string) (tempPath string, err error) {
 		t.ioWriterPool.Put(bufWriter)
 	}()
 
-	// 2. Set up the appropriate archive writer based on the format.
+	// 3. Set up the appropriate archive writer based on the format.
 	var archiver archiveWriter
 	switch t.format {
 	case Zip:
