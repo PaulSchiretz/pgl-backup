@@ -687,7 +687,7 @@ func (t *nativeTask) ensureParentDirectoryExists(relPathKey string) error {
 		PathInfo:   dirInfo,    // The cached PathInfo for the parent directory
 	}
 
-	// 3. Perform the I/O using the main directory handler.
+	// 4. Perform the I/O using the main directory handler.
 	// If this fails, the file copy cannot proceed.
 	return t.processDirectorySync(&parentTask)
 }
