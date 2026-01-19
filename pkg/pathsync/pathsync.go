@@ -2,6 +2,7 @@ package pathsync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,8 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/sharded"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
+
+var ErrDisabled = errors.New("sync is disabled")
 
 // PathSyncer orchestrates the file synchronization process.
 type PathSyncer struct {
@@ -56,6 +59,11 @@ func NewPathSyncer(bufferSizeKB int, numSyncWorkers int, numMirrorWorkers int) *
 
 // Sync is the main entry point for synchronization. It dispatches to the configured sync engine.
 func (s *PathSyncer) Sync(ctx context.Context, absSourcePath, absTargetBasePath string, relCurrentPathKey, relContentPathKey string, p *Plan, timestampUTC time.Time) error {
+
+	if !p.Enabled {
+		plog.Debug("Sync is disabled, skipping Sync")
+		return ErrDisabled
+	}
 
 	// Check for cancellation after validation but before starting the heavy work.
 	select {

@@ -21,15 +21,18 @@ func TestArchive(t *testing.T) {
 
 	tests := []struct {
 		name            string
+		disabled        bool
 		intervalMode    patharchive.IntervalMode
 		intervalSeconds int
 		constraints     patharchive.IntervalModeConstraints
 		lastBackupAge   time.Duration
 		dryRun          bool
 		setupConflict   bool // If true, create the destination directory beforehand
+		setupEmptyPath  bool // If true, force the source path to be empty
 		expectError     error
 		expectErrorStr  string
 		expectArchived  bool // True if file system change is expected
+		verify          func(t *testing.T, plan *patharchive.Plan)
 	}{
 		{
 			name:            "Manual - 24h Interval - 25h Passed (Should Archive)",
@@ -37,6 +40,12 @@ func TestArchive(t *testing.T) {
 			intervalSeconds: 86400,
 			lastBackupAge:   25 * time.Hour,
 			expectArchived:  true,
+			verify: func(t *testing.T, plan *patharchive.Plan) {
+				expectedPrefix := "archive/backup_"
+				if !strings.HasPrefix(plan.ResultInfo.RelPathKey, expectedPrefix) {
+					t.Errorf("ResultInfo path mismatch. Want prefix %q, got %q", expectedPrefix, plan.ResultInfo.RelPathKey)
+				}
+			},
 		},
 		{
 			name:            "Manual - 24h Interval - 1h Passed (Should NOT Archive)",
@@ -52,6 +61,12 @@ func TestArchive(t *testing.T) {
 			constraints:    patharchive.IntervalModeConstraints{Hours: 1},
 			lastBackupAge:  2 * time.Hour,
 			expectArchived: true,
+			verify: func(t *testing.T, plan *patharchive.Plan) {
+				expectedPrefix := "archive/backup_"
+				if !strings.HasPrefix(plan.ResultInfo.RelPathKey, expectedPrefix) {
+					t.Errorf("ResultInfo path mismatch. Want prefix %q, got %q", expectedPrefix, plan.ResultInfo.RelPathKey)
+				}
+			},
 		},
 		{
 			name:           "Auto - Daily Retention - 1h Passed (Should NOT Archive)",
@@ -68,6 +83,40 @@ func TestArchive(t *testing.T) {
 			lastBackupAge:   25 * time.Hour,
 			dryRun:          true,
 			expectArchived:  false, // FS should not change
+		},
+		{
+			name:            "Disabled - Should NOT Archive even if interval passed",
+			disabled:        true,
+			intervalMode:    patharchive.Manual,
+			intervalSeconds: 86400,
+			lastBackupAge:   25 * time.Hour,
+			expectArchived:  false,
+			expectError:     patharchive.ErrDisabled,
+		},
+		{
+			name:            "Dry Run - Verify ResultInfo Populated",
+			intervalMode:    patharchive.Manual,
+			intervalSeconds: 86400,
+			lastBackupAge:   25 * time.Hour,
+			dryRun:          true,
+			expectArchived:  false,
+			verify: func(t *testing.T, plan *patharchive.Plan) {
+				expectedPrefix := "archive/backup_"
+				if !strings.HasPrefix(plan.ResultInfo.RelPathKey, expectedPrefix) {
+					t.Errorf("Dry Run ResultInfo path mismatch. Want prefix %q, got %q", expectedPrefix, plan.ResultInfo.RelPathKey)
+				}
+			},
+		},
+		{
+			name:            "Invalid Input - Empty Path",
+			intervalMode:    patharchive.Manual,
+			intervalSeconds: 86400,
+			lastBackupAge:   25 * time.Hour,
+			setupEmptyPath:  true,
+			expectError:     patharchive.ErrNothingToArchive,
+			verify: func(t *testing.T, plan *patharchive.Plan) {
+				// No result info should be set
+			},
 		},
 		{
 			name:            "Destination Conflict (Should Error)",
@@ -107,6 +156,10 @@ func TestArchive(t *testing.T) {
 				RelPathKey: relCurrent,
 				Metadata:   meta,
 			}
+			// Override for invalid input test
+			if tc.setupEmptyPath {
+				toArchive.RelPathKey = ""
+			}
 
 			// Setup Conflict if needed
 			if tc.setupConflict {
@@ -121,7 +174,7 @@ func TestArchive(t *testing.T) {
 			// 2. Create Archiver and Plan
 			archiver := patharchive.NewPathArchiver()
 			plan := &patharchive.Plan{
-				Enabled:         true,
+				Enabled:         !tc.disabled,
 				IntervalMode:    tc.intervalMode,
 				IntervalSeconds: tc.intervalSeconds,
 				Constraints:     tc.constraints,
@@ -144,7 +197,7 @@ func TestArchive(t *testing.T) {
 			} else if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			} else {
-				if plan.ResultInfo.RelPathKey == "" {
+				if !tc.disabled && plan.ResultInfo.RelPathKey == "" {
 					t.Error("expected plan.ResultInfo to be set, but it was empty")
 				}
 			}
@@ -167,6 +220,10 @@ func TestArchive(t *testing.T) {
 				if !currentExists {
 					t.Error("expected 'current' directory to remain, but it is gone")
 				}
+			}
+
+			if tc.verify != nil {
+				tc.verify(t, plan)
 			}
 		})
 	}

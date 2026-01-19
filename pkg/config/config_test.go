@@ -229,6 +229,15 @@ func TestConfig_Validate(t *testing.T) {
 			errContains: "retention.snapshot is enabled but contains negative values",
 		},
 		{
+			name: "Snapshot Retention Disabled with Negative Values (Should Pass)",
+			modify: func(c *Config) {
+				c.Retention.Snapshot.Enabled = false
+				c.Retention.Snapshot.Hours = -1
+			},
+			checkSource: false,
+			wantErr:     false,
+		},
+		{
 			name: "Snapshot Retention Enabled with Zero Values (Explicit Keep None)",
 			modify: func(c *Config) {
 				c.Retention.Snapshot.Enabled = true

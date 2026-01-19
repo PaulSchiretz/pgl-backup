@@ -22,6 +22,7 @@ package pathcompression
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"sync"
 	"time"
@@ -30,6 +31,9 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompressionmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
+
+var ErrDisabled = errors.New("compression is disabled")
+var ErrNothingToCompress = errors.New("nothing to compress")
 
 type PathCompressor struct {
 	ioWriterPool *sync.Pool
@@ -59,6 +63,11 @@ func NewPathCompressor(bufferSizeKB int, numWorkers int) *PathCompressor {
 // Compress processes the specific list of paths provided by the engine.
 func (c *PathCompressor) Compress(ctx context.Context, absTargetBasePath, relContentPathKey string, toCompress []metafile.MetafileInfo, p *Plan, timestampUTC time.Time) error {
 
+	if !p.Enabled {
+		plog.Debug("Compression is disabled, skipping compress")
+		return ErrDisabled
+	}
+
 	// Check for cancellation
 	select {
 	case <-ctx.Done():
@@ -67,12 +76,7 @@ func (c *PathCompressor) Compress(ctx context.Context, absTargetBasePath, relCon
 	}
 
 	if len(toCompress) == 0 {
-		if p.DryRun {
-			plog.Debug("[DRY RUN] No backups need compressing")
-		} else {
-			plog.Debug("No backups need compressing")
-		}
-		return nil
+		return ErrNothingToCompress
 	}
 
 	var m pathcompressionmetrics.Metrics

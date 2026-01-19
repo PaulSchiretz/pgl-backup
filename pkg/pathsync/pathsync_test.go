@@ -16,7 +16,8 @@ func TestSync_Dispatch(t *testing.T) {
 		dstDir := t.TempDir()
 
 		plan := &Plan{
-			Engine: Engine(99),
+			Enabled: true,
+			Engine:  Engine(99),
 		}
 
 		syncer := NewPathSyncer(256, 1, 1)
@@ -62,7 +63,8 @@ func TestSync_Dispatch(t *testing.T) {
 		}
 
 		plan := &Plan{
-			Engine: Native,
+			Enabled: true,
+			Engine:  Native,
 		}
 
 		syncer := NewPathSyncer(256, 1, 1)
@@ -76,7 +78,7 @@ func TestSync_Dispatch(t *testing.T) {
 		}
 
 		if plan.ResultInfo.RelPathKey != relCurrent {
-			t.Errorf("expected ResultInfo.RelPathKey to be %q, got %q", relContent, plan.ResultInfo.RelPathKey)
+			t.Errorf("expected ResultInfo.RelPathKey to be %q, got %q", relCurrent, plan.ResultInfo.RelPathKey)
 		}
 		if !plan.ResultInfo.Metadata.TimestampUTC.Equal(timestamp) {
 			t.Errorf("expected ResultInfo.Metadata.TimestampUTC to be %v, got %v", timestamp, plan.ResultInfo.Metadata.TimestampUTC)

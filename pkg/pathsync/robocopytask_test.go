@@ -104,7 +104,8 @@ func TestRobocopySync_Integration(t *testing.T) {
 		syncer := NewPathSyncer(256, 1, 1)
 
 		plan := &Plan{
-			Engine: Robocopy,
+			Enabled: true,
+			Engine:  Robocopy,
 		}
 
 		// Act

@@ -193,6 +193,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 	// --- Test Cases ---
 	testCases := []struct {
 		name                    string
+		disabled                bool
 		preserveSourceDirName   bool
 		mirror                  bool
 		dryRun                  bool
@@ -464,6 +465,21 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
+			name:                  "Exclude Files Case Insensitive",
+			mirror:                true,
+			preserveSourceDirName: false,
+			excludeFiles:          []string{"*.JPG"},
+			srcFiles: []testFile{
+				{path: "keep.png", content: "data", modTime: baseTime},
+				{path: "ignore.jpg", content: "data", modTime: baseTime},
+				{path: "IGNORE.JPG", content: "data", modTime: baseTime},
+			},
+			expectedDstFiles: map[string]testFile{
+				"keep.png": {path: "keep.png", content: "data", modTime: baseTime},
+			},
+			expectedMissingDstFiles: []string{"ignore.jpg", "IGNORE.JPG"},
+		},
+		{
 			name:                  "Case-Sensitive Mirror - Deletes Mismatched Case",
 			mirror:                true,
 			preserveSourceDirName: false,
@@ -710,6 +726,17 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				entriesProcessed: 0,
 			},
 		},
+		{
+			name:                  "Disabled Sync - Safety Check",
+			disabled:              true,
+			mirror:                false,
+			preserveSourceDirName: false,
+			srcFiles: []testFile{
+				{path: "file1.txt", content: "hello", modTime: baseTime},
+			},
+			expectedMissingDstFiles: []string{"file1.txt"},
+			expectedErrorContains:   "sync is disabled",
+		},
 	}
 
 	for _, tc := range testCases {
@@ -737,7 +764,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			runner.setup()
 
 			plan := &Plan{
-				Enabled:               true,
+				Enabled:               !tc.disabled,
 				Engine:                Native,
 				PreserveSourceDirName: tc.preserveSourceDirName,
 				RetryCount:            3,
@@ -770,9 +797,12 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 
 			// HACK: To inspect the metrics instance, we need to get the last run from the syncer.
 			// This is a test-only pattern.
-			lastRunMetrics := syncer.lastNativeTask.metrics
-			if syncer.lastNativeTask == nil {
-				t.Fatal("syncer.lastNativeTask was nil, cannot inspect test state")
+			var lastRunMetrics pathsyncmetrics.Metrics
+			if !tc.disabled {
+				if syncer.lastNativeTask == nil {
+					t.Fatal("syncer.lastNativeTask was nil, cannot inspect test state")
+				}
+				lastRunMetrics = syncer.lastNativeTask.metrics
 			}
 
 			// Assert

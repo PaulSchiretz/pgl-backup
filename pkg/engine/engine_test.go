@@ -214,6 +214,19 @@ func TestExecuteBackup(t *testing.T) {
 			expectError: false, // Should continue
 		},
 		{
+			name:           "Archive Nothing To Archive (Ignored)",
+			mode:           planner.Incremental,
+			archiveEnabled: true,
+			archiveErr:     patharchive.ErrNothingToArchive,
+			setupFS: func(t *testing.T, targetDir string) {
+				// Create 'current' backup so fetchBackup succeeds
+				currentPath := filepath.Join(targetDir, relCurrent)
+				os.MkdirAll(currentPath, 0755)
+				metafile.Write(currentPath, metafile.MetafileContent{})
+			},
+			expectError: false,
+		},
+		{
 			name:             "Retention Failure (FailFast=True)",
 			mode:             planner.Incremental,
 			retentionEnabled: true,
@@ -246,6 +259,20 @@ func TestExecuteBackup(t *testing.T) {
 			failFast:           false,
 			compressErr:        errors.New("compression failed"),
 			expectError:        false, // Should continue
+		},
+		{
+			name:             "Retention Nothing To Prune (Ignored)",
+			mode:             planner.Incremental,
+			retentionEnabled: true,
+			retentionErr:     pathretention.ErrNothingToPrune,
+			expectError:      false,
+		},
+		{
+			name:               "Compression Nothing To Compress (Ignored)",
+			mode:               planner.Incremental,
+			compressionEnabled: true,
+			compressErr:        pathcompression.ErrNothingToCompress,
+			expectError:        false,
 		},
 		{
 			name:            "Hooks Execution Success",
@@ -484,6 +511,9 @@ func TestExecutePrune(t *testing.T) {
 		preflightErr error
 		retentionErr error
 
+		// Filesystem setup
+		setupFS func(t *testing.T, targetDir string)
+
 		// Expectations
 		expectError   bool
 		errorContains string
@@ -507,15 +537,25 @@ func TestExecutePrune(t *testing.T) {
 			expectError:         true,
 			errorContains:       "fatal error during prune",
 		},
+		{
+			name:                "Retention Nothing To Prune (Ignored)",
+			retentionIncEnabled: true,
+			retentionErr:        pathretention.ErrNothingToPrune,
+			expectError:         false,
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			targetDir := t.TempDir()
 
-			// Ensure archive directories exist for fetchBackups
-			os.MkdirAll(filepath.Join(targetDir, relArchiveInc), 0755)
-			os.MkdirAll(filepath.Join(targetDir, relArchiveSnap), 0755)
+			if tc.setupFS != nil {
+				tc.setupFS(t, targetDir)
+			} else {
+				// Ensure archive directories exist for fetchBackups
+				os.MkdirAll(filepath.Join(targetDir, relArchiveInc), 0755)
+				os.MkdirAll(filepath.Join(targetDir, relArchiveSnap), 0755)
+			}
 
 			plan := &planner.PrunePlan{
 				Preflight: &preflight.Plan{},

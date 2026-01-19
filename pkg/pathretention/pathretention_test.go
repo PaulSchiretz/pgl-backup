@@ -2,6 +2,7 @@ package pathretention_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,6 +22,7 @@ func TestPrune(t *testing.T) {
 		setupBackups  func(t *testing.T, baseDir string) []metafile.MetafileInfo
 		expectDeleted []string
 		expectKept    []string
+		expectError   error
 	}{
 		{
 			name: "Keep 1 Hourly - Deletes Older",
@@ -105,6 +107,83 @@ func TestPrune(t *testing.T) {
 			expectKept:    []string{"b_hour", "b_day", "b_week"},
 			expectDeleted: []string{"b_old"},
 		},
+		{
+			name: "Unsorted Input - Sorts Correctly",
+			plan: pathretention.Plan{
+				Enabled: true,
+				Hours:   1,
+			},
+			setupBackups: func(t *testing.T, baseDir string) []metafile.MetafileInfo {
+				// Pass in Oldest first. Logic should sort Newest first internally.
+				return []metafile.MetafileInfo{
+					createTestBackup(t, baseDir, "older", now.Add(-2*time.Hour)),
+					createTestBackup(t, baseDir, "newest", now.Add(-10*time.Minute)),
+				}
+			},
+			expectKept:    []string{"newest"},
+			expectDeleted: []string{"older"},
+		},
+		{
+			name: "Delete All - Zero Retention",
+			plan: pathretention.Plan{
+				Enabled: true,
+				Hours:   0,
+				Days:    0,
+				Weeks:   0,
+				Months:  0,
+				Years:   0,
+			},
+			setupBackups: func(t *testing.T, baseDir string) []metafile.MetafileInfo {
+				return []metafile.MetafileInfo{
+					createTestBackup(t, baseDir, "b1", now),
+					createTestBackup(t, baseDir, "b2", now.Add(-1*time.Hour)),
+				}
+			},
+			expectKept:    []string{},
+			expectDeleted: []string{"b1", "b2"},
+		},
+		{
+			name: "Long Term - Monthly and Yearly",
+			plan: pathretention.Plan{
+				Enabled: true,
+				Months:  1,
+				Years:   1,
+			},
+			setupBackups: func(t *testing.T, baseDir string) []metafile.MetafileInfo {
+				return []metafile.MetafileInfo{
+					createTestBackup(t, baseDir, "this_month", now),                  // Fits Monthly (Oct 2023)
+					createTestBackup(t, baseDir, "last_year", now.AddDate(-1, 0, 0)), // Fits Yearly (Oct 2022)
+					createTestBackup(t, baseDir, "old_year", now.AddDate(-2, 0, 0)),  // Fits nothing (Oct 2021)
+				}
+			},
+			expectKept:    []string{"this_month", "last_year"},
+			expectDeleted: []string{"old_year"},
+		},
+		{
+			name: "Disabled Retention - Safety Check",
+			plan: pathretention.Plan{
+				Enabled: false,
+				Hours:   0, // Even with 0 retention, nothing should be deleted if disabled
+			},
+			setupBackups: func(t *testing.T, baseDir string) []metafile.MetafileInfo {
+				return []metafile.MetafileInfo{
+					createTestBackup(t, baseDir, "b1", now),
+					createTestBackup(t, baseDir, "b2", now.Add(-1*time.Hour)),
+				}
+			},
+			expectKept:    []string{"b1", "b2"},
+			expectDeleted: []string{},
+			expectError:   pathretention.ErrDisabled,
+		},
+		{
+			name: "Empty Input - Returns Specific Error",
+			plan: pathretention.Plan{Enabled: true},
+			setupBackups: func(t *testing.T, baseDir string) []metafile.MetafileInfo {
+				return []metafile.MetafileInfo{}
+			},
+			expectKept:  []string{},
+			expectError: pathretention.ErrNothingToPrune,
+		},
 	}
 
 	for _, tc := range tests {
@@ -115,8 +194,14 @@ func TestPrune(t *testing.T) {
 			retainer := pathretention.NewPathRetainer(2) // 2 workers
 
 			err := retainer.Prune(context.Background(), targetBase, toPrune, &tc.plan, now)
-			if err != nil {
-				t.Fatalf("Prune failed: %v", err)
+			if tc.expectError != nil {
+				if !errors.Is(err, tc.expectError) {
+					t.Errorf("Expected error %v, got %v", tc.expectError, err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("Prune failed: %v", err)
+				}
 			}
 
 			// Verify Kept

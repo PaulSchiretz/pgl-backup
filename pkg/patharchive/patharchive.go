@@ -48,6 +48,7 @@ import (
 )
 
 var ErrNothingToArchive = errors.New("nothing to archive")
+var ErrDisabled = errors.New("archiving is disabled")
 
 type PathArchiver struct{}
 
@@ -60,6 +61,15 @@ func NewPathArchiver() *PathArchiver {
 // If it has, it renames the current backup directory to a permanent, timestamped archive directory. It also
 // prepares the archive interval before checking. It is now responsible for reading its own metadata.
 func (a *PathArchiver) Archive(ctx context.Context, absTargetBasePath, relArchivePathKey, backupDirPrefix string, toArchive metafile.MetafileInfo, p *Plan, timestampUTC time.Time) error {
+
+	if !p.Enabled {
+		plog.Debug("Archive is disabled, skipping archiving")
+		return ErrDisabled
+	}
+
+	if toArchive.RelPathKey == "" {
+		return ErrNothingToArchive
+	}
 
 	// Check for cancellation
 	select {

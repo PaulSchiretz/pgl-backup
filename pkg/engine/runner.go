@@ -12,6 +12,9 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/lockfile"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/patharchive"
+	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
+	"github.com/paulschiretz/pgl-backup/pkg/pathretention"
+	"github.com/paulschiretz/pgl-backup/pkg/pathsync"
 	"github.com/paulschiretz/pgl-backup/pkg/planner"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
@@ -110,7 +113,9 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absSourcePath, absTargetBase
 			}
 		} else {
 			if err := r.archiver.Archive(ctx, absTargetBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupDirPrefix, toArchive, p.Archive, timestampUTC); err != nil {
-				if err != patharchive.ErrNothingToArchive {
+				if errors.Is(err, patharchive.ErrDisabled) {
+					plog.Debug("Archiving disabled, skipping")
+				} else if !errors.Is(err, patharchive.ErrNothingToArchive) {
 					if p.FailFast {
 						return fmt.Errorf("Error during archive: %w", err)
 					}
@@ -123,7 +128,11 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absSourcePath, absTargetBase
 	// Perform the backup
 	if p.Sync.Enabled {
 		if err := r.syncer.Sync(ctx, absSourcePath, absTargetBasePath, p.Paths.RelCurrentPathKey, p.Paths.RelContentPathKey, p.Sync, timestampUTC); err != nil {
-			return fmt.Errorf("error during sync: %w", err)
+			if errors.Is(err, pathsync.ErrDisabled) {
+				plog.Debug("Sync disabled, skipping")
+			} else {
+				return fmt.Errorf("error during sync: %w", err)
+			}
 		}
 	}
 
@@ -131,16 +140,24 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absSourcePath, absTargetBase
 	if p.Archive.Enabled && p.Mode == planner.Snapshot {
 		toArchive := p.Sync.ResultInfo
 		if toArchive.RelPathKey == "" {
-			return fmt.Errorf("Error no snapshot syncResult to archive")
-		}
-		if err := r.archiver.Archive(ctx, absTargetBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupDirPrefix, toArchive, p.Archive, timestampUTC); err != nil {
-			return fmt.Errorf("Error during archive: %w", err)
+			if !p.Sync.Enabled {
+				plog.Debug("Skipping snapshot archive because sync was disabled")
+			} else {
+				return fmt.Errorf("Error no snapshot syncResult to archive")
+			}
+		} else {
+			if err := r.archiver.Archive(ctx, absTargetBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupDirPrefix, toArchive, p.Archive, timestampUTC); err != nil {
+				if errors.Is(err, patharchive.ErrDisabled) {
+					plog.Debug("Archiving disabled, skipping")
+				} else {
+					return fmt.Errorf("Error during archive: %w", err)
+				}
+			}
 		}
 	}
 
 	// Clean up outdated backups
 	if p.Retention.Enabled {
-
 		// Add our just created sync/archive relPathKey to the exclusion list for retention so they are never pruned
 		// NOTE: This is needed in case our retention is enabled but 0,0,0,0,0 and we just created a snapshot.(otherwise we would imetialy remove it again)
 		var relPathExclusionKeys []string
@@ -160,10 +177,16 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absSourcePath, absTargetBase
 			plog.Warn("Error reading backups for prune, skipping", "error", err)
 		}
 		if err := r.retainer.Prune(ctx, absTargetBasePath, toRetent, p.Retention, timestampUTC); err != nil {
-			if p.FailFast {
-				return fmt.Errorf("Error during prune: %w", err)
+			if errors.Is(err, pathretention.ErrDisabled) {
+				plog.Debug("Retention disabled, skipping")
+			} else if errors.Is(err, pathretention.ErrNothingToPrune) {
+				plog.Debug("No backups found for retention")
+			} else {
+				if p.FailFast {
+					return fmt.Errorf("Error during prune: %w", err)
+				}
+				plog.Warn("Error during prune, skipping prune", "error", err)
 			}
-			plog.Warn("Error during prune, skipping prune", "error", err)
 		}
 	}
 
@@ -175,10 +198,16 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absSourcePath, absTargetBase
 		}
 
 		if err := r.compressor.Compress(ctx, absTargetBasePath, p.Paths.RelContentPathKey, toCompress, p.Compression, timestampUTC); err != nil {
-			if p.FailFast {
-				return fmt.Errorf("Error during compress: %w", err)
+			if errors.Is(err, pathcompression.ErrDisabled) {
+				plog.Debug("Compression disabled, skipping")
+			} else if errors.Is(err, pathcompression.ErrNothingToCompress) {
+				plog.Debug("No backups need compressing")
+			} else {
+				if p.FailFast {
+					return fmt.Errorf("Error during compress: %w", err)
+				}
+				plog.Warn("Error during compress, skipping compress", "error", err)
 			}
-			plog.Warn("Error during compress, skipping compress", "error", err)
 		}
 	}
 	plog.Info("Backup completed")
@@ -220,7 +249,13 @@ func (r *Runner) ExecutePrune(ctx context.Context, absTargetBasePath string, p *
 			return fmt.Errorf("fatal error during prune incremental: %w", err)
 		}
 		if err := r.retainer.Prune(ctx, absTargetBasePath, toRetent, p.RetentionIncremental, timestampUTC); err != nil {
-			return fmt.Errorf("fatal error during prune incremental: %w", err)
+			if errors.Is(err, pathretention.ErrDisabled) {
+				plog.Debug("Incremental retention disabled, skipping")
+			} else if errors.Is(err, pathretention.ErrNothingToPrune) {
+				plog.Debug("No incremental backups found for retention")
+			} else {
+				return fmt.Errorf("fatal error during prune incremental: %w", err)
+			}
 		}
 	}
 
@@ -230,7 +265,13 @@ func (r *Runner) ExecutePrune(ctx context.Context, absTargetBasePath string, p *
 			return fmt.Errorf("fatal error during prune snapshot: %w", err)
 		}
 		if err := r.retainer.Prune(ctx, absTargetBasePath, toRetent, p.RetentionSnapshot, timestampUTC); err != nil {
-			return fmt.Errorf("fatal error during prune snapshot: %w", err)
+			if errors.Is(err, pathretention.ErrDisabled) {
+				plog.Debug("Snapshot retention disabled, skipping")
+			} else if errors.Is(err, pathretention.ErrNothingToPrune) {
+				plog.Debug("No snapshot backups found for retention")
+			} else {
+				return fmt.Errorf("fatal error during prune snapshot: %w", err)
+			}
 		}
 	}
 	plog.Info("Prune completed")

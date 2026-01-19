@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"compress/gzip"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -25,7 +26,7 @@ func TestCompress(t *testing.T) {
 		name        string
 		plan        pathcompression.Plan
 		setup       func(t *testing.T, targetBase string) []metafile.MetafileInfo
-		expectError bool
+		expectError error
 		validate    func(t *testing.T, targetBase string, backups []metafile.MetafileInfo)
 	}{
 		{
@@ -123,8 +124,9 @@ func TestCompress(t *testing.T) {
 			},
 		},
 		{
-			name: "Empty List",
-			plan: pathcompression.Plan{Enabled: true, Format: pathcompression.Zip},
+			name:        "Empty List",
+			plan:        pathcompression.Plan{Enabled: true, Format: pathcompression.Zip},
+			expectError: pathcompression.ErrNothingToCompress,
 			setup: func(t *testing.T, targetBase string) []metafile.MetafileInfo {
 				return []metafile.MetafileInfo{}
 			},
@@ -154,6 +156,29 @@ func TestCompress(t *testing.T) {
 				assertArchiveContains(t, archivePath, pathcompression.Zip, []string{"file.txt", "link.txt"})
 			},
 		},
+		{
+			name: "Disabled - No Compression",
+			plan: pathcompression.Plan{
+				Enabled: false,
+				Format:  pathcompression.Zip,
+			},
+			expectError: pathcompression.ErrDisabled,
+			setup: func(t *testing.T, targetBase string) []metafile.MetafileInfo {
+				return []metafile.MetafileInfo{
+					createTestBackup(t, targetBase, "backup_disabled", false),
+				}
+			},
+			validate: func(t *testing.T, targetBase string, backups []metafile.MetafileInfo) {
+				backupPath := filepath.Join(targetBase, backups[0].RelPathKey)
+				archivePath := filepath.Join(backupPath, "backup_disabled.zip")
+
+				if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
+					t.Errorf("Archive should NOT exist when disabled: %s", archivePath)
+				}
+				assertContentExists(t, backupPath)
+				assertMetaNotCompressed(t, backupPath)
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -165,9 +190,9 @@ func TestCompress(t *testing.T) {
 
 			err := compressor.Compress(context.Background(), targetBase, testContentDir, toCompress, &tc.plan, time.Now().UTC())
 
-			if tc.expectError {
-				if err == nil {
-					t.Error("Expected error but got nil")
+			if tc.expectError != nil {
+				if !errors.Is(err, tc.expectError) {
+					t.Errorf("Expected error %v, got %v", tc.expectError, err)
 				}
 			} else {
 				if err != nil {

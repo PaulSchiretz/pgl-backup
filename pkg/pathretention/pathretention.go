@@ -15,6 +15,7 @@ package pathretention
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"time"
 
@@ -32,6 +33,9 @@ const (
 	yearFormat  = "2006"          // YYYY
 )
 
+var ErrDisabled = errors.New("retention policy is disabled")
+var ErrNothingToPrune = errors.New("nothing to prune")
+
 type PathRetainer struct {
 	numWorkers int
 }
@@ -47,6 +51,11 @@ func NewPathRetainer(numWorkers int) *PathRetainer {
 // that are no longer needed according to the passed retention policy.
 func (r *PathRetainer) Prune(ctx context.Context, absTargetBasePath string, toPrune []metafile.MetafileInfo, p *Plan, timestampUTC time.Time) error {
 
+	if !p.Enabled {
+		plog.Debug("Retention policy is disabled, skipping prune")
+		return ErrDisabled
+	}
+
 	// NOTE: Even if retention is 0,0,0,0,0 and enabled, the backups that we just created are filetered before a call to this func. So it is safe to simply do what we are told.
 	// Check for cancellation
 	select {
@@ -56,12 +65,7 @@ func (r *PathRetainer) Prune(ctx context.Context, absTargetBasePath string, toPr
 	}
 
 	if len(toPrune) == 0 {
-		if p.DryRun {
-			plog.Debug("[DRY RUN] No backups found for retention")
-		} else {
-			plog.Debug("No backups found for retention")
-		}
-		return nil
+		return ErrNothingToPrune
 	}
 
 	// Sort all backups from newest to oldest for consistent processing.
