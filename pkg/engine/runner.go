@@ -100,6 +100,7 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absSourcePath, absTargetBase
 	}()
 
 	plog.Info("Starting backup", "source", absSourcePath, "target", absTargetBasePath, "mode", p.Mode)
+	var syncErr error
 
 	// Perform Archiving before Sync in Incremental mode
 	if p.Archive.Enabled && p.Mode == planner.Incremental {
@@ -131,13 +132,14 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absSourcePath, absTargetBase
 			if errors.Is(err, pathsync.ErrDisabled) {
 				plog.Debug("Sync disabled, skipping")
 			} else {
-				return fmt.Errorf("error during sync: %w", err)
+				syncErr = fmt.Errorf("error during sync: %w", err)
+				plog.Error("Sync failed", "error", err)
 			}
 		}
 	}
 
 	// Perform Archiving for Snapshot mode. We are strict here with errors as Snapshot without Archiving makes no sense
-	if p.Archive.Enabled && p.Mode == planner.Snapshot {
+	if syncErr == nil && p.Archive.Enabled && p.Mode == planner.Snapshot {
 		toArchive := p.Sync.ResultInfo
 		if toArchive.RelPathKey == "" {
 			if !p.Sync.Enabled {
@@ -210,6 +212,11 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absSourcePath, absTargetBase
 			}
 		}
 	}
+
+	if syncErr != nil {
+		return syncErr
+	}
+
 	plog.Info("Backup completed")
 	return nil
 }
