@@ -145,6 +145,31 @@ func (s *PathSyncer) runNativeTask(ctx context.Context, absSourcePath, absSyncTa
 		m = &pathsyncmetrics.NoopMetrics{}
 	}
 
+	discoveredPaths, err := sharded.NewShardedSet()
+	if err != nil {
+		return err
+	}
+	discoveredDirInfo, err := sharded.NewShardedMap()
+	if err != nil {
+		return err
+	}
+	syncedDirCache, err := sharded.NewShardedSet()
+	if err != nil {
+		return err
+	}
+	syncErrs, err := sharded.NewShardedMap()
+	if err != nil {
+		return err
+	}
+	mirrorErrs, err := sharded.NewShardedMap()
+	if err != nil {
+		return err
+	}
+	mirrorDirsToDelete, err := sharded.NewShardedSet()
+	if err != nil {
+		return err
+	}
+
 	t := &nativeTask{
 		PathSyncer:   s, // Just pass the compressor pointer
 		src:          absSourcePath,
@@ -160,17 +185,17 @@ func (s *PathSyncer) runNativeTask(ctx context.Context, absSourcePath, absSyncTa
 
 		mirror: p.Mirror,
 
-		discoveredPaths:   sharded.NewShardedSet(),
-		discoveredDirInfo: sharded.NewShardedMap(),
-		syncedDirCache:    sharded.NewShardedSet(),
+		discoveredPaths:   discoveredPaths,
+		discoveredDirInfo: discoveredDirInfo,
+		syncedDirCache:    syncedDirCache,
 		// Buffer 'syncTasksChan' to absorb bursts of small files discovered by the walker.
 		syncTasksChan:          make(chan *syncTask, s.numSyncWorkers*100),
 		mirrorTasksChan:        make(chan *mirrorTask, s.numMirrorWorkers*100),
 		criticalSyncErrsChan:   make(chan error, 1),
-		syncErrs:               sharded.NewShardedMap(),
+		syncErrs:               syncErrs,
 		criticalMirrorErrsChan: make(chan error, 1),
-		mirrorErrs:             sharded.NewShardedMap(),
-		mirrorDirsToDelete:     sharded.NewShardedSet(),
+		mirrorErrs:             mirrorErrs,
+		mirrorDirsToDelete:     mirrorDirsToDelete,
 		ctx:                    ctx,
 		metrics:                m, // Use the selected metrics implementation.
 	}

@@ -1,6 +1,7 @@
 package sharded
 
 import (
+	"fmt"
 	"sync"
 )
 
@@ -14,12 +15,15 @@ type mapShard struct {
 
 type ShardedMap []*mapShard
 
-func NewShardedMap() *ShardedMap {
+func NewShardedMap() (*ShardedMap, error) {
+	if !isPowerOfTwo(numMapShards) {
+		return nil, fmt.Errorf("numMapShards must be a power of 2")
+	}
 	s := make(ShardedMap, numMapShards)
 	for i := 0; i < numMapShards; i++ {
 		s[i] = &mapShard{items: make(map[string]interface{})}
 	}
-	return &s
+	return &s, nil
 }
 
 func (s *ShardedMap) getShard(key string) *mapShard {

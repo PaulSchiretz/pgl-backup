@@ -8,7 +8,10 @@ import (
 
 // TestShardedMap_Basic tests the fundamental Store, Load, Has, and Delete operations.
 func TestShardedMap_Basic(t *testing.T) {
-	m := NewShardedMap()
+	m, err := NewShardedMap()
+	if err != nil {
+		t.Fatalf("NewShardedMap failed: %v", err)
+	}
 	key := "test_key"
 	value := "test_value"
 
@@ -49,7 +52,10 @@ func TestShardedMap_Basic(t *testing.T) {
 // TestShardedMap_MultipleKeys tests functionality with multiple keys,
 // ensuring they don't interfere with each other.
 func TestShardedMap_MultipleKeys(t *testing.T) {
-	m := NewShardedMap()
+	m, err := NewShardedMap()
+	if err != nil {
+		t.Fatalf("NewShardedMap failed: %v", err)
+	}
 	testData := map[string]int{
 		"key1": 100,
 		"key2": 200,
@@ -91,7 +97,10 @@ func TestShardedMap_MultipleKeys(t *testing.T) {
 // TestShardedMap_Concurrency tests concurrent access to the ShardedMap.
 // It runs Store, Load, and Delete operations from multiple goroutines.
 func TestShardedMap_Concurrency(t *testing.T) {
-	m := NewShardedMap()
+	m, err := NewShardedMap()
+	if err != nil {
+		t.Fatalf("NewShardedMap failed: %v", err)
+	}
 	numGoroutines := 100
 	numKeysPerGoroutine := 100
 	var wg sync.WaitGroup
@@ -133,7 +142,10 @@ func TestShardedMap_Concurrency(t *testing.T) {
 
 // TestShardedMap_Count tests the Count method.
 func TestShardedMap_Count(t *testing.T) {
-	m := NewShardedMap()
+	m, err := NewShardedMap()
+	if err != nil {
+		t.Fatalf("NewShardedMap failed: %v", err)
+	}
 
 	// 1. Test count on an empty map
 	if count := m.Count(); count != 0 {
@@ -162,7 +174,10 @@ func TestShardedMap_Count(t *testing.T) {
 
 // TestShardedMap_Keys tests the Keys method.
 func TestShardedMap_Keys(t *testing.T) {
-	m := NewShardedMap()
+	m, err := NewShardedMap()
+	if err != nil {
+		t.Fatalf("NewShardedMap failed: %v", err)
+	}
 
 	// 1. Test on an empty map
 	if len(m.Keys()) != 0 {
@@ -195,7 +210,10 @@ func TestShardedMap_Keys(t *testing.T) {
 
 // TestShardedMap_Range tests the Range method.
 func TestShardedMap_Range(t *testing.T) {
-	m := NewShardedMap()
+	m, err := NewShardedMap()
+	if err != nil {
+		t.Fatalf("NewShardedMap failed: %v", err)
+	}
 
 	// Populate the map
 	expectedItems := map[string]interface{}{
@@ -243,7 +261,10 @@ func TestShardedMap_Range(t *testing.T) {
 
 // TestShardedMap_Items tests the Items method.
 func TestShardedMap_Items(t *testing.T) {
-	m := NewShardedMap()
+	m, err := NewShardedMap()
+	if err != nil {
+		t.Fatalf("NewShardedMap failed: %v", err)
+	}
 
 	// 1. Test on an empty map
 	if len(m.Items()) != 0 {
@@ -274,7 +295,10 @@ func TestShardedMap_Items(t *testing.T) {
 
 // TestShardedMap_Clear tests the Clear method.
 func TestShardedMap_Clear(t *testing.T) {
-	m := NewShardedMap()
+	m, err := NewShardedMap()
+	if err != nil {
+		t.Fatalf("NewShardedMap failed: %v", err)
+	}
 
 	// Populate the map
 	m.Store("key1", 1)
@@ -298,7 +322,10 @@ func TestShardedMap_Clear(t *testing.T) {
 
 // TestShardedMap_ShardCount tests the ShardCount method.
 func TestShardedMap_ShardCount(t *testing.T) {
-	m := NewShardedMap()
+	m, err := NewShardedMap()
+	if err != nil {
+		t.Fatalf("NewShardedMap failed: %v", err)
+	}
 
 	// 1. Test invalid indices
 	if count := m.ShardCount(-1); count != -1 {
@@ -331,7 +358,10 @@ func TestShardedMap_ShardCount(t *testing.T) {
 
 // TestShardedMap_GetShardIndex tests the GetShardIndex method.
 func TestShardedMap_GetShardIndex(t *testing.T) {
-	m := NewShardedMap()
+	m, err := NewShardedMap()
+	if err != nil {
+		t.Fatalf("NewShardedMap failed: %v", err)
+	}
 	key := "my-test-key"
 
 	// 1. Get the shard index for a key
@@ -353,7 +383,10 @@ func TestShardedMap_GetShardIndex(t *testing.T) {
 
 // TestShardedMap_LoadOrStore tests the LoadOrStore method.
 func TestShardedMap_LoadOrStore(t *testing.T) {
-	m := NewShardedMap()
+	m, err := NewShardedMap()
+	if err != nil {
+		t.Fatalf("NewShardedMap failed: %v", err)
+	}
 	key := "test_key"
 	initialValue := "initial_value"
 

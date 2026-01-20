@@ -22,3 +22,7 @@ func getShardIndex(key string, numShards int) int {
 	// to 'hash % N' when N is a power of 2.
 	return int(hash & uint32(numShards-1))
 }
+
+func isPowerOfTwo(n int) bool {
+	return n > 0 && (n&(n-1)) == 0
+}

@@ -1,6 +1,7 @@
 package sharded
 
 import (
+	"fmt"
 	"sync"
 )
 
@@ -14,12 +15,15 @@ type setShard struct {
 
 type ShardedSet []*setShard
 
-func NewShardedSet() *ShardedSet {
+func NewShardedSet() (*ShardedSet, error) {
+	if !isPowerOfTwo(numSetShards) {
+		return nil, fmt.Errorf("numSetShards must be a power of 2")
+	}
 	s := make(ShardedSet, numSetShards)
 	for i := 0; i < numSetShards; i++ {
 		s[i] = &setShard{items: make(map[string]struct{})}
 	}
-	return &s
+	return &s, nil
 }
 
 func (s *ShardedSet) getShard(key string) *setShard {
