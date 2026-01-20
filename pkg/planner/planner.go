@@ -162,6 +162,7 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 			ExcludeDirs:           syncExcludeDirs,
 			ExcludeFiles:          syncExcludeFiles,
 			PreserveSourceDirName: syncCfg.PreserveSourceDirName,
+			Mirror:                true,
 
 			RetryCount:    syncCfg.RetryCount,
 			RetryWait:     time.Duration(syncCfg.RetryWaitSeconds) * time.Second,

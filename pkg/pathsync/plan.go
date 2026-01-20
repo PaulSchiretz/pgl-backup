@@ -11,6 +11,7 @@ type Plan struct {
 	ModeIdentifier        string
 	Engine                Engine
 	PreserveSourceDirName bool
+	Mirror                bool
 
 	RetryCount    int
 	RetryWait     time.Duration

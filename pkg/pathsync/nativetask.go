@@ -119,6 +119,8 @@ type nativeTask struct {
 	retryWait     time.Duration
 	modTimeWindow time.Duration
 
+	mirror bool
+
 	// discoveredPaths is a concurrent set populated by the syncTaskProducer. It holds every
 	// non-excluded path found in the source directory. During the mirror phase, it is
 	// read to determine which paths in the destination are no longer present in the source
@@ -720,7 +722,9 @@ func (t *nativeTask) syncTaskProducer() {
 
 			// CRITICAL: Record the path unconditionally here
 			// If it's a subdir/file we can't read, record it so we don't delete it from destination.
-			t.discoveredPaths.Store(relPathKey)
+			if t.mirror {
+				t.discoveredPaths.Store(relPathKey)
+			}
 
 			// If we can't access a path, log the error but keep walking
 			plog.Warn("SKIP", "reason", "error accessing path", "path", absSrcPath, "error", err)
@@ -753,7 +757,9 @@ func (t *nativeTask) syncTaskProducer() {
 		// CRITICAL: Record the path unconditionally here
 		// If we mirror and the item exists in the source, it MUST be recorded in the set
 		// to prevent it from being deleted during the mirror phase.
-		t.discoveredPaths.Store(relPathKey)
+		if t.mirror {
+			t.discoveredPaths.Store(relPathKey)
+		}
 
 		// Get Info for worker
 		// WalkDir gives us a DirEntry. We need the FileInfo for timestamps/sizes later.
@@ -1182,5 +1188,8 @@ func (t *nativeTask) execute() error {
 
 	// 2. Mirror Phase (Deletions)
 	// Now that the sync is done and the map is fully populated, run the deletion phase.
-	return t.handleMirror()
+	if t.mirror {
+		return t.handleMirror()
+	}
+	return nil
 }

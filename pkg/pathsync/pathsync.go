@@ -158,6 +158,8 @@ func (s *PathSyncer) runNativeTask(ctx context.Context, absSourcePath, absSyncTa
 		retryWait:     p.RetryWait,
 		modTimeWindow: p.ModTimeWindow,
 
+		mirror: p.Mirror,
+
 		discoveredPaths:   sharded.NewShardedSet(),
 		discoveredDirInfo: sharded.NewShardedMap(),
 		syncedDirCache:    sharded.NewShardedSet(),
@@ -183,7 +185,7 @@ func (s *PathSyncer) runRobocopyTask(ctx context.Context, absSourcePath, absSync
 		trg:          absSyncTargetPath,
 		retryCount:   p.RetryCount,
 		retryWait:    p.RetryWait,
-		mirror:       true,
+		mirror:       p.Mirror,
 		dryRun:       p.DryRun,
 		failFast:     p.FailFast,
 		fileExcludes: p.ExcludeFiles,

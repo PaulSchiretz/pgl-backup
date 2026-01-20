@@ -125,4 +125,49 @@ func TestRobocopySync_Integration(t *testing.T) {
 			t.Errorf("expected destination file content to be 'robocopy test', but got %q", string(content))
 		}
 	})
+
+	t.Run("No Mirror - Extra files preserved", func(t *testing.T) {
+		srcDir := t.TempDir()
+		dstDir := t.TempDir()
+
+		// Create a source file
+		srcFile := filepath.Join(srcDir, "file.txt")
+		if err := os.WriteFile(srcFile, []byte("source content"), 0644); err != nil {
+			t.Fatalf("failed to create source file: %v", err)
+		}
+
+		// Create an extra file in the destination
+		extraDstFile := filepath.Join(dstDir, "extra.txt")
+		if err := os.WriteFile(extraDstFile, []byte("extra content"), 0644); err != nil {
+			t.Fatalf("failed to create extra destination file: %v", err)
+		}
+
+		// Create the syncer
+		plog.SetLevel(plog.LevelWarn)
+		syncer := NewPathSyncer(256, 1, 1)
+
+		plan := &Plan{
+			Enabled: true,
+			Engine:  Robocopy,
+			Mirror:  false, // Explicitly disable mirror
+		}
+
+		// Act
+		err := syncer.Sync(context.Background(), srcDir, dstDir, "", "", plan, time.Now())
+		if err != nil {
+			t.Fatalf("Sync failed: %v", err)
+		}
+
+		// Assert
+		// 1. Check that the source file was copied
+		dstFile := filepath.Join(dstDir, "file.txt")
+		if _, err := os.Stat(dstFile); os.IsNotExist(err) {
+			t.Errorf("expected destination file %q to exist, but it doesn't", dstFile)
+		}
+
+		// 2. Check that the extra destination file was NOT deleted
+		if _, err := os.Stat(extraDstFile); os.IsNotExist(err) {
+			t.Errorf("expected extra destination file %q to be preserved, but it was deleted", extraDstFile)
+		}
+	})
 }

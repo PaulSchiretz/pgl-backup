@@ -727,6 +727,26 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 		},
 		{
+			name:                  "No Mirror - Extra Files Preserved",
+			mirror:                false, // Explicitly false
+			preserveSourceDirName: false,
+			srcFiles: []testFile{
+				{path: "file1.txt", content: "hello", modTime: baseTime},
+			},
+			dstFiles: []testFile{
+				// This file exists only in the destination.
+				{path: "extra_file.txt", content: "should be preserved", modTime: baseTime},
+			},
+			expectedDstFiles: map[string]testFile{
+				// The file from the source should be copied.
+				"file1.txt": {path: "file1.txt", content: "hello", modTime: baseTime},
+				// The extra file in the destination should remain untouched.
+				"extra_file.txt": {path: "extra_file.txt", content: "should be preserved", modTime: baseTime},
+			},
+			// No files should be missing.
+			expectedMissingDstFiles: nil,
+		},
+		{
 			name:                  "Disabled Sync - Safety Check",
 			disabled:              true,
 			mirror:                false,
@@ -767,6 +787,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				Enabled:               !tc.disabled,
 				Engine:                Native,
 				PreserveSourceDirName: tc.preserveSourceDirName,
+				Mirror:                tc.mirror,
 				RetryCount:            3,
 				RetryWait:             5 * time.Second,
 				ExcludeFiles:          tc.excludeFiles,
@@ -949,6 +970,7 @@ func TestNativeSync_WorkerCancellation(t *testing.T) {
 	plan := &Plan{
 		Enabled: true,
 		Engine:  Native,
+		Mirror:  true,
 	}
 	syncer := NewPathSyncer(256, 1, 1)
 
@@ -994,6 +1016,7 @@ func TestNativeSync_MirrorCancellation(t *testing.T) {
 	plan := &Plan{
 		Enabled: true,
 		Engine:  Native,
+		Mirror:  true,
 	}
 	syncer := NewPathSyncer(256, 1, 1)
 
