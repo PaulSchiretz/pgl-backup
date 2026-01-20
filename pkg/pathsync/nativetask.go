@@ -798,6 +798,7 @@ func (t *nativeTask) syncTaskProducer() {
 		// Send all regular files and directories to the workers.
 		select {
 		case <-t.ctx.Done():
+			t.syncTaskPool.Put(task)
 			return t.ctx.Err() // Propagate cancellation error.
 		case t.syncTasksChan <- task:
 			return nil
@@ -1017,6 +1018,7 @@ func (t *nativeTask) mirrorTaskProducer() {
 			select {
 			case t.mirrorTasksChan <- task:
 			case <-t.ctx.Done():
+				t.mirrorTaskPool.Put(task)
 				return t.ctx.Err()
 			}
 		}
