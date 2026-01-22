@@ -125,6 +125,15 @@ func (c *zipCompressor) writeArchive(ctx context.Context, absSourcePath string, 
 		}
 		defer fileToZip.Close()
 
+		// Security: TOCTOU check
+		// Ensure the file we opened is the same one we discovered in the walk.
+		// This prevents attacks where a file is swapped for a symlink after discovery.
+		if openedInfo, err := fileToZip.Stat(); err != nil {
+			return fmt.Errorf("failed to stat opened file %s: %w", absSrcPath, err)
+		} else if !os.SameFile(info, openedInfo) {
+			return fmt.Errorf("file changed during backup (possible security attack): %s", absSrcPath)
+		}
+
 		_, err = io.CopyBuffer(writer, fileToZip, buf)
 		return err
 	}, func(absSrcPath, relPath string, info os.FileInfo) error {
@@ -231,7 +240,7 @@ func (c *tarCompressor) writeArchive(ctx context.Context, absSourcePath string, 
 
 	return walkAndCompress(ctx, absSourcePath, bufferPool, metrics, func(absSrcPath, relPath string, info os.FileInfo, buf []byte) error {
 		// Add File Logic
-		header, err := tar.FileInfoHeader(info, relPath)
+		header, err := tar.FileInfoHeader(info, "")
 		if err != nil {
 			return fmt.Errorf("failed to create tar header for %s: %w", absSrcPath, err)
 		}
@@ -246,6 +255,15 @@ func (c *tarCompressor) writeArchive(ctx context.Context, absSourcePath string, 
 			return fmt.Errorf("failed to open file %s: %w", absSrcPath, err)
 		}
 		defer fileToTar.Close()
+
+		// Security: TOCTOU check
+		// Ensure the file we opened is the same one we discovered in the walk.
+		// This prevents attacks where a file is swapped for a symlink after discovery.
+		if openedInfo, err := fileToTar.Stat(); err != nil {
+			return fmt.Errorf("failed to stat opened file %s: %w", absSrcPath, err)
+		} else if !os.SameFile(info, openedInfo) {
+			return fmt.Errorf("file changed during backup (possible security attack): %s", absSrcPath)
+		}
 
 		_, err = io.CopyBuffer(tarWriter, fileToTar, buf)
 		return err

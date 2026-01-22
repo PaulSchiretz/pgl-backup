@@ -3,7 +3,6 @@ package pathcompression
 import (
 	"archive/tar"
 	"archive/zip"
-	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -13,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/klauspost/compress/zstd"
+	"github.com/klauspost/pgzip"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompressionmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
@@ -55,21 +55,26 @@ func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 		metrics.AddEntriesProcessed(1)
 		metrics.AddOriginalBytes(int64(f.UncompressedSize64))
 
-		// Zip Slip protection
+		// Zip Slip protection:
+		// Ensure that the target path is within the extraction directory.
+		// This prevents malicious archives from writing to arbitrary paths via relative paths like "../../etc/passwd".
 		relPath := util.NormalizePath(f.Name)
 		absTarget := filepath.Join(absExtractTargetPath, relPath)
 		if !strings.HasPrefix(absTarget, filepath.Clean(absExtractTargetPath)+string(os.PathSeparator)) {
 			return fmt.Errorf("illegal file path in archive: %s", f.Name)
 		}
 
+		// Security: Strip SUID and SGID bits to prevent privilege escalation.
+		mode := f.Mode() &^ (os.ModeSetuid | os.ModeSetgid)
+
 		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(absTarget, f.Mode()); err != nil {
+			if err := os.MkdirAll(absTarget, mode); err != nil {
 				return err
 			}
 			continue
 		}
 
-		if err := os.MkdirAll(filepath.Dir(absTarget), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(absTarget), util.UserWritableDirPerms); err != nil {
 			return err
 		}
 
@@ -93,7 +98,11 @@ func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 		}
 
 		// Handle Regular Files
-		outFile, err := os.OpenFile(absTarget, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		// Security: Remove the file if it exists to prevent following a symlink
+		// created by a previous entry (Symlink Interception).
+		_ = os.Remove(absTarget)
+
+		outFile, err := os.OpenFile(absTarget, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 		if err != nil {
 			rc.Close()
 			return err
@@ -127,7 +136,7 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 	var r io.Reader = f
 	switch e.compression {
 	case TarGz:
-		gz, err := gzip.NewReader(f)
+		gz, err := pgzip.NewReader(f)
 		if err != nil {
 			return err
 		}
@@ -161,23 +170,32 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 		metrics.AddEntriesProcessed(1)
 		metrics.AddOriginalBytes(header.Size)
 
-		// Zip Slip protection
+		// Zip Slip protection:
+		// Ensure that the target path is within the extraction directory.
+		// This prevents malicious archives from writing to arbitrary paths via relative paths like "../../etc/passwd".
 		relPath := util.NormalizePath(header.Name)
 		absTarget := filepath.Join(absExtractTargetPath, relPath)
 		if !strings.HasPrefix(absTarget, filepath.Clean(absExtractTargetPath)+string(os.PathSeparator)) {
 			return fmt.Errorf("illegal file path in archive: %s", header.Name)
 		}
 
+		// Security: Strip SUID and SGID bits to prevent privilege escalation.
+		mode := os.FileMode(header.Mode) &^ (os.ModeSetuid | os.ModeSetgid)
+
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(absTarget, os.FileMode(header.Mode)); err != nil {
+			if err := os.MkdirAll(absTarget, mode); err != nil {
 				return err
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(absTarget), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(absTarget), util.UserWritableDirPerms); err != nil {
 				return err
 			}
-			outFile, err := os.OpenFile(absTarget, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, os.FileMode(header.Mode))
+			// Security: Remove the file if it exists to prevent following a symlink
+			// created by a previous entry (Symlink Interception).
+			_ = os.Remove(absTarget)
+
+			outFile, err := os.OpenFile(absTarget, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 			if err != nil {
 				return err
 			}
@@ -190,7 +208,7 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 			}
 			os.Chtimes(absTarget, header.AccessTime, header.ModTime)
 		case tar.TypeSymlink:
-			if err := os.MkdirAll(filepath.Dir(absTarget), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(absTarget), util.UserWritableDirPerms); err != nil {
 				return err
 			}
 			_ = os.Remove(absTarget)
