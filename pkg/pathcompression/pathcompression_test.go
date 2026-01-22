@@ -197,6 +197,115 @@ func TestCompress(t *testing.T) {
 	}
 }
 
+func TestExtract(t *testing.T) {
+	tests := []struct {
+		name     string
+		format   pathcompression.Format
+		setup    func(t *testing.T, targetBase string) metafile.MetafileInfo
+		validate func(t *testing.T, extractPath string)
+	}{
+		{
+			name:   "Extract Zip",
+			format: pathcompression.Zip,
+			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
+				return createTestBackup(t, targetBase, "extract_zip", false)
+			},
+			validate: func(t *testing.T, extractPath string) {
+				assertFileContent(t, filepath.Join(extractPath, "file.txt"), "content")
+			},
+		},
+		{
+			name:   "Extract TarGz",
+			format: pathcompression.TarGz,
+			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
+				return createTestBackup(t, targetBase, "extract_targz", false)
+			},
+			validate: func(t *testing.T, extractPath string) {
+				assertFileContent(t, filepath.Join(extractPath, "file.txt"), "content")
+			},
+		},
+		{
+			name:   "Extract TarZst",
+			format: pathcompression.TarZst,
+			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
+				return createTestBackup(t, targetBase, "extract_tarzst", false)
+			},
+			validate: func(t *testing.T, extractPath string) {
+				assertFileContent(t, filepath.Join(extractPath, "file.txt"), "content")
+			},
+		},
+		{
+			name:   "Extract Symlinks (TarZst)",
+			format: pathcompression.TarZst,
+			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
+				info := createTestBackup(t, targetBase, "extract_symlink", false)
+				contentDir := filepath.Join(targetBase, info.RelPathKey, testContentDir)
+				if err := os.Symlink("file.txt", filepath.Join(contentDir, "link.txt")); err != nil {
+					if runtime.GOOS == "windows" && strings.Contains(err.Error(), "privilege") {
+						t.Skip("Skipping symlink test on Windows (requires admin)")
+					}
+					t.Fatalf("Failed to create symlink: %v", err)
+				}
+				return info
+			},
+			validate: func(t *testing.T, extractPath string) {
+				assertFileContent(t, filepath.Join(extractPath, "file.txt"), "content")
+
+				linkPath := filepath.Join(extractPath, "link.txt")
+				info, err := os.Lstat(linkPath)
+				if err != nil {
+					t.Fatalf("Failed to lstat extracted link: %v", err)
+				}
+				if info.Mode()&os.ModeSymlink == 0 {
+					t.Errorf("Expected link.txt to be a symlink")
+				}
+				target, err := os.Readlink(linkPath)
+				if err != nil {
+					t.Fatalf("Failed to read link target: %v", err)
+				}
+				if target != "file.txt" {
+					t.Errorf("Expected link target 'file.txt', got %q", target)
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			targetBase := t.TempDir()
+			toCompress := tc.setup(t, targetBase)
+
+			// 1. Compress first to generate the archive
+			compressPlan := &pathcompression.Plan{
+				Enabled: true,
+				Format:  tc.format,
+			}
+			compressor := pathcompression.NewPathCompressor(256)
+
+			err := compressor.Compress(context.Background(), targetBase, testContentDir, toCompress, compressPlan, time.Now().UTC())
+			if err != nil {
+				t.Fatalf("Setup failed: failed to compress: %v", err)
+			}
+
+			// 2. Extract
+			extractPath := filepath.Join(targetBase, "extracted")
+			extractPlan := &pathcompression.Plan{
+				Enabled: true,
+				Format:  tc.format,
+			}
+
+			err = compressor.Extract(context.Background(), targetBase, toCompress, extractPath, extractPlan, time.Now().UTC())
+			if err != nil {
+				t.Fatalf("Extract failed: %v", err)
+			}
+
+			if tc.validate != nil {
+				tc.validate(t, extractPath)
+			}
+		})
+	}
+}
+
 // Helpers
 
 func createTestBackup(t *testing.T, targetBase, relPath string, compressed bool) metafile.MetafileInfo {
@@ -402,5 +511,16 @@ func assertArchiveContains(t *testing.T, archivePath string, format pathcompress
 		if !found {
 			t.Errorf("archive %s is missing expected file '%s'", archivePath, file)
 		}
+	}
+}
+
+func assertFileContent(t *testing.T, path, expected string) {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("Failed to read file %s: %v", path, err)
+	}
+	if string(content) != expected {
+		t.Errorf("File content mismatch for %s. Expected %q, got %q", path, expected, string(content))
 	}
 }
