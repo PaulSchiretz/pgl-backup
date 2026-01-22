@@ -34,18 +34,17 @@ import (
 
 var ErrDisabled = errors.New("compression is disabled")
 var ErrNothingToCompress = errors.New("nothing to compress")
+var ErrNothingToExtract = errors.New("nothing to extract")
 
 type PathCompressor struct {
 	ioWriterPool *sync.Pool
 	ioBufferPool *sync.Pool
-	numWorkers   int
 }
 
 // NewPathCompressor creates a new PathCompressor with the given configuration.
-func NewPathCompressor(bufferSizeKB int, numWorkers int) *PathCompressor {
+func NewPathCompressor(bufferSizeKB int) *PathCompressor {
 	bufferSize := bufferSizeKB * 1024
 	return &PathCompressor{
-		numWorkers: numWorkers,
 		ioWriterPool: &sync.Pool{
 			New: func() interface{} {
 				return bufio.NewWriterSize(io.Discard, bufferSize)
@@ -61,7 +60,7 @@ func NewPathCompressor(bufferSizeKB int, numWorkers int) *PathCompressor {
 }
 
 // Compress processes the specific list of paths provided by the engine.
-func (c *PathCompressor) Compress(ctx context.Context, absTargetBasePath, relContentPathKey string, toCompress []metafile.MetafileInfo, p *Plan, timestampUTC time.Time) error {
+func (c *PathCompressor) Compress(ctx context.Context, absTargetBasePath, relContentPathKey string, toCompress metafile.MetafileInfo, p *Plan, timestampUTC time.Time) error {
 
 	if !p.Enabled {
 		plog.Debug("Compression is disabled, skipping compress")
@@ -75,7 +74,7 @@ func (c *PathCompressor) Compress(ctx context.Context, absTargetBasePath, relCon
 	default:
 	}
 
-	if len(toCompress) == 0 {
+	if toCompress.RelPathKey == "" {
 		return ErrNothingToCompress
 	}
 
@@ -87,7 +86,7 @@ func (c *PathCompressor) Compress(ctx context.Context, absTargetBasePath, relCon
 		m = &pathcompressionmetrics.NoopMetrics{}
 	}
 
-	t := &task{
+	t := &compressTask{
 		PathCompressor:    c, // Just pass the compressor pointer
 		absTargetBasePath: absTargetBasePath,
 		relContentPathKey: relContentPathKey,
@@ -97,7 +96,47 @@ func (c *PathCompressor) Compress(ctx context.Context, absTargetBasePath, relCon
 		timestampUTC:      timestampUTC,
 		metrics:           m,
 		dryRun:            p.DryRun,
-		compressTasksChan: make(chan metafile.MetafileInfo, c.numWorkers*2),
+	}
+	return t.execute()
+}
+
+// Extract extracts an archive to a target directory.
+// It uses the configured buffer pool for efficient I/O.
+func (c *PathCompressor) Extract(ctx context.Context, absTargetBasePath string, toExtract metafile.MetafileInfo, absExtractTargetPath string, p *Plan, timestampUTC time.Time) error {
+
+	if !p.Enabled {
+		plog.Debug("Extract is disabled, skipping compress")
+		return ErrDisabled
+	}
+
+	// Check for cancellation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	if toExtract.RelPathKey == "" {
+		return ErrNothingToExtract
+	}
+
+	var m pathcompressionmetrics.Metrics
+	if p.Metrics {
+		m = &pathcompressionmetrics.CompressionMetrics{}
+	} else {
+		m = &pathcompressionmetrics.NoopMetrics{}
+	}
+
+	t := &extractTask{
+		PathCompressor:       c,
+		ctx:                  ctx,
+		absTargetBasePath:    absTargetBasePath,
+		toExtract:            toExtract,
+		absExtractTargetPath: absExtractTargetPath,
+		format:               p.Format,
+		timestampUTC:         timestampUTC,
+		metrics:              m,
+		dryRun:               p.DryRun,
 	}
 	return t.execute()
 }

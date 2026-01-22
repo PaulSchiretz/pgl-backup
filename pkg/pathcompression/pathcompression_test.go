@@ -25,9 +25,9 @@ func TestCompress(t *testing.T) {
 	tests := []struct {
 		name        string
 		plan        pathcompression.Plan
-		setup       func(t *testing.T, targetBase string) []metafile.MetafileInfo
+		setup       func(t *testing.T, targetBase string) metafile.MetafileInfo
 		expectError error
-		validate    func(t *testing.T, targetBase string, backups []metafile.MetafileInfo)
+		validate    func(t *testing.T, targetBase string, backup metafile.MetafileInfo)
 	}{
 		{
 			name: "Happy Path - Zip",
@@ -36,13 +36,11 @@ func TestCompress(t *testing.T) {
 				Format:  pathcompression.Zip,
 				Metrics: true,
 			},
-			setup: func(t *testing.T, targetBase string) []metafile.MetafileInfo {
-				return []metafile.MetafileInfo{
-					createTestBackup(t, targetBase, "backup_zip", false),
-				}
+			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
+				return createTestBackup(t, targetBase, "backup_zip", false)
 			},
-			validate: func(t *testing.T, targetBase string, backups []metafile.MetafileInfo) {
-				backupPath := filepath.Join(targetBase, backups[0].RelPathKey)
+			validate: func(t *testing.T, targetBase string, backup metafile.MetafileInfo) {
+				backupPath := filepath.Join(targetBase, backup.RelPathKey)
 				archivePath := filepath.Join(backupPath, "backup_zip.zip")
 
 				if _, err := os.Stat(archivePath); os.IsNotExist(err) {
@@ -60,13 +58,11 @@ func TestCompress(t *testing.T) {
 				Enabled: true,
 				Format:  pathcompression.TarGz,
 			},
-			setup: func(t *testing.T, targetBase string) []metafile.MetafileInfo {
-				return []metafile.MetafileInfo{
-					createTestBackup(t, targetBase, "backup_targz", false),
-				}
+			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
+				return createTestBackup(t, targetBase, "backup_targz", false)
 			},
-			validate: func(t *testing.T, targetBase string, backups []metafile.MetafileInfo) {
-				backupPath := filepath.Join(targetBase, backups[0].RelPathKey)
+			validate: func(t *testing.T, targetBase string, backup metafile.MetafileInfo) {
+				backupPath := filepath.Join(targetBase, backup.RelPathKey)
 				archivePath := filepath.Join(backupPath, "backup_targz.tar.gz")
 
 				if _, err := os.Stat(archivePath); os.IsNotExist(err) {
@@ -83,13 +79,11 @@ func TestCompress(t *testing.T) {
 				Enabled: true,
 				Format:  pathcompression.TarZst,
 			},
-			setup: func(t *testing.T, targetBase string) []metafile.MetafileInfo {
-				return []metafile.MetafileInfo{
-					createTestBackup(t, targetBase, "backup_tarzst", false),
-				}
+			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
+				return createTestBackup(t, targetBase, "backup_tarzst", false)
 			},
-			validate: func(t *testing.T, targetBase string, backups []metafile.MetafileInfo) {
-				backupPath := filepath.Join(targetBase, backups[0].RelPathKey)
+			validate: func(t *testing.T, targetBase string, backup metafile.MetafileInfo) {
+				backupPath := filepath.Join(targetBase, backup.RelPathKey)
 				archivePath := filepath.Join(backupPath, "backup_tarzst.tar.zst")
 
 				if _, err := os.Stat(archivePath); os.IsNotExist(err) {
@@ -107,13 +101,11 @@ func TestCompress(t *testing.T) {
 				Format:  pathcompression.Zip,
 				DryRun:  true,
 			},
-			setup: func(t *testing.T, targetBase string) []metafile.MetafileInfo {
-				return []metafile.MetafileInfo{
-					createTestBackup(t, targetBase, "backup_dryrun", false),
-				}
+			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
+				return createTestBackup(t, targetBase, "backup_dryrun", false)
 			},
-			validate: func(t *testing.T, targetBase string, backups []metafile.MetafileInfo) {
-				backupPath := filepath.Join(targetBase, backups[0].RelPathKey)
+			validate: func(t *testing.T, targetBase string, backup metafile.MetafileInfo) {
+				backupPath := filepath.Join(targetBase, backup.RelPathKey)
 				archivePath := filepath.Join(backupPath, "backup_dryrun.zip")
 
 				if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
@@ -124,20 +116,20 @@ func TestCompress(t *testing.T) {
 			},
 		},
 		{
-			name:        "Empty List",
+			name:        "Empty Metafile Info",
 			plan:        pathcompression.Plan{Enabled: true, Format: pathcompression.Zip},
 			expectError: pathcompression.ErrNothingToCompress,
-			setup: func(t *testing.T, targetBase string) []metafile.MetafileInfo {
-				return []metafile.MetafileInfo{}
+			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
+				return metafile.MetafileInfo{}
 			},
-			validate: func(t *testing.T, targetBase string, backups []metafile.MetafileInfo) {
+			validate: func(t *testing.T, targetBase string, backup metafile.MetafileInfo) {
 				// Nothing to validate
 			},
 		},
 		{
 			name: "Symlinks",
 			plan: pathcompression.Plan{Enabled: true, Format: pathcompression.Zip},
-			setup: func(t *testing.T, targetBase string) []metafile.MetafileInfo {
+			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
 				info := createTestBackup(t, targetBase, "backup_symlink", false)
 				// Add symlink
 				contentDir := filepath.Join(targetBase, info.RelPathKey, testContentDir)
@@ -148,10 +140,10 @@ func TestCompress(t *testing.T) {
 					}
 					t.Fatalf("Failed to create symlink: %v", err)
 				}
-				return []metafile.MetafileInfo{info}
+				return info
 			},
-			validate: func(t *testing.T, targetBase string, backups []metafile.MetafileInfo) {
-				backupPath := filepath.Join(targetBase, backups[0].RelPathKey)
+			validate: func(t *testing.T, targetBase string, backup metafile.MetafileInfo) {
+				backupPath := filepath.Join(targetBase, backup.RelPathKey)
 				archivePath := filepath.Join(backupPath, "backup_symlink.zip")
 				assertArchiveContains(t, archivePath, pathcompression.Zip, []string{"file.txt", "link.txt"})
 			},
@@ -163,13 +155,11 @@ func TestCompress(t *testing.T) {
 				Format:  pathcompression.Zip,
 			},
 			expectError: pathcompression.ErrDisabled,
-			setup: func(t *testing.T, targetBase string) []metafile.MetafileInfo {
-				return []metafile.MetafileInfo{
-					createTestBackup(t, targetBase, "backup_disabled", false),
-				}
+			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
+				return createTestBackup(t, targetBase, "backup_disabled", false)
 			},
-			validate: func(t *testing.T, targetBase string, backups []metafile.MetafileInfo) {
-				backupPath := filepath.Join(targetBase, backups[0].RelPathKey)
+			validate: func(t *testing.T, targetBase string, backup metafile.MetafileInfo) {
+				backupPath := filepath.Join(targetBase, backup.RelPathKey)
 				archivePath := filepath.Join(backupPath, "backup_disabled.zip")
 
 				if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
@@ -186,7 +176,7 @@ func TestCompress(t *testing.T) {
 			targetBase := t.TempDir()
 			toCompress := tc.setup(t, targetBase)
 
-			compressor := pathcompression.NewPathCompressor(256, 2)
+			compressor := pathcompression.NewPathCompressor(256)
 
 			err := compressor.Compress(context.Background(), targetBase, testContentDir, toCompress, &tc.plan, time.Now().UTC())
 
