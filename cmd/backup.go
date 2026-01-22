@@ -60,7 +60,6 @@ func RunBackup(ctx context.Context, flagMap map[string]interface{}) error {
 		),
 		pathcompression.NewPathCompressor(
 			runConfig.Engine.Performance.BufferSizeKB,
-			runConfig.Engine.Performance.CompressWorkers,
 		),
 	)
 

@@ -194,9 +194,9 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absSourcePath, absTargetBase
 
 	// Compress backups that are eligible
 	if p.Compression.Enabled {
-		var toCompress []metafile.MetafileInfo
+		var toCompress metafile.MetafileInfo
 		if p.Archive.ResultInfo.RelPathKey != "" {
-			toCompress = append(toCompress, p.Archive.ResultInfo)
+			toCompress = p.Archive.ResultInfo
 		}
 
 		if err := r.compressor.Compress(ctx, absTargetBasePath, p.Paths.RelContentPathKey, toCompress, p.Compression, timestampUTC); err != nil {

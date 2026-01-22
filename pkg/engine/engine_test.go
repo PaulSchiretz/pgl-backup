@@ -77,7 +77,7 @@ type mockCompressor struct {
 	err error
 }
 
-func (m *mockCompressor) Compress(ctx context.Context, absTargetBasePath, relContentPathKey string, toCompress []metafile.MetafileInfo, p *pathcompression.Plan, timestampUTC time.Time) error {
+func (m *mockCompressor) Compress(ctx context.Context, absTargetBasePath, relContentPathKey string, toCompress metafile.MetafileInfo, p *pathcompression.Plan, timestampUTC time.Time) error {
 	return m.err
 }
 
