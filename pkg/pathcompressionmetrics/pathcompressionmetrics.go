@@ -11,6 +11,7 @@ import (
 // Metrics defines the interface for collecting and reporting synchronization statistics.
 type Metrics interface {
 	AddArchivesCreated(n int64)
+	AddArchivesExtracted(n int64)
 	AddArchivesFailed(n int64)
 	AddOriginalBytes(n int64)
 	AddCompressedBytes(n int64)
@@ -23,20 +24,22 @@ type Metrics interface {
 // CompressionMetrics holds the atomic counters for tracking the compression operation's progress.
 // It is the concrete implementation of the Metrics interface.
 type CompressionMetrics struct {
-	ArchivesCreated  atomic.Int64
-	ArchivesFailed   atomic.Int64
-	OriginalBytes    atomic.Int64
-	CompressedBytes  atomic.Int64
-	EntriesProcessed atomic.Int64
+	ArchivesCreated   atomic.Int64
+	ArchivesExtracted atomic.Int64
+	ArchivesFailed    atomic.Int64
+	OriginalBytes     atomic.Int64
+	CompressedBytes   atomic.Int64
+	EntriesProcessed  atomic.Int64
 
 	stopChan chan struct{}
 }
 
-func (m *CompressionMetrics) AddArchivesCreated(n int64)  { m.ArchivesCreated.Add(n) }
-func (m *CompressionMetrics) AddArchivesFailed(n int64)   { m.ArchivesFailed.Add(n) }
-func (m *CompressionMetrics) AddOriginalBytes(n int64)    { m.OriginalBytes.Add(n) }
-func (m *CompressionMetrics) AddCompressedBytes(n int64)  { m.CompressedBytes.Add(n) }
-func (m *CompressionMetrics) AddEntriesProcessed(n int64) { m.EntriesProcessed.Add(n) }
+func (m *CompressionMetrics) AddArchivesCreated(n int64)   { m.ArchivesCreated.Add(n) }
+func (m *CompressionMetrics) AddArchivesExtracted(n int64) { m.ArchivesExtracted.Add(n) }
+func (m *CompressionMetrics) AddArchivesFailed(n int64)    { m.ArchivesFailed.Add(n) }
+func (m *CompressionMetrics) AddOriginalBytes(n int64)     { m.OriginalBytes.Add(n) }
+func (m *CompressionMetrics) AddCompressedBytes(n int64)   { m.CompressedBytes.Add(n) }
+func (m *CompressionMetrics) AddEntriesProcessed(n int64)  { m.EntriesProcessed.Add(n) }
 
 func (m *CompressionMetrics) StartProgress(msg string, interval time.Duration) {
 	m.stopChan = make(chan struct{})
@@ -75,6 +78,7 @@ func (m *CompressionMetrics) LogSummary(msg string) {
 	plog.Info(msg,
 		"entries_processed", m.EntriesProcessed.Load(),
 		"archives_created", m.ArchivesCreated.Load(),
+		"archives_extracted", m.ArchivesExtracted.Load(),
 		"archives_failed", m.ArchivesFailed.Load(),
 		"original_bytes", fmt.Sprintf("%d", orig),
 		"compressed_bytes", fmt.Sprintf("%d", comp),
@@ -87,6 +91,7 @@ func (m *CompressionMetrics) LogSummary(msg string) {
 type NoopMetrics struct{}
 
 func (m *NoopMetrics) AddArchivesCreated(n int64)                       {}
+func (m *NoopMetrics) AddArchivesExtracted(n int64)                     {}
 func (m *NoopMetrics) AddArchivesFailed(n int64)                        {}
 func (m *NoopMetrics) AddOriginalBytes(n int64)                         {}
 func (m *NoopMetrics) AddCompressedBytes(n int64)                       {}

@@ -14,6 +14,7 @@ func TestCompressionMetrics_Adders(t *testing.T) {
 		m := &CompressionMetrics{}
 
 		m.AddArchivesCreated(5)
+		m.AddArchivesExtracted(3)
 		m.AddArchivesFailed(2)
 		m.AddOriginalBytes(1000)
 		m.AddCompressedBytes(500)
@@ -21,6 +22,9 @@ func TestCompressionMetrics_Adders(t *testing.T) {
 
 		if got := m.ArchivesCreated.Load(); got != 5 {
 			t.Errorf("expected ArchivesCreated to be 5, got %d", got)
+		}
+		if got := m.ArchivesExtracted.Load(); got != 3 {
+			t.Errorf("expected ArchivesExtracted to be 3, got %d", got)
 		}
 		if got := m.ArchivesFailed.Load(); got != 2 {
 			t.Errorf("expected ArchivesFailed to be 2, got %d", got)
@@ -47,6 +51,7 @@ func TestCompressionMetrics_Log(t *testing.T) {
 		// --- Act ---
 		m := &CompressionMetrics{}
 		m.AddArchivesCreated(10)
+		m.AddArchivesExtracted(5)
 		m.AddOriginalBytes(200)
 		m.AddCompressedBytes(100) // 50% ratio
 		m.LogSummary("Test Compression Summary")
@@ -59,6 +64,9 @@ func TestCompressionMetrics_Log(t *testing.T) {
 		}
 		if !strings.Contains(output, "archives_created=10") {
 			t.Errorf("expected log output to contain 'archives_created=10', but it didn't. Got: %s", output)
+		}
+		if !strings.Contains(output, "archives_extracted=5") {
+			t.Errorf("expected log output to contain 'archives_extracted=5', but it didn't. Got: %s", output)
 		}
 		if !strings.Contains(output, "original_bytes=200") {
 			t.Errorf("expected log output to contain 'original_bytes=200', but it didn't. Got: %s", output)
@@ -99,6 +107,7 @@ func TestNoopMetrics(t *testing.T) {
 		}()
 
 		m.AddArchivesCreated(1)
+		m.AddArchivesExtracted(1)
 		m.AddArchivesFailed(1)
 		m.AddOriginalBytes(1)
 		m.AddCompressedBytes(1)

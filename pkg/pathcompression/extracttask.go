@@ -58,7 +58,7 @@ func (t *extractTask) execute() error {
 		t.metrics.AddArchivesFailed(1)
 		return err
 	}
-	t.metrics.AddArchivesCreated(1)
+	t.metrics.AddArchivesExtracted(1)
 
 	plog.Notice("EXTRACTED", "path", b.RelPathKey)
 	return nil
