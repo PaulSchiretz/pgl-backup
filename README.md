@@ -621,8 +621,9 @@ The best policy depends on how much data you are backing up and how much disk sp
 
 ### Commands
 
-* `backup`: Run the backup operation.
-* `prune`: Apply retention policies to clean up outdated backups.
+* `backup`: Run the backup operation. Use `-help` to see all the options.
+* `restore`: Run the restore operation. Use `-help` to see all the options.
+* `prune`: Apply retention policies to clean up outdated backups. Use `-help` to see all the options.
 * `init`: Initialize or update a configuration. Use `-default` to overwrite an existing configuration with defaults.
 * `version`: Print the application version.
 
@@ -636,7 +637,8 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `source` / `source` | `string` | `""` | The directory to back up. **Required**. |
 | `target` / `target` (internal) | `string` | `""` | The base directory where backups are stored. **Required**. |
 | `mode` / `runtime.mode` (internal) | `"incremental"` | Backup mode: `"incremental"` or `"snapshot"`. |
-| `overwrite` / `runtime.*OverwriteBehavior` (internal) | `string` | `"update"` / `"never"` | Controls how existing files are handled. Defaults to `"update"` for backup, `"never"` for restore. Options: `'always'`, `'never'`, `'if-newer'`, `'update'`. |
+| `overwrite` (backup) / `runtime.backupOverwriteBehavior` (internal) | `string` | `"update"` | Overwrite behavior for backup: `'always'`, `'never'`, `'if-newer'`, `'update'`. |
+| `overwrite` (restore) / `runtime.restoreOverwriteBehavior` (internal) | `string` | `"never"` | Overwrite behavior for restore: `'always'`, `'never'`, `'if-newer'`, `'update'`. |
 | `fail-fast` / `engine.failFast` | `bool` | `false` | If true, stops the backup immediately on the first file sync error. |
 | `default` / - | `false` | Used with `init` command. Overwrite existing configuration with defaults. |
 | `force` / - | `false` | Bypass confirmation prompts (e.g., for init -default). |
