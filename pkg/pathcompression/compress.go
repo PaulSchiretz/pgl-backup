@@ -215,7 +215,6 @@ func (c *tarCompressor) writeArchive(ctx context.Context, absSourcePath string, 
 	if c.compression == TarZst {
 		zstdWriter, err := zstd.NewWriter(bufWriter)
 		if err != nil {
-			targetF.Close()
 			return fmt.Errorf("failed to create zstd writer: %w", err)
 		}
 		compressedWriter = zstdWriter

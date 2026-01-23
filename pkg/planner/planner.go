@@ -24,7 +24,7 @@ type BackupPlan struct {
 	Sync        *pathsync.Plan
 	Archive     *patharchive.Plan
 	Retention   *pathretention.Plan
-	Compression *pathcompression.Plan
+	Compression *pathcompression.CompressPlan
 
 	PreBackupHooks  []string
 	PostBackupHooks []string
@@ -195,7 +195,7 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 			FailFast: failFast,
 			Metrics:  metrics,
 		},
-		Compression: &pathcompression.Plan{
+		Compression: &pathcompression.CompressPlan{
 			Enabled: compressionCfg.Enabled,
 			Format:  compressionFormat,
 			// Global Flags

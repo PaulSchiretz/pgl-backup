@@ -10,16 +10,62 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/klauspost/pgzip"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompressionmetrics"
+	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
+// handleOverwrite checks if a file should be written to absTargetPath based on the overwrite behavior.
+// It returns true if the file should be written.
+// As a side effect, it removes the existing file/symlink at absTargetPath if overwriting is decided.
+func handleOverwrite(absTargetPath string, archiveFileModTime time.Time, overwrite OverwriteBehavior) (bool, error) {
+	destInfo, err := os.Lstat(absTargetPath)
+	if os.IsNotExist(err) {
+		return true, nil // Path is clear.
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to stat destination path %s: %w", absTargetPath, err)
+	}
+
+	if destInfo.IsDir() {
+		return false, fmt.Errorf("cannot overwrite directory with a file: %s", absTargetPath)
+	}
+
+	// Default to 'always' if not specified
+	if overwrite == "" {
+		overwrite = OverwriteAlways
+	}
+
+	switch overwrite {
+	case OverwriteNever:
+		plog.Debug("Skipping existing file (overwrite=never)", "path", absTargetPath)
+		return false, nil
+	case OverwriteIfNewer:
+		if !archiveFileModTime.After(destInfo.ModTime()) {
+			plog.Debug("Skipping up-to-date file (overwrite=if-newer)", "path", absTargetPath)
+			return false, nil
+		}
+	case OverwriteAlways:
+		// Proceed to overwrite.
+	default:
+		return false, fmt.Errorf("unsupported overwrite behavior: %s", overwrite)
+	}
+
+	// If we reach here, we overwrite.
+	// Security: Remove existing file/symlink before creating the new one.
+	if err := os.Remove(absTargetPath); err != nil {
+		return false, fmt.Errorf("failed to remove existing file for overwrite at %s: %w", absTargetPath, err)
+	}
+	return true, nil
+}
+
 // extractor defines the interface for extracting archives to a target directory.
 type extractor interface {
-	Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics) error
+	Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics, overwrite OverwriteBehavior) error
 }
 
 // newExtractor returns the correct implementation based on the format.
@@ -38,7 +84,7 @@ func newExtractor(format Format) (extractor, error) {
 
 type zipExtractor struct{}
 
-func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics) error {
+func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics, overwrite OverwriteBehavior) error {
 	r, err := zip.OpenReader(absArchiveFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to open zip archive: %w", err)
@@ -90,7 +136,18 @@ func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 			if err != nil {
 				return err
 			}
-			_ = os.Remove(absTarget) // Remove existing if any
+
+			shouldWrite, err := handleOverwrite(absTarget, f.Modified, overwrite)
+			if err != nil {
+				return err
+			}
+			if !shouldWrite {
+				continue
+			}
+
+			// Security: Remove the file if it exists to prevent following a symlink
+			// created by a previous entry (Symlink Interception).
+			_ = os.Remove(absTarget)
 			if err := os.Symlink(string(linkTarget), absTarget); err != nil {
 				return err
 			}
@@ -98,6 +155,17 @@ func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 		}
 
 		// Handle Regular Files
+
+		shouldWrite, err := handleOverwrite(absTarget, f.Modified, overwrite)
+		if err != nil {
+			rc.Close()
+			return err
+		}
+		if !shouldWrite {
+			rc.Close()
+			continue
+		}
+
 		// Security: Remove the file if it exists to prevent following a symlink
 		// created by a previous entry (Symlink Interception).
 		_ = os.Remove(absTarget)
@@ -126,7 +194,7 @@ type tarExtractor struct {
 	compression Format
 }
 
-func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics) error {
+func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics, overwrite OverwriteBehavior) error {
 	f, err := os.Open(absArchiveFilePath)
 	if err != nil {
 		return err
@@ -191,6 +259,15 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 			if err := os.MkdirAll(filepath.Dir(absTarget), util.UserWritableDirPerms); err != nil {
 				return err
 			}
+
+			shouldWrite, err := handleOverwrite(absTarget, header.ModTime, overwrite)
+			if err != nil {
+				return err
+			}
+			if !shouldWrite {
+				continue
+			}
+
 			// Security: Remove the file if it exists to prevent following a symlink
 			// created by a previous entry (Symlink Interception).
 			_ = os.Remove(absTarget)
@@ -211,6 +288,17 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 			if err := os.MkdirAll(filepath.Dir(absTarget), util.UserWritableDirPerms); err != nil {
 				return err
 			}
+
+			shouldWrite, err := handleOverwrite(absTarget, header.ModTime, overwrite)
+			if err != nil {
+				return err
+			}
+			if !shouldWrite {
+				continue
+			}
+
+			// Security: Remove the file if it exists to prevent following a symlink
+			// created by a previous entry (Symlink Interception).
 			_ = os.Remove(absTarget)
 			if err := os.Symlink(header.Linkname, absTarget); err != nil {
 				return err

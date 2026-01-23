@@ -24,14 +24,14 @@ const testContentDir = "PGL_Backup_Content"
 func TestCompress(t *testing.T) {
 	tests := []struct {
 		name        string
-		plan        pathcompression.Plan
+		plan        pathcompression.CompressPlan
 		setup       func(t *testing.T, targetBase string) metafile.MetafileInfo
 		expectError error
 		validate    func(t *testing.T, targetBase string, backup metafile.MetafileInfo)
 	}{
 		{
 			name: "Happy Path - Zip",
-			plan: pathcompression.Plan{
+			plan: pathcompression.CompressPlan{
 				Enabled: true,
 				Format:  pathcompression.Zip,
 				Metrics: true,
@@ -54,7 +54,7 @@ func TestCompress(t *testing.T) {
 		},
 		{
 			name: "Happy Path - TarGz",
-			plan: pathcompression.Plan{
+			plan: pathcompression.CompressPlan{
 				Enabled: true,
 				Format:  pathcompression.TarGz,
 			},
@@ -75,7 +75,7 @@ func TestCompress(t *testing.T) {
 		},
 		{
 			name: "Happy Path - TarZst",
-			plan: pathcompression.Plan{
+			plan: pathcompression.CompressPlan{
 				Enabled: true,
 				Format:  pathcompression.TarZst,
 			},
@@ -96,7 +96,7 @@ func TestCompress(t *testing.T) {
 		},
 		{
 			name: "Dry Run",
-			plan: pathcompression.Plan{
+			plan: pathcompression.CompressPlan{
 				Enabled: true,
 				Format:  pathcompression.Zip,
 				DryRun:  true,
@@ -117,7 +117,7 @@ func TestCompress(t *testing.T) {
 		},
 		{
 			name:        "Empty Metafile Info",
-			plan:        pathcompression.Plan{Enabled: true, Format: pathcompression.Zip},
+			plan:        pathcompression.CompressPlan{Enabled: true, Format: pathcompression.Zip},
 			expectError: pathcompression.ErrNothingToCompress,
 			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
 				return metafile.MetafileInfo{}
@@ -128,7 +128,7 @@ func TestCompress(t *testing.T) {
 		},
 		{
 			name: "Symlinks",
-			plan: pathcompression.Plan{Enabled: true, Format: pathcompression.Zip},
+			plan: pathcompression.CompressPlan{Enabled: true, Format: pathcompression.Zip},
 			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
 				info := createTestBackup(t, targetBase, "backup_symlink", false)
 				// Add symlink
@@ -150,7 +150,7 @@ func TestCompress(t *testing.T) {
 		},
 		{
 			name: "Disabled - No Compression",
-			plan: pathcompression.Plan{
+			plan: pathcompression.CompressPlan{
 				Enabled: false,
 				Format:  pathcompression.Zip,
 			},
@@ -276,7 +276,7 @@ func TestExtract(t *testing.T) {
 			toCompress := tc.setup(t, targetBase)
 
 			// 1. Compress first to generate the archive
-			compressPlan := &pathcompression.Plan{
+			compressPlan := &pathcompression.CompressPlan{
 				Enabled: true,
 				Format:  tc.format,
 			}
@@ -289,12 +289,136 @@ func TestExtract(t *testing.T) {
 
 			// 2. Extract
 			extractPath := filepath.Join(targetBase, "extracted")
-			extractPlan := &pathcompression.Plan{
-				Enabled: true,
-				Format:  tc.format,
+			extractPlan := &pathcompression.ExtractPlan{
+				Enabled:           true,
+				Format:            tc.format,
+				OverwriteBehavior: pathcompression.OverwriteAlways, // Default behavior for these tests
 			}
 
 			err = compressor.Extract(context.Background(), targetBase, toCompress, extractPath, extractPlan, time.Now().UTC())
+			if err != nil {
+				t.Fatalf("Extract failed: %v", err)
+			}
+
+			if tc.validate != nil {
+				tc.validate(t, extractPath)
+			}
+		})
+	}
+}
+
+func TestExtract_OverwriteBehavior(t *testing.T) {
+	// 1. Setup: Create a base archive to extract from.
+	targetBase := t.TempDir()
+	toCompress := createTestBackup(t, targetBase, "overwrite_test", false)
+	// Add a second file to the backup
+	contentDir := filepath.Join(targetBase, toCompress.RelPathKey, testContentDir)
+	if err := os.WriteFile(filepath.Join(contentDir, "file2.txt"), []byte("content2"), 0644); err != nil {
+		t.Fatalf("Failed to create content file2: %v", err)
+	}
+
+	compressor := pathcompression.NewPathCompressor(256)
+	compressPlan := &pathcompression.CompressPlan{
+		Enabled: true,
+		Format:  pathcompression.Zip,
+	}
+	err := compressor.Compress(context.Background(), targetBase, testContentDir, toCompress, compressPlan, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("Setup failed: failed to compress: %v", err)
+	}
+
+	// 2. Define test cases for different overwrite behaviors
+	tests := []struct {
+		name            string
+		behavior        pathcompression.OverwriteBehavior
+		setupExtractDir func(t *testing.T, extractPath string) // Pre-populate the extraction dir
+		validate        func(t *testing.T, extractPath string)
+	}{
+		{
+			name:     "OverwriteNever - Skips Existing",
+			behavior: pathcompression.OverwriteNever,
+			setupExtractDir: func(t *testing.T, extractPath string) {
+				os.MkdirAll(extractPath, 0755)
+				// Create a file that will conflict with the archive
+				if err := os.WriteFile(filepath.Join(extractPath, "file.txt"), []byte("pre-existing"), 0644); err != nil {
+					t.Fatalf("Failed to create pre-existing file: %v", err)
+				}
+			},
+			validate: func(t *testing.T, extractPath string) {
+				// The pre-existing file should NOT be overwritten
+				assertFileContent(t, filepath.Join(extractPath, "file.txt"), "pre-existing")
+				// The other file from the archive should be created
+				assertFileContent(t, filepath.Join(extractPath, "file2.txt"), "content2")
+			},
+		},
+		{
+			name:     "OverwriteIfNewer - Skips Newer on Disk",
+			behavior: pathcompression.OverwriteIfNewer,
+			setupExtractDir: func(t *testing.T, extractPath string) {
+				os.MkdirAll(extractPath, 0755)
+				path := filepath.Join(extractPath, "file.txt")
+				if err := os.WriteFile(path, []byte("pre-existing-newer"), 0644); err != nil {
+					t.Fatalf("Failed to create pre-existing file: %v", err)
+				}
+				// Set mod time to be in the future, so it's definitely newer
+				futureTime := time.Now().Add(1 * time.Hour)
+				if err := os.Chtimes(path, futureTime, futureTime); err != nil {
+					t.Fatalf("Failed to set file time: %v", err)
+				}
+			},
+			validate: func(t *testing.T, extractPath string) {
+				assertFileContent(t, filepath.Join(extractPath, "file.txt"), "pre-existing-newer")
+			},
+		},
+		{
+			name:     "OverwriteIfNewer - Overwrites Older on Disk",
+			behavior: pathcompression.OverwriteIfNewer,
+			setupExtractDir: func(t *testing.T, extractPath string) {
+				os.MkdirAll(extractPath, 0755)
+				path := filepath.Join(extractPath, "file.txt")
+				if err := os.WriteFile(path, []byte("pre-existing-older"), 0644); err != nil {
+					t.Fatalf("Failed to create pre-existing file: %v", err)
+				}
+				// Set mod time to be in the past
+				pastTime := time.Now().Add(-1 * time.Hour)
+				if err := os.Chtimes(path, pastTime, pastTime); err != nil {
+					t.Fatalf("Failed to set file time: %v", err)
+				}
+			},
+			validate: func(t *testing.T, extractPath string) {
+				// The file from the archive has content "content"
+				assertFileContent(t, filepath.Join(extractPath, "file.txt"), "content")
+			},
+		},
+		{
+			name:     "OverwriteAlways - Overwrites Existing",
+			behavior: pathcompression.OverwriteAlways,
+			setupExtractDir: func(t *testing.T, extractPath string) {
+				os.MkdirAll(extractPath, 0755)
+				if err := os.WriteFile(filepath.Join(extractPath, "file.txt"), []byte("pre-existing"), 0644); err != nil {
+					t.Fatalf("Failed to create pre-existing file: %v", err)
+				}
+			},
+			validate: func(t *testing.T, extractPath string) {
+				assertFileContent(t, filepath.Join(extractPath, "file.txt"), "content")
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			extractPath := filepath.Join(targetBase, "extracted_"+tc.name)
+			if tc.setupExtractDir != nil {
+				tc.setupExtractDir(t, extractPath)
+			}
+
+			extractPlan := &pathcompression.ExtractPlan{
+				Enabled:           true,
+				Format:            pathcompression.Zip,
+				OverwriteBehavior: tc.behavior,
+			}
+
+			err := compressor.Extract(context.Background(), targetBase, toCompress, extractPath, extractPlan, time.Now().UTC())
 			if err != nil {
 				t.Fatalf("Extract failed: %v", err)
 			}

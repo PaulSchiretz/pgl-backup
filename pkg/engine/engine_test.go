@@ -77,7 +77,7 @@ type mockCompressor struct {
 	err error
 }
 
-func (m *mockCompressor) Compress(ctx context.Context, absTargetBasePath, relContentPathKey string, toCompress metafile.MetafileInfo, p *pathcompression.Plan, timestampUTC time.Time) error {
+func (m *mockCompressor) Compress(ctx context.Context, absTargetBasePath, relContentPathKey string, toCompress metafile.MetafileInfo, p *pathcompression.CompressPlan, timestampUTC time.Time) error {
 	return m.err
 }
 
@@ -348,7 +348,7 @@ func TestExecuteBackup(t *testing.T) {
 				Retention: &pathretention.Plan{
 					Enabled: tc.retentionEnabled,
 				},
-				Compression: &pathcompression.Plan{
+				Compression: &pathcompression.CompressPlan{
 					Enabled: tc.compressionEnabled,
 				},
 				PreBackupHooks:  tc.preBackupHooks,
@@ -458,7 +458,7 @@ func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
 		Sync:        &pathsync.Plan{Enabled: true},
 		Archive:     &patharchive.Plan{Enabled: true},
 		Retention:   &pathretention.Plan{Enabled: true}, // Enabled!
-		Compression: &pathcompression.Plan{Enabled: false},
+		Compression: &pathcompression.CompressPlan{Enabled: false},
 	}
 
 	// Mocks
