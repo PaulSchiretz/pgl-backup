@@ -13,9 +13,10 @@ type Plan struct {
 	PreserveSourceDirName bool
 	Mirror                bool
 
-	RetryCount    int
-	RetryWait     time.Duration
-	ModTimeWindow time.Duration // The time window to consider file modification times equal.
+	RetryCount        int
+	RetryWait         time.Duration
+	ModTimeWindow     time.Duration // The time window to consider file modification times equal.
+	OverwriteBehavior OverwriteBehavior
 
 	ExcludeFiles []string
 	ExcludeDirs  []string

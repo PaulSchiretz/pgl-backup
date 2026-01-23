@@ -1,5 +1,9 @@
 package pathcompression
 
+import (
+	"time"
+)
+
 // CompressPlan holds the configuration for a compression operation.
 type CompressPlan struct {
 	Enabled bool
@@ -16,6 +20,7 @@ type CompressPlan struct {
 type ExtractPlan struct {
 	Enabled           bool
 	OverwriteBehavior OverwriteBehavior
+	ModTimeWindow     time.Duration
 
 	// Global Flags
 	DryRun   bool

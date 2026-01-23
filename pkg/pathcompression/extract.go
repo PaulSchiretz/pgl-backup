@@ -22,7 +22,7 @@ import (
 // handleOverwrite checks if a file should be written to absTargetPath based on the overwrite behavior.
 // It returns true if the file should be written.
 // As a side effect, it removes the existing file/symlink at absTargetPath if overwriting is decided.
-func handleOverwrite(absTargetPath string, archiveFileModTime time.Time, overwrite OverwriteBehavior) (bool, error) {
+func handleOverwrite(absTargetPath string, archiveFileModTime time.Time, archiveFileSize int64, overwrite OverwriteBehavior, modTimeWindow time.Duration) (bool, error) {
 	destInfo, err := os.Lstat(absTargetPath)
 	if os.IsNotExist(err) {
 		return true, nil // Path is clear.
@@ -35,9 +35,17 @@ func handleOverwrite(absTargetPath string, archiveFileModTime time.Time, overwri
 		return false, fmt.Errorf("cannot overwrite directory with a file: %s", absTargetPath)
 	}
 
-	// Default to 'always' if not specified
+	// Helper to truncate time based on window
+	truncate := func(t time.Time) time.Time {
+		if modTimeWindow > 0 {
+			return t.Truncate(modTimeWindow)
+		}
+		return t
+	}
+
+	// Default to 'never' if not specified
 	if overwrite == "" {
-		overwrite = OverwriteAlways
+		overwrite = OverwriteNever
 	}
 
 	switch overwrite {
@@ -45,8 +53,13 @@ func handleOverwrite(absTargetPath string, archiveFileModTime time.Time, overwri
 		plog.Debug("Skipping existing file (overwrite=never)", "path", absTargetPath)
 		return false, nil
 	case OverwriteIfNewer:
-		if !archiveFileModTime.After(destInfo.ModTime()) {
+		if !truncate(archiveFileModTime).After(truncate(destInfo.ModTime())) {
 			plog.Debug("Skipping up-to-date file (overwrite=if-newer)", "path", absTargetPath)
+			return false, nil
+		}
+	case OverwriteUpdate:
+		if destInfo.Size() == archiveFileSize && truncate(destInfo.ModTime()).Equal(truncate(archiveFileModTime)) {
+			plog.Debug("Skipping up-to-date file (overwrite=update)", "path", absTargetPath)
 			return false, nil
 		}
 	case OverwriteAlways:
@@ -65,7 +78,7 @@ func handleOverwrite(absTargetPath string, archiveFileModTime time.Time, overwri
 
 // extractor defines the interface for extracting archives to a target directory.
 type extractor interface {
-	Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics, overwrite OverwriteBehavior) error
+	Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) error
 }
 
 // newExtractor returns the correct implementation based on the format.
@@ -84,7 +97,7 @@ func newExtractor(format Format) (extractor, error) {
 
 type zipExtractor struct{}
 
-func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics, overwrite OverwriteBehavior) error {
+func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) error {
 	r, err := zip.OpenReader(absArchiveFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to open zip archive: %w", err)
@@ -137,7 +150,7 @@ func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 				return err
 			}
 
-			shouldWrite, err := handleOverwrite(absTarget, f.Modified, overwrite)
+			shouldWrite, err := handleOverwrite(absTarget, f.Modified, int64(f.UncompressedSize64), overwrite, modTimeWindow)
 			if err != nil {
 				return err
 			}
@@ -156,7 +169,7 @@ func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 
 		// Handle Regular Files
 
-		shouldWrite, err := handleOverwrite(absTarget, f.Modified, overwrite)
+		shouldWrite, err := handleOverwrite(absTarget, f.Modified, int64(f.UncompressedSize64), overwrite, modTimeWindow)
 		if err != nil {
 			rc.Close()
 			return err
@@ -194,7 +207,7 @@ type tarExtractor struct {
 	compression Format
 }
 
-func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics, overwrite OverwriteBehavior) error {
+func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) error {
 	f, err := os.Open(absArchiveFilePath)
 	if err != nil {
 		return err
@@ -260,7 +273,7 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 				return err
 			}
 
-			shouldWrite, err := handleOverwrite(absTarget, header.ModTime, overwrite)
+			shouldWrite, err := handleOverwrite(absTarget, header.ModTime, header.Size, overwrite, modTimeWindow)
 			if err != nil {
 				return err
 			}
@@ -289,7 +302,7 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 				return err
 			}
 
-			shouldWrite, err := handleOverwrite(absTarget, header.ModTime, overwrite)
+			shouldWrite, err := handleOverwrite(absTarget, header.ModTime, header.Size, overwrite, modTimeWindow)
 			if err != nil {
 				return err
 			}

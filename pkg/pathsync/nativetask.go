@@ -115,9 +115,10 @@ type nativeTask struct {
 	fileExcludes exclusionSet
 	dirExcludes  exclusionSet
 
-	retryCount    int
-	retryWait     time.Duration
-	modTimeWindow time.Duration
+	retryCount        int
+	retryWait         time.Duration
+	modTimeWindow     time.Duration
+	overwriteBehavior OverwriteBehavior
 
 	mirror bool
 
@@ -515,9 +516,23 @@ func (t *nativeTask) processFileSync(task *syncTask) error {
 			// NOTE: Permissions are intentionally not compared. This prevents unnecessary file copies
 			// when only metadata (like the executable bit) changes, which is common with version
 			// control systems like Git. The backup process already ensures the destination is writable.
-			if t.truncateModTime(time.Unix(0, task.PathInfo.ModTime)).Equal(t.truncateModTime(trgInfo.ModTime())) && task.PathInfo.Size == trgInfo.Size() {
+			switch t.overwriteBehavior {
+			case OverwriteNever:
 				t.metrics.AddFilesUpToDate(1)
-				return nil // Not changed
+				return nil
+			case OverwriteIfNewer:
+				srcTime := t.truncateModTime(time.Unix(0, task.PathInfo.ModTime))
+				if !srcTime.After(t.truncateModTime(trgInfo.ModTime())) {
+					t.metrics.AddFilesUpToDate(1)
+					return nil
+				}
+			case OverwriteAlways:
+				// Fall through to copy
+			default: // OverwriteUpdate
+				if t.truncateModTime(time.Unix(0, task.PathInfo.ModTime)).Equal(t.truncateModTime(trgInfo.ModTime())) && task.PathInfo.Size == trgInfo.Size() {
+					t.metrics.AddFilesUpToDate(1)
+					return nil // Not changed
+				}
 			}
 		} else if trgInfo.IsDir() {
 			// Destination is a directory. Rename cannot overwrite it, so we must remove it explicitly.

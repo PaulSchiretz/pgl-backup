@@ -63,6 +63,11 @@ type cliFlags struct {
 	// Backup specific
 	Mode *string
 
+	// Restore specific
+	OverwriteBehavior *string
+	PreRestoreHooks   *string
+	PostRestoreHooks  *string
+
 	// Init specific
 	Force   *bool
 	Default *bool
@@ -79,6 +84,7 @@ func registerBackupFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.Target = fs.String("target", "", "Base destination directory for backups")
 	f.Mode = fs.String("mode", "incremental", "Backup mode: 'incremental' or 'snapshot'.")
 	f.FailFast = fs.Bool("fail-fast", false, "Stop the backup immediately on the first file sync error.")
+	f.OverwriteBehavior = fs.String("overwrite", "update", "Overwrite behavior: 'always', 'never', 'if-newer', 'update'.")
 	f.SyncWorkers = fs.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
 	f.MirrorWorkers = fs.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
 	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
@@ -168,6 +174,17 @@ func registerPruneFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
 }
 
+func registerRestoreFlags(fs *flag.FlagSet, f *cliFlags) {
+	f.Source = fs.String("source", "", "Directory containing the backup to restore from")
+	f.Target = fs.String("target", "", "Directory to restore to")
+	f.FailFast = fs.Bool("fail-fast", false, "Stop the restore immediately on the first error.")
+	f.SyncWorkers = fs.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
+	f.BufferSizeKB = fs.Int("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes.")
+	f.PreRestoreHooks = fs.String("pre-restore-hooks", "", "Comma-separated list of commands to run before the restore.")
+	f.PostRestoreHooks = fs.String("post-restore-hooks", "", "Comma-separated list of commands to run after the restore.")
+	f.OverwriteBehavior = fs.String("overwrite", "never", "Overwrite behavior: 'always', 'never', 'if-newer', 'update'.")
+}
+
 // Parse parses the provided arguments (usually os.Args[1:]) and returns the action and config map.
 func Parse(args []string) (Command, map[string]interface{}, error) {
 	// Handle top-level help
@@ -243,6 +260,21 @@ func Parse(args []string) (Command, map[string]interface{}, error) {
 		flagMap, err := flagsToMap(command, fs, f)
 		return command, flagMap, err
 
+	case Restore:
+		fs := flag.NewFlagSet(command.String(), flag.ContinueOnError)
+		registerGlobalFlags(fs, f)
+		registerRestoreFlags(fs, f)
+
+		fs.Usage = func() {
+			printSubcommandUsage(command, "Restore a backup from the target directory.", fs)
+		}
+
+		if err := fs.Parse(args[1:]); err != nil {
+			return command, nil, err
+		}
+		flagMap, err := flagsToMap(command, fs, f)
+		return command, flagMap, err
+
 	case Version:
 		return command, nil, nil
 
@@ -267,6 +299,7 @@ func flagsToMap(c Command, fs *flag.FlagSet, f *cliFlags) (map[string]interface{
 	addIfUsed(flagMap, usedFlags, "metrics", f.Metrics)
 
 	addIfUsed(flagMap, usedFlags, "source", f.Source)
+	addIfUsed(flagMap, usedFlags, "overwrite", f.OverwriteBehavior)
 	addIfUsed(flagMap, usedFlags, "target", f.Target)
 	addIfUsed(flagMap, usedFlags, "fail-fast", f.FailFast)
 	addIfUsed(flagMap, usedFlags, "sync-workers", f.SyncWorkers)
@@ -309,6 +342,8 @@ func flagsToMap(c Command, fs *flag.FlagSet, f *cliFlags) (map[string]interface{
 	addParsedIfUsed(flagMap, usedFlags, "user-exclude-dirs", f.UserExcludeDirs, ParseExcludeList)
 	addParsedIfUsed(flagMap, usedFlags, "pre-backup-hooks", f.PreBackupHooks, ParseCmdList)
 	addParsedIfUsed(flagMap, usedFlags, "post-backup-hooks", f.PostBackupHooks, ParseCmdList)
+	addParsedIfUsed(flagMap, usedFlags, "pre-restore-hooks", f.PreRestoreHooks, ParseCmdList)
+	addParsedIfUsed(flagMap, usedFlags, "post-restore-hooks", f.PostRestoreHooks, ParseCmdList)
 
 	return flagMap, nil
 }
@@ -337,6 +372,7 @@ func printTopLevelUsage(fs *flag.FlagSet) {
 	fmt.Fprintf(fs.Output(), "Commands:\n")
 	fmt.Fprintf(fs.Output(), "  backup      Run the backup operation\n")
 	fmt.Fprintf(fs.Output(), "  prune       Apply retention policies to clean up outdated backups\n")
+	fmt.Fprintf(fs.Output(), "  restore     Restore a backup\n")
 	fmt.Fprintf(fs.Output(), "  init        Initialize a new configuration\n")
 	fmt.Fprintf(fs.Output(), "  version     Print the application version\n")
 	fmt.Fprintf(fs.Output(), "\nRun '%s <command> -help' for more information on a command.\n", execName)

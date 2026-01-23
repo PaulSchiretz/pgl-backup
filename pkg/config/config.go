@@ -47,6 +47,12 @@ type HooksConfig struct {
 	// PostBackup is a list of shell commands to execute after the backup sync completes.
 	// SECURITY: These commands are executed as provided. Ensure they are from a trusted source.
 	PostBackup []string `json:"postBackup"`
+	// PreRestore is a list of shell commands to execute before the restore begins.
+	// SECURITY: These commands are executed as provided. Ensure they are from a trusted source.
+	PreRestore []string `json:"preRestore"`
+	// PostRestore is a list of shell commands to execute after the restore completes.
+	// SECURITY: These commands are executed as provided. Ensure they are from a trusted source.
+	PostRestore []string `json:"postRestore"`
 }
 
 type EnginePerformanceConfig struct {
@@ -107,8 +113,10 @@ type RetentionConfig struct {
 }
 
 type RuntimeConfig struct {
-	Mode   string
-	DryRun bool
+	Mode                     string
+	DryRun                   bool
+	BackupOverwriteBehavior  string
+	RestoreOverwriteBehavior string
 }
 
 type Config struct {
@@ -138,8 +146,10 @@ func NewDefault() Config {
 		TargetBase: "",     // Intentionally empty to force user configuration.
 		LogLevel:   "info", // Default log level.
 		Runtime: RuntimeConfig{
-			Mode:   "incremental", // Default mode
-			DryRun: false,
+			Mode:                     "incremental", // Default mode
+			DryRun:                   false,
+			BackupOverwriteBehavior:  "update", // Default to update behavior for backups
+			RestoreOverwriteBehavior: "never",  // Default to never overwrite for restores
 		},
 		Paths: PathsConfig{
 			Incremental: PathConfig{
@@ -223,8 +233,10 @@ func NewDefault() Config {
 			Level:   "default",
 		},
 		Hooks: HooksConfig{
-			PreBackup:  []string{},
-			PostBackup: []string{},
+			PreBackup:   []string{},
+			PostBackup:  []string{},
+			PreRestore:  []string{},
+			PostRestore: []string{},
 		},
 	}
 }
@@ -552,6 +564,12 @@ func (c *Config) LogSummary() {
 	if len(c.Hooks.PostBackup) > 0 {
 		logArgs = append(logArgs, "post_backup_hooks", strings.Join(c.Hooks.PostBackup, "; "))
 	}
+	if len(c.Hooks.PreRestore) > 0 {
+		logArgs = append(logArgs, "pre_restore_hooks", strings.Join(c.Hooks.PreRestore, "; "))
+	}
+	if len(c.Hooks.PostRestore) > 0 {
+		logArgs = append(logArgs, "post_restore_hooks", strings.Join(c.Hooks.PostRestore, "; "))
+	}
 	plog.Info("Configuration loaded", logArgs...)
 }
 
@@ -605,6 +623,12 @@ func MergeConfigWithFlags(command flagparse.Command, base Config, setFlags map[s
 			}
 		case "dry-run":
 			merged.Runtime.DryRun = value.(bool)
+		case "overwrite":
+			if command == flagparse.Restore {
+				merged.Runtime.RestoreOverwriteBehavior = value.(string)
+			} else {
+				merged.Runtime.BackupOverwriteBehavior = value.(string)
+			}
 		case "sync-workers":
 			merged.Engine.Performance.SyncWorkers = value.(int)
 		case "mirror-workers":
@@ -631,6 +655,10 @@ func MergeConfigWithFlags(command flagparse.Command, base Config, setFlags map[s
 			merged.Hooks.PreBackup = value.([]string)
 		case "post-backup-hooks":
 			merged.Hooks.PostBackup = value.([]string)
+		case "pre-restore-hooks":
+			merged.Hooks.PreRestore = value.([]string)
+		case "post-restore-hooks":
+			merged.Hooks.PostRestore = value.([]string)
 		case "archive":
 			merged.Archive.Enabled = value.(bool)
 		case "archive-interval-mode":

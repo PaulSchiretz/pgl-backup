@@ -21,6 +21,7 @@ type extractTask struct {
 	toExtract            metafile.MetafileInfo
 	absExtractTargetPath string
 	overwriteBehavior    OverwriteBehavior
+	modTimeWindow        time.Duration
 	timestampUTC         time.Time
 	metrics              pathcompressionmetrics.Metrics
 	dryRun               bool
@@ -80,7 +81,7 @@ func (t *extractTask) extractBackup(absToExtractPath, absExtractTargetPath strin
 		return err
 	}
 
-	if err := extractor.Extract(t.ctx, absArchiveFilePath, absExtractTargetPath, t.ioBufferPool, t.metrics, t.overwriteBehavior); err != nil {
+	if err := extractor.Extract(t.ctx, absArchiveFilePath, absExtractTargetPath, t.ioBufferPool, t.metrics, t.overwriteBehavior, t.modTimeWindow); err != nil {
 		return err
 	}
 	return nil

@@ -15,6 +15,7 @@ const (
 	Version
 	Init
 	Prune
+	Restore
 )
 
 var commandToString = map[Command]string{
@@ -23,6 +24,7 @@ var commandToString = map[Command]string{
 	Version: "version",
 	Init:    "init",
 	Prune:   "prune",
+	Restore: "restore",
 }
 
 var stringToCommand map[string]Command
@@ -42,5 +44,5 @@ func ParseCommand(s string) (Command, error) {
 	if command, ok := stringToCommand[s]; ok {
 		return command, nil
 	}
-	return None, fmt.Errorf("invalid command: %q. Must be 'backup', 'version', 'prune', or 'init'", s)
+	return None, fmt.Errorf("invalid command: %q. Must be 'backup', 'restore', 'version', 'prune', or 'init'", s)
 }

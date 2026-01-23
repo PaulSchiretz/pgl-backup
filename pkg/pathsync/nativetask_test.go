@@ -188,7 +188,7 @@ type expectedMetrics struct {
 }
 
 func TestNativeSync_EndToEnd(t *testing.T) {
-	baseTime := time.Now().Add(-24 * time.Hour).Truncate(time.Second)
+	baseTime := time.Now().Add(-24 * time.Hour).Truncate(time.Minute)
 
 	// --- Test Cases ---
 	testCases := []struct {
@@ -211,6 +211,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 		verify                  func(t *testing.T, src, dst string) // Optional custom verification.
 		expectedMetrics         *expectedMetrics                    // Optional metrics verification.
 		expectedErrorContains   string                              // If non-empty, asserts that the sync error contains this string.
+		overwriteBehavior       OverwriteBehavior                   // Optional override for overwrite behavior.
 	}{
 		{
 			name:                  "Simple Copy",
@@ -269,6 +270,23 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			expectedDstFiles: map[string]testFile{
 				// With a 0s window, the times are not equal, so the file MUST be copied.
 				"file.txt": {path: "file.txt", content: "content", modTime: baseTime.Add(500 * time.Millisecond)},
+			},
+		},
+		{
+			name:                  "OverwriteIfNewer with ModTimeWindow",
+			mirror:                false,
+			preserveSourceDirName: false,
+			modTimeWindow:         func() *int { i := 2; return &i }(), // 2 seconds window
+			overwriteBehavior:     OverwriteIfNewer,
+			srcFiles: []testFile{
+				// Source is 1.5s newer than base. With 2s window, they should truncate to same time.
+				{path: "file.txt", content: "newer content", modTime: baseTime.Add(1500 * time.Millisecond)},
+			},
+			dstFiles: []testFile{
+				{path: "file.txt", content: "older content", modTime: baseTime},
+			},
+			expectedDstFiles: map[string]testFile{
+				"file.txt": {path: "file.txt", content: "older content", modTime: baseTime}, // Should NOT copy
 			},
 		},
 		{
@@ -795,6 +813,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				DryRun:                tc.dryRun,
 				FailFast:              tc.failFast,
 				Metrics:               tc.enableMetrics,
+				OverwriteBehavior:     tc.overwriteBehavior,
 			}
 			if tc.modTimeWindow != nil {
 				plan.ModTimeWindow = time.Duration(*tc.modTimeWindow) * time.Second

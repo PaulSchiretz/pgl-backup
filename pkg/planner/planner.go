@@ -30,6 +30,19 @@ type BackupPlan struct {
 	PostBackupHooks []string
 }
 
+type RestorePlan struct {
+	DryRun   bool
+	FailFast bool
+	Metrics  bool
+
+	Preflight  *preflight.Plan
+	Sync       *pathsync.Plan
+	Extraction *pathcompression.ExtractPlan
+
+	PreRestoreHooks  []string
+	PostRestoreHooks []string
+}
+
 type PrunePlan struct {
 	DryRun   bool
 	FailFast bool
@@ -95,6 +108,12 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 	}
 
 	compressionLevel, err := pathcompression.ParseLevel(cfg.Compression.Level)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse Overwrite Settings (Shared)
+	syncOverwriteBehavior, err := pathsync.ParseOverwriteBehavior(cfg.Runtime.BackupOverwriteBehavior)
 	if err != nil {
 		return nil, err
 	}
@@ -181,9 +200,10 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 			PreserveSourceDirName: cfg.Sync.PreserveSourceDirName,
 			Mirror:                true,
 
-			RetryCount:    cfg.Sync.RetryCount,
-			RetryWait:     time.Duration(cfg.Sync.RetryWaitSeconds) * time.Second,
-			ModTimeWindow: time.Duration(cfg.Sync.ModTimeWindowSeconds) * time.Second,
+			RetryCount:        cfg.Sync.RetryCount,
+			RetryWait:         time.Duration(cfg.Sync.RetryWaitSeconds) * time.Second,
+			ModTimeWindow:     time.Duration(cfg.Sync.ModTimeWindowSeconds) * time.Second,
+			OverwriteBehavior: syncOverwriteBehavior,
 
 			// Global Flags
 			DryRun:   dryRun,
@@ -207,6 +227,85 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 			Enabled: cfg.Compression.Enabled,
 			Format:  compressionFormat,
 			Level:   compressionLevel,
+			// Global Flags
+			DryRun:   dryRun,
+			FailFast: failFast,
+			Metrics:  metrics,
+		},
+	}, nil
+}
+
+func GenerateRestorePlan(cfg config.Config) (*RestorePlan, error) {
+
+	// Global Flags
+	dryRun := cfg.Runtime.DryRun
+	failFast := cfg.Engine.FailFast
+	metrics := cfg.Engine.Metrics
+
+	// Parse Sync Settings (Shared)
+	syncEngine, err := pathsync.ParseEngine(cfg.Sync.Engine)
+	if err != nil {
+		return nil, err
+	}
+
+	syncExcludeFiles := cfg.Sync.ExcludeFiles()
+	syncExcludeDirs := cfg.Sync.ExcludeDirs()
+
+	// Parse Overwrite Settings (Shared)
+	syncOverwriteBehavior, err := pathsync.ParseOverwriteBehavior(cfg.Runtime.RestoreOverwriteBehavior)
+	if err != nil {
+		return nil, err
+	}
+
+	extractOverwriteBehavior, err := pathcompression.ParseOverwriteBehavior(cfg.Runtime.RestoreOverwriteBehavior)
+	if err != nil {
+		return nil, err
+	}
+
+	// finish the plan
+	return &RestorePlan{
+		DryRun:   dryRun,
+		Metrics:  metrics,
+		FailFast: failFast,
+
+		PreRestoreHooks:  cfg.Hooks.PreRestore,
+		PostRestoreHooks: cfg.Hooks.PostRestore,
+
+		Preflight: &preflight.Plan{
+			SourceAccessible:   true,
+			TargetAccessible:   true,
+			TargetWriteable:    true,
+			CaseMismatch:       true,
+			PathNesting:        true,
+			EnsureTargetExists: true,
+			// Global Flags
+			DryRun:   dryRun,
+			FailFast: failFast,
+			Metrics:  metrics,
+		},
+		Sync: &pathsync.Plan{
+			Enabled:               cfg.Sync.Enabled,
+			ModeIdentifier:        "restore",
+			Engine:                syncEngine,
+			ExcludeDirs:           syncExcludeDirs,
+			ExcludeFiles:          syncExcludeFiles,
+			PreserveSourceDirName: cfg.Sync.PreserveSourceDirName,
+			Mirror:                false,
+
+			RetryCount:        cfg.Sync.RetryCount,
+			RetryWait:         time.Duration(cfg.Sync.RetryWaitSeconds) * time.Second,
+			ModTimeWindow:     time.Duration(cfg.Sync.ModTimeWindowSeconds) * time.Second,
+			OverwriteBehavior: syncOverwriteBehavior,
+
+			// Global Flags
+			DryRun:   dryRun,
+			FailFast: failFast,
+			Metrics:  metrics,
+		},
+		Extraction: &pathcompression.ExtractPlan{
+			Enabled:           cfg.Compression.Enabled,
+			OverwriteBehavior: extractOverwriteBehavior,
+			ModTimeWindow:     time.Duration(cfg.Sync.ModTimeWindowSeconds) * time.Second,
 			// Global Flags
 			DryRun:   dryRun,
 			FailFast: failFast,

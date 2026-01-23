@@ -636,6 +636,7 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `source` / `source` | `string` | `""` | The directory to back up. **Required**. |
 | `target` / `target` (internal) | `string` | `""` | The base directory where backups are stored. **Required**. |
 | `mode` / `runtime.mode` (internal) | `"incremental"` | Backup mode: `"incremental"` or `"snapshot"`. |
+| `overwrite` / `runtime.*OverwriteBehavior` (internal) | `string` | `"update"` / `"never"` | Controls how existing files are handled. Defaults to `"update"` for backup, `"never"` for restore. Options: `'always'`, `'never'`, `'if-newer'`, `'update'`. |
 | `fail-fast` / `engine.failFast` | `bool` | `false` | If true, stops the backup immediately on the first file sync error. |
 | `default` / - | `false` | Used with `init` command. Overwrite existing configuration with defaults. |
 | `force` / - | `false` | Bypass confirmation prompts (e.g., for init -default). |
@@ -665,6 +666,8 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | - / `sync.defaultExcludeDirs` | `[]string` | `[...]` | Default directory patterns to exclude. |
 | `pre-backup-hooks` / `hooks.preBackup` | `[]string` | `[]` | List of shell commands to run before the backup. |
 | `post-backup-hooks` / `hooks.postBackup` | `[]string` | `[]` | List of shell commands to run after the backup. |
+| `pre-restore-hooks` / `hooks.preRestore` | `[]string` | `[]` | List of shell commands to run before the restore. |
+| `post-restore-hooks` / `hooks.postRestore` | `[]string` | `[]` | List of shell commands to run after the restore. |
 | **Archive & Retention** | | | |
 | `archive` / `archive.enabled` | `bool` | `true` | Enable archiving (rollover) for incremental backups. |
 | `archive-interval-mode` / `archive.intervalMode` | `string` | `"auto"` | `"auto"` or `"manual"`. |
