@@ -45,7 +45,11 @@ func RunBackup(ctx context.Context, flagMap map[string]interface{}) error {
 	runConfig := config.MergeConfigWithFlags(flagparse.Backup, loadedConfig, flagMap)
 
 	// CRITICAL: Validate the config for the run
-	if err := runConfig.Validate(true, false); err != nil {
+	if err := runConfig.Validate(config.ValidationOptions{
+		CheckSource:       true,
+		CheckSourceExists: true,
+		CheckBaseExists:   true,
+	}); err != nil {
 		return err
 	}
 

@@ -224,7 +224,7 @@ func Parse(args []string) (Command, map[string]interface{}, error) {
 
 		// Custom usage for the subcommand
 		fs.Usage = func() {
-			printSubcommandUsage(command, "Initialize a new backup target directory.", fs)
+			printSubcommandUsage(command, "Initialize a new backup base directory.", fs)
 		}
 
 		if err := fs.Parse(args[1:]); err != nil {
@@ -270,7 +270,7 @@ func Parse(args []string) (Command, map[string]interface{}, error) {
 		registerRestoreFlags(fs, f)
 
 		fs.Usage = func() {
-			printSubcommandUsage(command, "Restore a backup from the target directory.", fs)
+			printSubcommandUsage(command, "Restore a backup from the base directory.", fs)
 		}
 
 		if err := fs.Parse(args[1:]); err != nil {

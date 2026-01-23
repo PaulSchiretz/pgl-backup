@@ -45,7 +45,9 @@ func RunPrune(ctx context.Context, flagMap map[string]interface{}) error {
 	runConfig := config.MergeConfigWithFlags(flagparse.Prune, loadedConfig, flagMap)
 
 	// CRITICAL: Validate the config for the run
-	if err := runConfig.Validate(false, false); err != nil {
+	if err := runConfig.Validate(config.ValidationOptions{
+		CheckBaseExists: true,
+	}); err != nil {
 		return err
 	}
 

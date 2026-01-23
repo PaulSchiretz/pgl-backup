@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v1.3.0] - 2026-XX-XX
 
 ### Added
+- Added `restore` command to recover files from backups.
+  - Usage: `pgl-backup restore -base="/path/to/repo" -target="/restore/path" -backup-name="current" -mode="incremental"`
 - Added `OverwriteBehavior` to extraction logic, allowing control over how existing files are handled (`always`, `never`, `if-newer`).
 - Added `CompressionLevel` configuration (`default`, `fastest`, `better`, `best`) for `zip`, `tar.gz`, and `tar.zst` formats.
 

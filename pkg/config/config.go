@@ -120,6 +120,14 @@ type RuntimeConfig struct {
 	BackupName               string
 }
 
+type ValidationOptions struct {
+	CheckSource       bool
+	CheckSourceExists bool
+	CheckTarget       bool
+	CheckTargetExists bool
+	CheckBaseExists   bool
+}
+
 type Config struct {
 	Version     string            `json:"version"`
 	Source      string            `json:"source"`
@@ -316,12 +324,12 @@ func Generate(configToGenerate Config) error {
 // Validate checks the configuration for logical errors and inconsistencies.
 // It performs strict checks, including ensuring the source path is non-empty
 // and exists.
-func (c *Config) Validate(checkSource, checkTarget bool) error {
+func (c *Config) Validate(opts ValidationOptions) error {
 	// --- Strict Path Validation (Fail-Fast) ---
-	if checkSource && c.Source == "" {
+	if opts.CheckSource && c.Source == "" {
 		return fmt.Errorf("source path cannot be empty")
 	}
-	if checkTarget && c.Target == "" {
+	if opts.CheckTarget && c.Target == "" {
 		return fmt.Errorf("target path cannot be empty")
 	}
 	if c.Base == "" {
@@ -340,7 +348,7 @@ func (c *Config) Validate(checkSource, checkTarget bool) error {
 		c.Source = filepath.Clean(c.Source)
 
 		// After cleaning and expanding the path, check for existence.
-		if checkSource {
+		if opts.CheckSourceExists {
 			if _, err := os.Stat(c.Source); os.IsNotExist(err) {
 				return fmt.Errorf("source path '%s' does not exist", c.Source)
 			}
@@ -356,11 +364,11 @@ func (c *Config) Validate(checkSource, checkTarget bool) error {
 		c.Target = filepath.Clean(c.Target)
 
 		// After cleaning and expanding the path, check for existence.
-		/*if checkTarget {
+		if opts.CheckTargetExists {
 			if _, err := os.Stat(c.Target); os.IsNotExist(err) {
 				return fmt.Errorf("target path '%s' does not exist", c.Target)
 			}
-		}*/
+		}
 	}
 
 	// --- Validate Base Path ---
@@ -370,6 +378,12 @@ func (c *Config) Validate(checkSource, checkTarget bool) error {
 			return fmt.Errorf("could not expand base path: %w", err)
 		}
 		c.Base = filepath.Clean(c.Base)
+
+		if opts.CheckBaseExists {
+			if _, err := os.Stat(c.Base); os.IsNotExist(err) {
+				return fmt.Errorf("base path '%s' does not exist", c.Base)
+			}
+		}
 	}
 
 	// --- Validate Shared Settings ---

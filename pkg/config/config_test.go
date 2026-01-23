@@ -34,12 +34,12 @@ func TestConfig_Validate(t *testing.T) {
 	// We need actual temp dirs for the "checkSource" = true cases to pass existence checks.
 	tmpSource := t.TempDir()
 	tmpTarget := t.TempDir()
+	tmpBase := t.TempDir()
 
 	tests := []struct {
 		name        string
 		modify      func(*Config)
-		checkSource bool
-		checkTarget bool
+		opts        ValidationOptions
 		wantErr     bool
 		errContains string
 	}{
@@ -47,28 +47,28 @@ func TestConfig_Validate(t *testing.T) {
 			name: "Valid Config (Incremental)",
 			modify: func(c *Config) {
 				c.Source = tmpSource
-				c.Base = tmpTarget
+				c.Base = tmpBase
 				c.Runtime.Mode = "incremental"
 			},
-			checkSource: true,
-			wantErr:     false,
+			opts:    ValidationOptions{CheckSource: true, CheckSourceExists: true, CheckBaseExists: true},
+			wantErr: false,
 		},
 		{
 			name: "Valid Config (Snapshot)",
 			modify: func(c *Config) {
 				c.Source = tmpSource
-				c.Base = tmpTarget
+				c.Base = tmpBase
 				c.Runtime.Mode = "snapshot"
 			},
-			checkSource: true,
-			wantErr:     false,
+			opts:    ValidationOptions{CheckSource: true, CheckSourceExists: true},
+			wantErr: false,
 		},
 		{
 			name: "Empty Source (CheckSource=true)",
 			modify: func(c *Config) {
 				c.Source = ""
 			},
-			checkSource: true,
+			opts:        ValidationOptions{CheckSource: true},
 			wantErr:     true,
 			errContains: "source path cannot be empty",
 		},
@@ -77,15 +77,15 @@ func TestConfig_Validate(t *testing.T) {
 			modify: func(c *Config) {
 				c.Source = ""
 			},
-			checkSource: false,
-			wantErr:     false,
+			opts:    ValidationOptions{CheckSource: false},
+			wantErr: false,
 		},
 		{
 			name: "Non-Existent Source",
 			modify: func(c *Config) {
 				c.Source = filepath.Join(tmpSource, "nonexistent")
 			},
-			checkSource: true,
+			opts:        ValidationOptions{CheckSource: true, CheckSourceExists: true},
 			wantErr:     true,
 			errContains: "does not exist",
 		},
@@ -94,16 +94,25 @@ func TestConfig_Validate(t *testing.T) {
 			modify: func(c *Config) {
 				c.Base = ""
 			},
-			checkSource: false,
+			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "base path cannot be empty",
+		},
+		{
+			name: "Non-Existent Base (CheckBaseExists=true)",
+			modify: func(c *Config) {
+				c.Base = filepath.Join(tmpBase, "nonexistent")
+			},
+			opts:        ValidationOptions{CheckBaseExists: true},
+			wantErr:     true,
+			errContains: "does not exist",
 		},
 		{
 			name: "Empty Target (CheckTarget=true)",
 			modify: func(c *Config) {
 				c.Target = ""
 			},
-			checkTarget: true,
+			opts:        ValidationOptions{CheckTarget: true},
 			wantErr:     true,
 			errContains: "target path cannot be empty",
 		},
@@ -112,7 +121,7 @@ func TestConfig_Validate(t *testing.T) {
 			modify: func(c *Config) {
 				c.Target = filepath.Join(tmpTarget, "nonexistent")
 			},
-			checkTarget: true,
+			opts:        ValidationOptions{CheckTarget: true, CheckTargetExists: true},
 			wantErr:     true,
 			errContains: "does not exist",
 		},
@@ -123,7 +132,7 @@ func TestConfig_Validate(t *testing.T) {
 				c.Runtime.Mode = "incremental"
 				c.Paths.Incremental.Archive = ""
 			},
-			checkSource: false,
+			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "paths.incremental.archive cannot be empty",
 		},
@@ -134,7 +143,7 @@ func TestConfig_Validate(t *testing.T) {
 				c.Paths.Incremental.Current = "same"
 				c.Paths.Incremental.Archive = "same"
 			},
-			checkSource: false,
+			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "cannot be the same",
 		},
@@ -144,7 +153,7 @@ func TestConfig_Validate(t *testing.T) {
 				c.Runtime.Mode = "incremental"
 				c.Paths.Incremental.Archive = "sub/dir"
 			},
-			checkSource: false,
+			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "cannot contain path separators",
 		},
@@ -155,7 +164,7 @@ func TestConfig_Validate(t *testing.T) {
 				c.Runtime.Mode = "snapshot"
 				c.Paths.Snapshot.Current = ""
 			},
-			checkSource: false,
+			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "paths.snapshot.current cannot be empty",
 		},
@@ -166,7 +175,7 @@ func TestConfig_Validate(t *testing.T) {
 				c.Paths.Snapshot.Archive = "same"
 				c.Paths.Snapshot.Content = "same"
 			},
-			checkSource: false,
+			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "cannot be the same",
 		},
@@ -176,7 +185,7 @@ func TestConfig_Validate(t *testing.T) {
 			modify: func(c *Config) {
 				c.Engine.Performance.SyncWorkers = 0
 			},
-			checkSource: false,
+			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "syncWorkers must be at least 1",
 		},
@@ -186,7 +195,7 @@ func TestConfig_Validate(t *testing.T) {
 				c.Runtime.Mode = "incremental"
 				c.Sync.RetryCount = -1
 			},
-			checkSource: false,
+			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "retryCount cannot be negative",
 		},
@@ -196,7 +205,7 @@ func TestConfig_Validate(t *testing.T) {
 			modify: func(c *Config) {
 				c.Sync.UserExcludeFiles = []string{"["}
 			},
-			checkSource: false,
+			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "invalid glob pattern",
 		},
@@ -207,7 +216,7 @@ func TestConfig_Validate(t *testing.T) {
 				c.Retention.Incremental.Enabled = true
 				c.Retention.Incremental.Days = -1
 			},
-			checkSource: false,
+			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "retention.incremental is enabled but contains negative values",
 		},
@@ -221,8 +230,8 @@ func TestConfig_Validate(t *testing.T) {
 				c.Retention.Incremental.Months = 0
 				c.Retention.Incremental.Years = 0
 			},
-			checkSource: false,
-			wantErr:     false,
+			opts:    ValidationOptions{},
+			wantErr: false,
 		},
 		{
 			name: "Incremental Retention Enabled with Valid Positive Values",
@@ -234,8 +243,8 @@ func TestConfig_Validate(t *testing.T) {
 				c.Retention.Incremental.Months = 0
 				c.Retention.Incremental.Years = 0
 			},
-			checkSource: false,
-			wantErr:     false,
+			opts:    ValidationOptions{},
+			wantErr: false,
 		},
 		{
 			name: "Snapshot Retention Enabled with Default Negative Values",
@@ -243,7 +252,7 @@ func TestConfig_Validate(t *testing.T) {
 				c.Retention.Snapshot.Enabled = true
 				// Defaults are -1, so this should fail validation.
 			},
-			checkSource: false,
+			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "retention.snapshot is enabled but contains negative values",
 		},
@@ -253,8 +262,8 @@ func TestConfig_Validate(t *testing.T) {
 				c.Retention.Snapshot.Enabled = false
 				c.Retention.Snapshot.Hours = -1
 			},
-			checkSource: false,
-			wantErr:     false,
+			opts:    ValidationOptions{},
+			wantErr: false,
 		},
 		{
 			name: "Snapshot Retention Enabled with Zero Values (Explicit Keep None)",
@@ -266,8 +275,8 @@ func TestConfig_Validate(t *testing.T) {
 				c.Retention.Snapshot.Months = 0
 				c.Retention.Snapshot.Years = 0
 			},
-			checkSource: false,
-			wantErr:     false,
+			opts:    ValidationOptions{},
+			wantErr: false,
 		},
 		{
 			name: "Snapshot Retention Enabled with Valid Positive Values",
@@ -279,8 +288,8 @@ func TestConfig_Validate(t *testing.T) {
 				c.Retention.Snapshot.Months = 0
 				c.Retention.Snapshot.Years = 0
 			},
-			checkSource: false,
-			wantErr:     false,
+			opts:    ValidationOptions{},
+			wantErr: false,
 		},
 	}
 
@@ -288,7 +297,7 @@ func TestConfig_Validate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := validConfig()
 			tt.modify(&cfg)
-			err := cfg.Validate(tt.checkSource, tt.checkTarget)
+			err := cfg.Validate(tt.opts)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 				return

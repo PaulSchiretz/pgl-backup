@@ -80,7 +80,10 @@ func RunInit(ctx context.Context, flagMap map[string]interface{}) error {
 	}
 
 	// CRITICAL: Validate the config for the run
-	if err := runConfig.Validate(true, false); err != nil {
+	if err := runConfig.Validate(config.ValidationOptions{
+		CheckSource:       true,
+		CheckSourceExists: true,
+	}); err != nil {
 		return err
 	}
 

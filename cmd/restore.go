@@ -57,9 +57,10 @@ func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
 	runConfig := config.MergeConfigWithFlags(flagparse.Restore, loadedConfig, flagMap)
 
 	// CRITICAL: Validate the config for the run
-	// checkSource=false (we don't care about the original source for restore)
-	// checkTarget=true (we need a valid restore destination)
-	if err := runConfig.Validate(false, true); err != nil {
+	if err := runConfig.Validate(config.ValidationOptions{
+		CheckTarget:     true,
+		CheckBaseExists: true,
+	}); err != nil {
 		return err
 	}
 

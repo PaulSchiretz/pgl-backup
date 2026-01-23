@@ -22,9 +22,12 @@ func TestRun(t *testing.T) {
 	origArgs := os.Args
 	defer func() { os.Args = origArgs }()
 
+	tmpDir := t.TempDir()
+
 	tests := []struct {
 		name          string
 		args          []string
+		setup         func(*testing.T)
 		expectedError string
 	}{
 		{
@@ -41,19 +44,69 @@ func TestRun(t *testing.T) {
 			expectedError: "invalid command",
 		},
 		{
-			name:          "Prune Missing Target",
+			name: "Init Existing Empty Directory",
+			setup: func(t *testing.T) {
+				if err := os.MkdirAll(filepath.Join(tmpDir, "src"), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(filepath.Join(tmpDir, "existing_empty"), 0755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			args: []string{"pgl-backup", "init", "-base", filepath.Join(tmpDir, "existing_empty"), "-source", filepath.Join(tmpDir, "src")},
+		},
+		{
+			name:          "Prune Missing Base",
 			args:          []string{"pgl-backup", "prune"},
 			expectedError: "the -base flag is required",
 		},
 		{
-			name:          "Prune Non-Existent Target",
+			name:          "Prune Non-Existent Base",
 			args:          []string{"pgl-backup", "prune", "-base", filepath.Join(os.TempDir(), "pgl_nonexistent_target_12345")},
-			expectedError: "target directory does not exist",
+			expectedError: "base path",
+		},
+		{
+			name:          "Backup Missing Base",
+			args:          []string{"pgl-backup", "backup", "-source", tmpDir},
+			expectedError: "the -base flag is required",
+		},
+		{
+			name:          "Backup Missing Source",
+			args:          []string{"pgl-backup", "backup", "-base", tmpDir},
+			expectedError: "source path cannot be empty",
+		},
+		{
+			name:          "Backup Non-Existent Source",
+			args:          []string{"pgl-backup", "backup", "-base", tmpDir, "-source", filepath.Join(tmpDir, "nonexistent")},
+			expectedError: "source path",
+		},
+		{
+			name:          "Restore Missing Base",
+			args:          []string{"pgl-backup", "restore", "-target", tmpDir, "-backup-name", "current", "-mode", "incremental"},
+			expectedError: "the -base flag is required",
+		},
+		{
+			name:          "Restore Missing Target",
+			args:          []string{"pgl-backup", "restore", "-base", tmpDir, "-backup-name", "current", "-mode", "incremental"},
+			expectedError: "the -target flag is required",
+		},
+		{
+			name:          "Restore Missing Backup Name",
+			args:          []string{"pgl-backup", "restore", "-base", tmpDir, "-target", tmpDir, "-mode", "incremental"},
+			expectedError: "the -backup-name flag is required",
+		},
+		{
+			name:          "Restore Missing Mode",
+			args:          []string{"pgl-backup", "restore", "-base", tmpDir, "-target", tmpDir, "-backup-name", "current"},
+			expectedError: "the -mode flag is required",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.setup != nil {
+				tc.setup(t)
+			}
 			os.Args = tc.args
 
 			err := run(context.Background())

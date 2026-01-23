@@ -149,26 +149,26 @@ Let's set up a daily incremental backup for your `~/Documents` folder to an exte
 
 The easiest way to get started is to use the `init` command. This will generate a `pgl-backup.config.json` file in your target directory.
 
-*   **New Backups**: It creates the directory and a default configuration file. The `-source` and `-target` flags are required.
+*   **New Backups**: It creates the directory and a default configuration file. The `-base` and `-source` flags are required.
 *   **Existing Backups**: It reads your existing configuration, applies any new flags you provide (like changing the log level or source path), and saves the updated config. It preserves your retention policies and other settings.
 *   **Fresh Start**: If you want to completely overwrite an existing configuration with defaults, use `init -default` instead.
 
 ```sh
 # Example for Linux/macOS
-pgl-backup init -source="$HOME/Documents" -target="/media/backup-drive/MyDocumentsBackup"
+pgl-backup init -base="/media/backup-drive/MyDocumentsBackup" -source="$HOME/Documents"
 
 # Example for Windows
-pgl-backup init -source="C:\Users\YourUser\Documents" -target="E:\Backups\MyDocumentsBackup"
+pgl-backup init -base="E:\Backups\MyDocumentsBackup" -source="C:\Users\YourUser\Documents"
 ```
 
 You can also combine the init command with other flags to customize the configuration immediately:
 
 ```sh
 # Example for Linux/macOS
-pgl-backup init -source="$HOME/Documents" -target="/media/backup-drive/MyDocumentsBackup" -log-level=debug -user-exclude-files="*.mp4"
+pgl-backup init -base="/media/backup-drive/MyDocumentsBackup" -source="$HOME/Documents" -log-level=debug -user-exclude-files="*.mp4"
 
 # Example for Windows
-pgl-backup init -source="C:\Users\YourUser\Documents" -target="E:\Backups\MyDocumentsBackup" -log-level=debug -user-exclude-files="*.mp4"
+pgl-backup init -base="E:\Backups\MyDocumentsBackup" -source="C:\Users\YourUser\Documents" -log-level=debug -user-exclude-files="*.mp4"
 ```
 
 This command will:
@@ -273,7 +273,9 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
   },
   "hooks": {
     "preBackup": [],
-    "postBackup": []
+    "postBackup": [],
+    "preRestore": [],
+    "postRestore": []
   }
 }
 ```
@@ -284,7 +286,7 @@ Now, simply point `pgl-backup` at the target directory. It will automatically lo
 
 ```sh
 # Run the backup
-pgl-backup backup -target="/media/backup-drive/MyDocumentsBackup"
+pgl-backup backup -base="/media/backup-drive/MyDocumentsBackup"
 ```
 
 The first run will copy all files into a `PGL_Backup_Content` subdirectory inside the main `PGL_Backup_Incremental_Current` directory.
@@ -309,7 +311,7 @@ Your backup target will be organized like this:
 Once configured, this is the only command you need. It's perfect for a cron job or scheduled task.
 
 ```sh
-pgl-backup backup -target="/path/to/your/backup-target"
+pgl-backup backup -base="/path/to/your/backup-target"
 ```
 
 ### Dry Run
@@ -317,7 +319,7 @@ pgl-backup backup -target="/path/to/your/backup-target"
 See what changes would be made without touching any files.
 
 ```sh
-pgl-backup backup -target="/path/to/your/backup-target" -dry-run
+pgl-backup backup -base="/path/to/your/backup-target" -dry-run
 ```
 
 ### One-Off Snapshot Backup
@@ -325,7 +327,7 @@ pgl-backup backup -target="/path/to/your/backup-target" -dry-run
 Here's how to perform a single snapshot backup.
 
 ```sh
-pgl-backup backup -target="/path/to/your/backup-target" -mode=snapshot
+pgl-backup backup -base="/path/to/your/backup-target" -mode=snapshot
 ```
 
 ### Excluding Files and Directories
@@ -333,7 +335,7 @@ pgl-backup backup -target="/path/to/your/backup-target" -mode=snapshot
 Exclude temporary files and `node_modules` directories. Patterns support standard file globbing.
 
 ```sh
-pgl-backup backup -target="..." -user-exclude-files="*.tmp,*.log" -user-exclude-dirs="node_modules,.cache"
+pgl-backup backup -base="..." -user-exclude-files="*.tmp,*.log" -user-exclude-dirs="node_modules,.cache"
 ```
 > **Note on Matching**: All exclusion patterns are case-insensitive on all operating systems. A pattern like *.jpeg will match photo.jpeg, photo.JPEG, and photo.JpEg. This ensures your configuration is portable and behaves predictably across Windows, macOS, and Linux.
 
@@ -342,7 +344,7 @@ pgl-backup backup -target="..." -user-exclude-files="*.tmp,*.log" -user-exclude-
 Run a script before the backup starts. Commands with spaces must be wrapped in single or double quotes.
 
 ```sh
-pgl-backup backup -target="..." -pre-backup-hooks="'/usr/local/bin/dump_database.sh', 'echo Backup starting...'"
+pgl-backup backup -base="..." -pre-backup-hooks="'/usr/local/bin/dump_database.sh', 'echo Backup starting...'"
 ```
 >**Security Note:** Hooks execute arbitrary shell commands. Ensure that any commands in your configuration are from a trusted source and have the correct permissions to prevent unintended side effects.
 
@@ -351,14 +353,57 @@ pgl-backup backup -target="..." -pre-backup-hooks="'/usr/local/bin/dump_database
 Manually apply retention policies to clean up outdated backups without running a full backup. This is useful for freeing up disk space immediately. Supports `-dry-run` to preview deletions.
 
 ```sh
-pgl-backup prune -target="/path/to/your/backup-target"
+pgl-backup prune -base="/path/to/your/backup-target"
 ```
 
 ## How to Restore a Backup
 
-`pgl-backup` is intentionally designed to store your data in standard, open formats. This philosophy ensures that you retain full ownership and access to your files at all times, using native operating system tools, without ever needing to install or rely on `pgl-backup` itself for restoration.
+`pgl-backup` provides two ways to restore your data: using the built-in `restore` command for convenience, or by manually accessing your files with standard OS tools. The manual method guarantees you can always recover your data, even without `pgl-backup` installed.
 
-### 1. Locate Your Backup
+### Using the `restore` Command (Recommended)
+
+The `restore` command is the easiest and safest way to restore a backup. It automatically handles both compressed archives and uncompressed directories.
+
+**Command Structure:**
+```sh
+pgl-backup restore -base <path_to_backup_repo> -target <path_to_restore_destination> -backup-name <name_of_backup> -mode <incremental|snapshot>
+```
+
+*   `-base`: The root directory of your backup repository (where `pgl-backup.config.json` is located).
+*   `-target`: The directory where you want to restore the files.
+*   `-backup-name`: The name of the backup directory you want to restore. This can be `current` for the latest incremental backup, or a specific timestamped directory name (e.g., `PGL_Backup_2023-10-27-14-00-00...`).
+*   `-mode`: The mode of the backup you are restoring (`incremental` or `snapshot`). This is required to locate the correct backup path.
+
+**Examples:**
+
+**1. Restore the most recent incremental backup:**
+This restores the contents of the `PGL_Backup_Incremental_Current` directory.
+```sh
+pgl-backup restore -base="/media/backup-drive/MyDocumentsBackup" \
+                   -target="$HOME/RestoredDocuments" \
+                   -backup-name="current" \
+                   -mode="incremental"
+```
+
+**2. Restore a specific archived snapshot:**
+This finds the backup named `PGL_Backup_2023-10-27...` inside the snapshot archive directory, automatically decompresses it if needed, and restores its contents.
+```sh
+pgl-backup restore -base="/media/backup-drive/MyDocumentsBackup" \
+                   -target="$HOME/RestoredFromSnapshot" \
+                   -backup-name="PGL_Backup_2023-10-27-14-00-00-Snapshot-1a2b3c4d" \
+                   -mode="snapshot"
+```
+
+**Overwrite Behavior:**
+By default, the `restore` command will **never** overwrite existing files in the target directory (`-overwrite=never`). You can change this behavior:
+*   `-overwrite=if-newer`: Only overwrite if the file in the backup is newer.
+*   `-overwrite=always`: Always overwrite existing files.
+
+### Manual Restoration (Guaranteed Access)
+
+A core design philosophy of `pgl-backup` is zero vendor lock-in. Your data is always accessible.
+
+#### 1. Locate Your Backup
 
 Navigate to your backup target directory. You will see the following structure:
 
@@ -366,18 +411,18 @@ Navigate to your backup target directory. You will see the following structure:
 *   **`PGL_Backup_Incremental_Archive/`**: Contains compressed historical backups (e.g., `PGL_Backup_2023-10-27-14-00-00...tar.zst`).
 *   **`PGL_Backup_Snapshot_Archive/`**: Contains point-in-time snapshots if you use snapshot mode.
 
-### 2. Extract Files from Archives
+#### 2. Extract Files from Archives
 
 If you need to restore files from a compressed archive in `PGL_Backup_Incremental_Archive` or `PGL_Backup_Snapshot_Archive`, use the standard tools for your operating system.
 
 > **Tip:** For a consistent graphical experience across platforms, or if you prefer not to use the command line, tools like 7-Zip (Windows) or PeaZip (Windows, Linux, macOS) can handle `.zip`, `.tar.gz`, and `.tar.zst` archives effortlessly.
 
-#### Windows (`.zip`)
+##### Windows (`.zip`)
 1.  Right-click the `.zip` file.
 2.  Select **Extract All...**.
 3.  Choose a destination and click **Extract**.
 
-#### macOS / Linux (`.tar.gz`)
+##### macOS / Linux (`.tar.gz`)
 You can double-click the file to extract it, or use the terminal:
 
 ```sh
@@ -388,7 +433,7 @@ tar -xvf PGL_Backup_2023-10-27.tar.gz
 tar -xvf PGL_Backup_2023-10-27.tar.gz "path/to/file.txt"
 ```
 
-#### macOS / Linux (`.tar.zst`)
+##### macOS / Linux (`.tar.zst`)
 The `.tar.zst` format uses Zstandard compression for high speed and ratio. You may need to install `zstd` (e.g., `brew install zstd` or `apt install zstd`).
 
 ```sh

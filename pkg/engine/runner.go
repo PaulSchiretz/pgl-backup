@@ -293,6 +293,10 @@ func (r *Runner) ExecuteRestore(ctx context.Context, absBasePath, backupName, ab
 	default:
 	}
 
+	if backupName == "" {
+		return fmt.Errorf("backup name cannot be empty")
+	}
+
 	// save the execution timestamp
 	timestampUTC := time.Now().UTC()
 
@@ -333,31 +337,27 @@ func (r *Runner) ExecuteRestore(ctx context.Context, absBasePath, backupName, ab
 		}
 	}()
 
-	var relBackupPath string
+	var relBackupPathkey string
 	if backupName == p.Paths.RelCurrentPathKey || strings.ToLower(strings.TrimSpace(backupName)) == "current" {
-		relBackupPath = p.Paths.RelCurrentPathKey
+		relBackupPathkey = p.Paths.RelCurrentPathKey
 	} else {
-		relBackupPath = filepath.Join(p.Paths.RelArchivePathKey, backupName) // It's an archived backup
+		relBackupPathkey = filepath.Join(p.Paths.RelArchivePathKey, backupName) // It's an archived backup
 	}
-	relBackupPath = util.NormalizePath(relBackupPath)
+	relBackupPathkey = util.NormalizePath(relBackupPathkey)
 
-	absBackupPath := util.DenormalizePath(filepath.Join(absBasePath, relBackupPath))
+	absBackupPath := util.DenormalizePath(filepath.Join(absBasePath, relBackupPathkey))
 
 	plog.Info("Starting restore", "backup", absBackupPath, "destination", absTargetPath)
 
-	// Determine mode (Compressed vs Flat)
-	// We expect a metafile at the source root.
-	meta, err := metafile.Read(absBackupPath)
+	toRestore, err := r.fetchBackup(absBasePath, relBackupPathkey)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("backup not found at %s. Please verify the backup name %q and ensure the mode %q is correct: %w", absBackupPath, backupName, p.Mode, err)
+		}
 		return fmt.Errorf("failed to read backup metadata from %s: %w", absBackupPath, err)
 	}
 
-	toRestore := metafile.MetafileInfo{
-		RelPathKey: relBackupPath,
-		Metadata:   meta,
-	}
-
-	if meta.IsCompressed {
+	if toRestore.Metadata.IsCompressed {
 		// Extract
 		if err := r.compressor.Extract(ctx, absBasePath, toRestore, absTargetPath, p.Extraction, timestampUTC); err != nil {
 			return fmt.Errorf("restore extraction failed: %w", err)
