@@ -14,16 +14,23 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/lockfile"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/preflight"
+	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 // RunInit handles the logic for the 'init' command.
 func RunInit(ctx context.Context, flagMap map[string]interface{}) error {
 	// For init, the target flag is mandatory to know where to look/write.
-	targetVal, ok := flagMap["target"]
-	if !ok {
-		return fmt.Errorf("the -target flag is required for the init operation")
+	base, ok := flagMap["base"].(string)
+	if !ok || base == "" {
+		return fmt.Errorf("the -base flag is required for the init operation")
 	}
-	targetPath := targetVal.(string)
+
+	// Build absolute base path
+	absBasePath, err := filepath.Abs(base)
+	if err != nil {
+		return fmt.Errorf("could not determine absolute base path for %s: %w", base, err)
+	}
+	absBasePath = util.DenormalizePath(absBasePath)
 
 	var baseConfig config.Config
 
@@ -41,9 +48,9 @@ func RunInit(ctx context.Context, flagMap map[string]interface{}) error {
 		}
 
 		if !force {
-			configPath := filepath.Join(targetPath, config.ConfigFileName)
-			if _, err := os.Stat(configPath); err == nil {
-				fmt.Printf("WARNING: Configuration file already exists at %s.\n", configPath)
+			absConfigFilePath := util.DenormalizePath(filepath.Join(absBasePath, config.ConfigFileName))
+			if _, err := os.Stat(absConfigFilePath); err == nil {
+				fmt.Printf("WARNING: Configuration file already exists at %s.\n", absConfigFilePath)
 				fmt.Printf("Using -init-default will overwrite it with default values. All custom settings will be lost.\n")
 				if !PromptForConfirmation("Are you sure you want to continue?", false) {
 					plog.Info(buildinfo.Name + " init-default operation canceled.")
@@ -57,7 +64,7 @@ func RunInit(ctx context.Context, flagMap map[string]interface{}) error {
 		// If it fails (e.g. corrupt JSON or path mismatch), we fall back to defaults.
 		// Note: config.Load returns NewDefault() if the file simply doesn't exist.
 		var err error
-		baseConfig, err = config.Load(targetPath)
+		baseConfig, err = config.Load(absBasePath)
 		if err != nil {
 			plog.Warn("Could not load existing configuration, starting with defaults.", "reason", err)
 			baseConfig = config.NewDefault()
@@ -73,7 +80,7 @@ func RunInit(ctx context.Context, flagMap map[string]interface{}) error {
 	}
 
 	// CRITICAL: Validate the config for the run
-	if err := runConfig.Validate(true); err != nil {
+	if err := runConfig.Validate(true, false); err != nil {
 		return err
 	}
 
@@ -91,7 +98,8 @@ func RunInit(ctx context.Context, flagMap map[string]interface{}) error {
 		DryRun:             runConfig.Runtime.DryRun,
 	}
 
-	if err := validator.Run(ctx, runConfig.Source, runConfig.TargetBase, pfPlan, time.Now().UTC()); err != nil {
+	// Base is our target in restore mode, so it is used as target in init for the validator
+	if err := validator.Run(ctx, runConfig.Source, runConfig.Base, pfPlan, time.Now().UTC()); err != nil {
 		return fmt.Errorf("initialization preflight failed: %w", err)
 	}
 
@@ -102,8 +110,8 @@ func RunInit(ctx context.Context, flagMap map[string]interface{}) error {
 
 	// 2. Acquire Lock
 	// Ensure exclusive access to the target directory.
-	appID := fmt.Sprintf("pgl-backup-init:%s", runConfig.TargetBase)
-	lock, err := lockfile.Acquire(ctx, runConfig.TargetBase, appID)
+	appID := fmt.Sprintf("pgl-backup-init:%s", runConfig.Base)
+	lock, err := lockfile.Acquire(ctx, runConfig.Base, appID)
 	if err != nil {
 		return fmt.Errorf("failed to acquire lock on target directory: %w", err)
 	}

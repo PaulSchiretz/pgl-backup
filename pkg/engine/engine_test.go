@@ -32,11 +32,12 @@ func (m *mockValidator) Run(ctx context.Context, absSourcePath, absTargetPath st
 }
 
 type mockSyncer struct {
-	err        error
-	resultInfo metafile.MetafileInfo
+	err               error
+	resultInfo        metafile.MetafileInfo
+	restoreRelPathKey string
 }
 
-func (m *mockSyncer) Sync(ctx context.Context, absSourcePath, absTargetBasePath, relCurrentPathKey, relContentPathKey string, p *pathsync.Plan, timestampUTC time.Time) error {
+func (m *mockSyncer) Sync(ctx context.Context, absBasePath, absSourcePath, relCurrentPathKey, relContentPathKey string, p *pathsync.Plan, timestampUTC time.Time) error {
 	if m.err != nil {
 		return m.err
 	}
@@ -45,12 +46,17 @@ func (m *mockSyncer) Sync(ctx context.Context, absSourcePath, absTargetBasePath,
 	return nil
 }
 
+func (m *mockSyncer) Restore(ctx context.Context, absBasePath string, relContentPathKey string, toRestore metafile.MetafileInfo, absRestoreTargetPath string, p *pathsync.Plan) error {
+	m.restoreRelPathKey = toRestore.RelPathKey
+	return m.err
+}
+
 type mockArchiver struct {
 	err        error
 	resultPath string
 }
 
-func (m *mockArchiver) Archive(ctx context.Context, absTargetBasePath, relArchivePathKey, backupDirPrefix string, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) error {
+func (m *mockArchiver) Archive(ctx context.Context, absBasePath, relArchivePathKey, backupDirPrefix string, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) error {
 	if m.err != nil {
 		return m.err
 	}
@@ -68,20 +74,22 @@ type mockRetainer struct {
 	toPrune []metafile.MetafileInfo
 }
 
-func (m *mockRetainer) Prune(ctx context.Context, absTargetBasePath string, toPrune []metafile.MetafileInfo, p *pathretention.Plan, timestampUTC time.Time) error {
+func (m *mockRetainer) Prune(ctx context.Context, absBasePath string, toPrune []metafile.MetafileInfo, p *pathretention.Plan, timestampUTC time.Time) error {
 	m.toPrune = toPrune
 	return m.err
 }
 
 type mockCompressor struct {
-	err error
+	err               error
+	extractRelPathKey string
 }
 
-func (m *mockCompressor) Compress(ctx context.Context, absTargetBasePath, relContentPathKey string, toCompress metafile.MetafileInfo, p *pathcompression.CompressPlan, timestampUTC time.Time) error {
+func (m *mockCompressor) Compress(ctx context.Context, absBasePath, relContentPathKey string, toCompress metafile.MetafileInfo, p *pathcompression.CompressPlan, timestampUTC time.Time) error {
 	return m.err
 }
 
-func (m *mockCompressor) Extract(ctx context.Context, absTargetBasePath string, toExtract metafile.MetafileInfo, absExtractTargetPath string, p *pathcompression.ExtractPlan, timestampUTC time.Time) error {
+func (m *mockCompressor) Extract(ctx context.Context, absBasePath string, toExtract metafile.MetafileInfo, absExtractTargetPath string, p *pathcompression.ExtractPlan, timestampUTC time.Time) error {
+	m.extractRelPathKey = toExtract.RelPathKey
 	return m.err
 }
 
@@ -138,7 +146,7 @@ func TestExecuteBackup(t *testing.T) {
 		compressErr  error
 
 		// Filesystem setup
-		setupFS func(t *testing.T, targetDir string)
+		setupFS func(t *testing.T, baseDir string)
 
 		// Expectations
 		expectError   bool
@@ -152,9 +160,9 @@ func TestExecuteBackup(t *testing.T) {
 			syncEnabled:        true,
 			retentionEnabled:   true,
 			compressionEnabled: true,
-			setupFS: func(t *testing.T, targetDir string) {
+			setupFS: func(t *testing.T, baseDir string) {
 				// Create 'current' backup for archiving
-				currentPath := filepath.Join(targetDir, relCurrent)
+				currentPath := filepath.Join(baseDir, relCurrent)
 				if err := os.MkdirAll(currentPath, 0755); err != nil {
 					t.Fatal(err)
 				}
@@ -195,9 +203,9 @@ func TestExecuteBackup(t *testing.T) {
 			archiveEnabled: true,
 			failFast:       true,
 			archiveErr:     errors.New("archive failed"),
-			setupFS: func(t *testing.T, targetDir string) {
+			setupFS: func(t *testing.T, baseDir string) {
 				// Create 'current' backup so fetchBackup succeeds
-				currentPath := filepath.Join(targetDir, relCurrent)
+				currentPath := filepath.Join(baseDir, relCurrent)
 				os.MkdirAll(currentPath, 0755)
 				metafile.Write(currentPath, metafile.MetafileContent{})
 			},
@@ -210,8 +218,8 @@ func TestExecuteBackup(t *testing.T) {
 			archiveEnabled: true,
 			failFast:       false,
 			archiveErr:     errors.New("archive failed"),
-			setupFS: func(t *testing.T, targetDir string) {
-				currentPath := filepath.Join(targetDir, relCurrent)
+			setupFS: func(t *testing.T, baseDir string) {
+				currentPath := filepath.Join(baseDir, relCurrent)
 				os.MkdirAll(currentPath, 0755)
 				metafile.Write(currentPath, metafile.MetafileContent{})
 			},
@@ -222,9 +230,9 @@ func TestExecuteBackup(t *testing.T) {
 			mode:           planner.Incremental,
 			archiveEnabled: true,
 			archiveErr:     patharchive.ErrNothingToArchive,
-			setupFS: func(t *testing.T, targetDir string) {
+			setupFS: func(t *testing.T, baseDir string) {
 				// Create 'current' backup so fetchBackup succeeds
-				currentPath := filepath.Join(targetDir, relCurrent)
+				currentPath := filepath.Join(baseDir, relCurrent)
 				os.MkdirAll(currentPath, 0755)
 				metafile.Write(currentPath, metafile.MetafileContent{})
 			},
@@ -325,10 +333,10 @@ func TestExecuteBackup(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			srcDir := t.TempDir()
-			targetDir := t.TempDir()
+			baseDir := t.TempDir()
 
 			if tc.setupFS != nil {
-				tc.setupFS(t, targetDir)
+				tc.setupFS(t, baseDir)
 			}
 
 			// Construct Plan
@@ -384,7 +392,7 @@ func TestExecuteBackup(t *testing.T) {
 			}
 			runner.SetHookCommandExecutor(mockExecutor)
 
-			err := runner.ExecuteBackup(context.Background(), srcDir, targetDir, plan)
+			err := runner.ExecuteBackup(context.Background(), baseDir, srcDir, plan)
 
 			if tc.expectError {
 				if err == nil {
@@ -422,19 +430,132 @@ func TestExecuteBackup(t *testing.T) {
 	}
 }
 
+func TestExecuteRestore(t *testing.T) {
+	const (
+		relCurrent = "current_dir"
+		relArchive = "archive_dir"
+		relContent = "content_dir"
+	)
+
+	tests := []struct {
+		name          string
+		backupName    string
+		isCompressed  bool
+		setupFS       func(t *testing.T, baseDir string)
+		expectedPath  string // The relative path key expected to be passed to Syncer/Compressor
+		expectExtract bool   // True if we expect Compressor.Extract, False for Syncer.Restore
+		expectError   bool
+	}{
+		{
+			name:         "Restore Current (Uncompressed)",
+			backupName:   "current",
+			isCompressed: false,
+			setupFS: func(t *testing.T, baseDir string) {
+				path := filepath.Join(baseDir, relCurrent)
+				os.MkdirAll(path, 0755)
+				metafile.Write(path, metafile.MetafileContent{IsCompressed: false})
+			},
+			expectedPath:  relCurrent,
+			expectExtract: false,
+		},
+		{
+			name:         "Restore Archive (Compressed)",
+			backupName:   "backup_123",
+			isCompressed: true,
+			setupFS: func(t *testing.T, baseDir string) {
+				path := filepath.Join(baseDir, relArchive, "backup_123")
+				os.MkdirAll(path, 0755)
+				metafile.Write(path, metafile.MetafileContent{IsCompressed: true})
+			},
+			expectedPath:  filepath.Join(relArchive, "backup_123"),
+			expectExtract: true,
+		},
+		{
+			name:         "Restore Archive (Uncompressed)",
+			backupName:   "backup_456",
+			isCompressed: false,
+			setupFS: func(t *testing.T, baseDir string) {
+				path := filepath.Join(baseDir, relArchive, "backup_456")
+				os.MkdirAll(path, 0755)
+				metafile.Write(path, metafile.MetafileContent{IsCompressed: false})
+			},
+			expectedPath:  filepath.Join(relArchive, "backup_456"),
+			expectExtract: false,
+		},
+		{
+			name:        "Backup Not Found",
+			backupName:  "missing",
+			setupFS:     func(t *testing.T, baseDir string) {},
+			expectError: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			baseDir := t.TempDir()
+			targetDir := t.TempDir()
+
+			if tc.setupFS != nil {
+				tc.setupFS(t, baseDir)
+			}
+
+			plan := &planner.RestorePlan{
+				Paths: planner.PathKeys{
+					RelCurrentPathKey: relCurrent,
+					RelArchivePathKey: relArchive,
+					RelContentPathKey: relContent,
+				},
+				Preflight:  &preflight.Plan{},
+				Sync:       &pathsync.Plan{},
+				Extraction: &pathcompression.ExtractPlan{},
+			}
+
+			v := &mockValidator{}
+			s := &mockSyncer{}
+			a := &mockArchiver{}
+			r := &mockRetainer{}
+			c := &mockCompressor{}
+
+			runner := engine.NewRunner(v, s, a, r, c)
+
+			err := runner.ExecuteRestore(context.Background(), baseDir, tc.backupName, targetDir, plan)
+
+			if tc.expectError {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tc.expectExtract {
+				if c.extractRelPathKey != util.NormalizePath(tc.expectedPath) {
+					t.Errorf("Expected extract path %q, got %q", util.NormalizePath(tc.expectedPath), c.extractRelPathKey)
+				}
+			} else {
+				if s.restoreRelPathKey != util.NormalizePath(tc.expectedPath) {
+					t.Errorf("Expected restore path %q, got %q", util.NormalizePath(tc.expectedPath), s.restoreRelPathKey)
+				}
+			}
+		})
+	}
+}
+
 func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
 	// Setup
-	targetDir := t.TempDir()
+	baseDir := t.TempDir()
 	relArchive := "archive"
 	relCurrent := "current"
 	prefix := "backup_"
 
 	// Create the archive directory
-	archivePath := filepath.Join(targetDir, relArchive)
+	archivePath := filepath.Join(baseDir, relArchive)
 	os.MkdirAll(archivePath, 0755)
 
 	// Create 'current' backup so fetchBackup succeeds and Archive is called
-	currentPath := filepath.Join(targetDir, relCurrent)
+	currentPath := filepath.Join(baseDir, relCurrent)
 	os.MkdirAll(currentPath, 0755)
 	metafile.Write(currentPath, metafile.MetafileContent{TimestampUTC: time.Now()})
 
@@ -446,7 +567,7 @@ func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
 
 	// 2. Create the NEW backup on disk (simulating what Archiver just did)
 	newBackupRelPath := filepath.Join(relArchive, prefix+"new")
-	newBackupPath := filepath.Join(targetDir, newBackupRelPath)
+	newBackupPath := filepath.Join(baseDir, newBackupRelPath)
 	os.MkdirAll(newBackupPath, 0755)
 	metafile.Write(newBackupPath, metafile.MetafileContent{TimestampUTC: time.Now()})
 
@@ -480,7 +601,7 @@ func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
 	runner := engine.NewRunner(v, s, a, r, c)
 
 	// Execute
-	err := runner.ExecuteBackup(context.Background(), "src", targetDir, plan)
+	err := runner.ExecuteBackup(context.Background(), baseDir, "src", plan)
 	if err != nil {
 		t.Fatalf("ExecuteBackup failed: %v", err)
 	}
@@ -516,7 +637,7 @@ func TestExecutePrune(t *testing.T) {
 		retentionErr error
 
 		// Filesystem setup
-		setupFS func(t *testing.T, targetDir string)
+		setupFS func(t *testing.T, baseDir string)
 
 		// Expectations
 		expectError   bool
@@ -551,14 +672,14 @@ func TestExecutePrune(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			targetDir := t.TempDir()
+			baseDir := t.TempDir()
 
 			if tc.setupFS != nil {
-				tc.setupFS(t, targetDir)
+				tc.setupFS(t, baseDir)
 			} else {
 				// Ensure archive directories exist for fetchBackups
-				os.MkdirAll(filepath.Join(targetDir, relArchiveInc), 0755)
-				os.MkdirAll(filepath.Join(targetDir, relArchiveSnap), 0755)
+				os.MkdirAll(filepath.Join(baseDir, relArchiveInc), 0755)
+				os.MkdirAll(filepath.Join(baseDir, relArchiveSnap), 0755)
 			}
 
 			plan := &planner.PrunePlan{
@@ -587,7 +708,7 @@ func TestExecutePrune(t *testing.T) {
 
 			runner := engine.NewRunner(v, s, a, r, c)
 
-			err := runner.ExecutePrune(context.Background(), targetDir, plan)
+			err := runner.ExecutePrune(context.Background(), baseDir, plan)
 
 			if tc.expectError {
 				if err == nil {

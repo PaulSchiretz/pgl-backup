@@ -20,23 +20,24 @@ type Validator interface {
 
 // Syncer is an interface for the sync leaf package.
 type Syncer interface {
-	Sync(ctx context.Context, absSourcePath, absTargetBasePath, relCurrentPathKey, relContentPathKey string, p *pathsync.Plan, timestampUTC time.Time) error
+	Sync(ctx context.Context, absBasePath, absSourcePath, relCurrentPathKey, relContentPathKey string, p *pathsync.Plan, timestampUTC time.Time) error
+	Restore(ctx context.Context, absBasePath string, relContentPathKey string, toRestore metafile.MetafileInfo, absRestoreTargetPath string, p *pathsync.Plan) error
 }
 
 // Archiver is an interface for the archive leaf package.
 // Responsible for turning the the 'current' state into a permanent historical record.
 type Archiver interface {
-	Archive(ctx context.Context, absTargetBasePath, relArchivePathKey, backupDirPrefix string, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) error
+	Archive(ctx context.Context, absBasePath, relArchivePathKey, backupDirPrefix string, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) error
 }
 
 // Retainer is an interface for the retention leaf package.
 type Retainer interface {
-	Prune(ctx context.Context, absTargetBasePath string, toPrune []metafile.MetafileInfo, p *pathretention.Plan, timestampUTC time.Time) error
+	Prune(ctx context.Context, absBasePath string, toPrune []metafile.MetafileInfo, p *pathretention.Plan, timestampUTC time.Time) error
 }
 
 type Compressor interface {
-	Compress(ctx context.Context, absTargetBasePath, relContentPathKey string, toCompress metafile.MetafileInfo, p *pathcompression.CompressPlan, timestampUTC time.Time) error
-	Extract(ctx context.Context, absTargetBasePath string, toExtract metafile.MetafileInfo, absExtractTargetPath string, p *pathcompression.ExtractPlan, timestampUTC time.Time) error
+	Compress(ctx context.Context, absBasePath, relContentPathKey string, toCompress metafile.MetafileInfo, p *pathcompression.CompressPlan, timestampUTC time.Time) error
+	Extract(ctx context.Context, absBasePath string, toExtract metafile.MetafileInfo, absExtractTargetPath string, p *pathcompression.ExtractPlan, timestampUTC time.Time) error
 }
 
 // Runner is the central orchestrator.

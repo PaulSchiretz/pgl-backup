@@ -17,7 +17,7 @@ import (
 type extractTask struct {
 	*PathCompressor
 	ctx                  context.Context
-	absTargetBasePath    string
+	absBasePath          string
 	toExtract            metafile.MetafileInfo
 	absExtractTargetPath string
 	overwriteBehavior    OverwriteBehavior
@@ -48,7 +48,7 @@ func (t *extractTask) execute() error {
 		return nil
 	}
 
-	absToExtractPath := util.DenormalizePath(filepath.Join(t.absTargetBasePath, b.RelPathKey))
+	absToExtractPath := util.DenormalizePath(filepath.Join(t.absBasePath, b.RelPathKey))
 	// Check if the backup directory still exists.
 	if _, err := os.Stat(absToExtractPath); os.IsNotExist(err) {
 		return fmt.Errorf("backup directory not found: %s", b.RelPathKey)

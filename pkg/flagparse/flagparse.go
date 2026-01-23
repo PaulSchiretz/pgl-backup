@@ -19,8 +19,9 @@ type cliFlags struct {
 	DryRun   *bool
 	Metrics  *bool
 
-	// Common / Backup / Init
+	// Shared: Backup / Init
 	Source        *string
+	Base          *string
 	Target        *string
 	FailFast      *bool
 	SyncWorkers   *int
@@ -60,13 +61,14 @@ type cliFlags struct {
 	RetentionSnapshotMonths     *int
 	RetentionSnapshotYears      *int
 
-	// Backup specific
-	Mode *string
+	// Shared: Backup / Restore
+	Mode              *string
+	OverwriteBehavior *string
 
 	// Restore specific
-	OverwriteBehavior *string
-	PreRestoreHooks   *string
-	PostRestoreHooks  *string
+	BackupName       *string
+	PreRestoreHooks  *string
+	PostRestoreHooks *string
 
 	// Init specific
 	Force   *bool
@@ -81,7 +83,7 @@ func registerGlobalFlags(fs *flag.FlagSet, f *cliFlags) {
 
 func registerBackupFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.Source = fs.String("source", "", "Source directory to copy from")
-	f.Target = fs.String("target", "", "Base destination directory for backups")
+	f.Base = fs.String("base", "", "Base destination directory for backups. (Required)")
 	f.Mode = fs.String("mode", "incremental", "Backup mode: 'incremental' or 'snapshot'.")
 	f.FailFast = fs.Bool("fail-fast", false, "Stop the backup immediately on the first file sync error.")
 	f.OverwriteBehavior = fs.String("overwrite", "update", "Overwrite behavior: 'always', 'never', 'if-newer', 'update'.")
@@ -128,8 +130,8 @@ func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.Force = fs.Bool("force", false, "Bypass confirmation prompts.")
 	f.Default = fs.Bool("default", false, "Overwrite existing configuration with defaults.")
 
-	f.Source = fs.String("source", "", "Source directory to copy from")
-	f.Target = fs.String("target", "", "Base destination directory for backups")
+	f.Source = fs.String("source", "", "Source directory to copy from. (Required)")
+	f.Base = fs.String("base", "", "Base destination directory for backups. (Required)")
 	f.FailFast = fs.Bool("fail-fast", false, "Stop the backup immediately on the first file sync error.")
 	f.SyncWorkers = fs.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
 	f.MirrorWorkers = fs.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
@@ -170,13 +172,15 @@ func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
 }
 
 func registerPruneFlags(fs *flag.FlagSet, f *cliFlags) {
-	f.Target = fs.String("target", "", "Base destination directory for backups to prune")
+	f.Base = fs.String("base", "", "Base destination directory for backups to prune")
 	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
 }
 
 func registerRestoreFlags(fs *flag.FlagSet, f *cliFlags) {
-	f.Source = fs.String("source", "", "Directory containing the backup to restore from")
-	f.Target = fs.String("target", "", "Directory to restore to")
+	f.Base = fs.String("base", "", "Base directory of the backup repository (containing config). (Required)")
+	f.Target = fs.String("target", "", "Directory to restore to. (Required)")
+	f.BackupName = fs.String("backup-name", "", "Name of the backup to restore (e.g. 'PGL_Backup_2023...' or 'current')")
+	f.Mode = fs.String("mode", "", "Mode of the backup to restore: 'incremental' or 'snapshot'. (Required)")
 	f.FailFast = fs.Bool("fail-fast", false, "Stop the restore immediately on the first error.")
 	f.SyncWorkers = fs.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
 	f.BufferSizeKB = fs.Int("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes.")
@@ -298,9 +302,11 @@ func flagsToMap(c Command, fs *flag.FlagSet, f *cliFlags) (map[string]interface{
 	addIfUsed(flagMap, usedFlags, "mode", f.Mode)
 	addIfUsed(flagMap, usedFlags, "metrics", f.Metrics)
 
-	addIfUsed(flagMap, usedFlags, "source", f.Source)
-	addIfUsed(flagMap, usedFlags, "overwrite", f.OverwriteBehavior)
+	addIfUsed(flagMap, usedFlags, "base", f.Base)
 	addIfUsed(flagMap, usedFlags, "target", f.Target)
+	addIfUsed(flagMap, usedFlags, "source", f.Source)
+	addIfUsed(flagMap, usedFlags, "backup-name", f.BackupName)
+	addIfUsed(flagMap, usedFlags, "overwrite", f.OverwriteBehavior)
 	addIfUsed(flagMap, usedFlags, "fail-fast", f.FailFast)
 	addIfUsed(flagMap, usedFlags, "sync-workers", f.SyncWorkers)
 	addIfUsed(flagMap, usedFlags, "mirror-workers", f.MirrorWorkers)

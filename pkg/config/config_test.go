@@ -27,7 +27,7 @@ func TestConfig_Validate(t *testing.T) {
 	validConfig := func() Config {
 		c := NewDefault()
 		c.Source = "/tmp/source"
-		c.TargetBase = "/tmp/target"
+		c.Base = "/tmp/target"
 		return c
 	}
 
@@ -39,6 +39,7 @@ func TestConfig_Validate(t *testing.T) {
 		name        string
 		modify      func(*Config)
 		checkSource bool
+		checkTarget bool
 		wantErr     bool
 		errContains string
 	}{
@@ -46,7 +47,7 @@ func TestConfig_Validate(t *testing.T) {
 			name: "Valid Config (Incremental)",
 			modify: func(c *Config) {
 				c.Source = tmpSource
-				c.TargetBase = tmpTarget
+				c.Base = tmpTarget
 				c.Runtime.Mode = "incremental"
 			},
 			checkSource: true,
@@ -56,7 +57,7 @@ func TestConfig_Validate(t *testing.T) {
 			name: "Valid Config (Snapshot)",
 			modify: func(c *Config) {
 				c.Source = tmpSource
-				c.TargetBase = tmpTarget
+				c.Base = tmpTarget
 				c.Runtime.Mode = "snapshot"
 			},
 			checkSource: true,
@@ -91,11 +92,29 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "Empty Target",
 			modify: func(c *Config) {
-				c.TargetBase = ""
+				c.Base = ""
 			},
 			checkSource: false,
 			wantErr:     true,
+			errContains: "base path cannot be empty",
+		},
+		{
+			name: "Empty Target (CheckTarget=true)",
+			modify: func(c *Config) {
+				c.Target = ""
+			},
+			checkTarget: true,
+			wantErr:     true,
 			errContains: "target path cannot be empty",
+		},
+		{
+			name: "Non-Existent Target (CheckTarget=true)",
+			modify: func(c *Config) {
+				c.Target = filepath.Join(tmpTarget, "nonexistent")
+			},
+			checkTarget: true,
+			wantErr:     true,
+			errContains: "does not exist",
 		},
 		// Incremental Path Checks
 		{
@@ -269,7 +288,7 @@ func TestConfig_Validate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := validConfig()
 			tt.modify(&cfg)
-			err := cfg.Validate(tt.checkSource)
+			err := cfg.Validate(tt.checkSource, tt.checkTarget)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -368,7 +387,7 @@ func TestMergeConfigWithFlags(t *testing.T) {
 func TestGenerateAndLoad(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := NewDefault()
-	cfg.TargetBase = tmpDir
+	cfg.Base = tmpDir
 	cfg.Source = "/some/source"
 	cfg.LogLevel = "warn"
 

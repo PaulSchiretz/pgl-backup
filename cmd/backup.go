@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/buildinfo"
@@ -16,18 +17,26 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/planner"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/preflight"
+	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 // RunBackup handles the logic for the main backup execution.
 func RunBackup(ctx context.Context, flagMap map[string]interface{}) error {
 	// For backup, the target flag is mandatory.
-	targetPath, ok := flagMap["target"].(string)
-	if !ok || targetPath == "" {
-		return fmt.Errorf("the -target flag is required to run a backup")
+	base, ok := flagMap["base"].(string)
+	if !ok || base == "" {
+		return fmt.Errorf("the -base flag is required to run a backup")
 	}
 
+	// Build absolute base path
+	absBasePath, err := filepath.Abs(base)
+	if err != nil {
+		return fmt.Errorf("could not determine absolute base path for %s: %w", base, err)
+	}
+	absBasePath = util.DenormalizePath(absBasePath)
+
 	// Load config from the target directory, or use defaults if not found.
-	loadedConfig, err := config.Load(targetPath)
+	loadedConfig, err := config.Load(absBasePath)
 	if err != nil {
 		return fmt.Errorf("failed to load configuration from target: %w", err)
 	}
@@ -36,7 +45,7 @@ func RunBackup(ctx context.Context, flagMap map[string]interface{}) error {
 	runConfig := config.MergeConfigWithFlags(flagparse.Backup, loadedConfig, flagMap)
 
 	// CRITICAL: Validate the config for the run
-	if err := runConfig.Validate(true); err != nil {
+	if err := runConfig.Validate(true, false); err != nil {
 		return err
 	}
 
@@ -71,7 +80,7 @@ func RunBackup(ctx context.Context, flagMap map[string]interface{}) error {
 
 	// Execute the plan
 	startTime := time.Now()
-	err = runner.ExecuteBackup(ctx, runConfig.Source, runConfig.TargetBase, backupPlan)
+	err = runner.ExecuteBackup(ctx, runConfig.Base, runConfig.Source, backupPlan)
 	duration := time.Since(startTime).Round(time.Millisecond)
 	if err != nil {
 		return err // The error will be logged with full details by main()

@@ -137,15 +137,15 @@ type nativeSyncTestRunner struct {
 	dstDirs               []testDir
 	modTimeWin            *int
 	// Internal state
-	srcDir string
-	dstDir string
+	baseDir string
+	srcDir  string
 }
 
 func (r *nativeSyncTestRunner) setup() {
 	r.srcDir = r.t.TempDir()
-	r.dstDir = r.t.TempDir()
+	r.baseDir = r.t.TempDir()
 
-	if err := os.RemoveAll(r.dstDir); err != nil {
+	if err := os.RemoveAll(r.baseDir); err != nil {
 		r.t.Fatalf("failed to clean up dst dir before test: %v", err)
 	}
 
@@ -160,18 +160,18 @@ func (r *nativeSyncTestRunner) setup() {
 		createDir(r.t, filepath.Join(r.srcDir, d.path), d.perm, d.modTime)
 	}
 	for _, d := range r.dstDirs {
-		createDir(r.t, filepath.Join(r.dstDir, d.path), d.perm, d.modTime)
+		createDir(r.t, filepath.Join(r.baseDir, d.path), d.perm, d.modTime)
 	}
 	for _, f := range r.dstFiles {
 		if f.symlinkTarget != "" {
-			createSymlink(r.t, f.symlinkTarget, filepath.Join(r.dstDir, f.path))
+			createSymlink(r.t, f.symlinkTarget, filepath.Join(r.baseDir, f.path))
 		} else {
-			createFile(r.t, filepath.Join(r.dstDir, f.path), f.content, f.modTime)
+			createFile(r.t, filepath.Join(r.baseDir, f.path), f.content, f.modTime)
 		}
 	}
 
 	if !r.dryRun {
-		os.MkdirAll(r.dstDir, 0755)
+		os.MkdirAll(r.baseDir, 0755)
 	}
 }
 
@@ -821,7 +821,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				plan.ModTimeWindow = 1 * time.Second
 			}
 			syncer := NewPathSyncer(256, 4, 4)
-			err := syncer.Sync(context.Background(), runner.srcDir, runner.dstDir, "", "", plan, time.Now())
+			err := syncer.Sync(context.Background(), runner.baseDir, runner.srcDir, "", "", plan, time.Now())
 
 			// Assert on error
 			if tc.expectedErrorContains != "" {
@@ -847,7 +847,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 
 			// Assert
 			for relPathKey, expectedFile := range tc.expectedDstFiles {
-				fullPath := filepath.Join(runner.dstDir, expectedFile.path)
+				fullPath := filepath.Join(runner.baseDir, expectedFile.path)
 
 				if expectedFile.symlinkTarget != "" {
 					info, err := os.Lstat(fullPath)
@@ -893,13 +893,13 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				}
 			}
 			for _, p := range tc.expectedMissingDstFiles {
-				if pathExists(t, filepath.Join(runner.dstDir, p)) {
+				if pathExists(t, filepath.Join(runner.baseDir, p)) {
 					t.Errorf("expected path to be missing from destination: %s", p)
 				}
 			}
 			// Allow for additional custom verification
 			if tc.verify != nil {
-				tc.verify(t, runner.srcDir, runner.dstDir)
+				tc.verify(t, runner.srcDir, runner.baseDir)
 			}
 
 			// Verify metrics if provided
@@ -973,7 +973,7 @@ func TestNativeSync_WorkerCancellation(t *testing.T) {
 	// Arrange
 	tempDir := t.TempDir()
 	srcDir := filepath.Join(tempDir, "src")
-	dstDir := filepath.Join(tempDir, "dst")
+	baseDir := filepath.Join(tempDir, "base")
 
 	if err := os.MkdirAll(srcDir, 0755); err != nil {
 		t.Fatalf("failed to create src dir: %v", err)
@@ -1002,7 +1002,7 @@ func TestNativeSync_WorkerCancellation(t *testing.T) {
 	}()
 
 	// Act
-	err := syncer.Sync(ctx, srcDir, dstDir, "", "", plan, time.Now())
+	err := syncer.Sync(ctx, baseDir, srcDir, "", "", plan, time.Now())
 
 	// Assert
 	if err != nil && !strings.Contains(err.Error(), "context canceled") && !strings.Contains(err.Error(), "critical sync error") {
@@ -1014,19 +1014,19 @@ func TestNativeSync_MirrorCancellation(t *testing.T) {
 	// Arrange
 	tempDir := t.TempDir()
 	srcDir := filepath.Join(tempDir, "src")
-	dstDir := filepath.Join(tempDir, "dst")
+	baseDir := filepath.Join(tempDir, "base")
 
 	if err := os.MkdirAll(srcDir, 0755); err != nil {
 		t.Fatalf("failed to create src dir: %v", err)
 	}
-	if err := os.MkdirAll(dstDir, 0755); err != nil {
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
 		t.Fatalf("failed to create dst dir: %v", err)
 	}
 
 	// Create many files in DST that need to be deleted (Mirror phase work)
 	// Src is empty, so Sync phase is fast.
 	for i := 0; i < 1000; i++ {
-		fname := filepath.Join(dstDir, fmt.Sprintf("file_to_delete_%d.txt", i))
+		fname := filepath.Join(baseDir, fmt.Sprintf("file_to_delete_%d.txt", i))
 		if err := os.WriteFile(fname, []byte("content"), 0644); err != nil {
 			t.Fatalf("failed to create file: %v", err)
 		}
@@ -1048,7 +1048,7 @@ func TestNativeSync_MirrorCancellation(t *testing.T) {
 	}()
 
 	// Act
-	err := syncer.Sync(ctx, srcDir, dstDir, "", "", plan, time.Now())
+	err := syncer.Sync(ctx, baseDir, srcDir, "", "", plan, time.Now())
 
 	// Assert
 	if err != nil && !strings.Contains(err.Error(), "context canceled") && !strings.Contains(err.Error(), "critical mirror error") {

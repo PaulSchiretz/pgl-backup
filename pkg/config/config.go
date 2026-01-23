@@ -117,12 +117,14 @@ type RuntimeConfig struct {
 	DryRun                   bool
 	BackupOverwriteBehavior  string
 	RestoreOverwriteBehavior string
+	BackupName               string
 }
 
 type Config struct {
 	Version     string            `json:"version"`
 	Source      string            `json:"source"`
-	TargetBase  string            `json:"-"` // Never added to config file
+	Target      string            `json:"-"` // Used only in Restore mode, so it is never added to config file
+	Base        string            `json:"-"` // Never added to config file
 	Runtime     RuntimeConfig     `json:"-"` // Never added to config file
 	LogLevel    string            `json:"logLevel"`
 	Paths       PathsConfig       `json:"paths"`
@@ -141,10 +143,11 @@ func NewDefault() Config {
 	// the best performance and consistency with no external dependencies.
 	// Power users on Windows can still opt-in to 'robocopy' as a battle-tested alternative.
 	return Config{
-		Version:    buildinfo.Version,
-		Source:     "",     // Intentionally empty to force user configuration.
-		TargetBase: "",     // Intentionally empty to force user configuration.
-		LogLevel:   "info", // Default log level.
+		Version:  buildinfo.Version,
+		Base:     "",     // Intentionally empty to force user configuration.
+		Source:   "",     // Intentionally empty to force user configuration.
+		Target:   "",     // Intentionally empty to force user configuration.
+		LogLevel: "info", // Default log level.
 		Runtime: RuntimeConfig{
 			Mode:                     "incremental", // Default mode
 			DryRun:                   false,
@@ -244,49 +247,44 @@ func NewDefault() Config {
 // Load attempts to load a configuration from "pgl-backup.config.json".
 // If the file doesn't exist, it returns the provided default config without an error.
 // If the file exists but fails to parse, it returns an error and a zero-value config.
-func Load(targetBase string) (Config, error) {
+func Load(absBasePath string) (Config, error) {
 
-	absTargetBasePath, err := filepath.Abs(targetBase)
-	if err != nil {
-		return Config{}, fmt.Errorf("could not determine absolute path for load directory %s: %w", targetBase, err)
-	}
+	absConfigFilePath := util.DenormalizePath(filepath.Join(absBasePath, ConfigFileName))
 
-	configPath := filepath.Join(absTargetBasePath, ConfigFileName)
-
-	file, err := os.Open(configPath)
+	file, err := os.Open(absConfigFilePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return NewDefault(), nil // Config file doesn't exist, which is a normal case.
 		}
-		return Config{}, fmt.Errorf("error opening config file %s: %w", configPath, err)
+		return Config{}, fmt.Errorf("error opening config file %s: %w", absConfigFilePath, err)
 	}
 	defer file.Close()
 
-	plog.Info("Loading configuration", "path", configPath)
+	plog.Info("Loading configuration", "path", absConfigFilePath)
 	// Start with default values, then overwrite with the file's content.
 	// This makes the config loading resilient to missing fields in the JSON file.
 	// NOTE: if config.Version differs from appVersion we can add a migration step here.
 	config := NewDefault()
 	decoder := json.NewDecoder(file)
 	if err := decoder.Decode(&config); err != nil {
-		return Config{}, fmt.Errorf("error parsing config file %s: %w", configPath, err)
+		return Config{}, fmt.Errorf("error parsing config file %s: %w", absConfigFilePath, err)
 	}
 
-	// After loading, validate that if there is a targetBase in the config file it matches the
+	// After loading, validate that if there is a base in the config file it matches the
 	// directory it was loaded from. This prevents using a config file in the wrong directory.
-	// NOTE: there should never be a targetBase in the config!
-	if config.TargetBase != "" {
-		absTargetInConfig, err := filepath.Abs(config.TargetBase)
+	// NOTE: there should never be a base in the config!
+	if config.Base != "" {
+		absBaseInConfig, err := filepath.Abs(config.Base)
 		if err != nil {
-			return Config{}, fmt.Errorf("could not determine absolute path for targetBase in config %s: %w", config.TargetBase, err)
+			return Config{}, fmt.Errorf("could not determine absolute path for base in config %s: %w", config.Base, err)
 		}
 
-		if absTargetBasePath != absTargetInConfig {
-			return Config{}, fmt.Errorf("targetBase in config file (%s) does not match the directory it was loaded from (%s)", absTargetInConfig, absTargetBasePath)
+		if absBasePath != absBaseInConfig {
+			return Config{}, fmt.Errorf("base in config file (%s) does not match the directory it was loaded from (%s)", absBaseInConfig, absBasePath)
 		}
 	} else {
-		// Set the target base
-		config.TargetBase = absTargetBasePath
+		// Set the base
+		config.Base = absBasePath
 	}
 
 	// At this point our config has been migrated if needed so override the version in the struct
@@ -299,7 +297,7 @@ func Load(targetBase string) (Config, error) {
 // Generate creates or overwrites a default pgl-backup.config.json file in the specified
 // target directory.
 func Generate(configToGenerate Config) error {
-	configPath := filepath.Join(configToGenerate.TargetBase, ConfigFileName)
+	absConfigFilePath := util.DenormalizePath(filepath.Join(configToGenerate.Base, ConfigFileName))
 	// Marshal the default config into nicely formatted JSON.
 	jsonData, err := json.MarshalIndent(configToGenerate, "", "  ")
 	if err != nil {
@@ -307,24 +305,27 @@ func Generate(configToGenerate Config) error {
 	}
 
 	// Write the JSON data to the file.
-	if err := os.WriteFile(configPath, jsonData, util.UserWritableFilePerms); err != nil {
+	if err := os.WriteFile(absConfigFilePath, jsonData, util.UserWritableFilePerms); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 
-	plog.Info("Successfully saved config file", "path", configPath)
+	plog.Info("Successfully saved config file", "path", absConfigFilePath)
 	return nil
 }
 
 // Validate checks the configuration for logical errors and inconsistencies.
 // It performs strict checks, including ensuring the source path is non-empty
 // and exists.
-func (c *Config) Validate(checkSource bool) error {
+func (c *Config) Validate(checkSource, checkTarget bool) error {
 	// --- Strict Path Validation (Fail-Fast) ---
 	if checkSource && c.Source == "" {
 		return fmt.Errorf("source path cannot be empty")
 	}
-	if c.TargetBase == "" {
+	if checkTarget && c.Target == "" {
 		return fmt.Errorf("target path cannot be empty")
+	}
+	if c.Base == "" {
+		return fmt.Errorf("base path cannot be empty")
 	}
 
 	// Clean and expand paths for canonical representation before use.
@@ -347,12 +348,28 @@ func (c *Config) Validate(checkSource bool) error {
 	}
 
 	// --- Validate Target Path ---
-	if c.TargetBase != "" {
-		c.TargetBase, err = util.ExpandPath(c.TargetBase)
+	if c.Target != "" {
+		c.Target, err = util.ExpandPath(c.Target)
 		if err != nil {
 			return fmt.Errorf("could not expand target path: %w", err)
 		}
-		c.TargetBase = filepath.Clean(c.TargetBase)
+		c.Target = filepath.Clean(c.Target)
+
+		// After cleaning and expanding the path, check for existence.
+		/*if checkTarget {
+			if _, err := os.Stat(c.Target); os.IsNotExist(err) {
+				return fmt.Errorf("target path '%s' does not exist", c.Target)
+			}
+		}*/
+	}
+
+	// --- Validate Base Path ---
+	if c.Base != "" {
+		c.Base, err = util.ExpandPath(c.Base)
+		if err != nil {
+			return fmt.Errorf("could not expand base path: %w", err)
+		}
+		c.Base = filepath.Clean(c.Base)
 	}
 
 	// --- Validate Shared Settings ---
@@ -491,7 +508,7 @@ func (c *Config) LogSummary() {
 		"mode", c.Runtime.Mode,
 		"log_level", c.LogLevel,
 		"source", c.Source,
-		"target", c.TargetBase,
+		"base", c.Base,
 		"dry_run", c.Runtime.DryRun,
 		"sync_workers", c.Engine.Performance.SyncWorkers,
 		"mirror_workers", c.Engine.Performance.MirrorWorkers,
@@ -605,10 +622,12 @@ func MergeConfigWithFlags(command flagparse.Command, base Config, setFlags map[s
 
 	for name, value := range setFlags {
 		switch name {
+		case "base":
+			merged.Base = value.(string)
 		case "source":
 			merged.Source = value.(string)
 		case "target":
-			merged.TargetBase = value.(string)
+			merged.Target = value.(string)
 		case "log-level":
 			merged.LogLevel = value.(string)
 		case "fail-fast":
@@ -617,7 +636,7 @@ func MergeConfigWithFlags(command flagparse.Command, base Config, setFlags map[s
 			merged.Engine.Metrics = value.(bool)
 		case "mode":
 			switch command {
-			case flagparse.Backup:
+			case flagparse.Backup, flagparse.Restore:
 				merged.Runtime.Mode = value.(string)
 			default:
 			}
@@ -629,6 +648,8 @@ func MergeConfigWithFlags(command flagparse.Command, base Config, setFlags map[s
 			} else {
 				merged.Runtime.BackupOverwriteBehavior = value.(string)
 			}
+		case "backup-name":
+			merged.Runtime.BackupName = value.(string)
 		case "sync-workers":
 			merged.Engine.Performance.SyncWorkers = value.(int)
 		case "mirror-workers":

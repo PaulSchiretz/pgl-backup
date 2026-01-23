@@ -49,7 +49,7 @@ func NewPathRetainer(numWorkers int) *PathRetainer {
 
 // Prune scans a given backups and deletes backups
 // that are no longer needed according to the passed retention policy.
-func (r *PathRetainer) Prune(ctx context.Context, absTargetBasePath string, toPrune []metafile.MetafileInfo, p *Plan, timestampUTC time.Time) error {
+func (r *PathRetainer) Prune(ctx context.Context, absBasePath string, toPrune []metafile.MetafileInfo, p *Plan, timestampUTC time.Time) error {
 
 	if !p.Enabled {
 		plog.Debug("Retention policy is disabled, skipping prune")
@@ -81,19 +81,19 @@ func (r *PathRetainer) Prune(ctx context.Context, absTargetBasePath string, toPr
 	}
 
 	t := &task{
-		PathRetainer:      r,
-		ctx:               ctx,
-		absTargetBasePath: absTargetBasePath,
-		keepHours:         p.Hours,
-		keepDays:          p.Days,
-		keepWeeks:         p.Weeks,
-		keepMonths:        p.Months,
-		keepYears:         p.Years,
-		toPrune:           toPrune,
-		timestampUTC:      timestampUTC,
-		metrics:           m,
-		dryRun:            p.DryRun,
-		deleteTasksChan:   make(chan metafile.MetafileInfo, r.numWorkers*2),
+		PathRetainer:    r,
+		ctx:             ctx,
+		absBasePath:     absBasePath,
+		keepHours:       p.Hours,
+		keepDays:        p.Days,
+		keepWeeks:       p.Weeks,
+		keepMonths:      p.Months,
+		keepYears:       p.Years,
+		toPrune:         toPrune,
+		timestampUTC:    timestampUTC,
+		metrics:         m,
+		dryRun:          p.DryRun,
+		deleteTasksChan: make(chan metafile.MetafileInfo, r.numWorkers*2),
 	}
 	return t.execute()
 }

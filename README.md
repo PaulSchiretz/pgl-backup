@@ -184,6 +184,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
 {
   "version": "v1.0.0",
   "mode": "incremental",
+  "source": "/home/user/Documents",
   "logLevel": "info",
   "dryRun": false,
   "metrics": true,
@@ -191,7 +192,6 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
     "prefix": "PGL_Backup_"
   },
   "paths": {
-    "source": "/home/user/Documents",
     "incremental": {
       "current": "PGL_Backup_Incremental_Current",
       "archive": "PGL_Backup_Incremental_Archive",
@@ -634,8 +634,9 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | Flag / JSON Key | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `version`| `version` | `""` | The `pgl-backup` version. |
-| `source` / `source` | `string` | `""` | The directory to back up. **Required**. |
-| `target` / `target` (internal) | `string` | `""` | The base directory where backups are stored. **Required**. |
+| `source` (backup/init) / `source` | `string` | `""` | The directory to back up. **Required for Backup**. |
+| `base` / `base` (internal) | `string` | `""` | The base directory where backups are stored. **Required**. |
+| `target` (restore) / - | `string` | `""` | The destination directory for a restore operation. |
 | `mode` / `runtime.mode` (internal) | `"incremental"` | Backup mode: `"incremental"` or `"snapshot"`. |
 | `overwrite` (backup) / `runtime.backupOverwriteBehavior` (internal) | `string` | `"update"` | Overwrite behavior for backup: `'always'`, `'never'`, `'if-newer'`, `'update'`. |
 | `overwrite` (restore) / `runtime.restoreOverwriteBehavior` (internal) | `string` | `"never"` | Overwrite behavior for restore: `'always'`, `'never'`, `'if-newer'`, `'update'`. |

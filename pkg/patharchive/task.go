@@ -16,9 +16,9 @@ import (
 // tasks holds the mutable state for a single execution of the archive.
 // This makes the ArchiveEngine itself stateless and safe for concurrent use if needed.
 type task struct {
-	ctx               context.Context
-	absTargetBasePath string
-	relTargetPathKey  string
+	ctx              context.Context
+	absBasePath      string
+	relTargetPathKey string
 
 	toArchive    metafile.MetafileInfo
 	interval     time.Duration
@@ -59,8 +59,8 @@ func (t *task) execute() (metafile.MetafileInfo, error) {
 		return metafile.MetafileInfo{RelPathKey: t.relTargetPathKey, Metadata: t.toArchive.Metadata}, nil
 	}
 
-	absSourcePath := util.DenormalizePath(filepath.Join(t.absTargetBasePath, t.toArchive.RelPathKey))
-	absTargetPath := util.DenormalizePath(filepath.Join(t.absTargetBasePath, t.relTargetPathKey))
+	absSourcePath := util.DenormalizePath(filepath.Join(t.absBasePath, t.toArchive.RelPathKey))
+	absTargetPath := util.DenormalizePath(filepath.Join(t.absBasePath, t.relTargetPathKey))
 
 	// Log the intent before starting the operation
 	plog.Info("Starting archive operation", "from", t.toArchive.RelPathKey, "to", t.relTargetPathKey)

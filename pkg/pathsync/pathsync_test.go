@@ -8,12 +8,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 )
 
 func TestSync_Dispatch(t *testing.T) {
 	t.Run("Unknown Engine", func(t *testing.T) {
 		srcDir := t.TempDir()
-		dstDir := t.TempDir()
+		baseDir := t.TempDir()
 
 		plan := &Plan{
 			Enabled: true,
@@ -21,7 +23,7 @@ func TestSync_Dispatch(t *testing.T) {
 		}
 
 		syncer := NewPathSyncer(256, 1, 1)
-		err := syncer.Sync(context.Background(), srcDir, dstDir, "current", "content", plan, time.Now())
+		err := syncer.Sync(context.Background(), baseDir, srcDir, "current", "content", plan, time.Now())
 
 		if err == nil {
 			t.Fatal("expected an error for unknown sync engine, but got nil")
@@ -34,14 +36,14 @@ func TestSync_Dispatch(t *testing.T) {
 		}
 
 		srcDir := t.TempDir()
-		dstDir := t.TempDir()
+		baseDir := t.TempDir()
 
 		plan := &Plan{
 			Engine: Robocopy,
 		}
 
 		syncer := NewPathSyncer(256, 1, 1)
-		err := syncer.Sync(context.Background(), srcDir, dstDir, "current", "content", plan, time.Now())
+		err := syncer.Sync(context.Background(), baseDir, srcDir, "current", "content", plan, time.Now())
 
 		if err == nil {
 			t.Fatal("expected an error when using robocopy on a non-windows OS, but got nil")
@@ -55,7 +57,7 @@ func TestSync_Dispatch(t *testing.T) {
 
 	t.Run("Success Native Stores Result", func(t *testing.T) {
 		srcDir := t.TempDir()
-		dstDir := t.TempDir()
+		baseDir := t.TempDir()
 
 		// Create a dummy file in src so there is something to sync
 		if err := os.WriteFile(filepath.Join(srcDir, "test.txt"), []byte("content"), 0644); err != nil {
@@ -72,7 +74,7 @@ func TestSync_Dispatch(t *testing.T) {
 		relContent := "content"
 		timestamp := time.Now().UTC()
 
-		err := syncer.Sync(context.Background(), srcDir, dstDir, relCurrent, relContent, plan, timestamp)
+		err := syncer.Sync(context.Background(), baseDir, srcDir, relCurrent, relContent, plan, timestamp)
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
@@ -87,6 +89,88 @@ func TestSync_Dispatch(t *testing.T) {
 			t.Errorf("expected ResultInfo.Metadata.Source to be %q, got %q", srcDir, plan.ResultInfo.Metadata.Source)
 		}
 	})
+}
+
+func TestSync_PreserveSourceDirName(t *testing.T) {
+	srcDir := t.TempDir()
+	baseDir := t.TempDir()
+
+	// Create a dummy file in src so there is something to sync
+	if err := os.WriteFile(filepath.Join(srcDir, "test.txt"), []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := &Plan{
+		Enabled:               true,
+		Engine:                Native,
+		PreserveSourceDirName: true,
+	}
+
+	syncer := NewPathSyncer(256, 1, 1)
+	relCurrent := "current"
+	relContent := "content"
+	timestamp := time.Now().UTC()
+
+	err := syncer.Sync(context.Background(), baseDir, srcDir, relCurrent, relContent, plan, timestamp)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	// Calculate expected path: baseDir/current/content/<srcDirName>/test.txt
+	srcDirName := filepath.Base(srcDir)
+	expectedPath := filepath.Join(baseDir, relCurrent, relContent, srcDirName, "test.txt")
+
+	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
+		t.Errorf("expected file to exist at %s when PreserveSourceDirName is true", expectedPath)
+	}
+}
+
+func TestRestore_NoMetafile(t *testing.T) {
+	srcBase := t.TempDir()
+	restoreTarget := t.TempDir()
+
+	// Setup a mock backup structure: base/backup_name/content/file.txt
+	backupName := "my_backup"
+	relContentPath := "content"
+
+	contentDir := filepath.Join(srcBase, backupName, relContentPath)
+	if err := os.MkdirAll(contentDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(contentDir, "file.txt"), []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	toRestore := metafile.MetafileInfo{
+		RelPathKey: backupName,
+	}
+
+	plan := &Plan{
+		Enabled:               true,
+		Engine:                Native,
+		PreserveSourceDirName: false, // Standard restore behavior
+	}
+
+	syncer := NewPathSyncer(256, 1, 1)
+
+	// Act
+	err := syncer.Restore(context.Background(), srcBase, relContentPath, toRestore, restoreTarget, plan)
+	if err != nil {
+		t.Fatalf("Restore failed: %v", err)
+	}
+
+	// Assert
+	// 1. Content restored
+	restoredFile := filepath.Join(restoreTarget, "file.txt")
+	if _, err := os.Stat(restoredFile); os.IsNotExist(err) {
+		t.Errorf("Restored file not found at %s", restoredFile)
+	}
+
+	// 2. No metafile in restore target
+	metaPath := filepath.Join(restoreTarget, metafile.MetaFileName)
+	if _, err := os.Stat(metaPath); !os.IsNotExist(err) {
+		t.Errorf("Metafile should NOT exist in restore target, but found at %s", metaPath)
+	}
 }
 
 func TestResolveTargetDirectory(t *testing.T) {

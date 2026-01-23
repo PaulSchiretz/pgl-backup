@@ -20,12 +20,24 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
-// RunPrune handles the logic for the prune command.
-func RunPrune(ctx context.Context, flagMap map[string]interface{}) error {
-	// For prune, the target flag is mandatory.
+// RunRestore handles the logic for the restore command.
+func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
+	// For restore, the base and target flags are mandatory.
 	base, ok := flagMap["base"].(string)
 	if !ok || base == "" {
-		return fmt.Errorf("the -base flag is required to run prune")
+		return fmt.Errorf("the -base flag is required to run a restore")
+	}
+	target, ok := flagMap["target"].(string)
+	if !ok || target == "" {
+		return fmt.Errorf("the -target flag is required to run a restore")
+	}
+	backupName, ok := flagMap["backup-name"].(string)
+	if !ok || backupName == "" {
+		return fmt.Errorf("the -backup-name flag is required to run a restore")
+	}
+	// Require mode explicitly to avoid ambiguity about which backup path to search.
+	if _, ok := flagMap["mode"]; !ok {
+		return fmt.Errorf("the -mode flag is required to run a restore ('incremental' or 'snapshot')")
 	}
 
 	// Build absolute base path
@@ -35,17 +47,19 @@ func RunPrune(ctx context.Context, flagMap map[string]interface{}) error {
 	}
 	absBasePath = util.DenormalizePath(absBasePath)
 
-	// Load config from the target directory.
+	// Load config from the base directory.
 	loadedConfig, err := config.Load(absBasePath)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration from target: %w", err)
+		return fmt.Errorf("failed to load configuration from base: %w", err)
 	}
 
 	// Merge the flag values over the loaded config.
-	runConfig := config.MergeConfigWithFlags(flagparse.Prune, loadedConfig, flagMap)
+	runConfig := config.MergeConfigWithFlags(flagparse.Restore, loadedConfig, flagMap)
 
 	// CRITICAL: Validate the config for the run
-	if err := runConfig.Validate(false, false); err != nil {
+	// checkSource=false (we don't care about the original source for restore)
+	// checkTarget=true (we need a valid restore destination)
+	if err := runConfig.Validate(false, true); err != nil {
 		return err
 	}
 
@@ -73,18 +87,18 @@ func RunPrune(ctx context.Context, flagMap map[string]interface{}) error {
 	)
 
 	// Get the Plan
-	prunePlan, err := planner.GeneratePrunePlan(runConfig)
+	restorePlan, err := planner.GenerateRestorePlan(runConfig)
 	if err != nil {
 		return err
 	}
 
 	// Execute the plan
 	startTime := time.Now()
-	err = runner.ExecutePrune(ctx, runConfig.Base, prunePlan)
+	err = runner.ExecuteRestore(ctx, runConfig.Base, runConfig.Runtime.BackupName, runConfig.Target, restorePlan)
 	duration := time.Since(startTime).Round(time.Millisecond)
 	if err != nil {
 		return err
 	}
-	plog.Info(buildinfo.Name+" prune finished successfully.", "duration", duration)
+	plog.Info(buildinfo.Name+" restore finished successfully.", "duration", duration)
 	return nil
 }

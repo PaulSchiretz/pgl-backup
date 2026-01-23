@@ -31,9 +31,12 @@ type BackupPlan struct {
 }
 
 type RestorePlan struct {
+	Mode     Mode
 	DryRun   bool
 	FailFast bool
 	Metrics  bool
+
+	Paths PathKeys
 
 	Preflight  *preflight.Plan
 	Sync       *pathsync.Plan
@@ -236,11 +239,25 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 }
 
 func GenerateRestorePlan(cfg config.Config) (*RestorePlan, error) {
-
 	// Global Flags
 	dryRun := cfg.Runtime.DryRun
 	failFast := cfg.Engine.FailFast
 	metrics := cfg.Engine.Metrics
+
+	mode, err := ParseMode(cfg.Runtime.Mode)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathCfg config.PathConfig
+	switch mode {
+	case Incremental:
+		pathCfg = cfg.Paths.Incremental
+	case Snapshot:
+		pathCfg = cfg.Paths.Snapshot
+	default:
+		return nil, fmt.Errorf("unsupported mode: %s", mode)
+	}
 
 	// Parse Sync Settings (Shared)
 	syncEngine, err := pathsync.ParseEngine(cfg.Sync.Engine)
@@ -264,9 +281,18 @@ func GenerateRestorePlan(cfg config.Config) (*RestorePlan, error) {
 
 	// finish the plan
 	return &RestorePlan{
+
+		Mode:     mode,
 		DryRun:   dryRun,
 		Metrics:  metrics,
 		FailFast: failFast,
+
+		Paths: PathKeys{
+			RelCurrentPathKey: pathCfg.Current,
+			RelArchivePathKey: pathCfg.Archive,
+			RelContentPathKey: pathCfg.Content,
+			BackupDirPrefix:   pathCfg.BackupDirPrefix,
+		},
 
 		PreRestoreHooks:  cfg.Hooks.PreRestore,
 		PostRestoreHooks: cfg.Hooks.PostRestore,
@@ -285,12 +311,12 @@ func GenerateRestorePlan(cfg config.Config) (*RestorePlan, error) {
 		},
 		Sync: &pathsync.Plan{
 			Enabled:               cfg.Sync.Enabled,
-			ModeIdentifier:        "restore",
+			ModeIdentifier:        mode.String(),
 			Engine:                syncEngine,
 			ExcludeDirs:           syncExcludeDirs,
 			ExcludeFiles:          syncExcludeFiles,
-			PreserveSourceDirName: cfg.Sync.PreserveSourceDirName,
-			Mirror:                false,
+			PreserveSourceDirName: false, // Force false for restore to avoid creating PGL_Backup_Content subdir
+			Mirror:                false, // Force false for restore, we don't want to delete anything in the users retore target
 
 			RetryCount:        cfg.Sync.RetryCount,
 			RetryWait:         time.Duration(cfg.Sync.RetryWaitSeconds) * time.Second,

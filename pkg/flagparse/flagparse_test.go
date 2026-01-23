@@ -93,7 +93,7 @@ func TestParse(t *testing.T) {
 	})
 
 	t.Run("Override Source and Target (Explicit Subcommand)", func(t *testing.T) {
-		args := []string{"backup", "-source=/new/src", "-target=/new/dst"}
+		args := []string{"backup", "-source=/new/src", "-base=/new/dst"}
 		_, setFlags, err := flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
@@ -104,15 +104,15 @@ func TestParse(t *testing.T) {
 			t.Errorf("expected source to be '/new/src', but got %v", val)
 		}
 
-		if val, ok := setFlags["target"]; !ok {
-			t.Error("expected 'target' flag to be in setFlags map")
+		if val, ok := setFlags["base"]; !ok {
+			t.Error("expected 'base' flag to be in setFlags map")
 		} else if val != "/new/dst" {
-			t.Errorf("expected target to be '/new/dst', but got %v", val)
+			t.Errorf("expected base to be '/new/dst', but got %v", val)
 		}
 	})
 
 	t.Run("Missing Command (Flags only)", func(t *testing.T) {
-		args := []string{"-source=/new/src", "-target=/new/dst"}
+		args := []string{"-source=/new/src", "-base=/new/dst"}
 		_, _, err := flagparse.Parse(args)
 		if err == nil {
 			t.Fatal("expected error for missing command, got nil")
@@ -351,7 +351,7 @@ func TestParse(t *testing.T) {
 	})
 
 	t.Run("Unknown Command", func(t *testing.T) {
-		args := []string{"invalid-command", "-target=/tmp"}
+		args := []string{"invalid-command", "-base=/tmp"}
 		_, _, err := flagparse.Parse(args)
 		if err == nil {
 			t.Fatal("expected error for unknown command, got nil")

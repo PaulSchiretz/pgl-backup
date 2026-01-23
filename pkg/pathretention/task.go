@@ -20,8 +20,8 @@ import (
 type task struct {
 	*PathRetainer
 
-	ctx               context.Context
-	absTargetBasePath string
+	ctx         context.Context
+	absBasePath string
 
 	toPrune []metafile.MetafileInfo
 
@@ -105,7 +105,7 @@ func (t *task) deleteWorker() {
 			continue
 		}
 		plog.Notice("DELETE", "path", b.RelPathKey)
-		absPathToDelete := util.DenormalizePath(filepath.Join(t.absTargetBasePath, b.RelPathKey))
+		absPathToDelete := util.DenormalizePath(filepath.Join(t.absBasePath, b.RelPathKey))
 		if err := os.RemoveAll(absPathToDelete); err != nil {
 			t.metrics.AddBackupsFailed(1)
 			plog.Warn("Failed to delete outdated backup directory", "path", b.RelPathKey, "error", err)

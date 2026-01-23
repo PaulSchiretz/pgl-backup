@@ -58,7 +58,7 @@ func NewPathSyncer(bufferSizeKB int, numSyncWorkers int, numMirrorWorkers int) *
 }
 
 // Sync is the main entry point for synchronization. It dispatches to the configured sync engine.
-func (s *PathSyncer) Sync(ctx context.Context, absSourcePath, absTargetBasePath string, relCurrentPathKey, relContentPathKey string, p *Plan, timestampUTC time.Time) error {
+func (s *PathSyncer) Sync(ctx context.Context, absBasePath, absSourcePath string, relCurrentPathKey, relContentPathKey string, p *Plan, timestampUTC time.Time) error {
 
 	if !p.Enabled {
 		plog.Debug("Sync is disabled, skipping Sync")
@@ -72,7 +72,7 @@ func (s *PathSyncer) Sync(ctx context.Context, absSourcePath, absTargetBasePath 
 	default:
 	}
 
-	absTargetCurrentContentPath := util.DenormalizePath(filepath.Join(absTargetBasePath, relCurrentPathKey, relContentPathKey))
+	absTargetCurrentContentPath := util.DenormalizePath(filepath.Join(absBasePath, relCurrentPathKey, relContentPathKey))
 	absSyncTargetPath := s.resolveTargetDirectory(absSourcePath, absTargetCurrentContentPath, p.PreserveSourceDirName)
 
 	plog.Info("Syncing files", "source", absSourcePath, "target", absSyncTargetPath)
@@ -110,7 +110,7 @@ func (s *PathSyncer) Sync(ctx context.Context, absSourcePath, absTargetBasePath 
 	}
 
 	// If the sync was successful, write the metafile
-	absTargetCurrentPath := util.DenormalizePath(filepath.Join(absTargetBasePath, relCurrentPathKey))
+	absTargetCurrentPath := util.DenormalizePath(filepath.Join(absBasePath, relCurrentPathKey))
 	metadata := metafile.MetafileContent{
 		Version:      buildinfo.Version,
 		TimestampUTC: timestampUTC,
@@ -133,6 +133,56 @@ func (s *PathSyncer) Sync(ctx context.Context, absSourcePath, absTargetBasePath 
 		Metadata:   metadata,
 	}
 	return nil
+}
+
+// Restore restores a backup to a target directory.
+// Unlike Sync, it does not write metadata files to the destination.
+func (s *PathSyncer) Restore(ctx context.Context, absBasePath string, relContentPathKey string, toRestore metafile.MetafileInfo, absRestoreTargetPath string, p *Plan) error {
+
+	if !p.Enabled {
+		plog.Debug("Sync is disabled, skipping Restore")
+		return ErrDisabled
+	}
+
+	// Check for cancellation after validation but before starting the heavy work.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	// Construct the absolute path to the content directory within the backup
+	absSourcePath := util.DenormalizePath(filepath.Join(absBasePath, toRestore.RelPathKey, relContentPathKey))
+	// For restore, we sync directly into the target path. PreserveSourceDirName is always false.
+	absSyncTargetPath := absRestoreTargetPath
+
+	plog.Info("Restoring files", "source", absSourcePath, "target", absSyncTargetPath)
+
+	// Before dispatching to a specific sync engine, we prepare the destination directory.
+	// This centralizes the logic, ensuring that the target directory exists with appropriate
+	// permissions, regardless of which engine (native, robocopy) is used.
+	srcInfo, err := os.Stat(absSourcePath)
+	if err != nil {
+		return fmt.Errorf("could not stat backup content directory %s: %w", absSourcePath, err)
+	}
+
+	// We use the source directory's permissions as a template for the destination.
+	// Crucially, `withBackupWritePermission` is applied to ensure the backup user
+	// can always write to the destination on subsequent runs, preventing permission lockouts.
+	if !p.DryRun && absSyncTargetPath != "" {
+		if err := os.MkdirAll(absSyncTargetPath, util.WithUserWritePermission(srcInfo.Mode().Perm())); err != nil {
+			return fmt.Errorf("failed to create restore target directory %s: %w", absSyncTargetPath, err)
+		}
+	}
+
+	switch p.Engine {
+	case Robocopy:
+		return s.runRobocopyTask(ctx, absSourcePath, absSyncTargetPath, p)
+	case Native:
+		return s.runNativeTask(ctx, absSourcePath, absSyncTargetPath, p)
+	default:
+		return fmt.Errorf("unknown sync engine configured: %v", p.Engine)
+	}
 }
 
 // runNativeTask initializes the native sync task structure and kicks off the execution.

@@ -60,7 +60,7 @@ func NewPathCompressor(bufferSizeKB int) *PathCompressor {
 }
 
 // Compress processes the specific list of paths provided by the engine.
-func (c *PathCompressor) Compress(ctx context.Context, absTargetBasePath, relContentPathKey string, toCompress metafile.MetafileInfo, p *CompressPlan, timestampUTC time.Time) error {
+func (c *PathCompressor) Compress(ctx context.Context, absBasePath, relContentPathKey string, toCompress metafile.MetafileInfo, p *CompressPlan, timestampUTC time.Time) error {
 
 	if !p.Enabled {
 		plog.Debug("Compression is disabled, skipping compress")
@@ -88,7 +88,7 @@ func (c *PathCompressor) Compress(ctx context.Context, absTargetBasePath, relCon
 
 	t := &compressTask{
 		PathCompressor:    c, // Just pass the compressor pointer
-		absTargetBasePath: absTargetBasePath,
+		absBasePath:       absBasePath,
 		relContentPathKey: relContentPathKey,
 		ctx:               ctx,
 		format:            p.Format,
@@ -103,7 +103,7 @@ func (c *PathCompressor) Compress(ctx context.Context, absTargetBasePath, relCon
 
 // Extract extracts an archive to a target directory.
 // It uses the configured buffer pool for efficient I/O.
-func (c *PathCompressor) Extract(ctx context.Context, absTargetBasePath string, toExtract metafile.MetafileInfo, absExtractTargetPath string, p *ExtractPlan, timestampUTC time.Time) error {
+func (c *PathCompressor) Extract(ctx context.Context, absBasePath string, toExtract metafile.MetafileInfo, absExtractTargetPath string, p *ExtractPlan, timestampUTC time.Time) error {
 
 	if !p.Enabled {
 		plog.Debug("Extract is disabled, skipping compress")
@@ -131,7 +131,7 @@ func (c *PathCompressor) Extract(ctx context.Context, absTargetBasePath string, 
 	t := &extractTask{
 		PathCompressor:       c,
 		ctx:                  ctx,
-		absTargetBasePath:    absTargetBasePath,
+		absBasePath:          absBasePath,
 		toExtract:            toExtract,
 		absExtractTargetPath: absExtractTargetPath,
 		overwriteBehavior:    p.OverwriteBehavior,

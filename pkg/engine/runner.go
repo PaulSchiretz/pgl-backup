@@ -48,7 +48,7 @@ import (
 // By decoupling these concepts, the system provides a predictable creation schedule,
 // a consistent historical view, and a resilient compression pipeline.
 
-func (r *Runner) ExecuteBackup(ctx context.Context, absSourcePath, absTargetBasePath string, p *planner.BackupPlan) error {
+func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath string, p *planner.BackupPlan) error {
 	// Check for cancellation at the very beginning.
 	select {
 	case <-ctx.Done():
@@ -59,13 +59,13 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absSourcePath, absTargetBase
 	// save the execution timestamp
 	timestampUTC := time.Now().UTC()
 
-	// Run Preflight Validation
-	if err := r.validator.Run(ctx, absSourcePath, absTargetBasePath, p.Preflight, timestampUTC); err != nil {
+	// Run Preflight Validation, our absBasePath acts as target in backup mode
+	if err := r.validator.Run(ctx, absSourcePath, absBasePath, p.Preflight, timestampUTC); err != nil {
 		return fmt.Errorf("preflight failed: %w", err)
 	}
 
 	// Acquire Lock on Target Directory.
-	releaseLock, err := r.acquireTargetLock(ctx, absTargetBasePath)
+	releaseLock, err := r.acquireTargetLock(ctx, absBasePath)
 	if err != nil {
 		return err // A real error occurred during lock acquisition.
 	}
@@ -99,12 +99,12 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absSourcePath, absTargetBase
 		}
 	}()
 
-	plog.Info("Starting backup", "source", absSourcePath, "target", absTargetBasePath, "mode", p.Mode)
+	plog.Info("Starting backup", "base", absBasePath, "source", absSourcePath, "mode", p.Mode)
 	var syncErr error
 
 	// Perform Archiving before Sync in Incremental mode
 	if p.Archive.Enabled && p.Mode == planner.Incremental {
-		toArchive, err := r.fetchBackup(absTargetBasePath, p.Paths.RelCurrentPathKey)
+		toArchive, err := r.fetchBackup(absBasePath, p.Paths.RelCurrentPathKey)
 		if err != nil {
 			if !os.IsNotExist(err) { // This is a normal condition on the first incremental run; no previous current backup to archive.
 				if p.FailFast {
@@ -113,7 +113,7 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absSourcePath, absTargetBase
 				plog.Warn("Error reading backup for archive, skipping", "error", err)
 			}
 		} else {
-			if err := r.archiver.Archive(ctx, absTargetBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupDirPrefix, toArchive, p.Archive, timestampUTC); err != nil {
+			if err := r.archiver.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupDirPrefix, toArchive, p.Archive, timestampUTC); err != nil {
 				if errors.Is(err, patharchive.ErrDisabled) {
 					plog.Debug("Archiving disabled, skipping")
 				} else if !errors.Is(err, patharchive.ErrNothingToArchive) {
@@ -128,7 +128,7 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absSourcePath, absTargetBase
 
 	// Perform the backup
 	if p.Sync.Enabled {
-		if err := r.syncer.Sync(ctx, absSourcePath, absTargetBasePath, p.Paths.RelCurrentPathKey, p.Paths.RelContentPathKey, p.Sync, timestampUTC); err != nil {
+		if err := r.syncer.Sync(ctx, absBasePath, absSourcePath, p.Paths.RelCurrentPathKey, p.Paths.RelContentPathKey, p.Sync, timestampUTC); err != nil {
 			if errors.Is(err, pathsync.ErrDisabled) {
 				plog.Debug("Sync disabled, skipping")
 			} else {
@@ -148,7 +148,7 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absSourcePath, absTargetBase
 				return fmt.Errorf("Error no snapshot syncResult to archive")
 			}
 		} else {
-			if err := r.archiver.Archive(ctx, absTargetBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupDirPrefix, toArchive, p.Archive, timestampUTC); err != nil {
+			if err := r.archiver.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupDirPrefix, toArchive, p.Archive, timestampUTC); err != nil {
 				if errors.Is(err, patharchive.ErrDisabled) {
 					plog.Debug("Archiving disabled, skipping")
 				} else {
@@ -171,14 +171,14 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absSourcePath, absTargetBase
 		}
 
 		// Fetch backups that might need pruning
-		toRetent, err := r.fetchBackups(ctx, absTargetBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupDirPrefix, relPathExclusionKeys)
+		toRetent, err := r.fetchBackups(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupDirPrefix, relPathExclusionKeys)
 		if err != nil {
 			if p.FailFast {
 				return fmt.Errorf("Error reading backups for prune: %w", err)
 			}
 			plog.Warn("Error reading backups for prune, skipping", "error", err)
 		}
-		if err := r.retainer.Prune(ctx, absTargetBasePath, toRetent, p.Retention, timestampUTC); err != nil {
+		if err := r.retainer.Prune(ctx, absBasePath, toRetent, p.Retention, timestampUTC); err != nil {
 			if errors.Is(err, pathretention.ErrDisabled) {
 				plog.Debug("Retention disabled, skipping")
 			} else if errors.Is(err, pathretention.ErrNothingToPrune) {
@@ -199,7 +199,7 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absSourcePath, absTargetBase
 			toCompress = p.Archive.ResultInfo
 		}
 
-		if err := r.compressor.Compress(ctx, absTargetBasePath, p.Paths.RelContentPathKey, toCompress, p.Compression, timestampUTC); err != nil {
+		if err := r.compressor.Compress(ctx, absBasePath, p.Paths.RelContentPathKey, toCompress, p.Compression, timestampUTC); err != nil {
 			if errors.Is(err, pathcompression.ErrDisabled) {
 				plog.Debug("Compression disabled, skipping")
 			} else if errors.Is(err, pathcompression.ErrNothingToCompress) {
@@ -221,7 +221,7 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absSourcePath, absTargetBase
 	return nil
 }
 
-func (r *Runner) ExecutePrune(ctx context.Context, absTargetBasePath string, p *planner.PrunePlan) error {
+func (r *Runner) ExecutePrune(ctx context.Context, absBasePath string, p *planner.PrunePlan) error {
 	// Check for cancellation at the very beginning.
 	select {
 	case <-ctx.Done():
@@ -232,13 +232,13 @@ func (r *Runner) ExecutePrune(ctx context.Context, absTargetBasePath string, p *
 	// save the execution timestamp
 	timestampUTC := time.Now().UTC()
 
-	// Run Preflight Validation
-	if err := r.validator.Run(ctx, "", absTargetBasePath, p.Preflight, timestampUTC); err != nil {
+	// Run Preflight Validation, our absBasePath acts as target in prune mode
+	if err := r.validator.Run(ctx, "", absBasePath, p.Preflight, timestampUTC); err != nil {
 		return fmt.Errorf("preflight failed: %w", err)
 	}
 
 	// Acquire Lock on Target Directory.
-	releaseLock, err := r.acquireTargetLock(ctx, absTargetBasePath)
+	releaseLock, err := r.acquireTargetLock(ctx, absBasePath)
 	if err != nil {
 		return err // A real error occurred during lock acquisition.
 	}
@@ -247,15 +247,15 @@ func (r *Runner) ExecutePrune(ctx context.Context, absTargetBasePath string, p *
 	}
 	defer releaseLock()
 
-	plog.Info("Starting prune", "target", absTargetBasePath)
+	plog.Info("Starting prune", "base", absBasePath)
 
 	// Standalone prune logic
 	if p.RetentionIncremental.Enabled {
-		toRetent, err := r.fetchBackups(ctx, absTargetBasePath, p.PathsIncremental.RelArchivePathKey, p.PathsIncremental.BackupDirPrefix, []string{})
+		toRetent, err := r.fetchBackups(ctx, absBasePath, p.PathsIncremental.RelArchivePathKey, p.PathsIncremental.BackupDirPrefix, []string{})
 		if err != nil {
 			return fmt.Errorf("fatal error during prune incremental: %w", err)
 		}
-		if err := r.retainer.Prune(ctx, absTargetBasePath, toRetent, p.RetentionIncremental, timestampUTC); err != nil {
+		if err := r.retainer.Prune(ctx, absBasePath, toRetent, p.RetentionIncremental, timestampUTC); err != nil {
 			if errors.Is(err, pathretention.ErrDisabled) {
 				plog.Debug("Incremental retention disabled, skipping")
 			} else if errors.Is(err, pathretention.ErrNothingToPrune) {
@@ -267,11 +267,11 @@ func (r *Runner) ExecutePrune(ctx context.Context, absTargetBasePath string, p *
 	}
 
 	if p.RetentionSnapshot.Enabled {
-		toRetent, err := r.fetchBackups(ctx, absTargetBasePath, p.PathsSnapshot.RelArchivePathKey, p.PathsSnapshot.BackupDirPrefix, []string{})
+		toRetent, err := r.fetchBackups(ctx, absBasePath, p.PathsSnapshot.RelArchivePathKey, p.PathsSnapshot.BackupDirPrefix, []string{})
 		if err != nil {
 			return fmt.Errorf("fatal error during prune snapshot: %w", err)
 		}
-		if err := r.retainer.Prune(ctx, absTargetBasePath, toRetent, p.RetentionSnapshot, timestampUTC); err != nil {
+		if err := r.retainer.Prune(ctx, absBasePath, toRetent, p.RetentionSnapshot, timestampUTC); err != nil {
 			if errors.Is(err, pathretention.ErrDisabled) {
 				plog.Debug("Snapshot retention disabled, skipping")
 			} else if errors.Is(err, pathretention.ErrNothingToPrune) {
@@ -285,13 +285,102 @@ func (r *Runner) ExecutePrune(ctx context.Context, absTargetBasePath string, p *
 	return nil
 }
 
+func (r *Runner) ExecuteRestore(ctx context.Context, absBasePath, backupName, absTargetPath string, p *planner.RestorePlan) error {
+	// Check for cancellation at the very beginning.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	// save the execution timestamp
+	timestampUTC := time.Now().UTC()
+
+	// Run Preflight Validation, our absBasePath acts as source in restore mode
+	if err := r.validator.Run(ctx, absBasePath, absTargetPath, p.Preflight, timestampUTC); err != nil {
+		return fmt.Errorf("preflight failed: %w", err)
+	}
+
+	// Acquire Lock on Backup Repository (Source) to prevent concurrent modifications (like prune).
+	releaseLock, err := r.acquireTargetLock(ctx, absBasePath)
+	if err != nil {
+		return err
+	}
+	if releaseLock == nil {
+		return nil // Lock was already held
+	}
+	defer releaseLock()
+
+	// --- Pre-Restore Hooks ---
+	plog.Info("Running pre-restore hooks")
+	if err := r.runHooks(ctx, p.PreRestoreHooks, "pre-restore", p.DryRun); err != nil {
+		errMsg := "pre-restore hook failed"
+		if errors.Is(err, context.Canceled) {
+			errMsg = "pre-restore hook canceled"
+		}
+		return fmt.Errorf("%s: %w", errMsg, err)
+	}
+
+	// --- Post-Restore Hooks (deferred) ---
+	defer func() {
+		plog.Info("Running post-restore hooks")
+		if err := r.runHooks(ctx, p.PostRestoreHooks, "post-restore", p.DryRun); err != nil {
+			if errors.Is(err, context.Canceled) {
+				plog.Info("post-restore hooks skipped due to cancellation.")
+			} else {
+				plog.Warn("post-restore hook failed", "error", err)
+			}
+		}
+	}()
+
+	var relBackupPath string
+	if backupName == p.Paths.RelCurrentPathKey || strings.ToLower(strings.TrimSpace(backupName)) == "current" {
+		relBackupPath = p.Paths.RelCurrentPathKey
+	} else {
+		relBackupPath = filepath.Join(p.Paths.RelArchivePathKey, backupName) // It's an archived backup
+	}
+	relBackupPath = util.NormalizePath(relBackupPath)
+
+	absBackupPath := util.DenormalizePath(filepath.Join(absBasePath, relBackupPath))
+
+	plog.Info("Starting restore", "backup", absBackupPath, "destination", absTargetPath)
+
+	// Determine mode (Compressed vs Flat)
+	// We expect a metafile at the source root.
+	meta, err := metafile.Read(absBackupPath)
+	if err != nil {
+		return fmt.Errorf("failed to read backup metadata from %s: %w", absBackupPath, err)
+	}
+
+	toRestore := metafile.MetafileInfo{
+		RelPathKey: relBackupPath,
+		Metadata:   meta,
+	}
+
+	if meta.IsCompressed {
+		// Extract
+		if err := r.compressor.Extract(ctx, absBasePath, toRestore, absTargetPath, p.Extraction, timestampUTC); err != nil {
+			return fmt.Errorf("restore extraction failed: %w", err)
+		}
+	} else {
+		// Sync (Flat file restore)
+		// We sync FROM backup content TO absTargetPath.
+		if err := r.syncer.Restore(ctx, absBasePath, p.Paths.RelContentPathKey, toRestore, absTargetPath, p.Sync); err != nil {
+			return fmt.Errorf("restore sync failed: %w", err)
+		}
+	}
+
+	plog.Info("Restore completed")
+	return nil
+}
+
 // acquireTargetLock ensures the target directory exists and acquires a file lock within it.
 // It returns a release function that must be called to unlock the directory.
-func (r *Runner) acquireTargetLock(ctx context.Context, absTargetBasePath string) (func(), error) {
-	appID := fmt.Sprintf("pgl-backup:%s", absTargetBasePath)
+func (r *Runner) acquireTargetLock(ctx context.Context, absBasePath string) (func(), error) {
+	appID := fmt.Sprintf("pgl-backup:%s", absBasePath)
 
-	plog.Debug("Attempting to acquire lock", "path", absTargetBasePath)
-	lock, err := lockfile.Acquire(ctx, absTargetBasePath, appID)
+	plog.Debug("Attempting to acquire lock", "path", absBasePath)
+	lock, err := lockfile.Acquire(ctx, absBasePath, appID)
 	if err != nil {
 		var lockErr *lockfile.ErrLockActive
 		if errors.As(err, &lockErr) {
@@ -308,10 +397,10 @@ func (r *Runner) acquireTargetLock(ctx context.Context, absTargetBasePath string
 // fetchBackups scans a directory for valid backup folders and parses their metadata
 // It relies exclusively on the `.pgl-backup.meta.json` file; directories without a
 // readable metafile are ignored.
-// The relPathExclusionKeys are Relative to the absTargetBasePath, and filtered internally.
-func (r *Runner) fetchBackups(ctx context.Context, absTargetBasePath, relArchivePathKey, dirNamePrefix string, relPathExclusionKeys []string) ([]metafile.MetafileInfo, error) {
+// The relPathExclusionKeys are Relative to the absBasePath, and filtered internally.
+func (r *Runner) fetchBackups(ctx context.Context, absBasePath, relArchivePathKey, dirNamePrefix string, relPathExclusionKeys []string) ([]metafile.MetafileInfo, error) {
 
-	absArchivePath := util.DenormalizePath(filepath.Join(absTargetBasePath, relArchivePathKey))
+	absArchivePath := util.DenormalizePath(filepath.Join(absBasePath, relArchivePathKey))
 	entries, err := os.ReadDir(absArchivePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -359,7 +448,7 @@ func (r *Runner) fetchBackups(ctx context.Context, absTargetBasePath, relArchive
 		}
 
 		relBackupPathkey := util.NormalizePath(filepath.Join(relArchivePathKey, dirName))
-		foundBackup, err := r.fetchBackup(absTargetBasePath, relBackupPathkey)
+		foundBackup, err := r.fetchBackup(absBasePath, relBackupPathkey)
 		if err != nil {
 			plog.Warn("Skipping backup directory; cannot read metadata", "directory", dirName, "reason", err)
 			continue
@@ -369,8 +458,8 @@ func (r *Runner) fetchBackups(ctx context.Context, absTargetBasePath, relArchive
 	return foundBackups, nil
 }
 
-func (r *Runner) fetchBackup(absTargetBasePath, relPathKey string) (metafile.MetafileInfo, error) {
-	absBackupPath := util.DenormalizePath(filepath.Join(absTargetBasePath, relPathKey))
+func (r *Runner) fetchBackup(absBasePath, relPathKey string) (metafile.MetafileInfo, error) {
+	absBackupPath := util.DenormalizePath(filepath.Join(absBasePath, relPathKey))
 	metadata, err := metafile.Read(absBackupPath)
 	if err != nil {
 		return metafile.MetafileInfo{}, err

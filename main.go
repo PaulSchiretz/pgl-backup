@@ -36,6 +36,8 @@ func run(ctx context.Context) error {
 		return cmd.RunInit(ctx, flagMap)
 	case flagparse.Backup:
 		return cmd.RunBackup(ctx, flagMap)
+	case flagparse.Restore:
+		return cmd.RunRestore(ctx, flagMap)
 	case flagparse.Prune:
 		return cmd.RunPrune(ctx, flagMap)
 	default:

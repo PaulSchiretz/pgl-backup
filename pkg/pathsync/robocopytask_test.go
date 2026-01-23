@@ -91,7 +91,7 @@ func TestRobocopySync_Integration(t *testing.T) {
 
 	t.Run("Simple copy", func(t *testing.T) {
 		srcDir := t.TempDir()
-		dstDir := t.TempDir()
+		baseDir := t.TempDir()
 
 		// Create a source file
 		srcFile := filepath.Join(srcDir, "file.txt")
@@ -109,13 +109,13 @@ func TestRobocopySync_Integration(t *testing.T) {
 		}
 
 		// Act
-		err := syncer.Sync(context.Background(), srcDir, dstDir, "", "", plan, time.Now())
+		err := syncer.Sync(context.Background(), baseDir, srcDir, "", "", plan, time.Now())
 		if err != nil {
 			t.Fatalf("Sync failed: %v", err)
 		}
 
 		// Assert
-		dstFile := filepath.Join(dstDir, "file.txt")
+		dstFile := filepath.Join(baseDir, "file.txt")
 		content, err := os.ReadFile(dstFile)
 		if err != nil {
 			t.Fatalf("failed to read destination file: %v", err)
@@ -128,7 +128,7 @@ func TestRobocopySync_Integration(t *testing.T) {
 
 	t.Run("No Mirror - Extra files preserved", func(t *testing.T) {
 		srcDir := t.TempDir()
-		dstDir := t.TempDir()
+		baseDir := t.TempDir()
 
 		// Create a source file
 		srcFile := filepath.Join(srcDir, "file.txt")
@@ -137,7 +137,7 @@ func TestRobocopySync_Integration(t *testing.T) {
 		}
 
 		// Create an extra file in the destination
-		extraDstFile := filepath.Join(dstDir, "extra.txt")
+		extraDstFile := filepath.Join(baseDir, "extra.txt")
 		if err := os.WriteFile(extraDstFile, []byte("extra content"), 0644); err != nil {
 			t.Fatalf("failed to create extra destination file: %v", err)
 		}
@@ -153,14 +153,14 @@ func TestRobocopySync_Integration(t *testing.T) {
 		}
 
 		// Act
-		err := syncer.Sync(context.Background(), srcDir, dstDir, "", "", plan, time.Now())
+		err := syncer.Sync(context.Background(), baseDir, srcDir, "", "", plan, time.Now())
 		if err != nil {
 			t.Fatalf("Sync failed: %v", err)
 		}
 
 		// Assert
 		// 1. Check that the source file was copied
-		dstFile := filepath.Join(dstDir, "file.txt")
+		dstFile := filepath.Join(baseDir, "file.txt")
 		if _, err := os.Stat(dstFile); os.IsNotExist(err) {
 			t.Errorf("expected destination file %q to exist, but it doesn't", dstFile)
 		}

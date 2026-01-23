@@ -18,7 +18,7 @@ import (
 // This makes the PathCompressor itself stateless and safe for concurrent use if needed.
 type compressTask struct {
 	*PathCompressor
-	absTargetBasePath string
+	absBasePath       string
 	relContentPathKey string
 	ctx               context.Context
 	toCompress        metafile.MetafileInfo
@@ -51,7 +51,7 @@ func (t *compressTask) execute() error {
 		return nil
 	}
 
-	absToCompressPath := util.DenormalizePath(filepath.Join(t.absTargetBasePath, b.RelPathKey))
+	absToCompressPath := util.DenormalizePath(filepath.Join(t.absBasePath, b.RelPathKey))
 	absToCompressContentPath := util.DenormalizePath(filepath.Join(absToCompressPath, t.relContentPathKey))
 
 	// Check if the backup directory still exists.

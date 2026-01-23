@@ -43,11 +43,11 @@ func TestRun(t *testing.T) {
 		{
 			name:          "Prune Missing Target",
 			args:          []string{"pgl-backup", "prune"},
-			expectedError: "the -target flag is required",
+			expectedError: "the -base flag is required",
 		},
 		{
 			name:          "Prune Non-Existent Target",
-			args:          []string{"pgl-backup", "prune", "-target", filepath.Join(os.TempDir(), "pgl_nonexistent_target_12345")},
+			args:          []string{"pgl-backup", "prune", "-base", filepath.Join(os.TempDir(), "pgl_nonexistent_target_12345")},
 			expectedError: "target directory does not exist",
 		},
 	}

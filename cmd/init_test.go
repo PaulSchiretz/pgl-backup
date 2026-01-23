@@ -87,25 +87,25 @@ func TestRunInit(t *testing.T) {
 	tests := []struct {
 		name          string
 		flags         map[string]interface{}
-		preSetup      func(t *testing.T, targetDir string) context.CancelFunc
+		preSetup      func(t *testing.T, baseDir string) context.CancelFunc
 		stdinInput    string
 		expectError   bool
 		errorContains string
-		validate      func(t *testing.T, targetDir string)
+		validate      func(t *testing.T, baseDir string)
 	}{
 		{
 			name: "Happy Path - Success",
 			flags: map[string]interface{}{
 				"source": srcDir,
 			},
-			validate: func(t *testing.T, targetDir string) {
+			validate: func(t *testing.T, baseDir string) {
 				// Verify config file created
-				confPath := filepath.Join(targetDir, config.ConfigFileName)
+				confPath := filepath.Join(baseDir, config.ConfigFileName)
 				if _, err := os.Stat(confPath); os.IsNotExist(err) {
 					t.Error("expected config file to be created, but it was not")
 				}
 				// Verify lock file removed
-				lockPath := filepath.Join(targetDir, lockfile.LockFileName)
+				lockPath := filepath.Join(baseDir, lockfile.LockFileName)
 				if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
 					t.Error("expected lock file to be removed, but it exists")
 				}
@@ -167,20 +167,20 @@ func TestRunInit(t *testing.T) {
 				"default": true,
 				"force":   true,
 			},
-			preSetup: func(t *testing.T, targetDir string) context.CancelFunc {
-				if err := os.MkdirAll(targetDir, 0755); err != nil {
+			preSetup: func(t *testing.T, baseDir string) context.CancelFunc {
+				if err := os.MkdirAll(baseDir, 0755); err != nil {
 					t.Fatalf("failed to create target dir: %v", err)
 				}
 				cfg := config.NewDefault()
 				cfg.LogLevel = "debug"
-				cfg.TargetBase = targetDir
+				cfg.Base = baseDir
 				if err := config.Generate(cfg); err != nil {
 					t.Fatalf("failed to create existing config: %v", err)
 				}
 				return nil
 			},
-			validate: func(t *testing.T, targetDir string) {
-				cfg, err := config.Load(targetDir)
+			validate: func(t *testing.T, baseDir string) {
+				cfg, err := config.Load(baseDir)
 				if err != nil {
 					t.Fatalf("failed to load config: %v", err)
 				}
@@ -196,13 +196,13 @@ func TestRunInit(t *testing.T) {
 				"default": true,
 			},
 			stdinInput: "y\n",
-			preSetup: func(t *testing.T, targetDir string) context.CancelFunc {
-				if err := os.MkdirAll(targetDir, 0755); err != nil {
+			preSetup: func(t *testing.T, baseDir string) context.CancelFunc {
+				if err := os.MkdirAll(baseDir, 0755); err != nil {
 					t.Fatalf("failed to create target dir: %v", err)
 				}
 				cfg := config.NewDefault()
 				cfg.LogLevel = "debug"
-				cfg.TargetBase = targetDir
+				cfg.Base = baseDir
 				if err := config.Generate(cfg); err != nil {
 					t.Fatalf("failed to create existing config: %v", err)
 				}
@@ -225,13 +225,13 @@ func TestRunInit(t *testing.T) {
 				"default": true,
 			},
 			stdinInput: "n\n",
-			preSetup: func(t *testing.T, targetDir string) context.CancelFunc {
-				if err := os.MkdirAll(targetDir, 0755); err != nil {
+			preSetup: func(t *testing.T, baseDir string) context.CancelFunc {
+				if err := os.MkdirAll(baseDir, 0755); err != nil {
 					t.Fatalf("failed to create target dir: %v", err)
 				}
 				cfg := config.NewDefault()
 				cfg.LogLevel = "debug"
-				cfg.TargetBase = targetDir
+				cfg.Base = baseDir
 				if err := config.Generate(cfg); err != nil {
 					t.Fatalf("failed to create existing config: %v", err)
 				}
@@ -251,12 +251,12 @@ func TestRunInit(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			targetDir := t.TempDir()
-			// Inject target into flags
+			baseDir := t.TempDir()
+			// Inject base into flags
 			if tc.flags == nil {
 				tc.flags = make(map[string]interface{})
 			}
-			tc.flags["target"] = targetDir
+			tc.flags["base"] = baseDir
 
 			if tc.stdinInput != "" {
 				r, w, err := os.Pipe()
@@ -274,7 +274,7 @@ func TestRunInit(t *testing.T) {
 			}
 
 			if tc.preSetup != nil {
-				cancel := tc.preSetup(t, targetDir)
+				cancel := tc.preSetup(t, baseDir)
 				if cancel != nil {
 					defer cancel()
 				}
@@ -295,7 +295,7 @@ func TestRunInit(t *testing.T) {
 			}
 
 			if tc.validate != nil {
-				tc.validate(t, targetDir)
+				tc.validate(t, baseDir)
 			}
 		})
 	}
