@@ -535,6 +535,48 @@ func TestExtract_AutoDetect_CorruptMeta(t *testing.T) {
 	assertFileContent(t, filepath.Join(extractPath, "file.txt"), "content")
 }
 
+func TestExtract_AutoDetect_Failure(t *testing.T) {
+	// 1. Setup: Create a backup directory structure but NO archive file
+	targetBase := t.TempDir()
+	relPath := "autodetect_fail"
+	absPath := filepath.Join(targetBase, relPath)
+	if err := os.MkdirAll(absPath, 0755); err != nil {
+		t.Fatalf("Failed to create backup dir: %v", err)
+	}
+
+	// Metadata claims it is compressed, but has no format.
+	// We do NOT create any .zip/.tar.gz file, so auto-detection should fail.
+	meta := metafile.MetafileContent{
+		TimestampUTC:      time.Now().UTC(),
+		IsCompressed:      true,
+		CompressionFormat: "", // Missing/Corrupt
+	}
+
+	toExtract := metafile.MetafileInfo{
+		RelPathKey: relPath,
+		Metadata:   meta,
+	}
+
+	compressor := pathcompression.NewPathCompressor(256)
+	extractPath := filepath.Join(targetBase, "extracted")
+	extractPlan := &pathcompression.ExtractPlan{
+		Enabled:           true,
+		OverwriteBehavior: pathcompression.OverwriteAlways,
+	}
+
+	// 2. Attempt Extract
+	err := compressor.Extract(context.Background(), targetBase, toExtract, extractPath, extractPlan, time.Now().UTC())
+
+	// 3. Verify Error
+	if err == nil {
+		t.Fatal("Expected error due to missing format and file, got nil")
+	}
+	expectedErr := "unable to determine compression format"
+	if !strings.Contains(err.Error(), expectedErr) {
+		t.Errorf("Expected error containing %q, got %v", expectedErr, err)
+	}
+}
+
 // Helpers
 
 func createTestBackup(t *testing.T, targetBase, relPath string, compressed bool, format pathcompression.Format) metafile.MetafileInfo {

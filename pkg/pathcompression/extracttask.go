@@ -66,37 +66,9 @@ func (t *extractTask) execute() error {
 
 // extractBackup creates the extracts the archive of the backup's contents to the target path
 func (t *extractTask) extractBackup(absToExtractPath, absExtractTargetPath string) error {
-	// Determine format: prefer metadata, then file existence
-	var format Format
-	found := false
-
-	// Fetch compression format from metadata
-	if t.toExtract.Metadata.CompressionFormat != "" {
-		parsed, err := ParseFormat(t.toExtract.Metadata.CompressionFormat)
-		if err == nil {
-			format = parsed
-			found = true
-		} else {
-			plog.Warn("Invalid compression format in metadata, attempting auto-detection", "format", t.toExtract.Metadata.CompressionFormat, "error", err)
-		}
-	}
-
-	// Fetch compression format by iterating through extensions
-	if !found {
-		baseName := filepath.Base(absToExtractPath)
-		for _, f := range []Format{Zip, TarGz, TarZst} {
-			candidatePath := util.DenormalizePath(filepath.Join(absToExtractPath, baseName+"."+f.String()))
-			if _, err := os.Stat(candidatePath); err == nil {
-				format = f
-				found = true
-				plog.Debug("Auto-detected compression format from file extension", "format", format)
-				break
-			}
-		}
-	}
-
-	if !found {
-		return fmt.Errorf("unable to determine compression format for %s", absToExtractPath)
+	format, err := t.determineCompressionFormat(absToExtractPath)
+	if err != nil {
+		return err
 	}
 
 	// The archive is named after its parent backup directory (e.g., "PGL_Backup_2023-10-27...zip").
@@ -112,4 +84,29 @@ func (t *extractTask) extractBackup(absToExtractPath, absExtractTargetPath strin
 		return err
 	}
 	return nil
+}
+
+func (t *extractTask) determineCompressionFormat(absToExtractPath string) (Format, error) {
+	// Determine format: prefer metadata, then file existence
+
+	// Fetch compression format from metadata
+	if t.toExtract.Metadata.CompressionFormat != "" {
+		parsed, err := ParseFormat(t.toExtract.Metadata.CompressionFormat)
+		if err == nil {
+			return parsed, nil
+		}
+		plog.Warn("Invalid compression format in metadata, attempting auto-detection", "format", t.toExtract.Metadata.CompressionFormat, "error", err)
+	}
+
+	// Fetch compression format by iterating through extensions
+	baseName := filepath.Base(absToExtractPath)
+	for _, f := range []Format{Zip, TarGz, TarZst} {
+		candidatePath := util.DenormalizePath(filepath.Join(absToExtractPath, baseName+"."+f.String()))
+		if _, err := os.Stat(candidatePath); err == nil {
+			plog.Debug("Auto-detected compression format from file extension", "format", f)
+			return f, nil
+		}
+	}
+
+	return "", fmt.Errorf("unable to determine compression format for %s", absToExtractPath)
 }
