@@ -21,11 +21,12 @@ type MetafileInfo struct {
 
 // MetafileContent holds the contents of the metadatafile.
 type MetafileContent struct {
-	Version      string    `json:"version"`
-	TimestampUTC time.Time `json:"timestampUTC"`
-	Mode         string    `json:"mode"`
-	Source       string    `json:"source"`
-	IsCompressed bool      `json:"isCompressed,omitempty"`
+	Version           string    `json:"version"`
+	TimestampUTC      time.Time `json:"timestampUTC"`
+	Mode              string    `json:"mode"`
+	Source            string    `json:"source"`
+	IsCompressed      bool      `json:"isCompressed,omitempty"`
+	CompressionFormat string    `json:"compressionFormat,omitempty"`
 }
 
 // Write creates and writes the .pgl-backup.meta.json file into a given directory.

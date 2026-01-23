@@ -68,6 +68,7 @@ func (t *compressTask) execute() error {
 	t.metrics.AddArchivesCreated(1)
 	// 1. On successful archive creation, we update the metafile.
 	b.Metadata.IsCompressed = true
+	b.Metadata.CompressionFormat = t.format.String()
 	if writeErr := metafile.Write(absToCompressPath, b.Metadata); writeErr != nil {
 		plog.Error("Failed to write updated metafile after compression success. Original content has been preserved.", "path", b.RelPathKey, "error", writeErr)
 		return fmt.Errorf("failed to update metafile: %w", writeErr)

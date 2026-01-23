@@ -15,7 +15,6 @@ type CompressPlan struct {
 // ExtractPlan holds the configuration for an extraction operation.
 type ExtractPlan struct {
 	Enabled           bool
-	Format            Format
 	OverwriteBehavior OverwriteBehavior
 
 	// Global Flags

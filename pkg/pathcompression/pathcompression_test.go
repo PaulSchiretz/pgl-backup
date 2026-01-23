@@ -37,7 +37,7 @@ func TestCompress(t *testing.T) {
 				Metrics: true,
 			},
 			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
-				return createTestBackup(t, targetBase, "backup_zip", false)
+				return createTestBackup(t, targetBase, "backup_zip", false, "")
 			},
 			validate: func(t *testing.T, targetBase string, backup metafile.MetafileInfo) {
 				backupPath := filepath.Join(targetBase, backup.RelPathKey)
@@ -48,7 +48,7 @@ func TestCompress(t *testing.T) {
 				}
 
 				assertContentDeleted(t, backupPath)
-				assertMetaCompressed(t, backupPath)
+				assertMetaCompressed(t, backupPath, pathcompression.Zip)
 				assertArchiveContains(t, archivePath, pathcompression.Zip, []string{"file.txt"})
 			},
 		},
@@ -59,7 +59,7 @@ func TestCompress(t *testing.T) {
 				Format:  pathcompression.TarGz,
 			},
 			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
-				return createTestBackup(t, targetBase, "backup_targz", false)
+				return createTestBackup(t, targetBase, "backup_targz", false, "")
 			},
 			validate: func(t *testing.T, targetBase string, backup metafile.MetafileInfo) {
 				backupPath := filepath.Join(targetBase, backup.RelPathKey)
@@ -69,7 +69,7 @@ func TestCompress(t *testing.T) {
 					t.Errorf("Archive not found at %s", archivePath)
 				}
 				assertContentDeleted(t, backupPath)
-				assertMetaCompressed(t, backupPath)
+				assertMetaCompressed(t, backupPath, pathcompression.TarGz)
 				assertArchiveContains(t, archivePath, pathcompression.TarGz, []string{"file.txt"})
 			},
 		},
@@ -80,7 +80,7 @@ func TestCompress(t *testing.T) {
 				Format:  pathcompression.TarZst,
 			},
 			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
-				return createTestBackup(t, targetBase, "backup_tarzst", false)
+				return createTestBackup(t, targetBase, "backup_tarzst", false, "")
 			},
 			validate: func(t *testing.T, targetBase string, backup metafile.MetafileInfo) {
 				backupPath := filepath.Join(targetBase, backup.RelPathKey)
@@ -90,7 +90,7 @@ func TestCompress(t *testing.T) {
 					t.Errorf("Archive not found at %s", archivePath)
 				}
 				assertContentDeleted(t, backupPath)
-				assertMetaCompressed(t, backupPath)
+				assertMetaCompressed(t, backupPath, pathcompression.TarZst)
 				assertArchiveContains(t, archivePath, pathcompression.TarZst, []string{"file.txt"})
 			},
 		},
@@ -102,7 +102,7 @@ func TestCompress(t *testing.T) {
 				DryRun:  true,
 			},
 			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
-				return createTestBackup(t, targetBase, "backup_dryrun", false)
+				return createTestBackup(t, targetBase, "backup_dryrun", false, "")
 			},
 			validate: func(t *testing.T, targetBase string, backup metafile.MetafileInfo) {
 				backupPath := filepath.Join(targetBase, backup.RelPathKey)
@@ -130,7 +130,7 @@ func TestCompress(t *testing.T) {
 			name: "Symlinks",
 			plan: pathcompression.CompressPlan{Enabled: true, Format: pathcompression.Zip},
 			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
-				info := createTestBackup(t, targetBase, "backup_symlink", false)
+				info := createTestBackup(t, targetBase, "backup_symlink", false, "")
 				// Add symlink
 				contentDir := filepath.Join(targetBase, info.RelPathKey, testContentDir)
 				if err := os.Symlink("file.txt", filepath.Join(contentDir, "link.txt")); err != nil {
@@ -156,7 +156,7 @@ func TestCompress(t *testing.T) {
 			},
 			expectError: pathcompression.ErrDisabled,
 			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
-				return createTestBackup(t, targetBase, "backup_disabled", false)
+				return createTestBackup(t, targetBase, "backup_disabled", false, "")
 			},
 			validate: func(t *testing.T, targetBase string, backup metafile.MetafileInfo) {
 				backupPath := filepath.Join(targetBase, backup.RelPathKey)
@@ -208,7 +208,7 @@ func TestExtract(t *testing.T) {
 			name:   "Extract Zip",
 			format: pathcompression.Zip,
 			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
-				return createTestBackup(t, targetBase, "extract_zip", false)
+				return createTestBackup(t, targetBase, "extract_zip", false, "")
 			},
 			validate: func(t *testing.T, extractPath string) {
 				assertFileContent(t, filepath.Join(extractPath, "file.txt"), "content")
@@ -218,7 +218,7 @@ func TestExtract(t *testing.T) {
 			name:   "Extract TarGz",
 			format: pathcompression.TarGz,
 			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
-				return createTestBackup(t, targetBase, "extract_targz", false)
+				return createTestBackup(t, targetBase, "extract_targz", false, "")
 			},
 			validate: func(t *testing.T, extractPath string) {
 				assertFileContent(t, filepath.Join(extractPath, "file.txt"), "content")
@@ -228,7 +228,7 @@ func TestExtract(t *testing.T) {
 			name:   "Extract TarZst",
 			format: pathcompression.TarZst,
 			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
-				return createTestBackup(t, targetBase, "extract_tarzst", false)
+				return createTestBackup(t, targetBase, "extract_tarzst", false, "")
 			},
 			validate: func(t *testing.T, extractPath string) {
 				assertFileContent(t, filepath.Join(extractPath, "file.txt"), "content")
@@ -238,7 +238,7 @@ func TestExtract(t *testing.T) {
 			name:   "Extract Symlinks (TarZst)",
 			format: pathcompression.TarZst,
 			setup: func(t *testing.T, targetBase string) metafile.MetafileInfo {
-				info := createTestBackup(t, targetBase, "extract_symlink", false)
+				info := createTestBackup(t, targetBase, "extract_symlink", false, "")
 				contentDir := filepath.Join(targetBase, info.RelPathKey, testContentDir)
 				if err := os.Symlink("file.txt", filepath.Join(contentDir, "link.txt")); err != nil {
 					if runtime.GOOS == "windows" && strings.Contains(err.Error(), "privilege") {
@@ -287,11 +287,14 @@ func TestExtract(t *testing.T) {
 				t.Fatalf("Setup failed: failed to compress: %v", err)
 			}
 
+			// Update metadata in toCompress to reflect reality, simulating a reload
+			toCompress.Metadata.IsCompressed = true
+			toCompress.Metadata.CompressionFormat = tc.format.String()
+
 			// 2. Extract
 			extractPath := filepath.Join(targetBase, "extracted")
 			extractPlan := &pathcompression.ExtractPlan{
 				Enabled:           true,
-				Format:            tc.format,
 				OverwriteBehavior: pathcompression.OverwriteAlways, // Default behavior for these tests
 			}
 
@@ -310,7 +313,7 @@ func TestExtract(t *testing.T) {
 func TestExtract_OverwriteBehavior(t *testing.T) {
 	// 1. Setup: Create a base archive to extract from.
 	targetBase := t.TempDir()
-	toCompress := createTestBackup(t, targetBase, "overwrite_test", false)
+	toCompress := createTestBackup(t, targetBase, "overwrite_test", false, "")
 	// Add a second file to the backup
 	contentDir := filepath.Join(targetBase, toCompress.RelPathKey, testContentDir)
 	if err := os.WriteFile(filepath.Join(contentDir, "file2.txt"), []byte("content2"), 0644); err != nil {
@@ -326,6 +329,10 @@ func TestExtract_OverwriteBehavior(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Setup failed: failed to compress: %v", err)
 	}
+
+	// Update metadata in toCompress to reflect reality
+	toCompress.Metadata.IsCompressed = true
+	toCompress.Metadata.CompressionFormat = pathcompression.Zip.String()
 
 	// 2. Define test cases for different overwrite behaviors
 	tests := []struct {
@@ -414,7 +421,6 @@ func TestExtract_OverwriteBehavior(t *testing.T) {
 
 			extractPlan := &pathcompression.ExtractPlan{
 				Enabled:           true,
-				Format:            pathcompression.Zip,
 				OverwriteBehavior: tc.behavior,
 			}
 
@@ -430,17 +436,122 @@ func TestExtract_OverwriteBehavior(t *testing.T) {
 	}
 }
 
+func TestExtract_FormatMismatch(t *testing.T) {
+	// 1. Setup: Create a Zip backup
+	targetBase := t.TempDir()
+	toCompress := createTestBackup(t, targetBase, "mismatch_test", false, "")
+
+	compressor := pathcompression.NewPathCompressor(256)
+	compressPlan := &pathcompression.CompressPlan{
+		Enabled: true,
+		Format:  pathcompression.Zip,
+	}
+	// Compress it
+	err := compressor.Compress(context.Background(), targetBase, testContentDir, toCompress, compressPlan, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("Setup failed: failed to compress: %v", err)
+	}
+
+	// 2. Re-read metadata to get the updated CompressionFormat
+	absBackupPath := filepath.Join(targetBase, toCompress.RelPathKey)
+	meta, err := metafile.Read(absBackupPath)
+	if err != nil {
+		t.Fatalf("Failed to read metafile: %v", err)
+	}
+
+	// Verify it was written correctly
+	if meta.CompressionFormat != pathcompression.Zip.String() {
+		t.Fatalf("Expected metafile format Zip, got %s", meta.CompressionFormat)
+	}
+
+	toExtract := metafile.MetafileInfo{
+		RelPathKey: toCompress.RelPathKey,
+		Metadata:   meta,
+	}
+
+	// 3. Extract using a plan that specifies TarGz (mismatch)
+	extractPath := filepath.Join(targetBase, "extracted")
+	extractPlan := &pathcompression.ExtractPlan{
+		Enabled:           true,
+		OverwriteBehavior: pathcompression.OverwriteAlways,
+	}
+
+	err = compressor.Extract(context.Background(), targetBase, toExtract, extractPath, extractPlan, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("Extract failed with mismatched plan format: %v", err)
+	}
+
+	// 4. Validate content
+	assertFileContent(t, filepath.Join(extractPath, "file.txt"), "content")
+}
+
+func TestExtract_AutoDetect_CorruptMeta(t *testing.T) {
+	// 1. Setup: Create a Zip backup
+	targetBase := t.TempDir()
+	toCompress := createTestBackup(t, targetBase, "autodetect_test", false, "")
+
+	compressor := pathcompression.NewPathCompressor(256)
+	compressPlan := &pathcompression.CompressPlan{
+		Enabled: true,
+		Format:  pathcompression.Zip,
+	}
+	// Compress it
+	err := compressor.Compress(context.Background(), targetBase, testContentDir, toCompress, compressPlan, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("Setup failed: failed to compress: %v", err)
+	}
+
+	// 2. Corrupt metadata: Remove CompressionFormat
+	absBackupPath := filepath.Join(targetBase, toCompress.RelPathKey)
+	meta, err := metafile.Read(absBackupPath)
+	if err != nil {
+		t.Fatalf("Failed to read metafile: %v", err)
+	}
+
+	meta.CompressionFormat = "" // Corrupt it
+	if err := metafile.Write(absBackupPath, meta); err != nil {
+		t.Fatalf("Failed to write corrupted metafile: %v", err)
+	}
+
+	toExtract := metafile.MetafileInfo{
+		RelPathKey: toCompress.RelPathKey,
+		Metadata:   meta,
+	}
+
+	// 3. Extract without specifying format in plan (it's removed anyway)
+	extractPath := filepath.Join(targetBase, "extracted")
+	extractPlan := &pathcompression.ExtractPlan{
+		Enabled:           true,
+		OverwriteBehavior: pathcompression.OverwriteAlways,
+	}
+
+	// This should succeed by finding the .zip file on disk
+	err = compressor.Extract(context.Background(), targetBase, toExtract, extractPath, extractPlan, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("Extract failed during auto-detection: %v", err)
+	}
+
+	// 4. Validate content
+	assertFileContent(t, filepath.Join(extractPath, "file.txt"), "content")
+}
+
 // Helpers
 
-func createTestBackup(t *testing.T, targetBase, relPath string, compressed bool) metafile.MetafileInfo {
+func createTestBackup(t *testing.T, targetBase, relPath string, compressed bool, format pathcompression.Format) metafile.MetafileInfo {
 	absPath := filepath.Join(targetBase, relPath)
 	if err := os.MkdirAll(absPath, 0755); err != nil {
 		t.Fatalf("Failed to create backup dir: %v", err)
 	}
 
+	var fmtStr string
+	if compressed {
+		fmtStr = format.String()
+	}
+
 	meta := metafile.MetafileContent{
-		TimestampUTC: time.Now().UTC(),
-		IsCompressed: compressed,
+		TimestampUTC:      time.Now().UTC(),
+		IsCompressed:      compressed,
+		CompressionFormat: fmtStr,
 	}
 	if err := metafile.Write(absPath, meta); err != nil {
 		t.Fatalf("Failed to write metafile: %v", err)
@@ -477,7 +588,7 @@ func assertContentExists(t *testing.T, backupPath string) {
 	}
 }
 
-func assertMetaCompressed(t *testing.T, backupPath string) {
+func assertMetaCompressed(t *testing.T, backupPath string, expectedFormat pathcompression.Format) {
 	t.Helper()
 	m, err := metafile.Read(backupPath)
 	if err != nil {
@@ -485,6 +596,9 @@ func assertMetaCompressed(t *testing.T, backupPath string) {
 	}
 	if !m.IsCompressed {
 		t.Error("Metafile should be marked as compressed")
+	}
+	if m.CompressionFormat != expectedFormat.String() {
+		t.Errorf("Metafile CompressionFormat mismatch. Expected %q, got %q", expectedFormat, m.CompressionFormat)
 	}
 }
 
