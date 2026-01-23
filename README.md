@@ -216,22 +216,12 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
     }
   },
   "sync": {
-    "incremental": {
-      "enabled": true,
-      "PreserveSourceDirName": true,
-      "engine": "native",
-      "retryCount": 3,
-      "retryWaitSeconds": 5,
-      "modTimeWindowSeconds": 1
-    },
-    "snapshot": {
-      "enabled": true,
-      "PreserveSourceDirName": true,
-      "engine": "native",
-      "retryCount": 3,
-      "retryWaitSeconds": 5,
-      "modTimeWindowSeconds": 1
-    },
+    "enabled": true,
+    "PreserveSourceDirName": true,
+    "engine": "native",
+    "retryCount": 3,
+    "retryWaitSeconds": 5,
+    "modTimeWindowSeconds": 1,
     "defaultExcludeFiles": [
       "*.tmp",
       "*.temp",
@@ -254,16 +244,9 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
     "userExcludeDirs": []
   },
   "archive": {
-    "incremental": {
-      "enabled": true,
-      "intervalMode": "auto",
-      "intervalSeconds": 86400
-    },
-    "snapshot": {
-      "enabled": true,
-      "intervalMode": "manual",
-      "intervalSeconds": 0
-    }
+    "enabled": true,
+    "intervalMode": "auto",
+    "intervalSeconds": 86400
   },
   "retention": {
     "incremental": {
@@ -284,16 +267,9 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
     }
   },
   "compression": {
-    "incremental": {
-      "enabled": true,
-      "format": "tar.zst",
-      "Level": "default"
-    },
-    "snapshot": {
-      "enabled": true,
-      "format": "tar.zst",
-      "Level": "default"
-    }
+    "enabled": true,
+    "format": "tar.zst",
+    "Level": "default"
   },
   "hooks": {
     "preBackup": [],
@@ -676,18 +652,12 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | - / `paths.snapshot.content` | `"PGL_Backup_Content"` | Sub-directory for the content within a snapshot backup. |
 | - / `paths.snapshot.backupDirPrefix` | `"PGL_Backup_"` | Prefix for timestamped archive directories (snapshot). |
 | **Sync Settings** | | | |
-| - / `sync.incremental.enabled` | `bool` | `true` | Enable file synchronization for incremental backups. |
-| `sync-incremental-engine` / `sync.incremental.engine` | `string` | `"native"` | The sync engine to use for incremental backups: `"native"` or `"robocopy"` (Windows only). |
-| `sync-incremental-retry-count` / `sync.incremental.retryCount` | `int` | `3` | Number of retries for failed file copies (incremental). |
-| `sync-incremental-retry-wait` / `sync.incremental.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries (incremental). |
-| `sync-incremental-mod-time-window` / `sync.incremental.modTimeWindowSeconds` | `int` | `1` | Time window in seconds to consider file modification times equal (incremental). |
-| `sync-incremental-preserve-source-dir-name` / `sync.incremental.PreserveSourceDirName` | `bool` | `true` | If true, creates a subdirectory in the destination named after the source directory (incremental). |
-| - / `sync.snapshot.enabled` | `bool` | `true` | Enable file synchronization for snapshot backups. |
-| `sync-snapshot-engine` / `sync.snapshot.engine` | `string` | `"native"` | The sync engine to use for snapshots: `"native"` or `"robocopy"` (Windows only). |
-| `sync-snapshot-retry-count` / `sync.snapshot.retryCount` | `int` | `3` | Number of retries for failed file copies (snapshot). |
-| `sync-snapshot-retry-wait` / `sync.snapshot.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries (snapshot). |
-| `sync-snapshot-mod-time-window` / `sync.snapshot.modTimeWindowSeconds` | `int` | `1` | Time window in seconds to consider file modification times equal (snapshot). |
-| `sync-snapshot-preserve-source-dir-name` / `sync.snapshot.PreserveSourceDirName` | `bool` | `true` | If true, creates a subdirectory in the destination named after the source directory (snapshot). |
+| - / `sync.enabled` | `bool` | `true` | Enable file synchronization. |
+| `sync-engine` / `sync.engine` | `string` | `"native"` | The sync engine to use: `"native"` or `"robocopy"` (Windows only). |
+| `sync-retry-count` / `sync.retryCount` | `int` | `3` | Number of retries for failed file copies. |
+| `sync-retry-wait` / `sync.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries. |
+| `sync-mod-time-window` / `sync.modTimeWindowSeconds` | `int` | `1` | Time window in seconds to consider file modification times equal. |
+| `sync-preserve-source-dir-name` / `sync.PreserveSourceDirName` | `bool` | `true` | If true, creates a subdirectory in the destination named after the source directory. |
 | **Exclusions & Hooks** | | | |
 | `user-exclude-files` / `sync.userExcludeFiles` | `[]string` | `[]` | List of file patterns to exclude. |
 | `user-exclude-dirs` / `sync.userExcludeDirs` | `[]string` | `[]` | List of directory patterns to exclude. |
@@ -696,12 +666,9 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `pre-backup-hooks` / `hooks.preBackup` | `[]string` | `[]` | List of shell commands to run before the backup. |
 | `post-backup-hooks` / `hooks.postBackup` | `[]string` | `[]` | List of shell commands to run after the backup. |
 | **Archive & Retention** | | | |
-| `archive-incremental` / `archive.incremental.enabled` | `bool` | `true` | Enable archiving for incremental backups. |
-| `archive-incremental-interval-mode` / `archive.incremental.intervalMode` | `string` | `"auto"` | `"auto"` or `"manual"`. |
-| `archive-incremental-interval-seconds` / `archive.incremental.intervalSeconds` | `int` | `86400` | Interval in seconds for manual mode. |
-| `archive-snapshot` / `archive.snapshot.enabled` | `bool` | `true` | Enable archiving for snapshot backups. |
-| `archive-snapshot-interval-mode` / `archive.snapshot.intervalMode` | `string` | `"manual"` | `"auto"` or `"manual"`. |
-| `archive-snapshot-interval-seconds` / `archive.snapshot.intervalSeconds` | `int` | `0` | Interval in seconds for manual mode. |
+| `archive` / `archive.enabled` | `bool` | `true` | Enable archiving (rollover) for incremental backups. |
+| `archive-interval-mode` / `archive.intervalMode` | `string` | `"auto"` | `"auto"` or `"manual"`. |
+| `archive-interval-seconds` / `archive.intervalSeconds` | `int` | `86400` | Interval in seconds for manual mode. |
 | `retention-incremental` / `retention.incremental.enabled` | `bool` | `true` | Enable retention policy for incremental backups. |
 | `retention-incremental-hours` / `retention.incremental.hours` | `int` | `0` | Hourly backups to keep. |
 | `retention-incremental-days` / `retention.incremental.days` | `int` | `0` | Daily backups to keep. |
@@ -715,12 +682,9 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `retention-snapshot-months` / `retention.snapshot.months` | `int` | `-1` | Monthly backups to keep. |
 | `retention-snapshot-years` / `retention.snapshot.years` | `int` | `-1` | Yearly backups to keep. |
 | **Compression** | | | |
-| `compression-incremental` / `compression.incremental.enabled` | `bool` | `true` | Enable compression for incremental backups. |
-| `compression-incremental-format` / `compression.incremental.format` | `string` | `"tar.zst"` | `"zip"`, `"tar.gz"`, or `"tar.zst"`. |
-| `compression-incremental-level` / `compression.incremental.level` | `string` | `"default"` | Compression level: `"default"`, `"fastest"`, `"better"`, `"best"`. |
-| `compression-snapshot` / `compression.snapshot.enabled` | `bool` | `true` | Enable compression for snapshot backups. |
-| `compression-snapshot-format` / `compression.snapshot.format` | `string` | `"tar.zst"` | `"zip"`, `"tar.gz"`, or `"tar.zst"`. |
-| `compression-snapshot-level` / `compression.snapshot.level` | `string` | `"default"` | Compression level: `"default"`, `"fastest"`, `"better"`, `"best"`. |
+| `compression` / `compression.enabled` | `bool` | `true` | Enable compression for backups. |
+| `compression-format` / `compression.format` | `string` | `"tar.zst"` | `"zip"`, `"tar.gz"`, or `"tar.zst"`. |
+| `compression-level` / `compression.level` | `string` | `"default"` | Compression level: `"default"`, `"fastest"`, `"better"`, `"best"`. |
 | **Performance Tuning** | | | |
 | `sync-workers` / `engine.performance.syncWorkers` | `int` | `4` | Number of concurrent workers for file synchronization. |
 | `mirror-workers` / `engine.performance.mirrorWorkers` | `int` | `4` | Number of concurrent workers for file deletions in mirror mode. |

@@ -13,6 +13,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Refactored `pathcompression.Plan` into separate `CompressPlan` and `ExtractPlan` structs for better type safety and clarity.
+- **BREAKING CHANGE**: Simplified configuration structure. Merged `Sync` and `Compression` settings into single top-level sections (removing `Incremental`/`Snapshot` split). Simplified `Archive` settings to focus on incremental rollover. Updated CLI flags to match (e.g., `-sync-incremental-engine` is now `-sync-engine`).
+
+#### Migration Guide
+To upgrade your existing `pgl-backup.config.json`, you must flatten the `sync`, `archive`, and `compression` sections. The `incremental` and `snapshot` subsections have been removed in favor of shared settings.
+
+**Before:**
+```json
+"sync": { "incremental": { "engine": "native" }, "snapshot": { "engine": "native" } },
+"archive": { "incremental": { "enabled": true, "intervalMode": "auto" }, "snapshot": { "enabled": true, "intervalMode": "manual" } },
+"compression": { "incremental": { "enabled": true }, "snapshot": { "enabled": true } }
+```
+
+**After:**
+```json
+"sync": { "engine": "native" },
+"archive": { "enabled": true, "intervalMode": "auto" },
+"compression": { "enabled": true }
+```
 
 ### Fixed
 

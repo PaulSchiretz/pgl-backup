@@ -165,7 +165,7 @@ func TestConfig_Validate(t *testing.T) {
 			name: "Negative Retry Count",
 			modify: func(c *Config) {
 				c.Runtime.Mode = "incremental"
-				c.Sync.Incremental.RetryCount = -1
+				c.Sync.RetryCount = -1
 			},
 			checkSource: false,
 			wantErr:     true,
@@ -346,12 +346,12 @@ func TestMergeConfigWithFlags(t *testing.T) {
 			},
 		},
 		{
-			name:    "Override Nested Config (Archive Incremental Enabled)",
+			name:    "Override Nested Config (Archive Enabled)",
 			command: flagparse.Backup,
-			flags:   map[string]any{"archive-incremental": false},
+			flags:   map[string]any{"archive": false},
 			validate: func(t *testing.T, c Config) {
-				if c.Archive.Incremental.Enabled != false {
-					t.Errorf("Archive.Incremental.Enabled = %v, want false", c.Archive.Incremental.Enabled)
+				if c.Archive.Enabled != false {
+					t.Errorf("Archive.Enabled = %v, want false", c.Archive.Enabled)
 				}
 			},
 		},

@@ -64,56 +64,23 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 
 	// Identify which config block to use based on mode
 	var (
-		pathsCfg       config.PathsPolicyConfig
-		syncCfg        config.SyncPolicyConfig
-		archiveCfg     config.ArchivePolicyConfig
-		retentionCfg   config.RetentionPolicyConfig
-		compressionCfg config.CompressionPolicyConfig
+		pathCfg         config.PathConfig
+		retentionPolicy config.RetentionPolicy
 	)
 
 	switch mode {
 	case Incremental:
-		pathsCfg = cfg.Paths.Incremental
-		syncCfg = cfg.Sync.Incremental
-		archiveCfg = cfg.Archive.Incremental
-		retentionCfg = cfg.Retention.Incremental
-		compressionCfg = cfg.Compression.Incremental
+		pathCfg = cfg.Paths.Incremental
+		retentionPolicy = cfg.Retention.Incremental
 	case Snapshot:
-		pathsCfg = cfg.Paths.Snapshot
-		syncCfg = cfg.Sync.Snapshot
-		archiveCfg = cfg.Archive.Snapshot
-		retentionCfg = cfg.Retention.Snapshot
-		compressionCfg = cfg.Compression.Snapshot
+		pathCfg = cfg.Paths.Snapshot
+		retentionPolicy = cfg.Retention.Snapshot
 	default:
 		return nil, fmt.Errorf("unsupported mode: %s", mode)
 	}
 
-	// Parse values
-	archiveIntervalMode, err := patharchive.ParseIntervalMode(archiveCfg.IntervalMode)
-	if err != nil {
-		return nil, err
-	}
-
-	var archiveIntervalConstraints patharchive.IntervalModeConstraints
-	if retentionCfg.Enabled {
-		archiveIntervalConstraints = patharchive.IntervalModeConstraints{
-			Hours:  retentionCfg.Hours,
-			Days:   retentionCfg.Days,
-			Weeks:  retentionCfg.Weeks,
-			Months: retentionCfg.Months,
-			Years:  retentionCfg.Years,
-		}
-	} else {
-		archiveIntervalConstraints = patharchive.IntervalModeConstraints{
-			Hours:  0,
-			Days:   0,
-			Weeks:  0,
-			Months: 0,
-			Years:  0,
-		}
-	}
-
-	syncEngine, err := pathsync.ParseEngine(syncCfg.Engine)
+	// Parse Sync Settings (Shared)
+	syncEngine, err := pathsync.ParseEngine(cfg.Sync.Engine)
 	if err != nil {
 		return nil, err
 	}
@@ -121,14 +88,59 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 	syncExcludeFiles := cfg.Sync.ExcludeFiles()
 	syncExcludeDirs := cfg.Sync.ExcludeDirs()
 
-	compressionFormat, err := pathcompression.ParseFormat(compressionCfg.Format)
+	// Parse Compression Settings (Shared)
+	compressionFormat, err := pathcompression.ParseFormat(cfg.Compression.Format)
 	if err != nil {
 		return nil, err
 	}
 
-	compressionLevel, err := pathcompression.ParseLevel(compressionCfg.Level)
+	compressionLevel, err := pathcompression.ParseLevel(cfg.Compression.Level)
 	if err != nil {
 		return nil, err
+	}
+
+	// Prepare Archive Plan based on Mode
+	var archivePlan *patharchive.Plan
+	if mode == Incremental {
+		// Incremental: Use configured archive settings and retention constraints
+		archiveIntervalMode, err := patharchive.ParseIntervalMode(cfg.Archive.IntervalMode)
+		if err != nil {
+			return nil, err
+		}
+
+		var archiveIntervalConstraints patharchive.IntervalModeConstraints
+		if retentionPolicy.Enabled {
+			archiveIntervalConstraints = patharchive.IntervalModeConstraints{
+				Hours:  retentionPolicy.Hours,
+				Days:   retentionPolicy.Days,
+				Weeks:  retentionPolicy.Weeks,
+				Months: retentionPolicy.Months,
+				Years:  retentionPolicy.Years,
+			}
+		}
+
+		archivePlan = &patharchive.Plan{
+			Enabled:         cfg.Archive.Enabled,
+			IntervalSeconds: cfg.Archive.IntervalSeconds,
+			IntervalMode:    archiveIntervalMode,
+			Constraints:     archiveIntervalConstraints,
+			// Global Flags
+			DryRun:   dryRun,
+			FailFast: failFast,
+			Metrics:  metrics,
+		}
+	} else {
+		// Snapshot: Always enabled, manual mode, 0 interval (immediate)
+		archivePlan = &patharchive.Plan{
+			Enabled:         true,
+			IntervalSeconds: 0,
+			IntervalMode:    patharchive.Manual,
+			Constraints:     patharchive.IntervalModeConstraints{},
+			// Global Flags
+			DryRun:   dryRun,
+			FailFast: failFast,
+			Metrics:  metrics,
+		}
 	}
 
 	// finish the plan
@@ -143,10 +155,10 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 		PostBackupHooks: cfg.Hooks.PostBackup,
 
 		Paths: PathKeys{
-			RelCurrentPathKey: pathsCfg.Current,
-			RelArchivePathKey: pathsCfg.Archive,
-			RelContentPathKey: pathsCfg.Content,
-			BackupDirPrefix:   pathsCfg.BackupDirPrefix,
+			RelCurrentPathKey: pathCfg.Current,
+			RelArchivePathKey: pathCfg.Archive,
+			RelContentPathKey: pathCfg.Content,
+			BackupDirPrefix:   pathCfg.BackupDirPrefix,
 		},
 		Preflight: &preflight.Plan{
 			SourceAccessible:   true,
@@ -161,47 +173,38 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 			Metrics:  metrics,
 		},
 		Sync: &pathsync.Plan{
-			Enabled:               syncCfg.Enabled,
+			Enabled:               cfg.Sync.Enabled,
 			ModeIdentifier:        mode.String(),
 			Engine:                syncEngine,
 			ExcludeDirs:           syncExcludeDirs,
 			ExcludeFiles:          syncExcludeFiles,
-			PreserveSourceDirName: syncCfg.PreserveSourceDirName,
+			PreserveSourceDirName: cfg.Sync.PreserveSourceDirName,
 			Mirror:                true,
 
-			RetryCount:    syncCfg.RetryCount,
-			RetryWait:     time.Duration(syncCfg.RetryWaitSeconds) * time.Second,
-			ModTimeWindow: time.Duration(syncCfg.ModTimeWindowSeconds) * time.Second,
+			RetryCount:    cfg.Sync.RetryCount,
+			RetryWait:     time.Duration(cfg.Sync.RetryWaitSeconds) * time.Second,
+			ModTimeWindow: time.Duration(cfg.Sync.ModTimeWindowSeconds) * time.Second,
 
 			// Global Flags
 			DryRun:   dryRun,
 			FailFast: failFast,
 			Metrics:  metrics,
 		},
-		Archive: &patharchive.Plan{
-			Enabled:         archiveCfg.Enabled,
-			IntervalSeconds: archiveCfg.IntervalSeconds,
-			IntervalMode:    archiveIntervalMode,
-			Constraints:     archiveIntervalConstraints,
-			// Global Flags
-			DryRun:   dryRun,
-			FailFast: failFast,
-			Metrics:  metrics,
-		},
+		Archive: archivePlan,
 		Retention: &pathretention.Plan{
-			Enabled: retentionCfg.Enabled,
-			Hours:   retentionCfg.Hours,
-			Days:    retentionCfg.Days,
-			Weeks:   retentionCfg.Weeks,
-			Months:  retentionCfg.Months,
-			Years:   retentionCfg.Years,
+			Enabled: retentionPolicy.Enabled,
+			Hours:   retentionPolicy.Hours,
+			Days:    retentionPolicy.Days,
+			Weeks:   retentionPolicy.Weeks,
+			Months:  retentionPolicy.Months,
+			Years:   retentionPolicy.Years,
 			// Global Flags
 			DryRun:   dryRun,
 			FailFast: failFast,
 			Metrics:  metrics,
 		},
 		Compression: &pathcompression.CompressPlan{
-			Enabled: compressionCfg.Enabled,
+			Enabled: cfg.Compression.Enabled,
 			Format:  compressionFormat,
 			Level:   compressionLevel,
 			// Global Flags

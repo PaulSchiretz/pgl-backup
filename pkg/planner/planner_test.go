@@ -24,7 +24,7 @@ func TestGenerateBackupPlan(t *testing.T) {
 			configMod: func(c *config.Config) {
 				c.Runtime.Mode = "incremental"
 				// Ensure defaults are set as expected by NewDefault, but we can override specific ones to test mapping
-				c.Sync.Incremental.PreserveSourceDirName = true
+				c.Sync.PreserveSourceDirName = true
 			},
 			expectedMode: planner.Incremental,
 			validate: func(t *testing.T, p *planner.BackupPlan) {
@@ -43,7 +43,7 @@ func TestGenerateBackupPlan(t *testing.T) {
 			name: "Snapshot Mode",
 			configMod: func(c *config.Config) {
 				c.Runtime.Mode = "snapshot"
-				c.Sync.Snapshot.PreserveSourceDirName = false
+				c.Sync.PreserveSourceDirName = false
 			},
 			expectedMode: planner.Snapshot,
 			validate: func(t *testing.T, p *planner.BackupPlan) {
@@ -66,7 +66,7 @@ func TestGenerateBackupPlan(t *testing.T) {
 			name: "Invalid Archive Interval Mode",
 			configMod: func(c *config.Config) {
 				c.Runtime.Mode = "incremental"
-				c.Archive.Incremental.IntervalMode = "invalid"
+				c.Archive.IntervalMode = "invalid"
 			},
 			expectError: true,
 		},
@@ -74,7 +74,7 @@ func TestGenerateBackupPlan(t *testing.T) {
 			name: "Invalid Sync Engine",
 			configMod: func(c *config.Config) {
 				c.Runtime.Mode = "incremental"
-				c.Sync.Incremental.Engine = "invalid"
+				c.Sync.Engine = "invalid"
 			},
 			expectError: true,
 		},
@@ -82,7 +82,7 @@ func TestGenerateBackupPlan(t *testing.T) {
 			name: "Invalid Compression Format",
 			configMod: func(c *config.Config) {
 				c.Runtime.Mode = "incremental"
-				c.Compression.Incremental.Format = "invalid"
+				c.Compression.Format = "invalid"
 			},
 			expectError: true,
 		},
@@ -118,7 +118,7 @@ func TestGenerateBackupPlan(t *testing.T) {
 			name: "Sync Engine Parsing",
 			configMod: func(c *config.Config) {
 				c.Runtime.Mode = "incremental"
-				c.Sync.Incremental.Engine = "robocopy"
+				c.Sync.Engine = "robocopy"
 			},
 			expectedMode: planner.Incremental,
 			validate: func(t *testing.T, p *planner.BackupPlan) {
@@ -131,7 +131,7 @@ func TestGenerateBackupPlan(t *testing.T) {
 			name: "Compression Format Parsing",
 			configMod: func(c *config.Config) {
 				c.Runtime.Mode = "incremental"
-				c.Compression.Incremental.Format = "zip"
+				c.Compression.Format = "zip"
 			},
 			expectedMode: planner.Incremental,
 			validate: func(t *testing.T, p *planner.BackupPlan) {
@@ -147,9 +147,9 @@ func TestGenerateBackupPlan(t *testing.T) {
 				c.Runtime.DryRun = true
 				c.Engine.FailFast = true
 				c.Engine.Metrics = false
-				c.Sync.Incremental.RetryCount = 5
-				c.Sync.Incremental.RetryWaitSeconds = 10
-				c.Sync.Incremental.ModTimeWindowSeconds = 2
+				c.Sync.RetryCount = 5
+				c.Sync.RetryWaitSeconds = 10
+				c.Sync.ModTimeWindowSeconds = 2
 			},
 			expectedMode: planner.Incremental,
 			validate: func(t *testing.T, p *planner.BackupPlan) {
