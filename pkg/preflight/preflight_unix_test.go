@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestCheckBackupTargetAccessible_Unix(t *testing.T) {
+func TestCheckTargetAccessible_Unix(t *testing.T) {
 	t.Run("Error - No Permission on Deepest Existing Ancestor", func(t *testing.T) {
 		// Setup: Create a directory structure where the deepest existing ancestor
 		// of the target path is not accessible.
@@ -28,7 +28,7 @@ func TestCheckBackupTargetAccessible_Unix(t *testing.T) {
 		// The target path is several levels deep, and does not exist.
 		targetDir := filepath.Join(unreadableAncestor, "non_existent_child", "target")
 
-		err := checkBackupTargetAccessible(targetDir)
+		err := checkTargetAccessible(targetDir)
 		if err == nil {
 			t.Fatal("expected a permission error, but got nil")
 		}
@@ -50,7 +50,7 @@ func TestCheckBackupTargetAccessible_Unix(t *testing.T) {
 		}
 		t.Cleanup(func() { os.RemoveAll(mountPointBase) })
 
-		err := checkBackupTargetAccessible(targetDir)
+		err := checkTargetAccessible(targetDir)
 		if err == nil {
 			t.Fatal("expected an error for a non-mounted 'ghost' directory, but got nil")
 		}
@@ -78,14 +78,14 @@ func TestCheckBackupTargetAccessible_Unix(t *testing.T) {
 
 		// This check should pass because the heuristic skips the mount point check
 		// for paths inside the home directory.
-		err = checkBackupTargetAccessible(targetDir)
+		err = checkTargetAccessible(targetDir)
 		if err != nil {
 			t.Errorf("expected no error for a path in the home directory, but got: %v", err)
 		}
 	})
 }
 
-func TestCheckBackupTargetWritable_Unix(t *testing.T) {
+func TestCheckTargetWritable_Unix(t *testing.T) {
 	t.Run("Error - Target not writable", func(t *testing.T) {
 		// Create a directory that we can't write into
 		unwritableDir := filepath.Join(t.TempDir(), "unwritable")
@@ -94,7 +94,7 @@ func TestCheckBackupTargetWritable_Unix(t *testing.T) {
 		}
 		t.Cleanup(func() { os.Chmod(unwritableDir, 0755) }) // Clean up
 
-		err := checkBackupTargetWritable(unwritableDir)
+		err := checkTargetWritable(unwritableDir)
 		if err == nil {
 			t.Fatal("expected an error for unwritable target, but got nil")
 		}

@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func TestCheckBackupTargetAccessible_Windows(t *testing.T) {
+func TestCheckTargetAccessible_Windows(t *testing.T) {
 	t.Run("Windows - Error on Non-Existent Drive", func(t *testing.T) {
 		// Helper to find a drive letter that is guaranteed not to exist on this system.
 		findFirstNonExistentDrive := func() string {
@@ -34,7 +34,7 @@ func TestCheckBackupTargetAccessible_Windows(t *testing.T) {
 		}
 		nonExistentPath := filepath.Join(nonExistentDrive, "nonexistent", "backup", "path")
 
-		err := checkBackupTargetAccessible(nonExistentPath)
+		err := checkTargetAccessible(nonExistentPath)
 		if err == nil {
 			t.Fatal("expected an error for a non-existent drive, but got nil")
 		}
@@ -46,7 +46,7 @@ func TestCheckBackupTargetAccessible_Windows(t *testing.T) {
 	})
 
 	t.Run("Error - Target Path is Bare Drive Letter", func(t *testing.T) {
-		err := checkBackupTargetAccessible(`C:`)
+		err := checkTargetAccessible(`C:`)
 		if err == nil {
 			t.Error("expected error for target path being a bare drive letter, but got nil")
 		}
@@ -57,9 +57,9 @@ func TestCheckBackupTargetAccessible_Windows(t *testing.T) {
 
 	t.Run("Happy Path - Target Path is Windows Volume Root", func(t *testing.T) {
 		// This test verifies that an explicit volume root like "C:\" is considered a SAFE target
-		// by CheckBackupTargetAccessible. This function does not perform a write check,
+		// by CheckTargetAccessible. This function does not perform a write check,
 		// so it should pass as the path is not an unsafe root and it exists.
-		err := checkBackupTargetAccessible(`C:\`)
+		err := checkTargetAccessible(`C:\`)
 		if err != nil {
 			t.Errorf("expected no error for target path being a volume root, but got: %v", err)
 		}
@@ -69,7 +69,7 @@ func TestCheckBackupTargetAccessible_Windows(t *testing.T) {
 		// The initial `isUnsafeRoot` check should pass. The function will then fail later
 		// because the path doesn't exist. We verify that the error is the expected
 		// "volume root does not exist" and NOT the "unsafe root" error.
-		err := checkBackupTargetAccessible(`\\server\share`)
+		err := checkTargetAccessible(`\\server\share`)
 		if err == nil {
 			t.Fatal("expected an error for a non-existent UNC path, but got nil")
 		}

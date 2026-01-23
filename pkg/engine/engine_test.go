@@ -27,7 +27,7 @@ type mockValidator struct {
 	err error
 }
 
-func (m *mockValidator) Run(ctx context.Context, absSourcePath, absTargetBasePath string, p *preflight.Plan, timestampUTC time.Time) error {
+func (m *mockValidator) Run(ctx context.Context, absSourcePath, absTargetPath string, p *preflight.Plan, timestampUTC time.Time) error {
 	return m.err
 }
 

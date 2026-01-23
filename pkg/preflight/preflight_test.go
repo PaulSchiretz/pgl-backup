@@ -11,7 +11,7 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/preflight"
 )
 
-func TestCheckBackupTargetAccessible(t *testing.T) {
+func TestCheckTargetAccessible(t *testing.T) {
 	tests := []struct {
 		name          string
 		setupTarget   func(t *testing.T) string
@@ -83,7 +83,7 @@ func TestCheckBackupTargetAccessible(t *testing.T) {
 	}
 }
 
-func TestCheckBackupSourceAccessible(t *testing.T) {
+func TestCheckSourceAccessible(t *testing.T) {
 	tests := []struct {
 		name          string
 		setupSource   func(t *testing.T) string
@@ -280,7 +280,7 @@ func TestValidator_Run(t *testing.T) {
 	}
 }
 
-func TestCheckBackupTargetWritable(t *testing.T) {
+func TestCheckTargetWritable(t *testing.T) {
 	tests := []struct {
 		name          string
 		setupTarget   func(t *testing.T) string

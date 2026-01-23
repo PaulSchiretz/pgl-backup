@@ -25,19 +25,19 @@ func NewValidator() *Validator {
 	return &Validator{}
 }
 
-// Run performs all necessary validations and setup before a backup operation.
+// Run performs all necessary validations and setup before an operation runs.
 // It's an orchestrator function that calls other checks in a specific order.
-func (v *Validator) Run(ctx context.Context, absSourcePath, absTargetBasePath string, p *Plan, timestampUTC time.Time) error {
+func (v *Validator) Run(ctx context.Context, absSourcePath, absTargetPath string, p *Plan, timestampUTC time.Time) error {
 
 	// 1. Check target accessibility.
 	if p.TargetAccessible {
-		if err := checkBackupTargetAccessible(absTargetBasePath); err != nil {
+		if err := checkTargetAccessible(absTargetPath); err != nil {
 			return fmt.Errorf("target path accessibility check failed: %w", err)
 		}
 	}
 	// 2. Check source accessibility.
 	if p.SourceAccessible {
-		if err := checkBackupSourceAccessible(absSourcePath); err != nil {
+		if err := checkSourceAccessible(absSourcePath); err != nil {
 			return fmt.Errorf("source path validation failed: %w", err)
 		}
 	}
@@ -45,12 +45,12 @@ func (v *Validator) Run(ctx context.Context, absSourcePath, absTargetBasePath st
 	// 3. If not a dry run, perform state-changing checks (create dir, check writability).
 	if !p.DryRun {
 		if p.EnsureTargetExists {
-			if err := os.MkdirAll(absTargetBasePath, util.UserWritableDirPerms); err != nil {
+			if err := os.MkdirAll(absTargetPath, util.UserWritableDirPerms); err != nil {
 				return fmt.Errorf("failed to create target directory: %w", err)
 			}
 		}
 		if p.TargetWriteable {
-			if err := checkBackupTargetWritable(absTargetBasePath); err != nil {
+			if err := checkTargetWritable(absTargetPath); err != nil {
 				return fmt.Errorf("target path writable check failed: %w", err)
 			}
 		}
@@ -65,7 +65,7 @@ func (v *Validator) Run(ctx context.Context, absSourcePath, absTargetBasePath st
 
 	// 5. Check for path nesting.
 	if p.PathNesting {
-		if err := checkPathNesting(absSourcePath, absTargetBasePath); err != nil {
+		if err := checkPathNesting(absSourcePath, absTargetPath); err != nil {
 			return err
 		}
 	}
@@ -73,7 +73,7 @@ func (v *Validator) Run(ctx context.Context, absSourcePath, absTargetBasePath st
 	return nil
 }
 
-// checkBackupTargetAccessible performs pre-run checks to ensure the backup target is usable.
+// checkTargetAccessible performs pre-run checks to ensure the target is usable.
 // It provides more user-friendly errors than letting os.MkdirAll fail.
 //
 // The checks include:
@@ -84,7 +84,7 @@ func (v *Validator) Run(ctx context.Context, absSourcePath, absTargetBasePath st
 //     on a separate mounted drive. This prevents writing to a "ghost" directory if a drive is not
 //     mounted. This check is performed on the target path if it exists, or its deepest existing
 //     ancestor if it does not.
-func checkBackupTargetAccessible(targetPath string) error {
+func checkTargetAccessible(targetPath string) error {
 	// It's unsafe to operate on the current directory or the root of a filesystem.
 	if isUnsafeRoot(targetPath) {
 		return fmt.Errorf("target path cannot be the current directory ('.') or the root directory ('/')")
@@ -169,8 +169,8 @@ func checkPathNesting(source, target string) error {
 	return nil
 }
 
-// checkBackupSourceAccessible validates that the source path exists and is a directory.
-func checkBackupSourceAccessible(srcPath string) error {
+// checkSourceAccessible validates that the source path exists and is a directory.
+func checkSourceAccessible(srcPath string) error {
 	srcInfo, err := os.Stat(srcPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -186,9 +186,9 @@ func checkBackupSourceAccessible(srcPath string) error {
 	return nil
 }
 
-// checkBackupTargetWritable ensures the target directory can be created and is writable
+// checkTargetWritable ensures the target directory can be created and is writable
 // by performing filesystem modifications.
-func checkBackupTargetWritable(targetPath string) error {
+func checkTargetWritable(targetPath string) error {
 	// This function assumes the directory has been created by the caller.
 	// It first verifies the path exists and is a directory.
 	info, err := os.Stat(targetPath)

@@ -15,7 +15,7 @@ import (
 
 // Syncer is an interface for the preflight leaf package.
 type Validator interface {
-	Run(ctx context.Context, absSourcePath, absTargetBasePath string, p *preflight.Plan, timestampUTC time.Time) error
+	Run(ctx context.Context, absSourcePath, absTargetPath string, p *preflight.Plan, timestampUTC time.Time) error
 }
 
 // Syncer is an interface for the sync leaf package.
