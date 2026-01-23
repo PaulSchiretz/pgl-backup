@@ -36,6 +36,7 @@ type Retainer interface {
 
 type Compressor interface {
 	Compress(ctx context.Context, absTargetBasePath, relContentPathKey string, toCompress metafile.MetafileInfo, p *pathcompression.CompressPlan, timestampUTC time.Time) error
+	Extract(ctx context.Context, absTargetBasePath string, toExtract metafile.MetafileInfo, absExtractTargetPath string, p *pathcompression.ExtractPlan, timestampUTC time.Time) error
 }
 
 // Runner is the central orchestrator.

@@ -81,6 +81,10 @@ func (m *mockCompressor) Compress(ctx context.Context, absTargetBasePath, relCon
 	return m.err
 }
 
+func (m *mockCompressor) Extract(ctx context.Context, absTargetBasePath string, toExtract metafile.MetafileInfo, absExtractTargetPath string, p *pathcompression.ExtractPlan, timestampUTC time.Time) error {
+	return m.err
+}
+
 // TestHelperProcess isn't a real test. It's a helper process that the exec-based
 // tests can run. It's a standard pattern for testing code that uses os/exec.
 func TestHelperProcess(t *testing.T) {
