@@ -99,6 +99,7 @@ type BackupArchiveConfig struct {
 type CompressionPolicyConfig struct {
 	Enabled bool   `json:"enabled"`
 	Format  string `json:"format"`
+	Level   string `json:"level" comment:"Compression level: 'default', 'fastest', 'better', 'best'."`
 }
 
 type BackupCompressionConfig struct {
@@ -253,10 +254,12 @@ func NewDefault() Config {
 			Incremental: CompressionPolicyConfig{
 				Enabled: true,
 				Format:  "tar.zst",
+				Level:   "default",
 			},
 			Snapshot: CompressionPolicyConfig{
 				Enabled: true,
 				Format:  "tar.zst",
+				Level:   "default",
 			},
 		},
 		Hooks: BackupHooksConfig{
@@ -564,7 +567,7 @@ func (c *Config) LogSummary() {
 		}
 
 		if c.Compression.Incremental.Enabled {
-			compressionSummary := fmt.Sprintf("enabled (f:%s)", c.Compression.Incremental.Format)
+			compressionSummary := fmt.Sprintf("enabled (f:%s l:%s)", c.Compression.Incremental.Format, c.Compression.Incremental.Level)
 			logArgs = append(logArgs, "compression", compressionSummary)
 		}
 
@@ -600,7 +603,7 @@ func (c *Config) LogSummary() {
 		}
 
 		if c.Compression.Snapshot.Enabled {
-			compressionSummary := fmt.Sprintf("enabled (f:%s)", c.Compression.Snapshot.Format)
+			compressionSummary := fmt.Sprintf("enabled (f:%s l:%s)", c.Compression.Snapshot.Format, c.Compression.Snapshot.Level)
 			logArgs = append(logArgs, "compression", compressionSummary)
 		}
 
@@ -755,10 +758,14 @@ func MergeConfigWithFlags(command flagparse.Command, base Config, setFlags map[s
 			merged.Compression.Incremental.Enabled = value.(bool)
 		case "compression-incremental-format":
 			merged.Compression.Incremental.Format = value.(string)
+		case "compression-incremental-level":
+			merged.Compression.Incremental.Level = value.(string)
 		case "compression-snapshot":
 			merged.Compression.Snapshot.Enabled = value.(bool)
 		case "compression-snapshot-format":
 			merged.Compression.Snapshot.Format = value.(string)
+		case "compression-snapshot-level":
+			merged.Compression.Snapshot.Level = value.(string)
 		default:
 			plog.Debug("unhandled flag in MergeConfigWithFlags", "flag", name)
 		}

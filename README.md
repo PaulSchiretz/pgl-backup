@@ -286,11 +286,13 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
   "compression": {
     "incremental": {
       "enabled": true,
-      "format": "tar.zst"
+      "format": "tar.zst",
+      "Level": "default"
     },
     "snapshot": {
       "enabled": true,
-      "format": "tar.zst"
+      "format": "tar.zst",
+      "Level": "default"
     }
   },
   "hooks": {
@@ -715,8 +717,10 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | **Compression** | | | |
 | `compression-incremental` / `compression.incremental.enabled` | `bool` | `true` | Enable compression for incremental backups. |
 | `compression-incremental-format` / `compression.incremental.format` | `string` | `"tar.zst"` | `"zip"`, `"tar.gz"`, or `"tar.zst"`. |
+| `compression-incremental-level` / `compression.incremental.level` | `string` | `"default"` | Compression level: `"default"`, `"fastest"`, `"better"`, `"best"`. |
 | `compression-snapshot` / `compression.snapshot.enabled` | `bool` | `true` | Enable compression for snapshot backups. |
 | `compression-snapshot-format` / `compression.snapshot.format` | `string` | `"tar.zst"` | `"zip"`, `"tar.gz"`, or `"tar.zst"`. |
+| `compression-snapshot-level` / `compression.snapshot.level` | `string` | `"default"` | Compression level: `"default"`, `"fastest"`, `"better"`, `"best"`. |
 | **Performance Tuning** | | | |
 | `sync-workers` / `engine.performance.syncWorkers` | `int` | `4` | Number of concurrent workers for file synchronization. |
 | `mirror-workers` / `engine.performance.mirrorWorkers` | `int` | `4` | Number of concurrent workers for file deletions in mirror mode. |

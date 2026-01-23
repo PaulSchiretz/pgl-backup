@@ -54,8 +54,10 @@ type cliFlags struct {
 
 	CompressionIncrementalEnabled *bool
 	CompressionIncrementalFormat  *string
+	CompressionIncrementalLevel   *string
 	CompressionSnapshotEnabled    *bool
 	CompressionSnapshotFormat     *string
+	CompressionSnapshotLevel      *string
 
 	RetentionIncrementalEnabled *bool
 	RetentionIncrementalHours   *int
@@ -133,8 +135,10 @@ func registerBackupFlags(fs *flag.FlagSet, f *cliFlags) {
 
 	f.CompressionIncrementalEnabled = fs.Bool("compression-incremental", true, "Enable compression for incremental backups.")
 	f.CompressionIncrementalFormat = fs.String("compression-incremental-format", "", "Compression format for incremental backups: 'zip', 'tar.gz', or 'tar.zst'.")
+	f.CompressionIncrementalLevel = fs.String("compression-incremental-level", "", "Compression level for incremental backups: 'default', 'fastest', 'better', 'best'.")
 	f.CompressionSnapshotEnabled = fs.Bool("compression-snapshot", true, "Enable compression for snapshot backups.")
 	f.CompressionSnapshotFormat = fs.String("compression-snapshot-format", "", "Compression format for snapshot backups: 'zip', 'tar.gz', or 'tar.zst'.")
+	f.CompressionSnapshotLevel = fs.String("compression-snapshot-level", "", "Compression level for snapshot backups: 'default', 'fastest', 'better', 'best'.")
 }
 
 func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
@@ -188,8 +192,10 @@ func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
 
 	f.CompressionIncrementalEnabled = fs.Bool("compression-incremental", true, "Enable compression for incremental backups.")
 	f.CompressionIncrementalFormat = fs.String("compression-incremental-format", "", "Compression format for incremental backups: 'zip', 'tar.gz', or 'tar.zst'.")
+	f.CompressionIncrementalLevel = fs.String("compression-incremental-level", "", "Compression level for incremental backups: 'default', 'fastest', 'better', 'best'.")
 	f.CompressionSnapshotEnabled = fs.Bool("compression-snapshot", true, "Enable compression for snapshot backups.")
 	f.CompressionSnapshotFormat = fs.String("compression-snapshot-format", "", "Compression format for snapshot backups: 'zip', 'tar.gz', or 'tar.zst'.")
+	f.CompressionSnapshotLevel = fs.String("compression-snapshot-level", "", "Compression level for snapshot backups: 'default', 'fastest', 'better', 'best'.")
 }
 
 func registerPruneFlags(fs *flag.FlagSet, f *cliFlags) {
@@ -324,8 +330,10 @@ func flagsToMap(c Command, fs *flag.FlagSet, f *cliFlags) (map[string]interface{
 
 	addIfUsed(flagMap, usedFlags, "compression-incremental", f.CompressionIncrementalEnabled)
 	addIfUsed(flagMap, usedFlags, "compression-incremental-format", f.CompressionIncrementalFormat)
+	addIfUsed(flagMap, usedFlags, "compression-incremental-level", f.CompressionIncrementalLevel)
 	addIfUsed(flagMap, usedFlags, "compression-snapshot", f.CompressionSnapshotEnabled)
 	addIfUsed(flagMap, usedFlags, "compression-snapshot-format", f.CompressionSnapshotFormat)
+	addIfUsed(flagMap, usedFlags, "compression-snapshot-level", f.CompressionSnapshotLevel)
 
 	addIfUsed(flagMap, usedFlags, "retention-incremental", f.RetentionIncrementalEnabled)
 	addIfUsed(flagMap, usedFlags, "retention-incremental-hours", f.RetentionIncrementalHours)

@@ -23,6 +23,7 @@ type compressTask struct {
 	ctx               context.Context
 	toCompress        metafile.MetafileInfo
 	format            Format
+	level             Level
 	timestampUTC      time.Time
 	metrics           pathcompressionmetrics.Metrics
 	dryRun            bool
@@ -93,7 +94,7 @@ func (t *compressTask) compressBackup(absToCompressPath, absToCompressContentPat
 	// Cleanup stale tmp files from crashed runs.
 	defer t.cleanupStaleTempFiles(absToCompressPath)
 
-	compressor, err := newCompressor(t.format)
+	compressor, err := newCompressor(t.format, t.level)
 	if err != nil {
 		return err
 	}

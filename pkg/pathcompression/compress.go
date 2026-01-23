@@ -25,20 +25,22 @@ type compressor interface {
 }
 
 // newCompressor returns the correct implementation based on the format.
-func newCompressor(format Format) (compressor, error) {
+func newCompressor(format Format, level Level) (compressor, error) {
 	switch format {
 	case Zip:
-		return &zipCompressor{}, nil
+		return &zipCompressor{level: level}, nil
 	case TarGz:
-		return &tarCompressor{compression: TarGz}, nil
+		return &tarCompressor{compression: TarGz, level: level}, nil
 	case TarZst:
-		return &tarCompressor{compression: TarZst}, nil
+		return &tarCompressor{compression: TarZst, level: level}, nil
 	default:
 		return nil, fmt.Errorf("unsupported format: %s", format)
 	}
 }
 
-type zipCompressor struct{}
+type zipCompressor struct {
+	level Level
+}
 
 func (c *zipCompressor) Compress(ctx context.Context, absSourcePath, absArchiveFilePath string, writerPool, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics) (retErr error) {
 	// 1. Create Temp File
@@ -92,7 +94,18 @@ func (c *zipCompressor) writeArchive(ctx context.Context, absSourcePath string, 
 
 	zipWriter := zip.NewWriter(bufWriter)
 	zipWriter.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
-		return flate.NewWriter(out, flate.DefaultCompression)
+		var lvl int
+		switch c.level {
+		case Fastest:
+			lvl = flate.BestSpeed
+		case Better:
+			lvl = 6 // Good balance
+		case Best:
+			lvl = flate.BestCompression
+		default:
+			lvl = flate.DefaultCompression
+		}
+		return flate.NewWriter(out, lvl)
 	})
 
 	// Robust cleanup
@@ -161,6 +174,7 @@ func (c *zipCompressor) writeArchive(ctx context.Context, absSourcePath string, 
 
 type tarCompressor struct {
 	compression Format
+	level       Level
 }
 
 func (c *tarCompressor) Compress(ctx context.Context, absSourcePath, absArchiveFilePath string, writerPool, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics) (retErr error) {
@@ -213,13 +227,42 @@ func (c *tarCompressor) writeArchive(ctx context.Context, absSourcePath string, 
 
 	var compressedWriter io.WriteCloser
 	if c.compression == TarZst {
-		zstdWriter, err := zstd.NewWriter(bufWriter)
+		opts := []zstd.EOption{}
+		var encoderLevel zstd.EncoderLevel
+		switch c.level {
+		case Fastest:
+			encoderLevel = zstd.SpeedFastest
+		case Better:
+			encoderLevel = zstd.SpeedBetterCompression
+		case Best:
+			encoderLevel = zstd.SpeedBestCompression
+		default:
+			encoderLevel = zstd.SpeedDefault
+		}
+		opts = append(opts, zstd.WithEncoderLevel(encoderLevel))
+
+		zstdWriter, err := zstd.NewWriter(bufWriter, opts...)
 		if err != nil {
 			return fmt.Errorf("failed to create zstd writer: %w", err)
 		}
 		compressedWriter = zstdWriter
 	} else {
-		compressedWriter = pgzip.NewWriter(bufWriter)
+		var lvl int
+		switch c.level {
+		case Fastest:
+			lvl = pgzip.BestSpeed
+		case Better:
+			lvl = 6 // Good balance
+		case Best:
+			lvl = pgzip.BestCompression
+		default:
+			lvl = pgzip.DefaultCompression
+		}
+		pgzipWriter, err := pgzip.NewWriterLevel(bufWriter, lvl)
+		if err != nil {
+			return fmt.Errorf("failed to create gzip writer: %w", err)
+		}
+		compressedWriter = pgzipWriter
 	}
 
 	tarWriter := tar.NewWriter(compressedWriter)

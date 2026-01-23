@@ -126,6 +126,11 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 		return nil, err
 	}
 
+	compressionLevel, err := pathcompression.ParseLevel(compressionCfg.Level)
+	if err != nil {
+		return nil, err
+	}
+
 	// finish the plan
 	return &BackupPlan{
 
@@ -198,6 +203,7 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 		Compression: &pathcompression.CompressPlan{
 			Enabled: compressionCfg.Enabled,
 			Format:  compressionFormat,
+			Level:   compressionLevel,
 			// Global Flags
 			DryRun:   dryRun,
 			FailFast: failFast,

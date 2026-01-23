@@ -92,6 +92,7 @@ func (c *PathCompressor) Compress(ctx context.Context, absTargetBasePath, relCon
 		relContentPathKey: relContentPathKey,
 		ctx:               ctx,
 		format:            p.Format,
+		level:             p.Level,
 		toCompress:        toCompress,
 		timestampUTC:      timestampUTC,
 		metrics:           m,

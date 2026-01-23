@@ -4,6 +4,7 @@ package pathcompression
 type CompressPlan struct {
 	Enabled bool
 	Format  Format
+	Level   Level
 
 	// Global Flags
 	DryRun   bool
