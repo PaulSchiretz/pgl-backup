@@ -613,15 +613,17 @@ func (t *nativeTask) processSymlinkSync(task *syncTask) error {
 // processDirectorySync handles the creation and permission setting for a directory in the destination.
 // It returns an error (specifically filepath.SkipDir) if the directory cannot be created.
 func (t *nativeTask) processDirectorySync(task *syncTask) error {
-
-	if t.dryRun {
-		plog.Notice("[DRY RUN] DIR", "path", task.RelPathKey)
-		return nil
-	}
-
 	// 1. FAST PATH: Check the cache first.
 	if t.syncedDirCache.Has(task.RelPathKey) {
 		return nil // Already created.
+	}
+
+	if t.dryRun {
+		// Atomically update cache to ensure we only log once per directory.
+		if alreadyExisted := t.syncedDirCache.LoadOrStore(task.RelPathKey); !alreadyExisted {
+			plog.Notice("[DRY RUN] DIR", "path", task.RelPathKey)
+		}
+		return nil
 	}
 
 	// Convert the path to the OS-native format for file access
