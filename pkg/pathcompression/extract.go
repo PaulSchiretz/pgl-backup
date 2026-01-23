@@ -55,7 +55,7 @@ func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 		metrics.AddEntriesProcessed(1)
 		metrics.AddOriginalBytes(int64(f.UncompressedSize64))
 
-		// Zip Slip protection:
+		// Security: Zip Slip protection:
 		// Ensure that the target path is within the extraction directory.
 		// This prevents malicious archives from writing to arbitrary paths via relative paths like "../../etc/passwd".
 		relPath := util.NormalizePath(f.Name)
@@ -170,7 +170,7 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 		metrics.AddEntriesProcessed(1)
 		metrics.AddOriginalBytes(header.Size)
 
-		// Zip Slip protection:
+		// Security: Zip Slip protection:
 		// Ensure that the target path is within the extraction directory.
 		// This prevents malicious archives from writing to arbitrary paths via relative paths like "../../etc/passwd".
 		relPath := util.NormalizePath(header.Name)
