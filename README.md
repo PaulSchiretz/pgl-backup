@@ -182,7 +182,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
 
 ```json
 {
-  "version": "v1.0.0",
+  "version": "1.3.1",
   "logLevel": "info",
   "paths": {
     "incremental": {
@@ -196,7 +196,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
       "archive": "PGL_Backup_Snapshot_Archive",
       "content": "PGL_Backup_Content",
       "backupNamePrefix": "PGL_Backup_"
-    },
+    }
   },
   "engine": {
     "metrics": true,
@@ -210,7 +210,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
   },
   "sync": {
     "enabled": true,
-    "PreserveSourceDirName": true,
+    "preserveSourceDirName": true,
     "engine": "native",
     "retryCount": 3,
     "retryWaitSeconds": 5,
@@ -252,17 +252,17 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
     },
     "snapshot": {
       "enabled": false,
-      "hours": 0,
-      "days": 0,
-      "weeks": 4,
-      "months": 0,
-      "years": 0
+      "hours": -1,
+      "days": -1,
+      "weeks": -1,
+      "months": -1,
+      "years": -1
     }
   },
   "compression": {
     "enabled": true,
     "format": "tar.zst",
-    "Level": "default"
+    "level": "default"
   },
   "hooks": {
     "preBackup": [],
