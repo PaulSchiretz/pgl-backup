@@ -73,7 +73,7 @@ func TestRun(t *testing.T) {
 		{
 			name:          "Backup Missing Source",
 			args:          []string{"pgl-backup", "backup", "-base", tmpDir},
-			expectedError: "source path cannot be empty",
+			expectedError: "the -source flag is required",
 		},
 		{
 			name:          "Backup Non-Existent Source",

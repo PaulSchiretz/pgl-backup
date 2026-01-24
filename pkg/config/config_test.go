@@ -26,104 +26,28 @@ func TestConfig_Validate(t *testing.T) {
 	// Helper to create a valid base configuration
 	validConfig := func() Config {
 		c := NewDefault()
-		c.Source = "/tmp/source"
-		c.Base = "/tmp/target"
 		return c
 	}
-
-	// We need actual temp dirs for the "checkSource" = true cases to pass existence checks.
-	tmpSource := t.TempDir()
-	tmpTarget := t.TempDir()
-	tmpBase := t.TempDir()
 
 	tests := []struct {
 		name        string
 		modify      func(*Config)
-		opts        ValidationOptions
 		wantErr     bool
 		errContains string
 	}{
 		{
 			name: "Valid Config (Incremental)",
 			modify: func(c *Config) {
-				c.Source = tmpSource
-				c.Base = tmpBase
 				c.Runtime.Mode = "incremental"
 			},
-			opts:    ValidationOptions{CheckSource: true, CheckSourceExists: true, CheckBaseExists: true},
 			wantErr: false,
 		},
 		{
 			name: "Valid Config (Snapshot)",
 			modify: func(c *Config) {
-				c.Source = tmpSource
-				c.Base = tmpBase
 				c.Runtime.Mode = "snapshot"
 			},
-			opts:    ValidationOptions{CheckSource: true, CheckSourceExists: true},
 			wantErr: false,
-		},
-		{
-			name: "Empty Source (CheckSource=true)",
-			modify: func(c *Config) {
-				c.Source = ""
-			},
-			opts:        ValidationOptions{CheckSource: true},
-			wantErr:     true,
-			errContains: "source path cannot be empty",
-		},
-		{
-			name: "Empty Source (CheckSource=false)",
-			modify: func(c *Config) {
-				c.Source = ""
-			},
-			opts:    ValidationOptions{CheckSource: false},
-			wantErr: false,
-		},
-		{
-			name: "Non-Existent Source",
-			modify: func(c *Config) {
-				c.Source = filepath.Join(tmpSource, "nonexistent")
-			},
-			opts:        ValidationOptions{CheckSource: true, CheckSourceExists: true},
-			wantErr:     true,
-			errContains: "does not exist",
-		},
-		{
-			name: "Empty Target",
-			modify: func(c *Config) {
-				c.Base = ""
-			},
-			opts:        ValidationOptions{},
-			wantErr:     true,
-			errContains: "base path cannot be empty",
-		},
-		{
-			name: "Non-Existent Base (CheckBaseExists=true)",
-			modify: func(c *Config) {
-				c.Base = filepath.Join(tmpBase, "nonexistent")
-			},
-			opts:        ValidationOptions{CheckBaseExists: true},
-			wantErr:     true,
-			errContains: "does not exist",
-		},
-		{
-			name: "Empty Target (CheckTarget=true)",
-			modify: func(c *Config) {
-				c.Target = ""
-			},
-			opts:        ValidationOptions{CheckTarget: true},
-			wantErr:     true,
-			errContains: "target path cannot be empty",
-		},
-		{
-			name: "Non-Existent Target (CheckTarget=true)",
-			modify: func(c *Config) {
-				c.Target = filepath.Join(tmpTarget, "nonexistent")
-			},
-			opts:        ValidationOptions{CheckTarget: true, CheckTargetExists: true},
-			wantErr:     true,
-			errContains: "does not exist",
 		},
 		// Incremental Path Checks
 		{
@@ -132,7 +56,6 @@ func TestConfig_Validate(t *testing.T) {
 				c.Runtime.Mode = "incremental"
 				c.Paths.Incremental.Archive = ""
 			},
-			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "paths.incremental.archive cannot be empty",
 		},
@@ -143,7 +66,6 @@ func TestConfig_Validate(t *testing.T) {
 				c.Paths.Incremental.Current = "same"
 				c.Paths.Incremental.Archive = "same"
 			},
-			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "cannot be the same",
 		},
@@ -153,7 +75,6 @@ func TestConfig_Validate(t *testing.T) {
 				c.Runtime.Mode = "incremental"
 				c.Paths.Incremental.Archive = "sub/dir"
 			},
-			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "cannot contain path separators",
 		},
@@ -164,7 +85,6 @@ func TestConfig_Validate(t *testing.T) {
 				c.Runtime.Mode = "snapshot"
 				c.Paths.Snapshot.Current = ""
 			},
-			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "paths.snapshot.current cannot be empty",
 		},
@@ -175,7 +95,6 @@ func TestConfig_Validate(t *testing.T) {
 				c.Paths.Snapshot.Archive = "same"
 				c.Paths.Snapshot.Content = "same"
 			},
-			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "cannot be the same",
 		},
@@ -185,7 +104,6 @@ func TestConfig_Validate(t *testing.T) {
 			modify: func(c *Config) {
 				c.Engine.Performance.SyncWorkers = 0
 			},
-			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "syncWorkers must be at least 1",
 		},
@@ -195,7 +113,6 @@ func TestConfig_Validate(t *testing.T) {
 				c.Runtime.Mode = "incremental"
 				c.Sync.RetryCount = -1
 			},
-			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "retryCount cannot be negative",
 		},
@@ -205,7 +122,6 @@ func TestConfig_Validate(t *testing.T) {
 			modify: func(c *Config) {
 				c.Sync.UserExcludeFiles = []string{"["}
 			},
-			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "invalid glob pattern",
 		},
@@ -216,7 +132,6 @@ func TestConfig_Validate(t *testing.T) {
 				c.Retention.Incremental.Enabled = true
 				c.Retention.Incremental.Days = -1
 			},
-			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "retention.incremental is enabled but contains negative values",
 		},
@@ -230,7 +145,6 @@ func TestConfig_Validate(t *testing.T) {
 				c.Retention.Incremental.Months = 0
 				c.Retention.Incremental.Years = 0
 			},
-			opts:    ValidationOptions{},
 			wantErr: false,
 		},
 		{
@@ -243,7 +157,6 @@ func TestConfig_Validate(t *testing.T) {
 				c.Retention.Incremental.Months = 0
 				c.Retention.Incremental.Years = 0
 			},
-			opts:    ValidationOptions{},
 			wantErr: false,
 		},
 		{
@@ -252,7 +165,6 @@ func TestConfig_Validate(t *testing.T) {
 				c.Retention.Snapshot.Enabled = true
 				// Defaults are -1, so this should fail validation.
 			},
-			opts:        ValidationOptions{},
 			wantErr:     true,
 			errContains: "retention.snapshot is enabled but contains negative values",
 		},
@@ -262,7 +174,6 @@ func TestConfig_Validate(t *testing.T) {
 				c.Retention.Snapshot.Enabled = false
 				c.Retention.Snapshot.Hours = -1
 			},
-			opts:    ValidationOptions{},
 			wantErr: false,
 		},
 		{
@@ -275,7 +186,6 @@ func TestConfig_Validate(t *testing.T) {
 				c.Retention.Snapshot.Months = 0
 				c.Retention.Snapshot.Years = 0
 			},
-			opts:    ValidationOptions{},
 			wantErr: false,
 		},
 		{
@@ -288,7 +198,6 @@ func TestConfig_Validate(t *testing.T) {
 				c.Retention.Snapshot.Months = 0
 				c.Retention.Snapshot.Years = 0
 			},
-			opts:    ValidationOptions{},
 			wantErr: false,
 		},
 	}
@@ -297,7 +206,7 @@ func TestConfig_Validate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := validConfig()
 			tt.modify(&cfg)
-			err := cfg.Validate(tt.opts)
+			err := cfg.Validate()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -396,12 +305,10 @@ func TestMergeConfigWithFlags(t *testing.T) {
 func TestGenerateAndLoad(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := NewDefault()
-	cfg.Base = tmpDir
-	cfg.Source = "/some/source"
 	cfg.LogLevel = "warn"
 
 	// Test Generate
-	if err := Generate(cfg); err != nil {
+	if err := Generate(tmpDir, cfg); err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
 
@@ -424,9 +331,6 @@ func TestGenerateAndLoad(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if loadedCfg.Source != "/some/source" {
-		t.Errorf("Loaded Source = %v, want /some/source", loadedCfg.Source)
-	}
 	if loadedCfg.LogLevel != "warn" {
 		t.Errorf("Loaded LogLevel = %v, want warn", loadedCfg.LogLevel)
 	}
@@ -466,5 +370,44 @@ func TestExcludeHelpers(t *testing.T) {
 	}
 	if !hasFile(dirs, "user_dir") {
 		t.Error("ExcludeDirs() missing user exclude 'user_dir'")
+	}
+}
+
+func TestConfig_Validate_Normalization(t *testing.T) {
+	c := NewDefault()
+
+	// Set mixed-case values to verify normalization
+	c.Runtime.Mode = "Incremental"
+	c.Archive.IntervalMode = "Manual"
+	c.Compression.Format = "TAR.GZ"
+	c.Compression.Level = "Best"
+	c.Sync.Engine = "Native"
+	c.Runtime.BackupOverwriteBehavior = "Always"
+	c.Runtime.RestoreOverwriteBehavior = "If-Newer"
+
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate() failed: %v", err)
+	}
+
+	if c.Runtime.Mode != "incremental" {
+		t.Errorf("Runtime.Mode not normalized: got %q, want %q", c.Runtime.Mode, "incremental")
+	}
+	if c.Archive.IntervalMode != "manual" {
+		t.Errorf("Archive.IntervalMode not normalized: got %q, want %q", c.Archive.IntervalMode, "manual")
+	}
+	if c.Compression.Format != "tar.gz" {
+		t.Errorf("Compression.Format not normalized: got %q, want %q", c.Compression.Format, "tar.gz")
+	}
+	if c.Compression.Level != "best" {
+		t.Errorf("Compression.Level not normalized: got %q, want %q", c.Compression.Level, "best")
+	}
+	if c.Sync.Engine != "native" {
+		t.Errorf("Sync.Engine not normalized: got %q, want %q", c.Sync.Engine, "native")
+	}
+	if c.Runtime.BackupOverwriteBehavior != "always" {
+		t.Errorf("Runtime.BackupOverwriteBehavior not normalized: got %q, want %q", c.Runtime.BackupOverwriteBehavior, "always")
+	}
+	if c.Runtime.RestoreOverwriteBehavior != "if-newer" {
+		t.Errorf("Runtime.RestoreOverwriteBehavior not normalized: got %q, want %q", c.Runtime.RestoreOverwriteBehavior, "if-newer")
 	}
 }

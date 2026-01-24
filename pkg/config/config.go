@@ -27,10 +27,10 @@ var systemExcludeFilePatterns = []string{metafile.MetaFileName, lockfile.LockFil
 var systemExcludeDirPatterns = []string{}
 
 type PathConfig struct {
-	Current         string `json:"current"`
-	Archive         string `json:"archive"`
-	Content         string `json:"content"`
-	BackupDirPrefix string `json:"backupDirPrefix"`
+	Current          string `json:"current"`
+	Archive          string `json:"archive"`
+	Content          string `json:"content"`
+	BackupNamePrefix string `json:"backupNamePrefix"`
 }
 
 type PathsConfig struct {
@@ -117,22 +117,10 @@ type RuntimeConfig struct {
 	DryRun                   bool
 	BackupOverwriteBehavior  string
 	RestoreOverwriteBehavior string
-	BackupName               string
-}
-
-type ValidationOptions struct {
-	CheckSource       bool
-	CheckSourceExists bool
-	CheckTarget       bool
-	CheckTargetExists bool
-	CheckBaseExists   bool
 }
 
 type Config struct {
 	Version     string            `json:"version"`
-	Source      string            `json:"source"`
-	Target      string            `json:"-"` // Used only in Restore mode, so it is never added to config file
-	Base        string            `json:"-"` // Never added to config file
 	Runtime     RuntimeConfig     `json:"-"` // Never added to config file
 	LogLevel    string            `json:"logLevel"`
 	Paths       PathsConfig       `json:"paths"`
@@ -152,9 +140,6 @@ func NewDefault() Config {
 	// Power users on Windows can still opt-in to 'robocopy' as a battle-tested alternative.
 	return Config{
 		Version:  buildinfo.Version,
-		Base:     "",     // Intentionally empty to force user configuration.
-		Source:   "",     // Intentionally empty to force user configuration.
-		Target:   "",     // Intentionally empty to force user configuration.
 		LogLevel: "info", // Default log level.
 		Runtime: RuntimeConfig{
 			Mode:                     "incremental", // Default mode
@@ -164,16 +149,16 @@ func NewDefault() Config {
 		},
 		Paths: PathsConfig{
 			Incremental: PathConfig{
-				Current:         "PGL_Backup_Incremental_Current", // Default name for the incremental current sub-directory.
-				Archive:         "PGL_Backup_Incremental_Archive", // Default name for the incremental archive sub-directory.
-				Content:         "PGL_Backup_Content",             // Default name for the incremental content sub-directory.
-				BackupDirPrefix: "PGL_Backup_",
+				Current:          "PGL_Backup_Incremental_Current", // Default name for the incremental current sub-directory.
+				Archive:          "PGL_Backup_Incremental_Archive", // Default name for the incremental archive sub-directory.
+				Content:          "PGL_Backup_Content",             // Default name for the incremental content sub-directory.
+				BackupNamePrefix: "PGL_Backup_",
 			},
 			Snapshot: PathConfig{
-				Current:         "PGL_Backup_Snapshot_Current", // Default name for the snapshot current sub-directory.
-				Archive:         "PGL_Backup_Snapshot_Archive", // Default name for the snapshot archive sub-directory.
-				Content:         "PGL_Backup_Content",          // Default name for the snapshot content sub-directory.
-				BackupDirPrefix: "PGL_Backup_",
+				Current:          "PGL_Backup_Snapshot_Current", // Default name for the snapshot current sub-directory.
+				Archive:          "PGL_Backup_Snapshot_Archive", // Default name for the snapshot archive sub-directory.
+				Content:          "PGL_Backup_Content",          // Default name for the snapshot content sub-directory.
+				BackupNamePrefix: "PGL_Backup_",
 			},
 		},
 		Engine: EngineConfig{
@@ -278,23 +263,6 @@ func Load(absBasePath string) (Config, error) {
 		return Config{}, fmt.Errorf("error parsing config file %s: %w", absConfigFilePath, err)
 	}
 
-	// After loading, validate that if there is a base in the config file it matches the
-	// directory it was loaded from. This prevents using a config file in the wrong directory.
-	// NOTE: there should never be a base in the config!
-	if config.Base != "" {
-		absBaseInConfig, err := filepath.Abs(config.Base)
-		if err != nil {
-			return Config{}, fmt.Errorf("could not determine absolute path for base in config %s: %w", config.Base, err)
-		}
-
-		if absBasePath != absBaseInConfig {
-			return Config{}, fmt.Errorf("base in config file (%s) does not match the directory it was loaded from (%s)", absBaseInConfig, absBasePath)
-		}
-	} else {
-		// Set the base
-		config.Base = absBasePath
-	}
-
 	// At this point our config has been migrated if needed so override the version in the struct
 	if config.Version != buildinfo.Version {
 		config.Version = buildinfo.Version
@@ -304,8 +272,8 @@ func Load(absBasePath string) (Config, error) {
 
 // Generate creates or overwrites a default pgl-backup.config.json file in the specified
 // target directory.
-func Generate(configToGenerate Config) error {
-	absConfigFilePath := util.DenormalizePath(filepath.Join(configToGenerate.Base, ConfigFileName))
+func Generate(absBasePath string, configToGenerate Config) error {
+	absConfigFilePath := util.DenormalizePath(filepath.Join(absBasePath, ConfigFileName))
 	// Marshal the default config into nicely formatted JSON.
 	jsonData, err := json.MarshalIndent(configToGenerate, "", "  ")
 	if err != nil {
@@ -324,67 +292,16 @@ func Generate(configToGenerate Config) error {
 // Validate checks the configuration for logical errors and inconsistencies.
 // It performs strict checks, including ensuring the source path is non-empty
 // and exists.
-func (c *Config) Validate(opts ValidationOptions) error {
-	// --- Strict Path Validation (Fail-Fast) ---
-	if opts.CheckSource && c.Source == "" {
-		return fmt.Errorf("source path cannot be empty")
-	}
-	if opts.CheckTarget && c.Target == "" {
-		return fmt.Errorf("target path cannot be empty")
-	}
-	if c.Base == "" {
-		return fmt.Errorf("base path cannot be empty")
-	}
+func (c *Config) Validate() error {
 
-	// Clean and expand paths for canonical representation before use.
-	var err error
-
-	// --- Validate Source Path ---
-	if c.Source != "" {
-		c.Source, err = util.ExpandPath(c.Source)
-		if err != nil {
-			return fmt.Errorf("could not expand source path: %w", err)
-		}
-		c.Source = filepath.Clean(c.Source)
-
-		// After cleaning and expanding the path, check for existence.
-		if opts.CheckSourceExists {
-			if _, err := os.Stat(c.Source); os.IsNotExist(err) {
-				return fmt.Errorf("source path '%s' does not exist", c.Source)
-			}
-		}
-	}
-
-	// --- Validate Target Path ---
-	if c.Target != "" {
-		c.Target, err = util.ExpandPath(c.Target)
-		if err != nil {
-			return fmt.Errorf("could not expand target path: %w", err)
-		}
-		c.Target = filepath.Clean(c.Target)
-
-		// After cleaning and expanding the path, check for existence.
-		if opts.CheckTargetExists {
-			if _, err := os.Stat(c.Target); os.IsNotExist(err) {
-				return fmt.Errorf("target path '%s' does not exist", c.Target)
-			}
-		}
-	}
-
-	// --- Validate Base Path ---
-	if c.Base != "" {
-		c.Base, err = util.ExpandPath(c.Base)
-		if err != nil {
-			return fmt.Errorf("could not expand base path: %w", err)
-		}
-		c.Base = filepath.Clean(c.Base)
-
-		if opts.CheckBaseExists {
-			if _, err := os.Stat(c.Base); os.IsNotExist(err) {
-				return fmt.Errorf("base path '%s' does not exist", c.Base)
-			}
-		}
-	}
+	// Normalize enums to lowercase to ensure case-insensitive behavior
+	c.Runtime.Mode = strings.ToLower(c.Runtime.Mode)
+	c.Archive.IntervalMode = strings.ToLower(c.Archive.IntervalMode)
+	c.Compression.Format = strings.ToLower(c.Compression.Format)
+	c.Compression.Level = strings.ToLower(c.Compression.Level)
+	c.Sync.Engine = strings.ToLower(c.Sync.Engine)
+	c.Runtime.BackupOverwriteBehavior = strings.ToLower(c.Runtime.BackupOverwriteBehavior)
+	c.Runtime.RestoreOverwriteBehavior = strings.ToLower(c.Runtime.RestoreOverwriteBehavior)
 
 	// --- Validate Shared Settings ---
 	if c.Sync.RetryCount < 0 {
@@ -411,15 +328,7 @@ func (c *Config) Validate(opts ValidationOptions) error {
 		if c.Paths.Incremental.Content == "" {
 			return fmt.Errorf("paths.incremental.content cannot be empty")
 		}
-		if c.Paths.Incremental.Current == c.Paths.Incremental.Archive {
-			return fmt.Errorf("paths.incremental.current and paths.incremental.archive cannot be the same")
-		}
-		if c.Paths.Incremental.Current == c.Paths.Incremental.Content {
-			return fmt.Errorf("paths.incremental.current and paths.incremental.content cannot be the same")
-		}
-		if c.Paths.Incremental.Archive == c.Paths.Incremental.Content {
-			return fmt.Errorf("paths.incremental.archive and paths.incremental.content cannot be the same")
-		}
+
 		// Disallow path separators to ensure the archives directory is a direct child of the target.
 		// This is critical for guaranteeing that the atomic `os.Rename` operation during archive
 		// works correctly, as it requires the source and destination to be on the same filesystem.
@@ -433,6 +342,16 @@ func (c *Config) Validate(opts ValidationOptions) error {
 			return fmt.Errorf("paths.incremental.content cannot contain path separators ('/' or '\\')")
 		}
 
+		if strings.EqualFold(c.Paths.Incremental.Current, c.Paths.Incremental.Archive) {
+			return fmt.Errorf("paths.incremental.current and paths.incremental.archive cannot be the same")
+		}
+		if strings.EqualFold(c.Paths.Incremental.Current, c.Paths.Incremental.Content) {
+			return fmt.Errorf("paths.incremental.current and paths.incremental.content cannot be the same")
+		}
+		if strings.EqualFold(c.Paths.Incremental.Archive, c.Paths.Incremental.Content) {
+			return fmt.Errorf("paths.incremental.archive and paths.incremental.content cannot be the same")
+		}
+
 	case "snapshot":
 		if c.Paths.Snapshot.Archive == "" {
 			return fmt.Errorf("paths.snapshot.archive cannot be empty")
@@ -443,15 +362,7 @@ func (c *Config) Validate(opts ValidationOptions) error {
 		if c.Paths.Snapshot.Content == "" {
 			return fmt.Errorf("paths.snapshot.content cannot be empty")
 		}
-		if c.Paths.Snapshot.Current == c.Paths.Snapshot.Archive {
-			return fmt.Errorf("paths.snapshot.current and paths.snapshot.archive cannot be the same")
-		}
-		if c.Paths.Snapshot.Current == c.Paths.Snapshot.Content {
-			return fmt.Errorf("paths.snapshot.current and paths.snapshot.content cannot be the same")
-		}
-		if c.Paths.Snapshot.Archive == c.Paths.Snapshot.Content {
-			return fmt.Errorf("paths.snapshot.archive and paths.snapshot.content cannot be the same")
-		}
+
 		// Disallow path separators to ensure the archives directory is a direct child of the target.
 		// This is critical for guaranteeing that the atomic `os.Rename` operation during archive
 		// works correctly, as it requires the source and destination to be on the same filesystem.
@@ -463,6 +374,16 @@ func (c *Config) Validate(opts ValidationOptions) error {
 		}
 		if strings.ContainsAny(c.Paths.Snapshot.Content, `\/`) {
 			return fmt.Errorf("paths.snapshot.content cannot contain path separators ('/' or '\\')")
+		}
+
+		if strings.EqualFold(c.Paths.Snapshot.Current, c.Paths.Snapshot.Archive) {
+			return fmt.Errorf("paths.snapshot.current and paths.snapshot.archive cannot be the same")
+		}
+		if strings.EqualFold(c.Paths.Snapshot.Current, c.Paths.Snapshot.Content) {
+			return fmt.Errorf("paths.snapshot.current and paths.snapshot.content cannot be the same")
+		}
+		if strings.EqualFold(c.Paths.Snapshot.Archive, c.Paths.Snapshot.Content) {
+			return fmt.Errorf("paths.snapshot.archive and paths.snapshot.content cannot be the same")
 		}
 	}
 
@@ -517,10 +438,10 @@ func (c *Config) Validate(opts ValidationOptions) error {
 
 // LogSummary prints a user-friendly summary of the configuration to the
 // provided logger. It respects the 'Quiet' setting.
-func (c *Config) LogSummary(command flagparse.Command) {
+func (c *Config) LogSummary(command flagparse.Command, absBasePath, absSourcePath, absTargetPath, backupName string) {
 	logArgs := []interface{}{
 		"log_level", c.LogLevel,
-		"base", c.Base,
+		"base", absBasePath,
 		"dry_run", c.Runtime.DryRun,
 	}
 
@@ -528,26 +449,16 @@ func (c *Config) LogSummary(command flagparse.Command) {
 		logArgs = append(logArgs, "metrics", c.Engine.Metrics)
 	}
 
-	if command == flagparse.Backup {
-		logArgs = append(logArgs, "source", c.Source)
+	switch command {
+	case flagparse.Backup:
+		logArgs = append(logArgs, "source", absSourcePath)
 		logArgs = append(logArgs, "mode", c.Runtime.Mode)
 		logArgs = append(logArgs, "sync_workers", c.Engine.Performance.SyncWorkers)
 		logArgs = append(logArgs, "mirror_workers", c.Engine.Performance.MirrorWorkers)
 		logArgs = append(logArgs, "delete_workers", c.Engine.Performance.DeleteWorkers)
 		logArgs = append(logArgs, "buffer_size_kb", c.Engine.Performance.BufferSizeKB)
 		logArgs = append(logArgs, "overwrite", c.Runtime.BackupOverwriteBehavior)
-	} else if command == flagparse.Restore {
-		logArgs = append(logArgs, "target", c.Target)
-		logArgs = append(logArgs, "backup_name", c.Runtime.BackupName)
-		logArgs = append(logArgs, "mode", c.Runtime.Mode)
-		logArgs = append(logArgs, "sync_workers", c.Engine.Performance.SyncWorkers)
-		logArgs = append(logArgs, "buffer_size_kb", c.Engine.Performance.BufferSizeKB)
-		logArgs = append(logArgs, "overwrite", c.Runtime.RestoreOverwriteBehavior)
-	} else if command == flagparse.Prune {
-		logArgs = append(logArgs, "delete_workers", c.Engine.Performance.DeleteWorkers)
-	}
 
-	if command == flagparse.Backup || command == flagparse.Restore {
 		if c.Sync.Enabled {
 			syncSummary := fmt.Sprintf("enabled (e:%s)", c.Sync.Engine)
 			logArgs = append(logArgs, "sync", syncSummary)
@@ -561,9 +472,7 @@ func (c *Config) LogSummary(command flagparse.Command) {
 				logArgs = append(logArgs, "compression", "enabled")
 			}
 		}
-	}
 
-	if command == flagparse.Backup {
 		switch c.Runtime.Mode {
 		case "incremental":
 			logArgs = append(logArgs, "current_subdir", c.Paths.Incremental.Current)
@@ -603,9 +512,60 @@ func (c *Config) LogSummary(command flagparse.Command) {
 				logArgs = append(logArgs, "retention", snapshotRetentionSummary)
 			}
 		}
-	}
 
-	if command == flagparse.Prune {
+		if finalExcludeFiles := c.Sync.ExcludeFiles(); len(finalExcludeFiles) > 0 {
+			logArgs = append(logArgs, "exclude_files", strings.Join(finalExcludeFiles, ", "))
+		}
+		if finalExcludeDirs := c.Sync.ExcludeDirs(); len(finalExcludeDirs) > 0 {
+			logArgs = append(logArgs, "exclude_dirs", strings.Join(finalExcludeDirs, ", "))
+		}
+
+		if len(c.Hooks.PreBackup) > 0 {
+			logArgs = append(logArgs, "pre_backup_hooks", strings.Join(c.Hooks.PreBackup, "; "))
+		}
+		if len(c.Hooks.PostBackup) > 0 {
+			logArgs = append(logArgs, "post_backup_hooks", strings.Join(c.Hooks.PostBackup, "; "))
+		}
+
+	case flagparse.Restore:
+		logArgs = append(logArgs, "target", absTargetPath)
+		logArgs = append(logArgs, "backup_name", backupName)
+		logArgs = append(logArgs, "mode", c.Runtime.Mode)
+		logArgs = append(logArgs, "sync_workers", c.Engine.Performance.SyncWorkers)
+		logArgs = append(logArgs, "buffer_size_kb", c.Engine.Performance.BufferSizeKB)
+		logArgs = append(logArgs, "overwrite", c.Runtime.RestoreOverwriteBehavior)
+
+		if c.Sync.Enabled {
+			syncSummary := fmt.Sprintf("enabled (e:%s)", c.Sync.Engine)
+			logArgs = append(logArgs, "sync", syncSummary)
+		}
+
+		if c.Compression.Enabled {
+			if command == flagparse.Backup {
+				compressionSummary := fmt.Sprintf("enabled (f:%s l:%s)", c.Compression.Format, c.Compression.Level)
+				logArgs = append(logArgs, "compression", compressionSummary)
+			} else {
+				logArgs = append(logArgs, "compression", "enabled")
+			}
+		}
+
+		if finalExcludeFiles := c.Sync.ExcludeFiles(); len(finalExcludeFiles) > 0 {
+			logArgs = append(logArgs, "exclude_files", strings.Join(finalExcludeFiles, ", "))
+		}
+		if finalExcludeDirs := c.Sync.ExcludeDirs(); len(finalExcludeDirs) > 0 {
+			logArgs = append(logArgs, "exclude_dirs", strings.Join(finalExcludeDirs, ", "))
+		}
+
+		if len(c.Hooks.PreRestore) > 0 {
+			logArgs = append(logArgs, "pre_restore_hooks", strings.Join(c.Hooks.PreRestore, "; "))
+		}
+		if len(c.Hooks.PostRestore) > 0 {
+			logArgs = append(logArgs, "post_restore_hooks", strings.Join(c.Hooks.PostRestore, "; "))
+		}
+
+	case flagparse.Prune:
+		logArgs = append(logArgs, "delete_workers", c.Engine.Performance.DeleteWorkers)
+
 		if c.Retention.Incremental.Enabled {
 			retentionSummary := fmt.Sprintf("enabled (h:%d d:%d w:%d m:%d y:%d)",
 				c.Retention.Incremental.Hours, c.Retention.Incremental.Days, c.Retention.Incremental.Weeks,
@@ -617,33 +577,6 @@ func (c *Config) LogSummary(command flagparse.Command) {
 				c.Retention.Snapshot.Hours, c.Retention.Snapshot.Days, c.Retention.Snapshot.Weeks,
 				c.Retention.Snapshot.Months, c.Retention.Snapshot.Years)
 			logArgs = append(logArgs, "retention_snapshot", snapshotRetentionSummary)
-		}
-	}
-
-	if command == flagparse.Backup || command == flagparse.Restore {
-		if finalExcludeFiles := c.Sync.ExcludeFiles(); len(finalExcludeFiles) > 0 {
-			logArgs = append(logArgs, "exclude_files", strings.Join(finalExcludeFiles, ", "))
-		}
-		if finalExcludeDirs := c.Sync.ExcludeDirs(); len(finalExcludeDirs) > 0 {
-			logArgs = append(logArgs, "exclude_dirs", strings.Join(finalExcludeDirs, ", "))
-		}
-	}
-
-	if command == flagparse.Backup {
-		if len(c.Hooks.PreBackup) > 0 {
-			logArgs = append(logArgs, "pre_backup_hooks", strings.Join(c.Hooks.PreBackup, "; "))
-		}
-		if len(c.Hooks.PostBackup) > 0 {
-			logArgs = append(logArgs, "post_backup_hooks", strings.Join(c.Hooks.PostBackup, "; "))
-		}
-	}
-
-	if command == flagparse.Restore {
-		if len(c.Hooks.PreRestore) > 0 {
-			logArgs = append(logArgs, "pre_restore_hooks", strings.Join(c.Hooks.PreRestore, "; "))
-		}
-		if len(c.Hooks.PostRestore) > 0 {
-			logArgs = append(logArgs, "post_restore_hooks", strings.Join(c.Hooks.PostRestore, "; "))
 		}
 	}
 	plog.Info("Configuration loaded", logArgs...)
@@ -681,12 +614,6 @@ func MergeConfigWithFlags(command flagparse.Command, base Config, setFlags map[s
 
 	for name, value := range setFlags {
 		switch name {
-		case "base":
-			merged.Base = value.(string)
-		case "source":
-			merged.Source = value.(string)
-		case "target":
-			merged.Target = value.(string)
 		case "log-level":
 			merged.LogLevel = value.(string)
 		case "fail-fast":
@@ -707,8 +634,6 @@ func MergeConfigWithFlags(command flagparse.Command, base Config, setFlags map[s
 			} else {
 				merged.Runtime.BackupOverwriteBehavior = value.(string)
 			}
-		case "backup-name":
-			merged.Runtime.BackupName = value.(string)
 		case "sync-workers":
 			merged.Engine.Performance.SyncWorkers = value.(int)
 		case "mirror-workers":

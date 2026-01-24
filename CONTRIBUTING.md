@@ -5,7 +5,7 @@ We'd love your help making `pgl-backup` even better! Whether it's reporting a bu
 ## Found a Bug?
 
 Oops! If you've run into a bug, we'd be grateful if you could open an issue. Please include as much detail as you can:
-*   The version of `pgl-backup` you are using (`pgl-backup -version`).
+*   The version of `pgl-backup` you are using (`pgl-backup version`).
 *   Your operating system.
 *   The steps to reproduce the bug.
 *   Any relevant log output or error messages.
@@ -46,3 +46,7 @@ To maximize I/O throughput, especially on high-latency network drives, the Sync,
 *   **Predictable Creation (Archiving)**: Archive creation is anchored to the *local system's midnight*. This ensures backups align with the user's calendar day. Crucially, it uses **Boundary Crossing** logic (e.g., "did we cross midnight?") rather than simple elapsed time. This ensures that even if you run backups every 10 minutes (updating the timestamp constantly), an archive is still correctly created once per day/week/etc.
 *   **Consistent History (Retention)**: Retention policies apply standard calendar concepts (ISO weeks, YYYY-MM-DD) to the *UTC timestamp* stored in metadata. This ensures portable, consistent history.
 *   **Fail-Forward (Compression)**: The compression engine only attempts to compress the specific backup created during the current run. If it fails (e.g., corrupt data), it leaves the backup uncompressed and moves on. It does *not* retry historical failures, preventing "poison pill" scenarios.
+
+### 3. Configuration & State
+*   **Stateless Source**: The source path is never persisted in the configuration file or backup metadata. This ensures privacy and allows the backup repository to be portable across different machines or mount points. The source must be provided explicitly via CLI flags for operations that require it.
+*   **Separation of Concerns**: Runtime parameters (like `source`, `target` for restore, `backup-name`) are strictly separated from persisted repository configuration (like retention policies and exclusion rules).

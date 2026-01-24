@@ -16,7 +16,6 @@ func TestWriteAndReadMetafile(t *testing.T) {
 		Version:      "1.0.0",
 		TimestampUTC: time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC),
 		Mode:         "incremental",
-		Source:       "/path/to/source",
 	}
 
 	err := Write(tempDir, testContent)
@@ -43,9 +42,6 @@ func TestWriteAndReadMetafile(t *testing.T) {
 	}
 	if readContent.Mode != testContent.Mode {
 		t.Errorf("Expected mode %q, got %q", testContent.Mode, readContent.Mode)
-	}
-	if readContent.Source != testContent.Source {
-		t.Errorf("Expected source %q, got %q", testContent.Source, readContent.Source)
 	}
 }
 

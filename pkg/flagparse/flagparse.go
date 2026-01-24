@@ -311,8 +311,8 @@ func flagsToMap(c Command, fs *flag.FlagSet, f *cliFlags) (map[string]interface{
 	addIfUsed(flagMap, usedFlags, "metrics", f.Metrics)
 
 	addIfUsed(flagMap, usedFlags, "base", f.Base)
-	addIfUsed(flagMap, usedFlags, "target", f.Target)
 	addIfUsed(flagMap, usedFlags, "source", f.Source)
+	addIfUsed(flagMap, usedFlags, "target", f.Target)
 	addIfUsed(flagMap, usedFlags, "backup-name", f.BackupName)
 	addIfUsed(flagMap, usedFlags, "overwrite", f.OverwriteBehavior)
 	addIfUsed(flagMap, usedFlags, "fail-fast", f.FailFast)

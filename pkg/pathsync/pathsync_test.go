@@ -85,9 +85,6 @@ func TestSync_Dispatch(t *testing.T) {
 		if !plan.ResultInfo.Metadata.TimestampUTC.Equal(timestamp) {
 			t.Errorf("expected ResultInfo.Metadata.TimestampUTC to be %v, got %v", timestamp, plan.ResultInfo.Metadata.TimestampUTC)
 		}
-		if plan.ResultInfo.Metadata.Source != srcDir {
-			t.Errorf("expected ResultInfo.Metadata.Source to be %q, got %q", srcDir, plan.ResultInfo.Metadata.Source)
-		}
 	})
 }
 

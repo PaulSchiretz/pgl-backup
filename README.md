@@ -150,7 +150,7 @@ Let's set up a daily incremental backup for your `~/Documents` folder to an exte
 The easiest way to get started is to use the `init` command. This will generate a `pgl-backup.config.json` file in your target directory.
 
 *   **New Backups**: It creates the directory and a default configuration file. The `-base` and `-source` flags are required.
-*   **Existing Backups**: It reads your existing configuration, applies any new flags you provide (like changing the log level or source path), and saves the updated config. It preserves your retention policies and other settings.
+*   **Existing Backups**: It reads your existing configuration, applies any new flags you provide (like changing the log level), and saves the updated config. It preserves your retention policies and other settings. Note that `-source` is required to perform pre-flight checks.
 *   **Fresh Start**: If you want to completely overwrite an existing configuration with defaults, use `init -default` instead.
 
 ```sh
@@ -183,26 +183,19 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
 ```json
 {
   "version": "v1.0.0",
-  "mode": "incremental",
-  "source": "/home/user/Documents",
   "logLevel": "info",
-  "dryRun": false,
-  "metrics": true,
-  "naming": {
-    "prefix": "PGL_Backup_"
-  },
   "paths": {
     "incremental": {
       "current": "PGL_Backup_Incremental_Current",
       "archive": "PGL_Backup_Incremental_Archive",
       "content": "PGL_Backup_Content",
-      "backupDirPrefix": "PGL_Backup_"
+      "backupNamePrefix": "PGL_Backup_"
     },
     "snapshot": {
       "current": "PGL_Backup_Snapshot_Current",
       "archive": "PGL_Backup_Snapshot_Archive",
       "content": "PGL_Backup_Content",
-      "backupDirPrefix": "PGL_Backup_"
+      "backupNamePrefix": "PGL_Backup_"
     },
   },
   "engine": {
@@ -282,11 +275,11 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
 
 ### Step 3: Run Your First Backup
 
-Now, simply point `pgl-backup` at the target directory. It will automatically load the configuration file and run the backup. 
+Now, simply point `pgl-backup` at the target directory and provide the source. It will automatically load the configuration file from the base directory and run the backup. The `-source` flag is mandatory.
 
 ```sh
 # Run the backup
-pgl-backup backup -base="/media/backup-drive/MyDocumentsBackup"
+pgl-backup backup -base="/media/backup-drive/MyDocumentsBackup" -source="$HOME/Documents"
 ```
 
 The first run will copy all files into a `PGL_Backup_Content` subdirectory inside the main `PGL_Backup_Incremental_Current` directory.
@@ -308,10 +301,10 @@ Your backup target will be organized like this:
 
 ### Basic Backup
 
-Once configured, this is the only command you need. It's perfect for a cron job or scheduled task.
+Once configured, this is the only command you need for your backup script, cron job or scheduled task.
 
 ```sh
-pgl-backup backup -base="/path/to/your/backup-target"
+pgl-backup backup -base="/path/to/your/backup-target" -source="/path/to/your/source-data"
 ```
 
 ### Dry Run
@@ -319,7 +312,7 @@ pgl-backup backup -base="/path/to/your/backup-target"
 See what changes would be made without touching any files.
 
 ```sh
-pgl-backup backup -base="/path/to/your/backup-target" -dry-run
+pgl-backup backup -base="/path/to/your/backup-target" -source="/path/to/your/source-data" -dry-run
 ```
 
 ### One-Off Snapshot Backup
@@ -327,7 +320,7 @@ pgl-backup backup -base="/path/to/your/backup-target" -dry-run
 Here's how to perform a single snapshot backup.
 
 ```sh
-pgl-backup backup -base="/path/to/your/backup-target" -mode=snapshot
+pgl-backup backup -base="/path/to/your/backup-target" -source="/path/to/your/source-data" -mode=snapshot
 ```
 
 ### Excluding Files and Directories
@@ -335,7 +328,7 @@ pgl-backup backup -base="/path/to/your/backup-target" -mode=snapshot
 Exclude temporary files and `node_modules` directories. Patterns support standard file globbing.
 
 ```sh
-pgl-backup backup -base="..." -user-exclude-files="*.tmp,*.log" -user-exclude-dirs="node_modules,.cache"
+pgl-backup backup -base="..." -source="..." -user-exclude-files="*.tmp,*.log" -user-exclude-dirs="node_modules,.cache"
 ```
 > **Note on Matching**: All exclusion patterns are case-insensitive on all operating systems. A pattern like *.jpeg will match photo.jpeg, photo.JPEG, and photo.JpEg. This ensures your configuration is portable and behaves predictably across Windows, macOS, and Linux.
 
@@ -344,7 +337,7 @@ pgl-backup backup -base="..." -user-exclude-files="*.tmp,*.log" -user-exclude-di
 Run a script before the backup starts. Commands with spaces must be wrapped in single or double quotes.
 
 ```sh
-pgl-backup backup -base="..." -pre-backup-hooks="'/usr/local/bin/dump_database.sh', 'echo Backup starting...'"
+pgl-backup backup -base="..." -source="..." -pre-backup-hooks="'/usr/local/bin/dump_database.sh', 'echo Backup starting...'"
 ```
 >**Security Note:** Hooks execute arbitrary shell commands. Ensure that any commands in your configuration are from a trusted source and have the correct permissions to prevent unintended side effects.
 
@@ -679,9 +672,9 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | Flag / JSON Key | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `version`| `version` | `""` | The `pgl-backup` version. |
-| `source` (backup/init) / `source` | `string` | `""` | The directory to back up. **Required for Backup**. |
 | `base` / `base` (internal) | `string` | `""` | The base directory where backups are stored. **Required**. |
-| `target` (restore) / - | `string` | `""` | The destination directory for a restore operation. |
+| `source` (backup/init) / - | `string` | `""` | The directory to back up. **Required for Backup and Init**. |
+| `target` (restore) / - | `string` | `""` | The destination directory for a restore operation. **Required for Restore**.  |
 | `mode` / `runtime.mode` (internal) | `"incremental"` | Backup mode: `"incremental"` or `"snapshot"`. |
 | `overwrite` (backup) / `runtime.backupOverwriteBehavior` (internal) | `string` | `"update"` | Overwrite behavior for backup: `'always'`, `'never'`, `'if-newer'`, `'update'`. |
 | `overwrite` (restore) / `runtime.restoreOverwriteBehavior` (internal) | `string` | `"never"` | Overwrite behavior for restore: `'always'`, `'never'`, `'if-newer'`, `'update'`. |
@@ -695,11 +688,11 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | - / `paths.incremental.archive` | `"PGL_Backup_Incremental_Archive"` | Sub-directory for historical incremental backups. |
 | - / `paths.incremental.current` | `"PGL_Backup_Incremental_Current"` | Sub-directory for the current incremental backup. |
 | - / `paths.incremental.content` | `"PGL_Backup_Content"` | Sub-directory for the content within an incremental backup. |
-| - / `paths.incremental.backupDirPrefix` | `"PGL_Backup_"` | Prefix for timestamped archive directories (incremental). |
+| - / `paths.incremental.backupNamePrefix` | `"PGL_Backup_"` | Prefix for timestamped archive directories (incremental). |
 | - / `paths.snapshot.archive` | `"PGL_Backup_Snapshot_Archive"` | Sub-directory for snapshot backups. |
 | - / `paths.snapshot.current` | `"PGL_Backup_Snapshot_Current"` | Sub-directory for the current snapshot backup. |
 | - / `paths.snapshot.content` | `"PGL_Backup_Content"` | Sub-directory for the content within a snapshot backup. |
-| - / `paths.snapshot.backupDirPrefix` | `"PGL_Backup_"` | Prefix for timestamped archive directories (snapshot). |
+| - / `paths.snapshot.backupNamePrefix` | `"PGL_Backup_"` | Prefix for timestamped archive directories (snapshot). |
 | **Sync Settings** | | | |
 | - / `sync.enabled` | `bool` | `true` | Enable file synchronization. |
 | `sync-engine` / `sync.engine` | `string` | `"native"` | The sync engine to use: `"native"` or `"robocopy"` (Windows only). |

@@ -63,7 +63,7 @@ type PathKeys struct {
 	RelCurrentPathKey string
 	RelArchivePathKey string
 	RelContentPathKey string
-	BackupDirPrefix   string
+	BackupNamePrefix  string
 }
 
 func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
@@ -180,7 +180,7 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 			RelCurrentPathKey: pathCfg.Current,
 			RelArchivePathKey: pathCfg.Archive,
 			RelContentPathKey: pathCfg.Content,
-			BackupDirPrefix:   pathCfg.BackupDirPrefix,
+			BackupNamePrefix:  pathCfg.BackupNamePrefix,
 		},
 		Preflight: &preflight.Plan{
 			SourceAccessible:   true,
@@ -291,7 +291,7 @@ func GenerateRestorePlan(cfg config.Config) (*RestorePlan, error) {
 			RelCurrentPathKey: pathCfg.Current,
 			RelArchivePathKey: pathCfg.Archive,
 			RelContentPathKey: pathCfg.Content,
-			BackupDirPrefix:   pathCfg.BackupDirPrefix,
+			BackupNamePrefix:  pathCfg.BackupNamePrefix,
 		},
 
 		PreRestoreHooks:  cfg.Hooks.PreRestore,
@@ -371,7 +371,7 @@ func GeneratePrunePlan(cfg config.Config) (*PrunePlan, error) {
 			RelCurrentPathKey: cfg.Paths.Incremental.Current,
 			RelArchivePathKey: cfg.Paths.Incremental.Archive,
 			RelContentPathKey: cfg.Paths.Incremental.Content,
-			BackupDirPrefix:   cfg.Paths.Incremental.BackupDirPrefix,
+			BackupNamePrefix:  cfg.Paths.Incremental.BackupNamePrefix,
 		},
 
 		RetentionIncremental: &pathretention.Plan{
@@ -392,7 +392,7 @@ func GeneratePrunePlan(cfg config.Config) (*PrunePlan, error) {
 			RelCurrentPathKey: cfg.Paths.Snapshot.Current,
 			RelArchivePathKey: cfg.Paths.Snapshot.Archive,
 			RelContentPathKey: cfg.Paths.Snapshot.Content,
-			BackupDirPrefix:   cfg.Paths.Snapshot.BackupDirPrefix,
+			BackupNamePrefix:  cfg.Paths.Snapshot.BackupNamePrefix,
 		},
 
 		RetentionSnapshot: &pathretention.Plan{

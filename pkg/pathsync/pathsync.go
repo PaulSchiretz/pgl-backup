@@ -115,7 +115,6 @@ func (s *PathSyncer) Sync(ctx context.Context, absBasePath, absSourcePath string
 		Version:      buildinfo.Version,
 		TimestampUTC: timestampUTC,
 		Mode:         p.ModeIdentifier,
-		Source:       absSourcePath,
 	}
 	if p.DryRun {
 		plog.Info("[DRY RUN] Would write metafile", "directory", absTargetCurrentPath)

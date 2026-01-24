@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -22,18 +23,28 @@ import (
 
 // RunPrune handles the logic for the prune command.
 func RunPrune(ctx context.Context, flagMap map[string]interface{}) error {
-	// For prune, the target flag is mandatory.
+	// Define mandatory flags
 	base, ok := flagMap["base"].(string)
 	if !ok || base == "" {
 		return fmt.Errorf("the -base flag is required to run prune")
 	}
 
-	// Build absolute base path
+	var err error
+	// Validate Base
+	base, err = util.ExpandPath(base)
+	if err != nil {
+		return fmt.Errorf("could not expand base path: %w", err)
+	}
 	absBasePath, err := filepath.Abs(base)
 	if err != nil {
 		return fmt.Errorf("could not determine absolute base path for %s: %w", base, err)
 	}
 	absBasePath = util.DenormalizePath(absBasePath)
+
+	// NOTE: Base needs to exist, for a Prune run
+	if _, err := os.Stat(absBasePath); os.IsNotExist(err) {
+		return fmt.Errorf("base path '%s' does not exist", absBasePath)
+	}
 
 	// Load config from the target directory.
 	loadedConfig, err := config.Load(absBasePath)
@@ -45,9 +56,7 @@ func RunPrune(ctx context.Context, flagMap map[string]interface{}) error {
 	runConfig := config.MergeConfigWithFlags(flagparse.Prune, loadedConfig, flagMap)
 
 	// CRITICAL: Validate the config for the run
-	if err := runConfig.Validate(config.ValidationOptions{
-		CheckBaseExists: true,
-	}); err != nil {
+	if err := runConfig.Validate(); err != nil {
 		return err
 	}
 
@@ -55,7 +64,7 @@ func RunPrune(ctx context.Context, flagMap map[string]interface{}) error {
 	plog.SetLevel(plog.LevelFromString(runConfig.LogLevel))
 
 	// Log the Summary
-	runConfig.LogSummary(flagparse.Prune)
+	runConfig.LogSummary(flagparse.Prune, absBasePath, "", "", "")
 
 	// Create the runner and feed it with our leaf workers
 	runner := engine.NewRunner(
@@ -82,7 +91,7 @@ func RunPrune(ctx context.Context, flagMap map[string]interface{}) error {
 
 	// Execute the plan
 	startTime := time.Now()
-	err = runner.ExecutePrune(ctx, runConfig.Base, prunePlan)
+	err = runner.ExecutePrune(ctx, absBasePath, prunePlan)
 	duration := time.Since(startTime).Round(time.Millisecond)
 	if err != nil {
 		return err

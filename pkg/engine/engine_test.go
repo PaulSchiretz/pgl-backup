@@ -56,7 +56,7 @@ type mockArchiver struct {
 	resultPath string
 }
 
-func (m *mockArchiver) Archive(ctx context.Context, absBasePath, relArchivePathKey, backupDirPrefix string, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) error {
+func (m *mockArchiver) Archive(ctx context.Context, absBasePath, relArchivePathKey, backupNamePrefix string, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) error {
 	if m.err != nil {
 		return m.err
 	}
@@ -348,7 +348,7 @@ func TestExecuteBackup(t *testing.T) {
 					RelCurrentPathKey: relCurrent,
 					RelArchivePathKey: relArchive,
 					RelContentPathKey: relContent,
-					BackupDirPrefix:   prefix,
+					BackupNamePrefix:  prefix,
 				},
 				Preflight: &preflight.Plan{},
 				Sync: &pathsync.Plan{
@@ -577,7 +577,7 @@ func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
 		Paths: planner.PathKeys{
 			RelArchivePathKey: relArchive,
 			RelCurrentPathKey: relCurrent,
-			BackupDirPrefix:   prefix,
+			BackupNamePrefix:  prefix,
 		},
 		Preflight:   &preflight.Plan{},
 		Sync:        &pathsync.Plan{Enabled: true},
@@ -686,11 +686,11 @@ func TestExecutePrune(t *testing.T) {
 				Preflight: &preflight.Plan{},
 				PathsIncremental: planner.PathKeys{
 					RelArchivePathKey: relArchiveInc,
-					BackupDirPrefix:   prefix,
+					BackupNamePrefix:  prefix,
 				},
 				PathsSnapshot: planner.PathKeys{
 					RelArchivePathKey: relArchiveSnap,
-					BackupDirPrefix:   prefix,
+					BackupNamePrefix:  prefix,
 				},
 				RetentionIncremental: &pathretention.Plan{
 					Enabled: tc.retentionIncEnabled,

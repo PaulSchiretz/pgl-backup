@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -22,7 +23,8 @@ import (
 
 // RunRestore handles the logic for the restore command.
 func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
-	// For restore, the base and target flags are mandatory.
+
+	// Define mandatory flags
 	base, ok := flagMap["base"].(string)
 	if !ok || base == "" {
 		return fmt.Errorf("the -base flag is required to run a restore")
@@ -35,17 +37,39 @@ func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
 	if !ok || backupName == "" {
 		return fmt.Errorf("the -backup-name flag is required to run a restore")
 	}
-	// Require mode explicitly to avoid ambiguity about which backup path to search.
+	// NOTE: We require mode explicitly to avoid ambiguity about which backup path to search
 	if _, ok := flagMap["mode"]; !ok {
 		return fmt.Errorf("the -mode flag is required to run a restore ('incremental' or 'snapshot')")
 	}
 
-	// Build absolute base path
+	var err error
+	// Validate Base
+	base, err = util.ExpandPath(base)
+	if err != nil {
+		return fmt.Errorf("could not expand base path: %w", err)
+	}
 	absBasePath, err := filepath.Abs(base)
 	if err != nil {
 		return fmt.Errorf("could not determine absolute base path for %s: %w", base, err)
 	}
 	absBasePath = util.DenormalizePath(absBasePath)
+
+	// NOTE: Base needs to exist, for a Restore run
+	if _, err := os.Stat(absBasePath); os.IsNotExist(err) {
+		return fmt.Errorf("base path '%s' does not exist", absBasePath)
+	}
+
+	// Validate Target
+	target, err = util.ExpandPath(target)
+	if err != nil {
+		return fmt.Errorf("could not expand target path: %w", err)
+	}
+	absTargetPath, err := filepath.Abs(target)
+	if err != nil {
+		return fmt.Errorf("could not determine absolute target path: %w", err)
+	}
+	absTargetPath = util.DenormalizePath(absTargetPath)
+	// NOTE: Target will be created if it doesn't exist, for a Restore run
 
 	// Load config from the base directory.
 	loadedConfig, err := config.Load(absBasePath)
@@ -57,10 +81,7 @@ func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
 	runConfig := config.MergeConfigWithFlags(flagparse.Restore, loadedConfig, flagMap)
 
 	// CRITICAL: Validate the config for the run
-	if err := runConfig.Validate(config.ValidationOptions{
-		CheckTarget:     true,
-		CheckBaseExists: true,
-	}); err != nil {
+	if err := runConfig.Validate(); err != nil {
 		return err
 	}
 
@@ -68,7 +89,7 @@ func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
 	plog.SetLevel(plog.LevelFromString(runConfig.LogLevel))
 
 	// Log the Summary
-	runConfig.LogSummary(flagparse.Restore)
+	runConfig.LogSummary(flagparse.Restore, absBasePath, "", absTargetPath, backupName)
 
 	// Create the runner and feed it with our leaf workers
 	runner := engine.NewRunner(
@@ -95,7 +116,7 @@ func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
 
 	// Execute the plan
 	startTime := time.Now()
-	err = runner.ExecuteRestore(ctx, runConfig.Base, runConfig.Runtime.BackupName, runConfig.Target, restorePlan)
+	err = runner.ExecuteRestore(ctx, absBasePath, backupName, absTargetPath, restorePlan)
 	duration := time.Since(startTime).Round(time.Millisecond)
 	if err != nil {
 		return err

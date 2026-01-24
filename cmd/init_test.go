@@ -173,8 +173,7 @@ func TestRunInit(t *testing.T) {
 				}
 				cfg := config.NewDefault()
 				cfg.LogLevel = "debug"
-				cfg.Base = baseDir
-				if err := config.Generate(cfg); err != nil {
+				if err := config.Generate(baseDir, cfg); err != nil {
 					t.Fatalf("failed to create existing config: %v", err)
 				}
 				return nil
@@ -202,8 +201,7 @@ func TestRunInit(t *testing.T) {
 				}
 				cfg := config.NewDefault()
 				cfg.LogLevel = "debug"
-				cfg.Base = baseDir
-				if err := config.Generate(cfg); err != nil {
+				if err := config.Generate(baseDir, cfg); err != nil {
 					t.Fatalf("failed to create existing config: %v", err)
 				}
 				return nil
@@ -231,8 +229,7 @@ func TestRunInit(t *testing.T) {
 				}
 				cfg := config.NewDefault()
 				cfg.LogLevel = "debug"
-				cfg.Base = baseDir
-				if err := config.Generate(cfg); err != nil {
+				if err := config.Generate(baseDir, cfg); err != nil {
 					t.Fatalf("failed to create existing config: %v", err)
 				}
 				return nil

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.3.1] - 2026-XX-XX
+
+### Changed
+- **BREAKING CHANGE**: Renamed configuration field `paths.*.backupDirPrefix` to `paths.*.backupNamePrefix` for clarity.
+- **BREAKING CHANGE**: Removed `source` path from the persisted configuration file and metadata to improve privacy and portability. The `-source` flag is now mandatory for the `backup` command.
+- Refactored internal configuration handling to strictly separate runtime parameters (`base`, `target`, `backup-name`) from persisted settings.
+
+### Fixed
+- Fixed configuration validation to use case-insensitive comparisons for path names, preventing potential collisions on Windows and macOS.
+- Fixed configuration parsing to automatically normalize enum values (e.g., `Mode`, `CompressionFormat`) to lowercase, ensuring consistent behavior regardless of input case.
+
 ## [v1.3.0] - 2026-01-24
 
 ### Added

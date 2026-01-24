@@ -113,7 +113,7 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 				plog.Warn("Error reading backup for archive, skipping", "error", err)
 			}
 		} else {
-			if err := r.archiver.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupDirPrefix, toArchive, p.Archive, timestampUTC); err != nil {
+			if err := r.archiver.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupNamePrefix, toArchive, p.Archive, timestampUTC); err != nil {
 				if errors.Is(err, patharchive.ErrDisabled) {
 					plog.Debug("Archiving disabled, skipping")
 				} else if !errors.Is(err, patharchive.ErrNothingToArchive) {
@@ -148,7 +148,7 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 				return fmt.Errorf("Error no snapshot syncResult to archive")
 			}
 		} else {
-			if err := r.archiver.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupDirPrefix, toArchive, p.Archive, timestampUTC); err != nil {
+			if err := r.archiver.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupNamePrefix, toArchive, p.Archive, timestampUTC); err != nil {
 				if errors.Is(err, patharchive.ErrDisabled) {
 					plog.Debug("Archiving disabled, skipping")
 				} else {
@@ -171,7 +171,7 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 		}
 
 		// Fetch backups that might need pruning
-		toRetent, err := r.fetchBackups(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupDirPrefix, relPathExclusionKeys)
+		toRetent, err := r.fetchBackups(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupNamePrefix, relPathExclusionKeys)
 		if err != nil {
 			if p.FailFast {
 				return fmt.Errorf("Error reading backups for prune: %w", err)
@@ -251,7 +251,7 @@ func (r *Runner) ExecutePrune(ctx context.Context, absBasePath string, p *planne
 
 	// Standalone prune logic
 	if p.RetentionIncremental.Enabled {
-		toRetent, err := r.fetchBackups(ctx, absBasePath, p.PathsIncremental.RelArchivePathKey, p.PathsIncremental.BackupDirPrefix, []string{})
+		toRetent, err := r.fetchBackups(ctx, absBasePath, p.PathsIncremental.RelArchivePathKey, p.PathsIncremental.BackupNamePrefix, []string{})
 		if err != nil {
 			return fmt.Errorf("fatal error during prune incremental: %w", err)
 		}
@@ -267,7 +267,7 @@ func (r *Runner) ExecutePrune(ctx context.Context, absBasePath string, p *planne
 	}
 
 	if p.RetentionSnapshot.Enabled {
-		toRetent, err := r.fetchBackups(ctx, absBasePath, p.PathsSnapshot.RelArchivePathKey, p.PathsSnapshot.BackupDirPrefix, []string{})
+		toRetent, err := r.fetchBackups(ctx, absBasePath, p.PathsSnapshot.RelArchivePathKey, p.PathsSnapshot.BackupNamePrefix, []string{})
 		if err != nil {
 			return fmt.Errorf("fatal error during prune snapshot: %w", err)
 		}
@@ -398,7 +398,7 @@ func (r *Runner) acquireTargetLock(ctx context.Context, absBasePath string) (fun
 // It relies exclusively on the `.pgl-backup.meta.json` file; directories without a
 // readable metafile are ignored.
 // The relPathExclusionKeys are Relative to the absBasePath, and filtered internally.
-func (r *Runner) fetchBackups(ctx context.Context, absBasePath, relArchivePathKey, dirNamePrefix string, relPathExclusionKeys []string) ([]metafile.MetafileInfo, error) {
+func (r *Runner) fetchBackups(ctx context.Context, absBasePath, relArchivePathKey, backupNamePrefix string, relPathExclusionKeys []string) ([]metafile.MetafileInfo, error) {
 
 	absArchivePath := util.DenormalizePath(filepath.Join(absBasePath, relArchivePathKey))
 	entries, err := os.ReadDir(absArchivePath)
@@ -438,7 +438,7 @@ func (r *Runner) fetchBackups(ctx context.Context, absBasePath, relArchivePathKe
 		}
 
 		dirName := entry.Name()
-		if !entry.IsDir() || !strings.HasPrefix(dirName, dirNamePrefix) {
+		if !entry.IsDir() || !strings.HasPrefix(dirName, backupNamePrefix) {
 			continue
 		}
 

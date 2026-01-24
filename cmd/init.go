@@ -19,18 +19,44 @@ import (
 
 // RunInit handles the logic for the 'init' command.
 func RunInit(ctx context.Context, flagMap map[string]interface{}) error {
-	// For init, the target flag is mandatory to know where to look/write.
+	// Define mandatory flags
 	base, ok := flagMap["base"].(string)
 	if !ok || base == "" {
 		return fmt.Errorf("the -base flag is required for the init operation")
 	}
+	source, ok := flagMap["source"].(string)
+	if !ok || source == "" {
+		return fmt.Errorf("the -source flag is required for the init operation")
+	}
 
-	// Build absolute base path
+	var err error
+	// Validate Base
+	base, err = util.ExpandPath(base)
+	if err != nil {
+		return fmt.Errorf("could not expand base path: %w", err)
+	}
 	absBasePath, err := filepath.Abs(base)
 	if err != nil {
 		return fmt.Errorf("could not determine absolute base path for %s: %w", base, err)
 	}
 	absBasePath = util.DenormalizePath(absBasePath)
+	// NOTE: Base will be created if it doesn't exist, for an Init run
+
+	// Validate Source
+	source, err = util.ExpandPath(source)
+	if err != nil {
+		return fmt.Errorf("could not expand source path: %w", err)
+	}
+	absSourcePath, err := filepath.Abs(source)
+	if err != nil {
+		return fmt.Errorf("could not determine absolute source path: %w", err)
+	}
+	absSourcePath = util.DenormalizePath(absSourcePath)
+
+	// NOTE: Source needs to exist, for an Init run
+	if _, err := os.Stat(absSourcePath); os.IsNotExist(err) {
+		return fmt.Errorf("source path '%s' does not exist", absSourcePath)
+	}
 
 	var baseConfig config.Config
 
@@ -74,18 +100,16 @@ func RunInit(ctx context.Context, flagMap map[string]interface{}) error {
 	// Create a config from base merged with user flags.
 	runConfig := config.MergeConfigWithFlags(flagparse.Init, baseConfig, flagMap)
 
-	// Ensure source is set (either from existing config or flags).
-	if runConfig.Source == "" {
-		return fmt.Errorf("the -source flag is required for the init operation (unless updating an existing config)")
-	}
-
 	// CRITICAL: Validate the config for the run
-	if err := runConfig.Validate(config.ValidationOptions{
-		CheckSource:       true,
-		CheckSourceExists: true,
-	}); err != nil {
+	if err := runConfig.Validate(); err != nil {
 		return err
 	}
+
+	// Set the global log level based on the final configuration.
+	plog.SetLevel(plog.LevelFromString(runConfig.LogLevel))
+
+	// Log the Summary
+	runConfig.LogSummary(flagparse.Init, absBasePath, absSourcePath, "", "")
 
 	startTime := time.Now()
 
@@ -102,7 +126,7 @@ func RunInit(ctx context.Context, flagMap map[string]interface{}) error {
 	}
 
 	// Base is our target in restore mode, so it is used as target in init for the validator
-	if err := validator.Run(ctx, runConfig.Source, runConfig.Base, pfPlan, time.Now().UTC()); err != nil {
+	if err := validator.Run(ctx, absSourcePath, absBasePath, pfPlan, time.Now().UTC()); err != nil {
 		return fmt.Errorf("initialization preflight failed: %w", err)
 	}
 
@@ -113,15 +137,15 @@ func RunInit(ctx context.Context, flagMap map[string]interface{}) error {
 
 	// 2. Acquire Lock
 	// Ensure exclusive access to the target directory.
-	appID := fmt.Sprintf("pgl-backup-init:%s", runConfig.Base)
-	lock, err := lockfile.Acquire(ctx, runConfig.Base, appID)
+	appID := fmt.Sprintf("pgl-backup-init:%s", absBasePath)
+	lock, err := lockfile.Acquire(ctx, absBasePath, appID)
 	if err != nil {
 		return fmt.Errorf("failed to acquire lock on target directory: %w", err)
 	}
 	defer lock.Release()
 
 	// 3. Generate Config
-	if err := config.Generate(runConfig); err != nil {
+	if err := config.Generate(absBasePath, runConfig); err != nil {
 		return fmt.Errorf("failed to generate config file: %w", err)
 	}
 

@@ -60,7 +60,7 @@ func NewPathArchiver() *PathArchiver {
 // Archive checks if the time since the last backup has crossed the configured interval.
 // If it has, it renames the current backup directory to a permanent, timestamped archive directory. It also
 // prepares the archive interval before checking. It is now responsible for reading its own metadata.
-func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathKey, backupDirPrefix string, toArchive metafile.MetafileInfo, p *Plan, timestampUTC time.Time) error {
+func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathKey, backupNamePrefix string, toArchive metafile.MetafileInfo, p *Plan, timestampUTC time.Time) error {
 
 	if !p.Enabled {
 		plog.Debug("Archive is disabled, skipping archiving")
@@ -99,8 +99,8 @@ func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathK
 	// The directory name must remain uniquely based on UTC time to avoid DST conflicts,
 	// but we add the user's local offset to make the timezone clear to the user.
 	timestamp := util.FormatTimestampWithOffset(toArchive.Metadata.TimestampUTC)
-	dirName := backupDirPrefix + timestamp
-	relTargetPathKey := util.NormalizePath(filepath.Join(relArchivePathKey, dirName))
+	backupName := backupNamePrefix + timestamp
+	relTargetPathKey := util.NormalizePath(filepath.Join(relArchivePathKey, backupName))
 
 	t := &task{
 		ctx:              ctx,
