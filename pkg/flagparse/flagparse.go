@@ -82,8 +82,9 @@ func registerGlobalFlags(fs *flag.FlagSet, f *cliFlags) {
 }
 
 func registerBackupFlags(fs *flag.FlagSet, f *cliFlags) {
-	f.Source = fs.String("source", "", "Source directory to copy from")
 	f.Base = fs.String("base", "", "Base destination directory for backups. (Required)")
+	f.Source = fs.String("source", "", "Source directory to copy from. (Required)")
+
 	f.Mode = fs.String("mode", "incremental", "Backup mode: 'incremental' or 'snapshot'.")
 	f.FailFast = fs.Bool("fail-fast", false, "Stop the backup immediately on the first file sync error.")
 	f.OverwriteBehavior = fs.String("overwrite", "update", "Overwrite behavior: 'always', 'never', 'if-newer', 'update'.")
@@ -127,12 +128,12 @@ func registerBackupFlags(fs *flag.FlagSet, f *cliFlags) {
 
 func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
 	// Init supports all backup flags (to generate config) plus 'force' and 'default'.
-	f.Force = fs.Bool("force", false, "Bypass confirmation prompts.")
-	f.Default = fs.Bool("default", false, "Overwrite existing configuration with defaults.")
-
 	f.Source = fs.String("source", "", "Source directory to copy from. (Required)")
 	f.Base = fs.String("base", "", "Base destination directory for backups. (Required)")
+	f.Force = fs.Bool("force", false, "Bypass confirmation prompts.")
+	f.Default = fs.Bool("default", false, "Overwrite existing configuration with defaults.")
 	f.FailFast = fs.Bool("fail-fast", false, "Stop the backup immediately on the first file sync error.")
+
 	f.SyncWorkers = fs.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
 	f.MirrorWorkers = fs.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
 	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
