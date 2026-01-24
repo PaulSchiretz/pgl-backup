@@ -182,8 +182,16 @@ func registerRestoreFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.BackupName = fs.String("backup-name", "", "Name of the backup to restore (e.g. 'PGL_Backup_2023...' or 'current')")
 	f.Mode = fs.String("mode", "", "Mode of the backup to restore: 'incremental' or 'snapshot'. (Required)")
 	f.FailFast = fs.Bool("fail-fast", false, "Stop the restore immediately on the first error.")
+	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
+
+	f.SyncRetryCount = fs.Int("sync-retry-count", 0, "Number of retries for failed file copies.")
+	f.SyncRetryWait = fs.Int("sync-retry-wait", 0, "Seconds to wait between retries.")
+	f.SyncModTimeWindow = fs.Int("sync-mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
 	f.SyncWorkers = fs.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
 	f.BufferSizeKB = fs.Int("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes.")
+
+	f.UserExcludeFiles = fs.String("user-exclude-files", "", "Comma-separated list of case-insensitive file names to exclude (supports glob patterns).")
+	f.UserExcludeDirs = fs.String("user-exclude-dirs", "", "Comma-separated list of case-insensitive directory names to exclude (supports glob patterns).")
 	f.PreRestoreHooks = fs.String("pre-restore-hooks", "", "Comma-separated list of commands to run before the restore.")
 	f.PostRestoreHooks = fs.String("post-restore-hooks", "", "Comma-separated list of commands to run after the restore.")
 	f.OverwriteBehavior = fs.String("overwrite", "never", "Overwrite behavior: 'always', 'never', 'if-newer', 'update'.")

@@ -517,89 +517,134 @@ func (c *Config) Validate(opts ValidationOptions) error {
 
 // LogSummary prints a user-friendly summary of the configuration to the
 // provided logger. It respects the 'Quiet' setting.
-func (c *Config) LogSummary() {
+func (c *Config) LogSummary(command flagparse.Command) {
 	logArgs := []interface{}{
-		"mode", c.Runtime.Mode,
 		"log_level", c.LogLevel,
-		"source", c.Source,
 		"base", c.Base,
 		"dry_run", c.Runtime.DryRun,
-		"sync_workers", c.Engine.Performance.SyncWorkers,
-		"mirror_workers", c.Engine.Performance.MirrorWorkers,
-		"metrics", c.Engine.Metrics,
-		"delete_workers", c.Engine.Performance.DeleteWorkers,
-		"buffer_size_kb", c.Engine.Performance.BufferSizeKB,
 	}
 
-	if c.Sync.Enabled {
-		syncSummary := fmt.Sprintf("enabled (e:%s)", c.Sync.Engine)
-		logArgs = append(logArgs, "sync", syncSummary)
+	if command != flagparse.Init {
+		logArgs = append(logArgs, "metrics", c.Engine.Metrics)
 	}
 
-	if c.Compression.Enabled {
-		compressionSummary := fmt.Sprintf("enabled (f:%s l:%s)", c.Compression.Format, c.Compression.Level)
-		logArgs = append(logArgs, "compression", compressionSummary)
+	if command == flagparse.Backup {
+		logArgs = append(logArgs, "source", c.Source)
+		logArgs = append(logArgs, "mode", c.Runtime.Mode)
+		logArgs = append(logArgs, "sync_workers", c.Engine.Performance.SyncWorkers)
+		logArgs = append(logArgs, "mirror_workers", c.Engine.Performance.MirrorWorkers)
+		logArgs = append(logArgs, "delete_workers", c.Engine.Performance.DeleteWorkers)
+		logArgs = append(logArgs, "buffer_size_kb", c.Engine.Performance.BufferSizeKB)
+		logArgs = append(logArgs, "overwrite", c.Runtime.BackupOverwriteBehavior)
+	} else if command == flagparse.Restore {
+		logArgs = append(logArgs, "target", c.Target)
+		logArgs = append(logArgs, "backup_name", c.Runtime.BackupName)
+		logArgs = append(logArgs, "mode", c.Runtime.Mode)
+		logArgs = append(logArgs, "sync_workers", c.Engine.Performance.SyncWorkers)
+		logArgs = append(logArgs, "buffer_size_kb", c.Engine.Performance.BufferSizeKB)
+		logArgs = append(logArgs, "overwrite", c.Runtime.RestoreOverwriteBehavior)
+	} else if command == flagparse.Prune {
+		logArgs = append(logArgs, "delete_workers", c.Engine.Performance.DeleteWorkers)
 	}
 
-	switch c.Runtime.Mode {
-	case "incremental":
-		logArgs = append(logArgs, "current_subdir", c.Paths.Incremental.Current)
-		logArgs = append(logArgs, "archive_subdir", c.Paths.Incremental.Archive)
-		logArgs = append(logArgs, "content_subdir", c.Paths.Incremental.Content)
-
-		if c.Archive.Enabled {
-			switch c.Archive.IntervalMode {
-			case "manual":
-				archiveSummary := fmt.Sprintf("enabled (m:%s i:%ds)",
-					c.Archive.IntervalMode,
-					c.Archive.IntervalSeconds)
-				logArgs = append(logArgs, "archive", archiveSummary)
-			default:
-				archiveSummary := fmt.Sprintf("enabled (m:%s)",
-					c.Archive.IntervalMode)
-				logArgs = append(logArgs, "archive", archiveSummary)
-			}
+	if command == flagparse.Backup || command == flagparse.Restore {
+		if c.Sync.Enabled {
+			syncSummary := fmt.Sprintf("enabled (e:%s)", c.Sync.Engine)
+			logArgs = append(logArgs, "sync", syncSummary)
 		}
 
+		if c.Compression.Enabled {
+			if command == flagparse.Backup {
+				compressionSummary := fmt.Sprintf("enabled (f:%s l:%s)", c.Compression.Format, c.Compression.Level)
+				logArgs = append(logArgs, "compression", compressionSummary)
+			} else {
+				logArgs = append(logArgs, "compression", "enabled")
+			}
+		}
+	}
+
+	if command == flagparse.Backup {
+		switch c.Runtime.Mode {
+		case "incremental":
+			logArgs = append(logArgs, "current_subdir", c.Paths.Incremental.Current)
+			logArgs = append(logArgs, "archive_subdir", c.Paths.Incremental.Archive)
+			logArgs = append(logArgs, "content_subdir", c.Paths.Incremental.Content)
+
+			if c.Archive.Enabled {
+				switch c.Archive.IntervalMode {
+				case "manual":
+					archiveSummary := fmt.Sprintf("enabled (m:%s i:%ds)",
+						c.Archive.IntervalMode,
+						c.Archive.IntervalSeconds)
+					logArgs = append(logArgs, "archive", archiveSummary)
+				default:
+					archiveSummary := fmt.Sprintf("enabled (m:%s)",
+						c.Archive.IntervalMode)
+					logArgs = append(logArgs, "archive", archiveSummary)
+				}
+			}
+
+			if c.Retention.Incremental.Enabled {
+				retentionSummary := fmt.Sprintf("enabled (h:%d d:%d w:%d m:%d y:%d)",
+					c.Retention.Incremental.Hours, c.Retention.Incremental.Days, c.Retention.Incremental.Weeks,
+					c.Retention.Incremental.Months, c.Retention.Incremental.Years)
+				logArgs = append(logArgs, "retention", retentionSummary)
+			}
+
+		case "snapshot":
+			logArgs = append(logArgs, "current_subdir", c.Paths.Snapshot.Current)
+			logArgs = append(logArgs, "archive_subdir", c.Paths.Snapshot.Archive)
+			logArgs = append(logArgs, "content_subdir", c.Paths.Snapshot.Content)
+
+			if c.Retention.Snapshot.Enabled {
+				snapshotRetentionSummary := fmt.Sprintf("enabled (h:%d d:%d w:%d m:%d y:%d)",
+					c.Retention.Snapshot.Hours, c.Retention.Snapshot.Days, c.Retention.Snapshot.Weeks,
+					c.Retention.Snapshot.Months, c.Retention.Snapshot.Years)
+				logArgs = append(logArgs, "retention", snapshotRetentionSummary)
+			}
+		}
+	}
+
+	if command == flagparse.Prune {
 		if c.Retention.Incremental.Enabled {
 			retentionSummary := fmt.Sprintf("enabled (h:%d d:%d w:%d m:%d y:%d)",
 				c.Retention.Incremental.Hours, c.Retention.Incremental.Days, c.Retention.Incremental.Weeks,
 				c.Retention.Incremental.Months, c.Retention.Incremental.Years)
-			logArgs = append(logArgs, "retention", retentionSummary)
+			logArgs = append(logArgs, "retention_incremental", retentionSummary)
 		}
-
-	case "snapshot":
-		logArgs = append(logArgs, "current_subdir", c.Paths.Snapshot.Current)
-		logArgs = append(logArgs, "archive_subdir", c.Paths.Snapshot.Archive)
-		logArgs = append(logArgs, "content_subdir", c.Paths.Snapshot.Content)
-
 		if c.Retention.Snapshot.Enabled {
 			snapshotRetentionSummary := fmt.Sprintf("enabled (h:%d d:%d w:%d m:%d y:%d)",
 				c.Retention.Snapshot.Hours, c.Retention.Snapshot.Days, c.Retention.Snapshot.Weeks,
 				c.Retention.Snapshot.Months, c.Retention.Snapshot.Years)
-			logArgs = append(logArgs, "retention", snapshotRetentionSummary)
+			logArgs = append(logArgs, "retention_snapshot", snapshotRetentionSummary)
 		}
-
 	}
 
-	if finalExcludeFiles := c.Sync.ExcludeFiles(); len(finalExcludeFiles) > 0 {
-		logArgs = append(logArgs, "exclude_files", strings.Join(finalExcludeFiles, ", "))
-	}
-	if finalExcludeDirs := c.Sync.ExcludeDirs(); len(finalExcludeDirs) > 0 {
-		logArgs = append(logArgs, "exclude_dirs", strings.Join(finalExcludeDirs, ", "))
+	if command == flagparse.Backup || command == flagparse.Restore {
+		if finalExcludeFiles := c.Sync.ExcludeFiles(); len(finalExcludeFiles) > 0 {
+			logArgs = append(logArgs, "exclude_files", strings.Join(finalExcludeFiles, ", "))
+		}
+		if finalExcludeDirs := c.Sync.ExcludeDirs(); len(finalExcludeDirs) > 0 {
+			logArgs = append(logArgs, "exclude_dirs", strings.Join(finalExcludeDirs, ", "))
+		}
 	}
 
-	if len(c.Hooks.PreBackup) > 0 {
-		logArgs = append(logArgs, "pre_backup_hooks", strings.Join(c.Hooks.PreBackup, "; "))
+	if command == flagparse.Backup {
+		if len(c.Hooks.PreBackup) > 0 {
+			logArgs = append(logArgs, "pre_backup_hooks", strings.Join(c.Hooks.PreBackup, "; "))
+		}
+		if len(c.Hooks.PostBackup) > 0 {
+			logArgs = append(logArgs, "post_backup_hooks", strings.Join(c.Hooks.PostBackup, "; "))
+		}
 	}
-	if len(c.Hooks.PostBackup) > 0 {
-		logArgs = append(logArgs, "post_backup_hooks", strings.Join(c.Hooks.PostBackup, "; "))
-	}
-	if len(c.Hooks.PreRestore) > 0 {
-		logArgs = append(logArgs, "pre_restore_hooks", strings.Join(c.Hooks.PreRestore, "; "))
-	}
-	if len(c.Hooks.PostRestore) > 0 {
-		logArgs = append(logArgs, "post_restore_hooks", strings.Join(c.Hooks.PostRestore, "; "))
+
+	if command == flagparse.Restore {
+		if len(c.Hooks.PreRestore) > 0 {
+			logArgs = append(logArgs, "pre_restore_hooks", strings.Join(c.Hooks.PreRestore, "; "))
+		}
+		if len(c.Hooks.PostRestore) > 0 {
+			logArgs = append(logArgs, "post_restore_hooks", strings.Join(c.Hooks.PostRestore, "; "))
+		}
 	}
 	plog.Info("Configuration loaded", logArgs...)
 }

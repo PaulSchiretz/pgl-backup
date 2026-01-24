@@ -55,7 +55,7 @@ func RunPrune(ctx context.Context, flagMap map[string]interface{}) error {
 	plog.SetLevel(plog.LevelFromString(runConfig.LogLevel))
 
 	// Log the Summary
-	runConfig.LogSummary()
+	runConfig.LogSummary(flagparse.Prune)
 
 	// Create the runner and feed it with our leaf workers
 	runner := engine.NewRunner(
