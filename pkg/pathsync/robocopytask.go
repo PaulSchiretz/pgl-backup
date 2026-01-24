@@ -12,11 +12,12 @@ type robocopyTask struct {
 	retryCount int
 	retryWait  time.Duration
 
-	mirror       bool
-	dryRun       bool
-	failFast     bool
-	fileExcludes []string
-	dirExcludes  []string
-	ctx          context.Context
-	metrics      bool
+	mirror            bool
+	dryRun            bool
+	failFast          bool
+	fileExcludes      []string
+	dirExcludes       []string
+	ctx               context.Context
+	metrics           bool
+	overwriteBehavior OverwriteBehavior
 }

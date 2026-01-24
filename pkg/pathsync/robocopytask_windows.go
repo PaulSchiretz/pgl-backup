@@ -66,6 +66,18 @@ func (t *robocopyTask) execute() error {
 		args = append(args, "/L") // /L :: List only - don't copy, delete, or timestamp files.
 	}
 
+	// Map OverwriteBehavior to Robocopy flags
+	switch t.overwriteBehavior {
+	case OverwriteNever:
+		// Exclude Changed, Newer, and Older files. Effectively only copy new files (files that don't exist in dest).
+		args = append(args, "/XC", "/XN", "/XO")
+	case OverwriteIfNewer:
+		// Exclude Older files. Copy if source is Newer.
+		args = append(args, "/XO")
+	case OverwriteAlways:
+		args = append(args, "/IS", "/IT") // Include Same and Tweaked files (force overwrite even if identical)
+	}
+
 	// Add files to exclude.
 	if len(t.fileExcludes) > 0 {
 		args = append(args, "/XF")

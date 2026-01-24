@@ -256,17 +256,18 @@ func (s *PathSyncer) runNativeTask(ctx context.Context, absSourcePath, absSyncTa
 // runRobocopyTask initializes the robocopy task structure and kicks off the execution.
 func (s *PathSyncer) runRobocopyTask(ctx context.Context, absSourcePath, absSyncTargetPath string, p *Plan) error {
 	t := &robocopyTask{
-		src:          absSourcePath,
-		trg:          absSyncTargetPath,
-		retryCount:   p.RetryCount,
-		retryWait:    p.RetryWait,
-		mirror:       p.Mirror,
-		dryRun:       p.DryRun,
-		failFast:     p.FailFast,
-		fileExcludes: p.ExcludeFiles,
-		dirExcludes:  p.ExcludeDirs,
-		ctx:          ctx,
-		metrics:      p.Metrics,
+		src:               absSourcePath,
+		trg:               absSyncTargetPath,
+		retryCount:        p.RetryCount,
+		retryWait:         p.RetryWait,
+		mirror:            p.Mirror,
+		dryRun:            p.DryRun,
+		failFast:          p.FailFast,
+		fileExcludes:      p.ExcludeFiles,
+		dirExcludes:       p.ExcludeDirs,
+		ctx:               ctx,
+		metrics:           p.Metrics,
+		overwriteBehavior: p.OverwriteBehavior,
 	}
 	return t.execute()
 }

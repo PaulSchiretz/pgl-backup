@@ -170,4 +170,93 @@ func TestRobocopySync_Integration(t *testing.T) {
 			t.Errorf("expected extra destination file %q to be preserved, but it was deleted", extraDstFile)
 		}
 	})
+
+	t.Run("OverwriteNever - Skips newer source", func(t *testing.T) {
+		srcDir := t.TempDir()
+		baseDir := t.TempDir()
+
+		// Create a source file with "newer" content
+		srcFile := filepath.Join(srcDir, "file.txt")
+		if err := os.WriteFile(srcFile, []byte("newer content"), 0644); err != nil {
+			t.Fatalf("failed to create source file: %v", err)
+		}
+		// Ensure source is newer
+		futureTime := time.Now().Add(time.Hour)
+		if err := os.Chtimes(srcFile, futureTime, futureTime); err != nil {
+			t.Fatalf("failed to set source time: %v", err)
+		}
+
+		// Create a destination file with "older" content
+		dstFile := filepath.Join(baseDir, "file.txt")
+		if err := os.WriteFile(dstFile, []byte("older content"), 0644); err != nil {
+			t.Fatalf("failed to create destination file: %v", err)
+		}
+
+		// Create the syncer
+		plog.SetLevel(plog.LevelWarn)
+		syncer := NewPathSyncer(256, 1, 1)
+
+		plan := &Plan{
+			Enabled:           true,
+			Engine:            Robocopy,
+			OverwriteBehavior: OverwriteNever,
+		}
+
+		// Act
+		if err := syncer.Sync(context.Background(), baseDir, srcDir, "", "", plan, time.Now()); err != nil {
+			t.Fatalf("Sync failed: %v", err)
+		}
+
+		// Assert: Content should still be "older content"
+		if content, _ := os.ReadFile(dstFile); string(content) != "older content" {
+			t.Errorf("expected destination content to be preserved, but got %q", string(content))
+		}
+	})
+
+	t.Run("OverwriteIfNewer - Updates older destination", func(t *testing.T) {
+		srcDir := t.TempDir()
+		baseDir := t.TempDir()
+
+		// Create a source file with "newer" content
+		srcFile := filepath.Join(srcDir, "file.txt")
+		if err := os.WriteFile(srcFile, []byte("newer content"), 0644); err != nil {
+			t.Fatalf("failed to create source file: %v", err)
+		}
+		// Ensure source is newer
+		futureTime := time.Now().Add(time.Hour)
+		if err := os.Chtimes(srcFile, futureTime, futureTime); err != nil {
+			t.Fatalf("failed to set source time: %v", err)
+		}
+
+		// Create a destination file with "older" content
+		dstFile := filepath.Join(baseDir, "file.txt")
+		if err := os.WriteFile(dstFile, []byte("older content"), 0644); err != nil {
+			t.Fatalf("failed to create destination file: %v", err)
+		}
+		// Ensure destination is older
+		pastTime := time.Now().Add(-time.Hour)
+		if err := os.Chtimes(dstFile, pastTime, pastTime); err != nil {
+			t.Fatalf("failed to set destination time: %v", err)
+		}
+
+		// Create the syncer
+		plog.SetLevel(plog.LevelWarn)
+		syncer := NewPathSyncer(256, 1, 1)
+
+		plan := &Plan{
+			Enabled:           true,
+			Engine:            Robocopy,
+			OverwriteBehavior: OverwriteIfNewer,
+		}
+
+		// Act
+		if err := syncer.Sync(context.Background(), baseDir, srcDir, "", "", plan, time.Now()); err != nil {
+			t.Fatalf("Sync failed: %v", err)
+		}
+
+		// Assert: Content should be updated to "newer content"
+		if content, _ := os.ReadFile(dstFile); string(content) != "newer content" {
+			t.Errorf("expected destination content to be updated, but got %q", string(content))
+		}
+	})
 }
