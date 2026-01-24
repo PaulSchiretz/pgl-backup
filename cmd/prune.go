@@ -46,10 +46,10 @@ func RunPrune(ctx context.Context, flagMap map[string]interface{}) error {
 		return fmt.Errorf("base path '%s' does not exist", absBasePath)
 	}
 
-	// Load config from the target directory.
+	// Load config from the base directory.
 	loadedConfig, err := config.Load(absBasePath)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration from target: %w", err)
+		return fmt.Errorf("failed to load configuration from base: %w", err)
 	}
 
 	// Merge the flag values over the loaded config.

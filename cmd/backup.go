@@ -67,10 +67,10 @@ func RunBackup(ctx context.Context, flagMap map[string]interface{}) error {
 		return fmt.Errorf("source path '%s' does not exist", absSourcePath)
 	}
 
-	// Load config from the target directory, or use defaults if not found.
+	// Load config from the base directory, or use defaults if not found.
 	loadedConfig, err := config.Load(absBasePath)
 	if err != nil {
-		return fmt.Errorf("failed to load configuration from target: %w", err)
+		return fmt.Errorf("failed to load configuration from base: %w", err)
 	}
 
 	// Merge the flag values over the loaded config to get the final run config.
