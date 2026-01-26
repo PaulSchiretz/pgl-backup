@@ -111,15 +111,23 @@ func (s *PathSyncer) Sync(ctx context.Context, absBasePath, absSourcePath string
 
 	// If the sync was successful, write the metafile
 	absTargetCurrentPath := util.DenormalizePath(filepath.Join(absBasePath, relCurrentPathKey))
+
+	// CRITICAL: Here we generate the uuid for the synced backup and write our metafile to the disk
+	uuid, err := util.GenerateUUID()
+	if err != nil {
+		return fmt.Errorf("failed to generate UUID: %w", err)
+	}
+
 	metadata := metafile.MetafileContent{
 		Version:      buildinfo.Version,
 		TimestampUTC: timestampUTC,
 		Mode:         p.ModeIdentifier,
+		UUID:         uuid,
 	}
 	if p.DryRun {
 		plog.Info("[DRY RUN] Would write metafile", "directory", absTargetCurrentPath)
 	} else {
-		err := metafile.Write(absTargetCurrentPath, metadata)
+		err := metafile.Write(absTargetCurrentPath, &metadata)
 		if err != nil {
 			return err
 		}

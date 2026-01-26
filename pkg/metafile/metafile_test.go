@@ -16,9 +16,10 @@ func TestWriteAndReadMetafile(t *testing.T) {
 		Version:      "1.0.0",
 		TimestampUTC: time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC),
 		Mode:         "incremental",
+		UUID:         "test-uuid-1234",
 	}
 
-	err := Write(tempDir, testContent)
+	err := Write(tempDir, &testContent)
 	if err != nil {
 		t.Fatalf("Write() failed: %v", err)
 	}
@@ -42,6 +43,9 @@ func TestWriteAndReadMetafile(t *testing.T) {
 	}
 	if readContent.Mode != testContent.Mode {
 		t.Errorf("Expected mode %q, got %q", testContent.Mode, readContent.Mode)
+	}
+	if readContent.UUID != testContent.UUID {
+		t.Errorf("Expected UUID %q, got %q", testContent.UUID, readContent.UUID)
 	}
 }
 

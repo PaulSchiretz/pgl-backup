@@ -22,6 +22,7 @@ type MetafileInfo struct {
 // MetafileContent holds the contents of the metadatafile.
 type MetafileContent struct {
 	Version           string    `json:"version"`
+	UUID              string    `json:"uuid"`
 	TimestampUTC      time.Time `json:"timestampUTC"`
 	Mode              string    `json:"mode"`
 	IsCompressed      bool      `json:"isCompressed,omitempty"`
@@ -29,7 +30,7 @@ type MetafileContent struct {
 }
 
 // Write creates and writes the .pgl-backup.meta.json file into a given directory.
-func Write(dirPath string, content MetafileContent) error {
+func Write(dirPath string, content *MetafileContent) error {
 	metaFilePath := filepath.Join(dirPath, MetaFileName)
 	jsonData, err := json.MarshalIndent(content, "", "  ")
 	if err != nil {

@@ -167,7 +167,7 @@ func TestExecuteBackup(t *testing.T) {
 					t.Fatal(err)
 				}
 				meta := metafile.MetafileContent{TimestampUTC: time.Now()}
-				if err := metafile.Write(currentPath, meta); err != nil {
+				if err := metafile.Write(currentPath, &meta); err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -207,7 +207,7 @@ func TestExecuteBackup(t *testing.T) {
 				// Create 'current' backup so fetchBackup succeeds
 				currentPath := filepath.Join(baseDir, relCurrent)
 				os.MkdirAll(currentPath, 0755)
-				metafile.Write(currentPath, metafile.MetafileContent{})
+				metafile.Write(currentPath, &metafile.MetafileContent{})
 			},
 			expectError:   true,
 			errorContains: "Error during archive",
@@ -221,7 +221,7 @@ func TestExecuteBackup(t *testing.T) {
 			setupFS: func(t *testing.T, baseDir string) {
 				currentPath := filepath.Join(baseDir, relCurrent)
 				os.MkdirAll(currentPath, 0755)
-				metafile.Write(currentPath, metafile.MetafileContent{})
+				metafile.Write(currentPath, &metafile.MetafileContent{})
 			},
 			expectError: false, // Should continue
 		},
@@ -234,7 +234,7 @@ func TestExecuteBackup(t *testing.T) {
 				// Create 'current' backup so fetchBackup succeeds
 				currentPath := filepath.Join(baseDir, relCurrent)
 				os.MkdirAll(currentPath, 0755)
-				metafile.Write(currentPath, metafile.MetafileContent{})
+				metafile.Write(currentPath, &metafile.MetafileContent{})
 			},
 			expectError: false,
 		},
@@ -453,7 +453,7 @@ func TestExecuteRestore(t *testing.T) {
 			setupFS: func(t *testing.T, baseDir string) {
 				path := filepath.Join(baseDir, relCurrent)
 				os.MkdirAll(path, 0755)
-				metafile.Write(path, metafile.MetafileContent{IsCompressed: false})
+				metafile.Write(path, &metafile.MetafileContent{IsCompressed: false})
 			},
 			expectedPath:  relCurrent,
 			expectExtract: false,
@@ -465,7 +465,7 @@ func TestExecuteRestore(t *testing.T) {
 			setupFS: func(t *testing.T, baseDir string) {
 				path := filepath.Join(baseDir, relArchive, "backup_123")
 				os.MkdirAll(path, 0755)
-				metafile.Write(path, metafile.MetafileContent{IsCompressed: true})
+				metafile.Write(path, &metafile.MetafileContent{IsCompressed: true})
 			},
 			expectedPath:  filepath.Join(relArchive, "backup_123"),
 			expectExtract: true,
@@ -477,7 +477,7 @@ func TestExecuteRestore(t *testing.T) {
 			setupFS: func(t *testing.T, baseDir string) {
 				path := filepath.Join(baseDir, relArchive, "backup_456")
 				os.MkdirAll(path, 0755)
-				metafile.Write(path, metafile.MetafileContent{IsCompressed: false})
+				metafile.Write(path, &metafile.MetafileContent{IsCompressed: false})
 			},
 			expectedPath:  filepath.Join(relArchive, "backup_456"),
 			expectExtract: false,
@@ -557,19 +557,19 @@ func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
 	// Create 'current' backup so fetchBackup succeeds and Archive is called
 	currentPath := filepath.Join(baseDir, relCurrent)
 	os.MkdirAll(currentPath, 0755)
-	metafile.Write(currentPath, metafile.MetafileContent{TimestampUTC: time.Now()})
+	metafile.Write(currentPath, &metafile.MetafileContent{TimestampUTC: time.Now()})
 
 	// 1. Create an OLD backup on disk (should be pruned)
 	oldBackupName := prefix + "old"
 	oldBackupPath := filepath.Join(archivePath, oldBackupName)
 	os.MkdirAll(oldBackupPath, 0755)
-	metafile.Write(oldBackupPath, metafile.MetafileContent{TimestampUTC: time.Now().Add(-24 * time.Hour)})
+	metafile.Write(oldBackupPath, &metafile.MetafileContent{TimestampUTC: time.Now().Add(-24 * time.Hour)})
 
 	// 2. Create the NEW backup on disk (simulating what Archiver just did)
 	newBackupRelPath := filepath.Join(relArchive, prefix+"new")
 	newBackupPath := filepath.Join(baseDir, newBackupRelPath)
 	os.MkdirAll(newBackupPath, 0755)
-	metafile.Write(newBackupPath, metafile.MetafileContent{TimestampUTC: time.Now()})
+	metafile.Write(newBackupPath, &metafile.MetafileContent{TimestampUTC: time.Now()})
 
 	// Plan
 	plan := &planner.BackupPlan{

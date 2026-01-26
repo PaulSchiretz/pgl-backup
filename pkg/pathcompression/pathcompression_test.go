@@ -509,7 +509,7 @@ func TestExtract_AutoDetect_CorruptMeta(t *testing.T) {
 	}
 
 	meta.CompressionFormat = "" // Corrupt it
-	if err := metafile.Write(absBackupPath, meta); err != nil {
+	if err := metafile.Write(absBackupPath, &meta); err != nil {
 		t.Fatalf("Failed to write corrupted metafile: %v", err)
 	}
 
@@ -595,7 +595,7 @@ func createTestBackup(t *testing.T, targetBase, relPath string, compressed bool,
 		IsCompressed:      compressed,
 		CompressionFormat: fmtStr,
 	}
-	if err := metafile.Write(absPath, meta); err != nil {
+	if err := metafile.Write(absPath, &meta); err != nil {
 		t.Fatalf("Failed to write metafile: %v", err)
 	}
 

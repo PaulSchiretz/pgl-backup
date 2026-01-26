@@ -1,6 +1,8 @@
 package util
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -161,4 +163,34 @@ func IsPathCaseSensitive(path string) (bool, error) {
 	}
 	// If we can stat it (err is nil) or any other error occurs, assume case-insensitive.
 	return false, nil
+}
+
+// GenerateUUID returns a cryptographically secure Version 4 UUID compliant with RFC 4122.
+// It uses crypto/rand for entropy and manually sets the required version and variant bits.
+// This implementation is optimized using a byte buffer and hex.Encode to avoid the
+// performance overhead of fmt.Sprintf.
+func GenerateUUID() (string, error) {
+	uuid := make([]byte, 16)
+	if _, err := rand.Read(uuid); err != nil {
+		return "", err
+	}
+
+	// Set version 4 (bits 4-7 of byte 6 to 0100)
+	uuid[6] = (uuid[6] & 0x0f) | 0x40
+	// Set variant RFC 4122 (bits 6-7 of byte 8 to 10)
+	uuid[8] = (uuid[8] & 0x3f) | 0x80
+
+	// A UUID string is 36 characters: 32 hex chars + 4 hyphens
+	buf := make([]byte, 36)
+	hex.Encode(buf[0:8], uuid[0:4])
+	buf[8] = '-'
+	hex.Encode(buf[9:13], uuid[4:6])
+	buf[13] = '-'
+	hex.Encode(buf[14:18], uuid[6:8])
+	buf[18] = '-'
+	hex.Encode(buf[19:23], uuid[8:10])
+	buf[23] = '-'
+	hex.Encode(buf[24:], uuid[10:])
+
+	return string(buf), nil
 }

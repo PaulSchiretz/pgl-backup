@@ -148,7 +148,7 @@ func TestArchive(t *testing.T) {
 			meta := metafile.MetafileContent{
 				TimestampUTC: lastBackupTime,
 			}
-			if err := metafile.Write(absCurrent, meta); err != nil {
+			if err := metafile.Write(absCurrent, &meta); err != nil {
 				t.Fatalf("failed to write metafile: %v", err)
 			}
 
