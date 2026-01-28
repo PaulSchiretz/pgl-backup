@@ -122,6 +122,12 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 					}
 					plog.Warn("Error during archive, skipping archive", "error", err)
 				}
+			} else if p.Archive.ResultInfo.RelPathKey == "" {
+				err := fmt.Errorf("Error archive succeeded but ResultInfo is empty")
+				if p.FailFast {
+					return err
+				}
+				plog.Error("Error after archive, consistency check failed", "error", err)
 			}
 		}
 	}
@@ -134,6 +140,23 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 			} else {
 				syncErr = fmt.Errorf("error during sync: %w", err)
 				plog.Error("Sync failed", "error", err)
+			}
+		} else {
+			// Sync successful. Write the metafile using the info populated by Sync.
+			if p.Sync.ResultInfo.RelPathKey == "" {
+				syncErr = fmt.Errorf("sync succeeded but ResultInfo is empty")
+				plog.Error("Metafile write failed", "error", syncErr)
+			} else {
+				absTargetCurrentPath := util.DenormalizePath(filepath.Join(absBasePath, p.Sync.ResultInfo.RelPathKey))
+
+				if p.DryRun {
+					plog.Info("[DRY RUN] Would write metafile", "directory", absTargetCurrentPath)
+				} else {
+					if err := metafile.Write(absTargetCurrentPath, &p.Sync.ResultInfo.Metadata); err != nil {
+						syncErr = fmt.Errorf("failed to write metafile: %w", err)
+						plog.Error("Metafile write failed", "error", err)
+					}
+				}
 			}
 		}
 	}
@@ -154,6 +177,8 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 				} else {
 					return fmt.Errorf("Error during archive: %w", err)
 				}
+			} else if p.Archive.ResultInfo.RelPathKey == "" {
+				return fmt.Errorf("Error archive succeeded but ResultInfo is empty")
 			}
 		}
 	}

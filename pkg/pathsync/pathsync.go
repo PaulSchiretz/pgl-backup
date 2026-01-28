@@ -109,9 +109,6 @@ func (s *PathSyncer) Sync(ctx context.Context, absBasePath, absSourcePath string
 		return fmt.Errorf("unknown sync engine configured: %v", p.Engine)
 	}
 
-	// If the sync was successful, write the metafile
-	absTargetCurrentPath := util.DenormalizePath(filepath.Join(absBasePath, relCurrentPathKey))
-
 	// CRITICAL: Here we generate the uuid for the synced backup and write our metafile to the disk
 	uuid, err := util.GenerateUUID()
 	if err != nil {
@@ -123,14 +120,6 @@ func (s *PathSyncer) Sync(ctx context.Context, absBasePath, absSourcePath string
 		TimestampUTC: timestampUTC,
 		Mode:         p.ModeIdentifier,
 		UUID:         uuid,
-	}
-	if p.DryRun {
-		plog.Info("[DRY RUN] Would write metafile", "directory", absTargetCurrentPath)
-	} else {
-		err := metafile.Write(absTargetCurrentPath, &metadata)
-		if err != nil {
-			return err
-		}
 	}
 	plog.Notice("SYNCED", "source", absSourcePath, "target", absSyncTargetPath)
 

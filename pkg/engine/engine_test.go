@@ -41,6 +41,11 @@ func (m *mockSyncer) Sync(ctx context.Context, absBasePath, absSourcePath, relCu
 	if m.err != nil {
 		return m.err
 	}
+	// Simulate real syncer behavior: ensure the target directory exists.
+	// This is required because Runner now writes the metafile to this directory.
+	targetPath := filepath.Join(absBasePath, relCurrentPathKey)
+	os.MkdirAll(targetPath, 0755)
+
 	// Simulate setting result info
 	p.ResultInfo = m.resultInfo
 	return nil
@@ -52,13 +57,18 @@ func (m *mockSyncer) Restore(ctx context.Context, absBasePath string, relContent
 }
 
 type mockArchiver struct {
-	err        error
-	resultPath string
+	err               error
+	resultPath        string
+	returnEmptyResult bool
 }
 
 func (m *mockArchiver) Archive(ctx context.Context, absBasePath, relArchivePathKey, backupNamePrefix string, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) error {
 	if m.err != nil {
 		return m.err
+	}
+	if m.returnEmptyResult {
+		p.ResultInfo = metafile.MetafileInfo{}
+		return nil
 	}
 	// Simulate result info
 	path := "archived_path"
@@ -139,11 +149,12 @@ func TestExecuteBackup(t *testing.T) {
 		dryRun             bool
 
 		// Mock behaviors
-		preflightErr error
-		syncErr      error
-		archiveErr   error
-		retentionErr error
-		compressErr  error
+		preflightErr       error
+		syncErr            error
+		archiveErr         error
+		retentionErr       error
+		compressErr        error
+		archiveReturnEmpty bool
 
 		// Filesystem setup
 		setupFS func(t *testing.T, baseDir string)
@@ -237,6 +248,20 @@ func TestExecuteBackup(t *testing.T) {
 				metafile.Write(currentPath, &metafile.MetafileContent{})
 			},
 			expectError: false,
+		},
+		{
+			name:               "Incremental Archive Success Empty Result (FailFast=True)",
+			mode:               planner.Incremental,
+			archiveEnabled:     true,
+			failFast:           true,
+			archiveReturnEmpty: true,
+			setupFS: func(t *testing.T, baseDir string) {
+				currentPath := filepath.Join(baseDir, relCurrent)
+				os.MkdirAll(currentPath, 0755)
+				metafile.Write(currentPath, &metafile.MetafileContent{})
+			},
+			expectError:   true,
+			errorContains: "archive succeeded but ResultInfo is empty",
 		},
 		{
 			name:             "Retention Failure (FailFast=True)",
@@ -369,8 +394,8 @@ func TestExecuteBackup(t *testing.T) {
 
 			// Mocks
 			v := &mockValidator{err: tc.preflightErr}
-			s := &mockSyncer{err: tc.syncErr, resultInfo: metafile.MetafileInfo{RelPathKey: "synced_path"}}
-			a := &mockArchiver{err: tc.archiveErr}
+			s := &mockSyncer{err: tc.syncErr, resultInfo: metafile.MetafileInfo{RelPathKey: relCurrent}}
+			a := &mockArchiver{err: tc.archiveErr, returnEmptyResult: tc.archiveReturnEmpty}
 			r := &mockRetainer{err: tc.retentionErr}
 			c := &mockCompressor{err: tc.compressErr}
 
@@ -588,7 +613,9 @@ func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
 
 	// Mocks
 	v := &mockValidator{}
-	s := &mockSyncer{}
+	s := &mockSyncer{
+		resultInfo: metafile.MetafileInfo{RelPathKey: relCurrent},
+	}
 
 	// Mock Archiver that returns the path of the NEW backup we created
 	a := &mockArchiver{
