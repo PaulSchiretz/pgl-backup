@@ -166,6 +166,16 @@ func checkPathNesting(source, target string) error {
 		return fmt.Errorf("source path '%s' is inside or same as target path '%s'. This is not supported", source, target)
 	}
 
+	// Check for physical identity (e.g. bind mounts, symlinks resolving to same dir).
+	// This catches cases where string comparison fails (e.g. different paths pointing to the same inode).
+	srcInfo, errSrc := os.Stat(absSource)
+	trgInfo, errTrg := os.Stat(absTarget)
+	if errSrc == nil && errTrg == nil {
+		if os.SameFile(srcInfo, trgInfo) {
+			return fmt.Errorf("source and target paths resolve to the same physical directory")
+		}
+	}
+
 	return nil
 }
 
@@ -182,6 +192,13 @@ func checkSourceAccessible(srcPath string) error {
 	if !srcInfo.IsDir() {
 		return fmt.Errorf("source path %s is not a directory", srcPath)
 	}
+
+	// Verify that the source directory is readable.
+	f, err := os.Open(srcPath)
+	if err != nil {
+		return fmt.Errorf("source directory is not readable: %w", err)
+	}
+	defer f.Close()
 
 	return nil
 }
