@@ -366,11 +366,10 @@ func (r *Runner) ExecuteRestore(ctx context.Context, absBasePath, backupName, ab
 
 	var relBackupPathkey string
 	if backupName == p.Paths.RelCurrentPathKey || strings.ToLower(strings.TrimSpace(backupName)) == "current" {
-		relBackupPathkey = p.Paths.RelCurrentPathKey
+		relBackupPathkey = util.NormalizePath(p.Paths.RelCurrentPathKey)
 	} else {
-		relBackupPathkey = filepath.Join(p.Paths.RelArchivePathKey, backupName) // It's an archived backup
+		relBackupPathkey = util.NormalizePath(filepath.Join(p.Paths.RelArchivePathKey, backupName)) // It's an archived backup
 	}
-	relBackupPathkey = util.NormalizePath(relBackupPathkey)
 
 	absBackupPath := util.DenormalizePath(filepath.Join(absBasePath, relBackupPathkey))
 

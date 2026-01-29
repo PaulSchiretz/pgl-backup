@@ -182,6 +182,27 @@ func TestExecuteBackup(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name:               "Incremental Happy Path with Archive and Compression",
+			mode:               planner.Incremental,
+			archiveEnabled:     true,
+			syncEnabled:        true,
+			retentionEnabled:   true,
+			compressionEnabled: true,
+			setupFS: func(t *testing.T, baseDir string) {
+				currentPath := filepath.Join(baseDir, relCurrent)
+				if err := os.MkdirAll(currentPath, 0755); err != nil {
+					t.Fatal(err)
+				}
+				meta := metafile.MetafileContent{TimestampUTC: time.Now()}
+				if err := metafile.Write(currentPath, &meta); err != nil {
+					t.Fatal(err)
+				}
+			},
+			// We need the archiver to return a path so compression triggers
+			archiveReturnEmpty: false,
+			expectError:        false,
+		},
+		{
 			name:               "Snapshot Happy Path",
 			mode:               planner.Snapshot,
 			archiveEnabled:     true,
@@ -377,6 +398,13 @@ func TestExecuteBackup(t *testing.T) {
 			expectError:     true,
 			errorContains:   "error during sync",
 		},
+		{
+			name:          "Metafile Write Failure",
+			mode:          planner.Incremental,
+			syncEnabled:   true,
+			expectError:   true,
+			errorContains: "failed to write metafile",
+		},
 	}
 
 	for _, tc := range tests {
@@ -420,6 +448,17 @@ func TestExecuteBackup(t *testing.T) {
 			v := &mockValidator{err: tc.preflightErr}
 			s := &mockSyncer{err: tc.syncErr, resultInfo: metafile.MetafileInfo{RelPathKey: relCurrent}}
 			a := &mockArchiver{err: tc.archiveErr, returnEmptyResult: tc.archiveReturnEmpty}
+
+			if tc.name == "Metafile Write Failure" {
+				// Return a path that doesn't exist so metafile.Write fails
+				s.resultInfo = metafile.MetafileInfo{RelPathKey: "non_existent_dir"}
+			}
+
+			// If we want to test compression triggering, the mock archiver needs to return a path
+			if tc.name == "Incremental Happy Path with Archive and Compression" {
+				a.resultPath = "archive/backup_123"
+			}
+
 			r := &mockRetainer{err: tc.retentionErr}
 			c := &mockCompressor{err: tc.compressErr}
 

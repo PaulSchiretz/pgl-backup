@@ -648,7 +648,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 		{
 			name:                  "Overwrite Destination File with Directory (Fail-Fast Mode)",
 			preserveSourceDirName: false,
-			failFast:              true, // Should still succeed because this is no longer an error
+			failFast:              true, // Should still succeed because conflict resolution handles this
 			srcFiles: []testFile{
 				// This file will cause the error.
 				{path: filepath.Join("unwritable_dir", "file1.txt"), content: "content1", modTime: baseTime},
