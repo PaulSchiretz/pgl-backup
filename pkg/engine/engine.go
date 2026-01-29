@@ -20,14 +20,14 @@ type Validator interface {
 
 // Syncer is an interface for the sync leaf package.
 type Syncer interface {
-	Sync(ctx context.Context, absBasePath, absSourcePath, relCurrentPathKey, relContentPathKey string, p *pathsync.Plan, timestampUTC time.Time) error
+	Sync(ctx context.Context, absBasePath, absSourcePath, relCurrentPathKey, relContentPathKey string, p *pathsync.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error)
 	Restore(ctx context.Context, absBasePath string, relContentPathKey string, toRestore metafile.MetafileInfo, absRestoreTargetPath string, p *pathsync.Plan) error
 }
 
 // Archiver is an interface for the archive leaf package.
 // Responsible for turning the the 'current' state into a permanent historical record.
 type Archiver interface {
-	Archive(ctx context.Context, absBasePath, relArchivePathKey, backupNamePrefix string, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) error
+	Archive(ctx context.Context, absBasePath, relArchivePathKey, backupNamePrefix string, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error)
 }
 
 // Retainer is an interface for the retention leaf package.

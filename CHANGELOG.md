@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a pre-flight check to detect if source and target paths resolve to the same physical directory (e.g., via symlinks or bind mounts).
 
 ### Changed
-- Refactored metafile writing logic from the sync engine to the main runner to improve separation of concerns.
+- Refactored core engine functions (`Sync`, `Archive`) to return results explicitly instead of modifying input structs via side effects. This improves data flow clarity and moves metafile writing responsibility to the main runner.
+- Introduced a new internal `hints` package to decouple error handling. The engine now checks for ignorable error *behaviors* (e.g., "task disabled") rather than specific error types from sub-packages, making the system more modular.
 
 ### Fixed
 - Added safety checks to ensure backup metadata is valid before attempting to write it or perform archiving/retention.

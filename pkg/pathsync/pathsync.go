@@ -2,7 +2,6 @@ package pathsync
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/buildinfo"
+	"github.com/paulschiretz/pgl-backup/pkg/hints"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/pathsyncmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
@@ -18,7 +18,7 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
-var ErrDisabled = errors.New("sync is disabled")
+var ErrDisabled = hints.New("sync is disabled")
 
 // PathSyncer orchestrates the file synchronization process.
 type PathSyncer struct {
@@ -58,17 +58,17 @@ func NewPathSyncer(bufferSizeKB int, numSyncWorkers int, numMirrorWorkers int) *
 }
 
 // Sync is the main entry point for synchronization. It dispatches to the configured sync engine.
-func (s *PathSyncer) Sync(ctx context.Context, absBasePath, absSourcePath string, relCurrentPathKey, relContentPathKey string, p *Plan, timestampUTC time.Time) error {
+func (s *PathSyncer) Sync(ctx context.Context, absBasePath, absSourcePath string, relCurrentPathKey, relContentPathKey string, p *Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
 
 	if !p.Enabled {
 		plog.Debug("Sync is disabled, skipping Sync")
-		return ErrDisabled
+		return metafile.MetafileInfo{}, ErrDisabled
 	}
 
 	// Check for cancellation after validation but before starting the heavy work.
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return metafile.MetafileInfo{}, ctx.Err()
 	default:
 	}
 
@@ -82,7 +82,7 @@ func (s *PathSyncer) Sync(ctx context.Context, absBasePath, absSourcePath string
 	// permissions, regardless of which engine (native, robocopy) is used.
 	srcInfo, err := os.Stat(absSourcePath)
 	if err != nil {
-		return fmt.Errorf("could not stat source directory %s: %w", absSourcePath, err)
+		return metafile.MetafileInfo{}, fmt.Errorf("could not stat source directory %s: %w", absSourcePath, err)
 	}
 
 	// We use the source directory's permissions as a template for the destination.
@@ -90,7 +90,7 @@ func (s *PathSyncer) Sync(ctx context.Context, absBasePath, absSourcePath string
 	// can always write to the destination on subsequent runs, preventing permission lockouts.
 	if !p.DryRun && absSyncTargetPath != "" {
 		if err := os.MkdirAll(absSyncTargetPath, util.WithUserWritePermission(srcInfo.Mode().Perm())); err != nil {
-			return fmt.Errorf("failed to create target directory %s: %w", absSyncTargetPath, err)
+			return metafile.MetafileInfo{}, fmt.Errorf("failed to create target directory %s: %w", absSyncTargetPath, err)
 		}
 	}
 
@@ -98,21 +98,21 @@ func (s *PathSyncer) Sync(ctx context.Context, absBasePath, absSourcePath string
 	case Robocopy:
 		err := s.runRobocopyTask(ctx, absSourcePath, absSyncTargetPath, p)
 		if err != nil {
-			return err
+			return metafile.MetafileInfo{}, err
 		}
 	case Native:
 		err := s.runNativeTask(ctx, absSourcePath, absSyncTargetPath, p)
 		if err != nil {
-			return err
+			return metafile.MetafileInfo{}, err
 		}
 	default:
-		return fmt.Errorf("unknown sync engine configured: %v", p.Engine)
+		return metafile.MetafileInfo{}, fmt.Errorf("unknown sync engine configured: %v", p.Engine)
 	}
 
 	// CRITICAL: Here we generate the uuid for the synced backup and write our metafile to the disk
 	uuid, err := util.GenerateUUID()
 	if err != nil {
-		return fmt.Errorf("failed to generate UUID: %w", err)
+		return metafile.MetafileInfo{}, fmt.Errorf("failed to generate UUID: %w", err)
 	}
 
 	metadata := metafile.MetafileContent{
@@ -123,12 +123,10 @@ func (s *PathSyncer) Sync(ctx context.Context, absBasePath, absSourcePath string
 	}
 	plog.Notice("SYNCED", "source", absSourcePath, "target", absSyncTargetPath)
 
-	// Store the Result
-	p.ResultInfo = metafile.MetafileInfo{
+	return metafile.MetafileInfo{
 		RelPathKey: util.NormalizePath(relCurrentPathKey),
 		Metadata:   metadata,
-	}
-	return nil
+	}, nil
 }
 
 // Restore restores a backup to a target directory.

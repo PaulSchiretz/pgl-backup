@@ -109,7 +109,7 @@ func TestRobocopySync_Integration(t *testing.T) {
 		}
 
 		// Act
-		err := syncer.Sync(context.Background(), baseDir, srcDir, "", "", plan, time.Now())
+		_, err := syncer.Sync(context.Background(), baseDir, srcDir, "", "", plan, time.Now())
 		if err != nil {
 			t.Fatalf("Sync failed: %v", err)
 		}
@@ -153,7 +153,7 @@ func TestRobocopySync_Integration(t *testing.T) {
 		}
 
 		// Act
-		err := syncer.Sync(context.Background(), baseDir, srcDir, "", "", plan, time.Now())
+		_, err := syncer.Sync(context.Background(), baseDir, srcDir, "", "", plan, time.Now())
 		if err != nil {
 			t.Fatalf("Sync failed: %v", err)
 		}
@@ -203,7 +203,7 @@ func TestRobocopySync_Integration(t *testing.T) {
 		}
 
 		// Act
-		if err := syncer.Sync(context.Background(), baseDir, srcDir, "", "", plan, time.Now()); err != nil {
+		if _, err := syncer.Sync(context.Background(), baseDir, srcDir, "", "", plan, time.Now()); err != nil {
 			t.Fatalf("Sync failed: %v", err)
 		}
 
@@ -250,7 +250,7 @@ func TestRobocopySync_Integration(t *testing.T) {
 		}
 
 		// Act
-		if err := syncer.Sync(context.Background(), baseDir, srcDir, "", "", plan, time.Now()); err != nil {
+		if _, err := syncer.Sync(context.Background(), baseDir, srcDir, "", "", plan, time.Now()); err != nil {
 			t.Fatalf("Sync failed: %v", err)
 		}
 

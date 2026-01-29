@@ -821,7 +821,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				plan.ModTimeWindow = 1 * time.Second
 			}
 			syncer := NewPathSyncer(256, 4, 4)
-			err := syncer.Sync(context.Background(), runner.baseDir, runner.srcDir, "", "", plan, time.Now())
+			_, err := syncer.Sync(context.Background(), runner.baseDir, runner.srcDir, "", "", plan, time.Now())
 
 			// Assert on error
 			if tc.expectedErrorContains != "" {
@@ -1002,7 +1002,7 @@ func TestNativeSync_WorkerCancellation(t *testing.T) {
 	}()
 
 	// Act
-	err := syncer.Sync(ctx, baseDir, srcDir, "", "", plan, time.Now())
+	_, err := syncer.Sync(ctx, baseDir, srcDir, "", "", plan, time.Now())
 
 	// Assert
 	if err != nil && !strings.Contains(err.Error(), "context canceled") && !strings.Contains(err.Error(), "critical sync error") {
@@ -1048,7 +1048,7 @@ func TestNativeSync_MirrorCancellation(t *testing.T) {
 	}()
 
 	// Act
-	err := syncer.Sync(ctx, baseDir, srcDir, "", "", plan, time.Now())
+	_, err := syncer.Sync(ctx, baseDir, srcDir, "", "", plan, time.Now())
 
 	// Assert
 	if err != nil && !strings.Contains(err.Error(), "context canceled") && !strings.Contains(err.Error(), "critical mirror error") {

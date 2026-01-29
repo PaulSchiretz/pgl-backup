@@ -32,7 +32,7 @@ func TestArchive(t *testing.T) {
 		expectError     error
 		expectErrorStr  string
 		expectArchived  bool // True if file system change is expected
-		verify          func(t *testing.T, plan *patharchive.Plan)
+		verify          func(t *testing.T, plan *patharchive.Plan, result metafile.MetafileInfo)
 	}{
 		{
 			name:            "Manual - 24h Interval - 25h Passed (Should Archive)",
@@ -40,10 +40,10 @@ func TestArchive(t *testing.T) {
 			intervalSeconds: 86400,
 			lastBackupAge:   25 * time.Hour,
 			expectArchived:  true,
-			verify: func(t *testing.T, plan *patharchive.Plan) {
+			verify: func(t *testing.T, plan *patharchive.Plan, result metafile.MetafileInfo) {
 				expectedPrefix := "archive/backup_"
-				if !strings.HasPrefix(plan.ResultInfo.RelPathKey, expectedPrefix) {
-					t.Errorf("ResultInfo path mismatch. Want prefix %q, got %q", expectedPrefix, plan.ResultInfo.RelPathKey)
+				if !strings.HasPrefix(result.RelPathKey, expectedPrefix) {
+					t.Errorf("ResultInfo path mismatch. Want prefix %q, got %q", expectedPrefix, result.RelPathKey)
 				}
 			},
 		},
@@ -61,10 +61,10 @@ func TestArchive(t *testing.T) {
 			constraints:    patharchive.IntervalModeConstraints{Hours: 1},
 			lastBackupAge:  2 * time.Hour,
 			expectArchived: true,
-			verify: func(t *testing.T, plan *patharchive.Plan) {
+			verify: func(t *testing.T, plan *patharchive.Plan, result metafile.MetafileInfo) {
 				expectedPrefix := "archive/backup_"
-				if !strings.HasPrefix(plan.ResultInfo.RelPathKey, expectedPrefix) {
-					t.Errorf("ResultInfo path mismatch. Want prefix %q, got %q", expectedPrefix, plan.ResultInfo.RelPathKey)
+				if !strings.HasPrefix(result.RelPathKey, expectedPrefix) {
+					t.Errorf("ResultInfo path mismatch. Want prefix %q, got %q", expectedPrefix, result.RelPathKey)
 				}
 			},
 		},
@@ -100,10 +100,10 @@ func TestArchive(t *testing.T) {
 			lastBackupAge:   25 * time.Hour,
 			dryRun:          true,
 			expectArchived:  false,
-			verify: func(t *testing.T, plan *patharchive.Plan) {
+			verify: func(t *testing.T, plan *patharchive.Plan, result metafile.MetafileInfo) {
 				expectedPrefix := "archive/backup_"
-				if !strings.HasPrefix(plan.ResultInfo.RelPathKey, expectedPrefix) {
-					t.Errorf("Dry Run ResultInfo path mismatch. Want prefix %q, got %q", expectedPrefix, plan.ResultInfo.RelPathKey)
+				if !strings.HasPrefix(result.RelPathKey, expectedPrefix) {
+					t.Errorf("Dry Run ResultInfo path mismatch. Want prefix %q, got %q", expectedPrefix, result.RelPathKey)
 				}
 			},
 		},
@@ -114,7 +114,7 @@ func TestArchive(t *testing.T) {
 			lastBackupAge:   25 * time.Hour,
 			setupEmptyPath:  true,
 			expectError:     patharchive.ErrNothingToArchive,
-			verify: func(t *testing.T, plan *patharchive.Plan) {
+			verify: func(t *testing.T, plan *patharchive.Plan, result metafile.MetafileInfo) {
 				// No result info should be set
 			},
 		},
@@ -183,7 +183,7 @@ func TestArchive(t *testing.T) {
 			}
 
 			// 3. Execute
-			err := archiver.Archive(context.Background(), targetBase, relArchive, prefix, toArchive, plan, now)
+			result, err := archiver.Archive(context.Background(), targetBase, relArchive, prefix, toArchive, plan, now)
 
 			// 4. Verify Error
 			if tc.expectError != nil {
@@ -197,7 +197,7 @@ func TestArchive(t *testing.T) {
 			} else if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			} else {
-				if !tc.disabled && plan.ResultInfo.RelPathKey == "" {
+				if !tc.disabled && result.RelPathKey == "" {
 					t.Error("expected plan.ResultInfo to be set, but it was empty")
 				}
 			}
@@ -223,7 +223,7 @@ func TestArchive(t *testing.T) {
 			}
 
 			if tc.verify != nil {
-				tc.verify(t, plan)
+				tc.verify(t, plan, result)
 			}
 		})
 	}

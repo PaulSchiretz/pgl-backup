@@ -2,8 +2,6 @@ package pathsync
 
 import (
 	"time"
-
-	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 )
 
 type Plan struct {
@@ -20,7 +18,6 @@ type Plan struct {
 
 	ExcludeFiles []string
 	ExcludeDirs  []string
-	ResultInfo   metafile.MetafileInfo
 
 	// Global Flags
 	DryRun   bool

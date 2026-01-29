@@ -15,10 +15,10 @@ package pathretention
 
 import (
 	"context"
-	"errors"
 	"sort"
 	"time"
 
+	"github.com/paulschiretz/pgl-backup/pkg/hints"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/pathretentionmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
@@ -33,8 +33,8 @@ const (
 	yearFormat  = "2006"          // YYYY
 )
 
-var ErrDisabled = errors.New("retention policy is disabled")
-var ErrNothingToPrune = errors.New("nothing to prune")
+var ErrDisabled = hints.New("retention policy is disabled")
+var ErrNothingToPrune = hints.New("nothing to prune")
 
 type PathRetainer struct {
 	numWorkers int

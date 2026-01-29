@@ -22,19 +22,19 @@ package pathcompression
 import (
 	"bufio"
 	"context"
-	"errors"
 	"io"
 	"sync"
 	"time"
 
+	"github.com/paulschiretz/pgl-backup/pkg/hints"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompressionmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
-var ErrDisabled = errors.New("compression is disabled")
-var ErrNothingToCompress = errors.New("nothing to compress")
-var ErrNothingToExtract = errors.New("nothing to extract")
+var ErrDisabled = hints.New("compression is disabled")
+var ErrNothingToCompress = hints.New("nothing to compress")
+var ErrNothingToExtract = hints.New("nothing to extract")
 
 type PathCompressor struct {
 	ioWriterPool *sync.Pool
@@ -106,7 +106,7 @@ func (c *PathCompressor) Compress(ctx context.Context, absBasePath, relContentPa
 func (c *PathCompressor) Extract(ctx context.Context, absBasePath string, toExtract metafile.MetafileInfo, absExtractTargetPath string, p *ExtractPlan, timestampUTC time.Time) error {
 
 	if !p.Enabled {
-		plog.Debug("Extract is disabled, skipping compress")
+		plog.Debug("Extraction is disabled, skipping extract")
 		return ErrDisabled
 	}
 

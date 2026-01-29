@@ -37,18 +37,17 @@ type mockSyncer struct {
 	restoreRelPathKey string
 }
 
-func (m *mockSyncer) Sync(ctx context.Context, absBasePath, absSourcePath, relCurrentPathKey, relContentPathKey string, p *pathsync.Plan, timestampUTC time.Time) error {
+func (m *mockSyncer) Sync(ctx context.Context, absBasePath, absSourcePath, relCurrentPathKey, relContentPathKey string, p *pathsync.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
 	if m.err != nil {
-		return m.err
+		return metafile.MetafileInfo{}, m.err
 	}
 	// Simulate real syncer behavior: ensure the target directory exists.
 	// This is required because Runner now writes the metafile to this directory.
 	targetPath := filepath.Join(absBasePath, relCurrentPathKey)
 	os.MkdirAll(targetPath, 0755)
 
-	// Simulate setting result info
-	p.ResultInfo = m.resultInfo
-	return nil
+	// Return the configured result info
+	return m.resultInfo, nil
 }
 
 func (m *mockSyncer) Restore(ctx context.Context, absBasePath string, relContentPathKey string, toRestore metafile.MetafileInfo, absRestoreTargetPath string, p *pathsync.Plan) error {
@@ -62,21 +61,19 @@ type mockArchiver struct {
 	returnEmptyResult bool
 }
 
-func (m *mockArchiver) Archive(ctx context.Context, absBasePath, relArchivePathKey, backupNamePrefix string, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) error {
+func (m *mockArchiver) Archive(ctx context.Context, absBasePath, relArchivePathKey, backupNamePrefix string, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
 	if m.err != nil {
-		return m.err
+		return metafile.MetafileInfo{}, m.err
 	}
 	if m.returnEmptyResult {
-		p.ResultInfo = metafile.MetafileInfo{}
-		return nil
+		return metafile.MetafileInfo{}, nil
 	}
 	// Simulate result info
 	path := "archived_path"
 	if m.resultPath != "" {
 		path = m.resultPath
 	}
-	p.ResultInfo = metafile.MetafileInfo{RelPathKey: path}
-	return nil
+	return metafile.MetafileInfo{RelPathKey: path}, nil
 }
 
 type mockRetainer struct {
@@ -221,7 +218,7 @@ func TestExecuteBackup(t *testing.T) {
 				metafile.Write(currentPath, &metafile.MetafileContent{})
 			},
 			expectError:   true,
-			errorContains: "Error during archive",
+			errorContains: "error during archive",
 		},
 		{
 			name:           "Incremental Archive Failure (FailFast=False)",
@@ -270,7 +267,7 @@ func TestExecuteBackup(t *testing.T) {
 			failFast:         true,
 			retentionErr:     errors.New("retention failed"),
 			expectError:      true,
-			errorContains:    "Error during prune",
+			errorContains:    "error during prune",
 		},
 		{
 			name:             "Retention Failure (FailFast=False)",
@@ -283,19 +280,40 @@ func TestExecuteBackup(t *testing.T) {
 		{
 			name:               "Compression Failure (FailFast=True)",
 			mode:               planner.Incremental,
+			archiveEnabled:     true,
 			compressionEnabled: true,
 			failFast:           true,
 			compressErr:        errors.New("compression failed"),
-			expectError:        true,
-			errorContains:      "Error during compress",
+			setupFS: func(t *testing.T, baseDir string) {
+				currentPath := filepath.Join(baseDir, relCurrent)
+				os.MkdirAll(currentPath, 0755)
+				metafile.Write(currentPath, &metafile.MetafileContent{})
+			},
+			expectError:   true,
+			errorContains: "error during compress",
 		},
 		{
 			name:               "Compression Failure (FailFast=False)",
 			mode:               planner.Incremental,
+			archiveEnabled:     true,
 			compressionEnabled: true,
 			failFast:           false,
 			compressErr:        errors.New("compression failed"),
-			expectError:        false, // Should continue
+			setupFS: func(t *testing.T, baseDir string) {
+				currentPath := filepath.Join(baseDir, relCurrent)
+				os.MkdirAll(currentPath, 0755)
+				metafile.Write(currentPath, &metafile.MetafileContent{})
+			},
+			expectError: false, // Should continue
+		},
+		{
+			name:               "Compression Skipped if Archive Disabled",
+			mode:               planner.Incremental,
+			archiveEnabled:     false, // Key: Archive is off
+			compressionEnabled: true,  // But compression is on
+			// If compression were called, this error would be returned and fail the test.
+			compressErr: errors.New("compression should not have been called"),
+			expectError: false, // The run should succeed without calling compression.
 		},
 		{
 			name:             "Retention Nothing To Prune (Ignored)",
@@ -307,9 +325,15 @@ func TestExecuteBackup(t *testing.T) {
 		{
 			name:               "Compression Nothing To Compress (Ignored)",
 			mode:               planner.Incremental,
+			archiveEnabled:     true,
 			compressionEnabled: true,
 			compressErr:        pathcompression.ErrNothingToCompress,
-			expectError:        false,
+			setupFS: func(t *testing.T, baseDir string) {
+				currentPath := filepath.Join(baseDir, relCurrent)
+				os.MkdirAll(currentPath, 0755)
+				metafile.Write(currentPath, &metafile.MetafileContent{})
+			},
+			expectError: false,
 		},
 		{
 			name:            "Hooks Execution Success",

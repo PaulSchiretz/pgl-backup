@@ -34,21 +34,21 @@ package patharchive
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/paulschiretz/pgl-backup/pkg/hints"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/patharchivemetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
-var ErrNothingToArchive = errors.New("nothing to archive")
-var ErrDisabled = errors.New("archiving is disabled")
+var ErrNothingToArchive = hints.New("nothing to archive")
+var ErrDisabled = hints.New("archiving is disabled")
 
 type PathArchiver struct{}
 
@@ -60,21 +60,21 @@ func NewPathArchiver() *PathArchiver {
 // Archive checks if the time since the last backup has crossed the configured interval.
 // If it has, it renames the current backup directory to a permanent, timestamped archive directory. It also
 // prepares the archive interval before checking. It is now responsible for reading its own metadata.
-func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathKey, backupNamePrefix string, toArchive metafile.MetafileInfo, p *Plan, timestampUTC time.Time) error {
+func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathKey, backupNamePrefix string, toArchive metafile.MetafileInfo, p *Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
 
 	if !p.Enabled {
 		plog.Debug("Archive is disabled, skipping archiving")
-		return ErrDisabled
+		return metafile.MetafileInfo{}, ErrDisabled
 	}
 
 	if toArchive.RelPathKey == "" {
-		return ErrNothingToArchive
+		return metafile.MetafileInfo{}, ErrNothingToArchive
 	}
 
 	// Check for cancellation
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return metafile.MetafileInfo{}, ctx.Err()
 	default:
 	}
 
@@ -92,7 +92,7 @@ func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathK
 	if !p.DryRun {
 		absArchivePath := util.DenormalizePath(filepath.Join(absBasePath, relArchivePathKey))
 		if err := os.MkdirAll(absArchivePath, util.UserWritableDirPerms); err != nil {
-			return fmt.Errorf("failed to create archive directory %s: %w", relArchivePathKey, err)
+			return metafile.MetafileInfo{}, fmt.Errorf("failed to create archive directory %s: %w", relArchivePathKey, err)
 		}
 	}
 
@@ -116,12 +116,10 @@ func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathK
 
 	result, err := t.execute()
 	if err != nil {
-		return err
+		return metafile.MetafileInfo{}, err
 	}
 
-	// Store the Result
-	p.ResultInfo = result
-	return nil
+	return result, nil
 }
 
 // resolveInterval calculates the effective archive interval based on configuration.

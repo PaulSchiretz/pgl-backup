@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/paulschiretz/pgl-backup/pkg/hints"
 	"github.com/paulschiretz/pgl-backup/pkg/lockfile"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/patharchive"
@@ -100,61 +101,71 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 	}()
 
 	plog.Info("Starting backup", "base", absBasePath, "source", absSourcePath, "mode", p.Mode)
-	var syncErr error
+
+	syncErr := pathsync.ErrDisabled
+	archiveErr := patharchive.ErrDisabled
+	pruneErr := pathretention.ErrDisabled
+	compressErr := pathcompression.ErrDisabled
+	var syncResult, archiveResult metafile.MetafileInfo
 
 	// Perform Archiving before Sync in Incremental mode
 	if p.Archive.Enabled && p.Mode == planner.Incremental {
-		toArchive, err := r.fetchBackup(absBasePath, p.Paths.RelCurrentPathKey)
-		if err != nil {
-			if !os.IsNotExist(err) { // This is a normal condition on the first incremental run; no previous current backup to archive.
+		var toArchive metafile.MetafileInfo
+		toArchive, archiveErr = r.fetchBackup(absBasePath, p.Paths.RelCurrentPathKey)
+		if archiveErr != nil {
+			if !os.IsNotExist(archiveErr) { // This is a normal condition on the first incremental run; no previous current backup to archive.
+				archiveErr = fmt.Errorf("error reading backup for archive: %w", archiveErr)
 				if p.FailFast {
-					return fmt.Errorf("Error reading backup for archive: %w", err)
+					return archiveErr
 				}
-				plog.Warn("Error reading backup for archive, skipping", "error", err)
+				plog.Warn("Error reading backup for archive, skipping", "error", archiveErr)
 			}
 		} else {
-			if err := r.archiver.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupNamePrefix, toArchive, p.Archive, timestampUTC); err != nil {
-				if errors.Is(err, patharchive.ErrDisabled) {
-					plog.Debug("Archiving disabled, skipping")
-				} else if !errors.Is(err, patharchive.ErrNothingToArchive) {
+			archiveResult, archiveErr = r.archiver.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupNamePrefix, toArchive, p.Archive, timestampUTC)
+			if archiveErr != nil {
+				if hints.IsHint(archiveErr) {
+					plog.Debug("Archiving skipped", "reason", archiveErr)
+				} else {
+					archiveErr = fmt.Errorf("error during archive: %w", archiveErr)
 					if p.FailFast {
-						return fmt.Errorf("Error during archive: %w", err)
+						return archiveErr
 					}
-					plog.Warn("Error during archive, skipping archive", "error", err)
+					plog.Warn("Error during archive, skipping archive", "error", archiveErr)
 				}
-			} else if p.Archive.ResultInfo.RelPathKey == "" {
-				err := fmt.Errorf("Error archive succeeded but ResultInfo is empty")
+			} else if archiveResult.RelPathKey == "" {
+				archiveErr = fmt.Errorf("archive succeeded but ResultInfo is empty")
 				if p.FailFast {
-					return err
+					return archiveErr
 				}
-				plog.Error("Error after archive, consistency check failed", "error", err)
+				plog.Error("Error after archive, consistency check failed", "error", archiveErr)
 			}
 		}
 	}
 
 	// Perform the backup
 	if p.Sync.Enabled {
-		if err := r.syncer.Sync(ctx, absBasePath, absSourcePath, p.Paths.RelCurrentPathKey, p.Paths.RelContentPathKey, p.Sync, timestampUTC); err != nil {
-			if errors.Is(err, pathsync.ErrDisabled) {
-				plog.Debug("Sync disabled, skipping")
+		syncResult, syncErr = r.syncer.Sync(ctx, absBasePath, absSourcePath, p.Paths.RelCurrentPathKey, p.Paths.RelContentPathKey, p.Sync, timestampUTC)
+		if syncErr != nil {
+			if hints.IsHint(syncErr) {
+				plog.Debug("Sync skipped", "reason", syncErr)
 			} else {
-				syncErr = fmt.Errorf("error during sync: %w", err)
-				plog.Error("Sync failed", "error", err)
+				syncErr = fmt.Errorf("error during sync: %w", syncErr)
+				plog.Error("Sync failed", "error", syncErr)
 			}
 		} else {
 			// Sync successful. Write the metafile using the info populated by Sync.
-			if p.Sync.ResultInfo.RelPathKey == "" {
+			if syncResult.RelPathKey == "" {
 				syncErr = fmt.Errorf("sync succeeded but ResultInfo is empty")
 				plog.Error("Metafile write failed", "error", syncErr)
 			} else {
-				absTargetCurrentPath := util.DenormalizePath(filepath.Join(absBasePath, p.Sync.ResultInfo.RelPathKey))
+				absTargetCurrentPath := util.DenormalizePath(filepath.Join(absBasePath, syncResult.RelPathKey))
 
 				if p.DryRun {
 					plog.Info("[DRY RUN] Would write metafile", "directory", absTargetCurrentPath)
 				} else {
-					if err := metafile.Write(absTargetCurrentPath, &p.Sync.ResultInfo.Metadata); err != nil {
-						syncErr = fmt.Errorf("failed to write metafile: %w", err)
-						plog.Error("Metafile write failed", "error", err)
+					if syncErr = metafile.Write(absTargetCurrentPath, &syncResult.Metadata); syncErr != nil {
+						syncErr = fmt.Errorf("failed to write metafile: %w", syncErr)
+						plog.Error("Metafile write failed", "error", syncErr)
 					}
 				}
 			}
@@ -163,23 +174,17 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 
 	// Perform Archiving for Snapshot mode. We are strict here with errors as Snapshot without Archiving makes no sense
 	if syncErr == nil && p.Archive.Enabled && p.Mode == planner.Snapshot {
-		toArchive := p.Sync.ResultInfo
-		if toArchive.RelPathKey == "" {
-			if !p.Sync.Enabled {
-				plog.Debug("Skipping snapshot archive because sync was disabled")
+		var toArchive metafile.MetafileInfo
+		toArchive = syncResult
+		archiveResult, archiveErr = r.archiver.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupNamePrefix, toArchive, p.Archive, timestampUTC)
+		if archiveErr != nil {
+			if hints.Is(archiveErr, patharchive.ErrDisabled) {
+				plog.Debug("Archiving skipped", "reason", archiveErr)
 			} else {
-				return fmt.Errorf("Error no snapshot syncResult to archive")
+				return fmt.Errorf("error during archive: %w", archiveErr)
 			}
-		} else {
-			if err := r.archiver.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupNamePrefix, toArchive, p.Archive, timestampUTC); err != nil {
-				if errors.Is(err, patharchive.ErrDisabled) {
-					plog.Debug("Archiving disabled, skipping")
-				} else {
-					return fmt.Errorf("Error during archive: %w", err)
-				}
-			} else if p.Archive.ResultInfo.RelPathKey == "" {
-				return fmt.Errorf("Error archive succeeded but ResultInfo is empty")
-			}
+		} else if archiveResult.RelPathKey == "" {
+			return fmt.Errorf("archive succeeded but ResultInfo is empty")
 		}
 	}
 
@@ -188,57 +193,55 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 		// Add our just created sync/archive relPathKey to the exclusion list for retention so they are never pruned
 		// NOTE: This is needed in case our retention is enabled but 0,0,0,0,0 and we just created a snapshot.(otherwise we would imetialy remove it again)
 		var relPathExclusionKeys []string
-		if p.Archive.ResultInfo.RelPathKey != "" {
-			relPathExclusionKeys = append(relPathExclusionKeys, p.Archive.ResultInfo.RelPathKey)
+		if archiveResult.RelPathKey != "" {
+			relPathExclusionKeys = append(relPathExclusionKeys, archiveResult.RelPathKey)
 		}
-		if p.Sync.ResultInfo.RelPathKey != "" {
-			relPathExclusionKeys = append(relPathExclusionKeys, p.Sync.ResultInfo.RelPathKey)
+		if syncResult.RelPathKey != "" {
+			relPathExclusionKeys = append(relPathExclusionKeys, syncResult.RelPathKey)
 		}
 
 		// Fetch backups that might need pruning
-		toRetent, err := r.fetchBackups(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupNamePrefix, relPathExclusionKeys)
-		if err != nil {
+		var toRetent []metafile.MetafileInfo
+		toRetent, pruneErr = r.fetchBackups(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupNamePrefix, relPathExclusionKeys)
+		if pruneErr != nil {
 			if p.FailFast {
-				return fmt.Errorf("Error reading backups for prune: %w", err)
+				return fmt.Errorf("error reading backups for prune: %w", pruneErr)
 			}
-			plog.Warn("Error reading backups for prune, skipping", "error", err)
+			plog.Warn("Error reading backups for prune, skipping", "error", pruneErr)
 		}
-		if err := r.retainer.Prune(ctx, absBasePath, toRetent, p.Retention, timestampUTC); err != nil {
-			if errors.Is(err, pathretention.ErrDisabled) {
-				plog.Debug("Retention disabled, skipping")
-			} else if errors.Is(err, pathretention.ErrNothingToPrune) {
-				plog.Debug("No backups found for retention")
+		if pruneErr = r.retainer.Prune(ctx, absBasePath, toRetent, p.Retention, timestampUTC); pruneErr != nil {
+			if hints.IsHint(pruneErr) {
+				plog.Debug("Retention skipped", "reason", pruneErr)
 			} else {
 				if p.FailFast {
-					return fmt.Errorf("Error during prune: %w", err)
+					return fmt.Errorf("error during prune: %w", pruneErr)
 				}
-				plog.Warn("Error during prune, skipping prune", "error", err)
+				plog.Warn("Error during prune, skipping prune", "error", pruneErr)
 			}
 		}
 	}
 
 	// Compress backups that are eligible
-	if p.Compression.Enabled {
+	if archiveErr == nil && p.Compression.Enabled {
 		var toCompress metafile.MetafileInfo
-		if p.Archive.ResultInfo.RelPathKey != "" {
-			toCompress = p.Archive.ResultInfo
+		if archiveResult.RelPathKey != "" {
+			toCompress = archiveResult
 		}
 
-		if err := r.compressor.Compress(ctx, absBasePath, p.Paths.RelContentPathKey, toCompress, p.Compression, timestampUTC); err != nil {
-			if errors.Is(err, pathcompression.ErrDisabled) {
-				plog.Debug("Compression disabled, skipping")
-			} else if errors.Is(err, pathcompression.ErrNothingToCompress) {
-				plog.Debug("No backups need compressing")
+		if compressErr = r.compressor.Compress(ctx, absBasePath, p.Paths.RelContentPathKey, toCompress, p.Compression, timestampUTC); compressErr != nil {
+			if hints.IsHint(compressErr) {
+				plog.Debug("Compression skipped", "reason", compressErr)
 			} else {
+				compressErr = fmt.Errorf("error during compress: %w", compressErr)
 				if p.FailFast {
-					return fmt.Errorf("Error during compress: %w", err)
+					return compressErr
 				}
-				plog.Warn("Error during compress, skipping compress", "error", err)
+				plog.Warn("Error during compress, skipping compress", "error", compressErr)
 			}
 		}
 	}
 
-	if syncErr != nil {
+	if syncErr != nil && !hints.IsHint(syncErr) {
 		return syncErr
 	}
 
@@ -275,34 +278,33 @@ func (r *Runner) ExecutePrune(ctx context.Context, absBasePath string, p *planne
 	plog.Info("Starting prune", "base", absBasePath)
 
 	// Standalone prune logic
+	var pruneErr error
 	if p.RetentionIncremental.Enabled {
-		toRetent, err := r.fetchBackups(ctx, absBasePath, p.PathsIncremental.RelArchivePathKey, p.PathsIncremental.BackupNamePrefix, []string{})
-		if err != nil {
-			return fmt.Errorf("fatal error during prune incremental: %w", err)
+		var toRetent []metafile.MetafileInfo
+		toRetent, pruneErr = r.fetchBackups(ctx, absBasePath, p.PathsIncremental.RelArchivePathKey, p.PathsIncremental.BackupNamePrefix, []string{})
+		if pruneErr != nil {
+			return fmt.Errorf("fatal error during prune incremental: %w", pruneErr)
 		}
-		if err := r.retainer.Prune(ctx, absBasePath, toRetent, p.RetentionIncremental, timestampUTC); err != nil {
-			if errors.Is(err, pathretention.ErrDisabled) {
-				plog.Debug("Incremental retention disabled, skipping")
-			} else if errors.Is(err, pathretention.ErrNothingToPrune) {
-				plog.Debug("No incremental backups found for retention")
+		if pruneErr = r.retainer.Prune(ctx, absBasePath, toRetent, p.RetentionIncremental, timestampUTC); pruneErr != nil {
+			if hints.IsHint(pruneErr) {
+				plog.Debug("Incremental retention skipped", "reason", pruneErr)
 			} else {
-				return fmt.Errorf("fatal error during prune incremental: %w", err)
+				return fmt.Errorf("fatal error during prune incremental: %w", pruneErr)
 			}
 		}
 	}
 
 	if p.RetentionSnapshot.Enabled {
-		toRetent, err := r.fetchBackups(ctx, absBasePath, p.PathsSnapshot.RelArchivePathKey, p.PathsSnapshot.BackupNamePrefix, []string{})
-		if err != nil {
-			return fmt.Errorf("fatal error during prune snapshot: %w", err)
+		var toRetent []metafile.MetafileInfo
+		toRetent, pruneErr = r.fetchBackups(ctx, absBasePath, p.PathsSnapshot.RelArchivePathKey, p.PathsSnapshot.BackupNamePrefix, []string{})
+		if pruneErr != nil {
+			return fmt.Errorf("fatal error during prune snapshot: %w", pruneErr)
 		}
-		if err := r.retainer.Prune(ctx, absBasePath, toRetent, p.RetentionSnapshot, timestampUTC); err != nil {
-			if errors.Is(err, pathretention.ErrDisabled) {
-				plog.Debug("Snapshot retention disabled, skipping")
-			} else if errors.Is(err, pathretention.ErrNothingToPrune) {
-				plog.Debug("No snapshot backups found for retention")
+		if pruneErr = r.retainer.Prune(ctx, absBasePath, toRetent, p.RetentionSnapshot, timestampUTC); pruneErr != nil {
+			if hints.IsHint(pruneErr) {
+				plog.Debug("Snapshot retention skipped", "reason", pruneErr)
 			} else {
-				return fmt.Errorf("fatal error during prune snapshot: %w", err)
+				return fmt.Errorf("fatal error during prune snapshot: %w", pruneErr)
 			}
 		}
 	}

@@ -1,9 +1,5 @@
 package patharchive
 
-import (
-	"github.com/paulschiretz/pgl-backup/pkg/metafile"
-)
-
 type IntervalModeConstraints struct {
 	Hours  int
 	Days   int
@@ -17,7 +13,6 @@ type Plan struct {
 	IntervalSeconds int
 	IntervalMode    IntervalMode
 	Constraints     IntervalModeConstraints
-	ResultInfo      metafile.MetafileInfo
 
 	// Global Flags
 	DryRun   bool

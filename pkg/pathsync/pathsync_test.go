@@ -23,7 +23,7 @@ func TestSync_Dispatch(t *testing.T) {
 		}
 
 		syncer := NewPathSyncer(256, 1, 1)
-		err := syncer.Sync(context.Background(), baseDir, srcDir, "current", "content", plan, time.Now())
+		_, err := syncer.Sync(context.Background(), baseDir, srcDir, "current", "content", plan, time.Now())
 
 		if err == nil {
 			t.Fatal("expected an error for unknown sync engine, but got nil")
@@ -43,7 +43,7 @@ func TestSync_Dispatch(t *testing.T) {
 		}
 
 		syncer := NewPathSyncer(256, 1, 1)
-		err := syncer.Sync(context.Background(), baseDir, srcDir, "current", "content", plan, time.Now())
+		_, err := syncer.Sync(context.Background(), baseDir, srcDir, "current", "content", plan, time.Now())
 
 		if err == nil {
 			t.Fatal("expected an error when using robocopy on a non-windows OS, but got nil")
@@ -74,16 +74,16 @@ func TestSync_Dispatch(t *testing.T) {
 		relContent := "content"
 		timestamp := time.Now().UTC()
 
-		err := syncer.Sync(context.Background(), baseDir, srcDir, relCurrent, relContent, plan, timestamp)
+		result, err := syncer.Sync(context.Background(), baseDir, srcDir, relCurrent, relContent, plan, timestamp)
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
 
-		if plan.ResultInfo.RelPathKey != relCurrent {
-			t.Errorf("expected ResultInfo.RelPathKey to be %q, got %q", relCurrent, plan.ResultInfo.RelPathKey)
+		if result.RelPathKey != relCurrent {
+			t.Errorf("expected ResultInfo.RelPathKey to be %q, got %q", relCurrent, result.RelPathKey)
 		}
-		if !plan.ResultInfo.Metadata.TimestampUTC.Equal(timestamp) {
-			t.Errorf("expected ResultInfo.Metadata.TimestampUTC to be %v, got %v", timestamp, plan.ResultInfo.Metadata.TimestampUTC)
+		if !result.Metadata.TimestampUTC.Equal(timestamp) {
+			t.Errorf("expected ResultInfo.Metadata.TimestampUTC to be %v, got %v", timestamp, result.Metadata.TimestampUTC)
 		}
 	})
 }
@@ -108,7 +108,7 @@ func TestSync_PreserveSourceDirName(t *testing.T) {
 	relContent := "content"
 	timestamp := time.Now().UTC()
 
-	err := syncer.Sync(context.Background(), baseDir, srcDir, relCurrent, relContent, plan, timestamp)
+	_, err := syncer.Sync(context.Background(), baseDir, srcDir, relCurrent, relContent, plan, timestamp)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
