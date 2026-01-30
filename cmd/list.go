@@ -21,12 +21,12 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
-// RunList handles the logic for the prune command.
+// RunList handles the logic for the list command.
 func RunList(ctx context.Context, flagMap map[string]interface{}) error {
 	// Define mandatory flags
 	base, ok := flagMap["base"].(string)
 	if !ok || base == "" {
-		return fmt.Errorf("the -base flag is required to run prune")
+		return fmt.Errorf("the -base flag is required to run list")
 	}
 
 	var err error
@@ -41,7 +41,7 @@ func RunList(ctx context.Context, flagMap map[string]interface{}) error {
 	}
 	absBasePath = util.DenormalizePath(absBasePath)
 
-	// NOTE: Base needs to exist, for a Prune run
+	// NOTE: Base needs to exist, for a List run
 	if _, err := os.Stat(absBasePath); os.IsNotExist(err) {
 		return fmt.Errorf("base path '%s' does not exist", absBasePath)
 	}
@@ -53,7 +53,7 @@ func RunList(ctx context.Context, flagMap map[string]interface{}) error {
 	}
 
 	// Merge the flag values over the loaded config.
-	runConfig := config.MergeConfigWithFlags(flagparse.Prune, loadedConfig, flagMap)
+	runConfig := config.MergeConfigWithFlags(flagparse.List, loadedConfig, flagMap)
 
 	// CRITICAL: Validate the config for the run
 	if err := runConfig.Validate(); err != nil {
@@ -64,7 +64,7 @@ func RunList(ctx context.Context, flagMap map[string]interface{}) error {
 	plog.SetLevel(plog.LevelFromString(runConfig.LogLevel))
 
 	// Log the Summary
-	runConfig.LogSummary(flagparse.Prune, absBasePath, "", "", "")
+	runConfig.LogSummary(flagparse.List, absBasePath, "", "", "")
 
 	// Create the runner and feed it with our leaf workers
 	runner := engine.NewRunner(

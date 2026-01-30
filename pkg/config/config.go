@@ -622,7 +622,7 @@ func MergeConfigWithFlags(command flagparse.Command, base Config, setFlags map[s
 			merged.Engine.Metrics = value.(bool)
 		case "mode":
 			switch command {
-			case flagparse.Backup, flagparse.Restore:
+			case flagparse.Backup, flagparse.Restore, flagparse.List:
 				merged.Runtime.Mode = value.(string)
 			default:
 			}
