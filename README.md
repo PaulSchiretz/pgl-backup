@@ -349,6 +349,14 @@ Manually apply retention policies to clean up outdated backups without running a
 pgl-backup prune -base="/path/to/your/backup-target"
 ```
 
+### List Backups
+
+View a list of all backups stored in the repository, including their timestamps, modes, and UUIDs. This is useful for finding the specific name of a backup you want to restore.
+
+```sh
+pgl-backup list -base="/path/to/your/backup-target"
+```
+
 ## How to Restore a Backup
 
 `pgl-backup` provides two ways to restore your data: using the built-in `restore` command for convenience, or by manually accessing your files with standard OS tools. The manual method guarantees you can always recover your data, even without `pgl-backup` installed.
@@ -661,6 +669,7 @@ The best policy depends on how much data you are backing up and how much disk sp
 
 * `backup`: Run the backup operation. Use `-help` to see all the options.
 * `restore`: Run the restore operation. Use `-help` to see all the options.
+* `list`: List all backups in the base directory. Use `-help` to see all the options.
 * `prune`: Apply retention policies to clean up outdated backups. Use `-help` to see all the options.
 * `init`: Initialize or update a configuration. Use `-default` to overwrite an existing configuration with defaults.
 * `version`: Print the application version.

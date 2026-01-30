@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a unique identifier (UUID) to the backup metadata (`.pgl-backup.meta.json`) to provide an immutable identity for backups, independent of their file path.
 - Added a pre-flight check to verify that the source directory is readable.
 - Added a pre-flight check to detect if source and target paths resolve to the same physical directory (e.g., via symlinks or bind mounts).
+- Added `list` command to enumerate all backups in the repository, simplifying the restore process.
 
 ### Changed
 - Refactored core engine functions (`Sync`, `Archive`) to return results explicitly instead of modifying input structs via side effects. This improves data flow clarity and moves metafile writing responsibility to the main runner.

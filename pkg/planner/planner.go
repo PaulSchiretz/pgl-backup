@@ -30,6 +30,16 @@ type BackupPlan struct {
 	PostBackupHooks []string
 }
 
+type ListPlan struct {
+	DryRun   bool
+	FailFast bool
+	Metrics  bool
+
+	PathsIncremental PathKeys
+	PathsSnapshot    PathKeys
+	Preflight        *preflight.Plan
+}
+
 type RestorePlan struct {
 	Mode     Mode
 	DryRun   bool
@@ -234,6 +244,49 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 			DryRun:   dryRun,
 			FailFast: failFast,
 			Metrics:  metrics,
+		},
+	}, nil
+}
+
+func GenerateListPlan(cfg config.Config) (*ListPlan, error) {
+
+	// Global Flags
+	dryRun := cfg.Runtime.DryRun
+	failFast := cfg.Engine.FailFast
+	metrics := cfg.Engine.Metrics
+
+	// finish the plan
+	return &ListPlan{
+		DryRun:   dryRun,
+		Metrics:  metrics,
+		FailFast: failFast,
+
+		Preflight: &preflight.Plan{
+			SourceAccessible:   false,
+			TargetAccessible:   true,
+			TargetWriteable:    false,
+			CaseMismatch:       false,
+			PathNesting:        false,
+			EnsureTargetExists: false,
+
+			// Global Flags
+			DryRun:   dryRun,
+			FailFast: failFast,
+			Metrics:  metrics,
+		},
+
+		PathsIncremental: PathKeys{
+			RelCurrentPathKey: cfg.Paths.Incremental.Current,
+			RelArchivePathKey: cfg.Paths.Incremental.Archive,
+			RelContentPathKey: cfg.Paths.Incremental.Content,
+			BackupNamePrefix:  cfg.Paths.Incremental.BackupNamePrefix,
+		},
+
+		PathsSnapshot: PathKeys{
+			RelCurrentPathKey: cfg.Paths.Snapshot.Current,
+			RelArchivePathKey: cfg.Paths.Snapshot.Archive,
+			RelContentPathKey: cfg.Paths.Snapshot.Content,
+			BackupNamePrefix:  cfg.Paths.Snapshot.BackupNamePrefix,
 		},
 	}, nil
 }

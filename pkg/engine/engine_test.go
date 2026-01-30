@@ -1,6 +1,7 @@
 package engine_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/pathretention"
 	"github.com/paulschiretz/pgl-backup/pkg/pathsync"
 	"github.com/paulschiretz/pgl-backup/pkg/planner"
+	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/preflight"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
@@ -513,6 +515,94 @@ func TestExecuteBackup(t *testing.T) {
 				}
 			} else if len(executedHooks) > 0 && tc.dryRun {
 				t.Errorf("expected no hooks executed in dry run, but got %v", executedHooks)
+			}
+		})
+	}
+}
+
+func TestExecuteList(t *testing.T) {
+	tests := []struct {
+		name           string
+		setupFS        func(t *testing.T, baseDir string)
+		expectError    bool
+		expectedLogMsg []string // Substrings to check in the log output
+	}{
+		{
+			name: "List Happy Path",
+			setupFS: func(t *testing.T, baseDir string) {
+				// 1. Incremental Current
+				incCurrent := filepath.Join(baseDir, "PGL_Backup_Incremental_Current")
+				os.MkdirAll(incCurrent, 0755)
+				metafile.Write(incCurrent, &metafile.MetafileContent{
+					TimestampUTC: time.Now(),
+					Mode:         "incremental",
+					UUID:         "uuid-1",
+				})
+
+				// 2. Snapshot Archive (Compressed)
+				snapArchive := filepath.Join(baseDir, "PGL_Backup_Snapshot_Archive")
+				os.MkdirAll(snapArchive, 0755)
+				b2 := filepath.Join(snapArchive, "PGL_Backup_2023-01-02")
+				os.MkdirAll(b2, 0755)
+				metafile.Write(b2, &metafile.MetafileContent{
+					TimestampUTC:      time.Now().Add(-48 * time.Hour),
+					Mode:              "snapshot",
+					UUID:              "uuid-3",
+					IsCompressed:      true,
+					CompressionFormat: "zip",
+				})
+			},
+			expectError: false,
+			expectedLogMsg: []string{
+				"Backup (",   // Check for the timestamp format start
+				"format=zip", // Check for compression format
+			},
+		},
+		{
+			name:        "List Empty Base",
+			setupFS:     func(t *testing.T, baseDir string) {},
+			expectError: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			baseDir := t.TempDir()
+			if tc.setupFS != nil {
+				tc.setupFS(t, baseDir)
+			}
+
+			// Capture logs
+			var logBuf bytes.Buffer
+			plog.SetOutput(&logBuf)
+			defer plog.SetOutput(os.Stderr)
+
+			plan := &planner.ListPlan{
+				PathsIncremental: planner.PathKeys{
+					RelCurrentPathKey: "PGL_Backup_Incremental_Current",
+					RelArchivePathKey: "PGL_Backup_Incremental_Archive",
+					BackupNamePrefix:  "PGL_Backup_",
+				},
+				PathsSnapshot: planner.PathKeys{
+					RelCurrentPathKey: "PGL_Backup_Snapshot_Current",
+					RelArchivePathKey: "PGL_Backup_Snapshot_Archive",
+					BackupNamePrefix:  "PGL_Backup_",
+				},
+				Preflight: &preflight.Plan{},
+			}
+
+			runner := engine.NewRunner(&mockValidator{}, &mockSyncer{}, &mockArchiver{}, &mockRetainer{}, &mockCompressor{})
+			err := runner.ExecuteList(context.Background(), baseDir, plan)
+
+			if (err != nil) != tc.expectError {
+				t.Errorf("ExecuteList() error = %v, expectError %v", err, tc.expectError)
+			}
+
+			output := logBuf.String()
+			for _, msg := range tc.expectedLogMsg {
+				if !strings.Contains(output, msg) {
+					t.Errorf("Expected log output to contain %q, but got:\n%s", msg, output)
+				}
 			}
 		})
 	}

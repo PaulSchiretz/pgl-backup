@@ -312,6 +312,87 @@ func (r *Runner) ExecutePrune(ctx context.Context, absBasePath string, p *planne
 	return nil
 }
 
+func (r *Runner) ExecuteList(ctx context.Context, absBasePath string, p *planner.ListPlan) error {
+	// Check for cancellation at the very beginning.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	// save the execution timestamp
+	timestampUTC := time.Now().UTC()
+
+	// Run Preflight Validation, our absBasePath acts as target in prune mode
+	if err := r.validator.Run(ctx, "", absBasePath, p.Preflight, timestampUTC); err != nil {
+		return fmt.Errorf("preflight failed: %w", err)
+	}
+
+	// Acquire Lock on Target Directory.
+	releaseLock, err := r.acquireTargetLock(ctx, absBasePath)
+	if err != nil {
+		return err // A real error occurred during lock acquisition.
+	}
+	if releaseLock == nil {
+		return nil // Lock was already held, exit gracefully.
+	}
+	defer releaseLock()
+
+	plog.Info("Starting list", "base", absBasePath)
+
+	logBackup := func(category string, b metafile.MetafileInfo) {
+		msg := fmt.Sprintf("Backup (%s)", b.Metadata.TimestampUTC.Local().Format(time.RFC1123))
+
+		args := []interface{}{
+			"category", category,
+			"name", filepath.Base(b.RelPathKey),
+			"path", b.RelPathKey,
+			"timestamp", b.Metadata.TimestampUTC,
+			"uuid", b.Metadata.UUID,
+			"mode", b.Metadata.Mode,
+			"compressed", b.Metadata.IsCompressed,
+		}
+
+		if b.Metadata.IsCompressed {
+			args = append(args, "compressionFormat", b.Metadata.CompressionFormat)
+		}
+
+		plog.Info(msg, args...)
+	}
+
+	// 1. Incremental Current
+	if current, err := r.fetchBackup(absBasePath, p.PathsIncremental.RelCurrentPathKey); err == nil {
+		logBackup("Incremental (Current)", current)
+	}
+
+	// 2. Incremental Archives
+	if archives, err := r.fetchBackups(ctx, absBasePath, p.PathsIncremental.RelArchivePathKey, p.PathsIncremental.BackupNamePrefix, nil); err == nil {
+		for _, b := range archives {
+			logBackup("Incremental (Archive)", b)
+		}
+	} else {
+		plog.Warn("Could not list incremental archives", "error", err)
+	}
+
+	// 3. Snapshot Current
+	if current, err := r.fetchBackup(absBasePath, p.PathsSnapshot.RelCurrentPathKey); err == nil {
+		logBackup("Snapshot (Current)", current)
+	}
+
+	// 4. Snapshot Archives
+	if archives, err := r.fetchBackups(ctx, absBasePath, p.PathsSnapshot.RelArchivePathKey, p.PathsSnapshot.BackupNamePrefix, nil); err == nil {
+		for _, b := range archives {
+			logBackup("Snapshot (Archive)", b)
+		}
+	} else {
+		plog.Warn("Could not list snapshot archives", "error", err)
+	}
+
+	// Standalone list logic
+	plog.Info("List completed")
+	return nil
+}
+
 func (r *Runner) ExecuteRestore(ctx context.Context, absBasePath, backupName, absTargetPath string, p *planner.RestorePlan) error {
 	// Check for cancellation at the very beginning.
 	select {

@@ -177,6 +177,10 @@ func registerPruneFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
 }
 
+func registerListFlags(fs *flag.FlagSet, f *cliFlags) {
+	f.Base = fs.String("base", "", "Base destination directory for backups to list")
+}
+
 func registerRestoreFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.Base = fs.String("base", "", "Base directory of the backup repository (containing config). (Required)")
 	f.Target = fs.String("target", "", "Directory to restore to. (Required)")
@@ -272,6 +276,21 @@ func Parse(args []string) (Command, map[string]interface{}, error) {
 		}
 		flagMap, err := flagsToMap(command, fs, f)
 		return command, flagMap, err
+
+	case List:
+		fs := flag.NewFlagSet(command.String(), flag.ContinueOnError)
+		registerGlobalFlags(fs, f)
+		registerListFlags(fs, f)
+
+		fs.Usage = func() {
+			printSubcommandUsage(command, "List all backups in the base directory.", fs)
+		}
+
+		if err := fs.Parse(args[1:]); err != nil {
+			return List, nil, err
+		}
+		flagMap, err := flagsToMap(command, fs, f)
+		return List, flagMap, err
 
 	case Restore:
 		fs := flag.NewFlagSet(command.String(), flag.ContinueOnError)
