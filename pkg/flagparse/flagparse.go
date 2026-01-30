@@ -82,8 +82,8 @@ func registerGlobalFlags(fs *flag.FlagSet, f *cliFlags) {
 }
 
 func registerBackupFlags(fs *flag.FlagSet, f *cliFlags) {
-	f.Base = fs.String("base", "", "Base destination directory for backups. (Required)")
-	f.Source = fs.String("source", "", "Source directory to copy from. (Required)")
+	f.Base = fs.String("base", "", "Base directory of the backup repository. (Required)")
+	f.Source = fs.String("source", "", "Source directory to backup. (Required)")
 
 	f.Mode = fs.String("mode", "incremental", "Backup mode: 'incremental' or 'snapshot'.")
 	f.FailFast = fs.Bool("fail-fast", false, "Stop the backup immediately on the first file sync error.")
@@ -128,8 +128,8 @@ func registerBackupFlags(fs *flag.FlagSet, f *cliFlags) {
 
 func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
 	// Init supports all backup flags (to generate config) plus 'force' and 'default'.
-	f.Source = fs.String("source", "", "Source directory to copy from. (Required)")
-	f.Base = fs.String("base", "", "Base destination directory for backups. (Required)")
+	f.Source = fs.String("source", "", "Source directory to backup. (Required)")
+	f.Base = fs.String("base", "", "Base directory of the backup repository. (Required)")
 	f.Force = fs.Bool("force", false, "Bypass confirmation prompts.")
 	f.Default = fs.Bool("default", false, "Overwrite existing configuration with defaults.")
 	f.FailFast = fs.Bool("fail-fast", false, "Stop the backup immediately on the first file sync error.")
@@ -173,19 +173,21 @@ func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
 }
 
 func registerPruneFlags(fs *flag.FlagSet, f *cliFlags) {
-	f.Base = fs.String("base", "", "Base destination directory for backups to prune")
+	f.Base = fs.String("base", "", "Base directory of the backup repository. (Required)")
 	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
+	f.Mode = fs.String("mode", "any", "Which backups to prune ('incremental' or 'snapshot'). Defaults to 'any' (prunes both).")
 }
 
 func registerListFlags(fs *flag.FlagSet, f *cliFlags) {
-	f.Base = fs.String("base", "", "Base destination directory for backups to list")
+	f.Base = fs.String("base", "", "Base directory of the backup repository. (Required)")
+	f.Mode = fs.String("mode", "any", "Which backups to list ('incremental' or 'snapshot'). Defaults to 'any' (lists both).")
 }
 
 func registerRestoreFlags(fs *flag.FlagSet, f *cliFlags) {
-	f.Base = fs.String("base", "", "Base directory of the backup repository (containing config). (Required)")
+	f.Base = fs.String("base", "", "Base directory of the backup repository. (Required)")
 	f.Target = fs.String("target", "", "Directory to restore to. (Required)")
-	f.BackupName = fs.String("backup-name", "", "Name of the backup to restore (e.g. 'PGL_Backup_2023...' or 'current')")
-	f.Mode = fs.String("mode", "", "Mode of the backup to restore: 'incremental' or 'snapshot'. (Required)")
+	f.BackupName = fs.String("backup-name", "", "Name of the backup to restore (e.g. 'PGL_Backup_2023...' or 'current') (Required)")
+	f.Mode = fs.String("mode", "any", "Where to search for the backup specified by -backup-name. Defaults to 'any' (searches incremental first, then snapshot).")
 	f.FailFast = fs.Bool("fail-fast", false, "Stop the restore immediately on the first error.")
 	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
 

@@ -349,6 +349,13 @@ Manually apply retention policies to clean up outdated backups without running a
 pgl-backup prune -base="/path/to/your/backup-target"
 ```
 
+**Command Structure:**
+*   `-base`: The root directory of your backup repository (where `pgl-backup.config.json` is located).
+
+**Optional Flags:**
+*   `-mode`: Specify the backup mode (`incremental` or `snapshot`). If omitted, `pgl-backup` automatically prunes **incremental** and **snapshot** backups.
+
+
 ### List Backups
 
 View a list of all backups stored in the repository, including their timestamps, modes, and UUIDs. This is useful for finding the specific name of a backup you want to restore.
@@ -356,6 +363,12 @@ View a list of all backups stored in the repository, including their timestamps,
 ```sh
 pgl-backup list -base="/path/to/your/backup-target"
 ```
+
+**Command Structure:**
+*   `-base`: The root directory of your backup repository (where `pgl-backup.config.json` is located).
+
+**Optional Flags:**
+*   `-mode`: Specify the backup mode (`incremental` or `snapshot`). If omitted, `pgl-backup` automatically lists **incremental** and **snapshot** backups.
 
 ## How to Restore a Backup
 
@@ -365,19 +378,33 @@ pgl-backup list -base="/path/to/your/backup-target"
 
 The `restore` command is the easiest and safest way to restore a backup. It automatically handles both compressed archives and uncompressed directories.
 
-**Command Structure:**
+The `restore` command copies data from a specific backup to a target directory.
+
 ```sh
-pgl-backup restore -base <path_to_backup_repo> -target <path_to_restore_destination> -backup-name <name_of_backup> -mode <incremental|snapshot>
+pgl-backup restore -base="/path/to/backup-repo" -target="/path/to/restore-location" -backup-name="PGL_Backup_2023-10-27_10-00-00"
 ```
 
+**Command Structure:**
 *   `-base`: The root directory of your backup repository (where `pgl-backup.config.json` is located).
 *   `-target`: The directory where you want to restore the files.
 *   `-backup-name`: The name of the backup directory you want to restore. This can be `current` for the latest incremental backup, or a specific timestamped directory name (e.g., `PGL_Backup_2023-10-27-14-00-00...`).
-*   `-mode`: The mode of the backup you are restoring (`incremental` or `snapshot`). This is required to locate the correct backup path.
+
+**Optional Flags:**
+*   `-mode`: Where to search for the backup specified by -backup-name (`incremental` or `snapshot`). Defaults to `any` (searches **incremental** backups first, then **snapshot** backups); in the unlikely event of a name collision, the incremental version takes precedence.
+*   `-overwrite`: Control overwrite behavior (`always`, `never`, `if-newer`, `update`). Default is `never`.
+*   `-fail-fast`: Stop immediately on the first error.
 
 **Examples:**
 
-**1. Restore the most recent incremental backup:**
+**1. Restore a named backup:**
+This finds the backup named `PGL_Backup_2023-10-27...` inside any archive directory, automatically decompresses it if needed, and restores its contents.
+```sh
+pgl-backup restore -base="/media/backup-drive/MyDocumentsBackup" \
+                   -target="$HOME/RestoredFromSnapshot" \
+                   -backup-name="PGL_Backup_2023-10-27-14-00-00" \
+```
+
+**2. Restore the most recent incremental backup:**
 This restores the contents of the `PGL_Backup_Incremental_Current` directory.
 ```sh
 pgl-backup restore -base="/media/backup-drive/MyDocumentsBackup" \
@@ -386,12 +413,12 @@ pgl-backup restore -base="/media/backup-drive/MyDocumentsBackup" \
                    -mode="incremental"
 ```
 
-**2. Restore a specific archived snapshot:**
+**3. Restore a specific archived snapshot:**
 This finds the backup named `PGL_Backup_2023-10-27...` inside the snapshot archive directory, automatically decompresses it if needed, and restores its contents.
 ```sh
 pgl-backup restore -base="/media/backup-drive/MyDocumentsBackup" \
                    -target="$HOME/RestoredFromSnapshot" \
-                   -backup-name="PGL_Backup_2023-10-27-14-00-00-Snapshot-1a2b3c4d" \
+                   -backup-name="PGL_Backup_2023-10-27-14-00-00" \
                    -mode="snapshot"
 ```
 
@@ -684,7 +711,7 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `base` / `base` (internal) | `string` | `""` | The base directory where backups are stored. **Required**. |
 | `source` (backup/init) / - | `string` | `""` | The directory to back up. **Required for Backup and Init**. |
 | `target` (restore) / - | `string` | `""` | The destination directory for a restore operation. **Required for Restore**.  |
-| `mode` / `runtime.mode` (internal) | `"incremental"` | Backup mode: `"incremental"` or `"snapshot"`. |
+| `mode` / `runtime.mode` (internal) | `"incremental"` | Backup mode: `"incremental"` or `"snapshot"`. Defaults to `"any"` for list/prune/restore. |
 | `overwrite` (backup) / `runtime.backupOverwriteBehavior` (internal) | `string` | `"update"` | Overwrite behavior for backup: `'always'`, `'never'`, `'if-newer'`, `'update'`. |
 | `overwrite` (restore) / `runtime.restoreOverwriteBehavior` (internal) | `string` | `"never"` | Overwrite behavior for restore: `'always'`, `'never'`, `'if-newer'`, `'update'`. |
 | `fail-fast` / `engine.failFast` | `bool` | `false` | If true, stops the backup immediately on the first file sync error. |

@@ -12,11 +12,16 @@ type Mode int
 
 // Constants for Mode, acting as an enum.
 const (
-	Incremental Mode = iota // 0
-	Snapshot                // 1
+	Any Mode = iota
+	Incremental
+	Snapshot
 )
 
-var modeToString = map[Mode]string{Incremental: "incremental", Snapshot: "snapshot"}
+var modeToString = map[Mode]string{
+	Any:         "any",
+	Incremental: "incremental",
+	Snapshot:    "snapshot",
+}
 var stringToMode = map[string]Mode{}
 
 func init() {
@@ -36,7 +41,7 @@ func ParseMode(s string) (Mode, error) {
 	if mode, ok := stringToMode[s]; ok {
 		return mode, nil
 	}
-	return 0, fmt.Errorf("invalid engine mode: %q. Must be 'incremental' or 'snapshot'", s)
+	return 0, fmt.Errorf("invalid engine mode: %q. Must be 'any','incremental' or 'snapshot'", s)
 }
 
 // MarshalJSON implements the json.Marshaler interface for Mode.

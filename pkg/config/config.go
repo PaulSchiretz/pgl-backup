@@ -142,7 +142,7 @@ func NewDefault() Config {
 		Version:  buildinfo.Version,
 		LogLevel: "info", // Default log level.
 		Runtime: RuntimeConfig{
-			Mode:                     "incremental", // Default mode
+			Mode:                     "any", // Default mode, 'any' defaults to incremental for backup command
 			DryRun:                   false,
 			BackupOverwriteBehavior:  "update", // Default to update behavior for backups
 			RestoreOverwriteBehavior: "never",  // Default to never overwrite for restores
@@ -564,6 +564,7 @@ func (c *Config) LogSummary(command flagparse.Command, absBasePath, absSourcePat
 		}
 
 	case flagparse.Prune:
+		logArgs = append(logArgs, "mode", c.Runtime.Mode)
 		logArgs = append(logArgs, "delete_workers", c.Engine.Performance.DeleteWorkers)
 
 		if c.Retention.Incremental.Enabled {
@@ -621,17 +622,16 @@ func MergeConfigWithFlags(command flagparse.Command, base Config, setFlags map[s
 		case "metrics":
 			merged.Engine.Metrics = value.(bool)
 		case "mode":
-			switch command {
-			case flagparse.Backup, flagparse.Restore, flagparse.List:
+			if command != flagparse.Init {
 				merged.Runtime.Mode = value.(string)
-			default:
 			}
 		case "dry-run":
 			merged.Runtime.DryRun = value.(bool)
 		case "overwrite":
-			if command == flagparse.Restore {
+			switch command {
+			case flagparse.Restore:
 				merged.Runtime.RestoreOverwriteBehavior = value.(string)
-			} else {
+			case flagparse.Backup:
 				merged.Runtime.BackupOverwriteBehavior = value.(string)
 			}
 		case "sync-workers":

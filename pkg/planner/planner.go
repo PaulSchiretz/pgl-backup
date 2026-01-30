@@ -31,13 +31,15 @@ type BackupPlan struct {
 }
 
 type ListPlan struct {
+	Mode     Mode
 	DryRun   bool
 	FailFast bool
 	Metrics  bool
 
 	PathsIncremental PathKeys
 	PathsSnapshot    PathKeys
-	Preflight        *preflight.Plan
+
+	Preflight *preflight.Plan
 }
 
 type RestorePlan struct {
@@ -46,7 +48,8 @@ type RestorePlan struct {
 	FailFast bool
 	Metrics  bool
 
-	Paths PathKeys
+	PathsIncremental PathKeys
+	PathsSnapshot    PathKeys
 
 	Preflight  *preflight.Plan
 	Sync       *pathsync.Plan
@@ -57,6 +60,7 @@ type RestorePlan struct {
 }
 
 type PrunePlan struct {
+	Mode     Mode
 	DryRun   bool
 	FailFast bool
 	Metrics  bool
@@ -94,6 +98,7 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 		retentionPolicy config.RetentionPolicy
 	)
 
+	// mode needs to be set eather to incremental or snapshot
 	switch mode {
 	case Incremental:
 		pathCfg = cfg.Paths.Incremental
@@ -102,7 +107,7 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 		pathCfg = cfg.Paths.Snapshot
 		retentionPolicy = cfg.Retention.Snapshot
 	default:
-		return nil, fmt.Errorf("unsupported mode: %s", mode)
+		return nil, fmt.Errorf("unsupported mode for backup: %s", mode)
 	}
 
 	// Parse Sync Settings (Shared)
@@ -255,8 +260,14 @@ func GenerateListPlan(cfg config.Config) (*ListPlan, error) {
 	failFast := cfg.Engine.FailFast
 	metrics := cfg.Engine.Metrics
 
+	mode, err := ParseMode(cfg.Runtime.Mode)
+	if err != nil {
+		return nil, err
+	}
+
 	// finish the plan
 	return &ListPlan{
+		Mode:     mode,
 		DryRun:   dryRun,
 		Metrics:  metrics,
 		FailFast: failFast,
@@ -302,16 +313,6 @@ func GenerateRestorePlan(cfg config.Config) (*RestorePlan, error) {
 		return nil, err
 	}
 
-	var pathCfg config.PathConfig
-	switch mode {
-	case Incremental:
-		pathCfg = cfg.Paths.Incremental
-	case Snapshot:
-		pathCfg = cfg.Paths.Snapshot
-	default:
-		return nil, fmt.Errorf("unsupported mode: %s", mode)
-	}
-
 	// Parse Sync Settings (Shared)
 	syncEngine, err := pathsync.ParseEngine(cfg.Sync.Engine)
 	if err != nil {
@@ -340,11 +341,18 @@ func GenerateRestorePlan(cfg config.Config) (*RestorePlan, error) {
 		Metrics:  metrics,
 		FailFast: failFast,
 
-		Paths: PathKeys{
-			RelCurrentPathKey: pathCfg.Current,
-			RelArchivePathKey: pathCfg.Archive,
-			RelContentPathKey: pathCfg.Content,
-			BackupNamePrefix:  pathCfg.BackupNamePrefix,
+		PathsIncremental: PathKeys{
+			RelCurrentPathKey: cfg.Paths.Incremental.Current,
+			RelArchivePathKey: cfg.Paths.Incremental.Archive,
+			RelContentPathKey: cfg.Paths.Incremental.Content,
+			BackupNamePrefix:  cfg.Paths.Incremental.BackupNamePrefix,
+		},
+
+		PathsSnapshot: PathKeys{
+			RelCurrentPathKey: cfg.Paths.Snapshot.Current,
+			RelArchivePathKey: cfg.Paths.Snapshot.Archive,
+			RelContentPathKey: cfg.Paths.Snapshot.Content,
+			BackupNamePrefix:  cfg.Paths.Snapshot.BackupNamePrefix,
 		},
 
 		PreRestoreHooks:  cfg.Hooks.PreRestore,
@@ -400,8 +408,14 @@ func GeneratePrunePlan(cfg config.Config) (*PrunePlan, error) {
 	failFast := cfg.Engine.FailFast
 	metrics := cfg.Engine.Metrics
 
+	mode, err := ParseMode(cfg.Runtime.Mode)
+	if err != nil {
+		return nil, err
+	}
+
 	// finish the plan
 	return &PrunePlan{
+		Mode:     mode,
 		DryRun:   dryRun,
 		Metrics:  metrics,
 		FailFast: failFast,

@@ -76,6 +76,11 @@ func RunBackup(ctx context.Context, flagMap map[string]interface{}) error {
 	// Merge the flag values over the loaded config to get the final run config.
 	runConfig := config.MergeConfigWithFlags(flagparse.Backup, loadedConfig, flagMap)
 
+	// Default to incremental if not specified
+	if runConfig.Runtime.Mode != "incremental" && runConfig.Runtime.Mode != "snapshot" {
+		runConfig.Runtime.Mode = "incremental"
+	}
+
 	// CRITICAL: Validate the config for the run
 	if err := runConfig.Validate(); err != nil {
 		return err

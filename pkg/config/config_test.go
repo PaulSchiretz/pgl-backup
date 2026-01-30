@@ -263,12 +263,22 @@ func TestMergeConfigWithFlags(t *testing.T) {
 			},
 		},
 		{
-			name:    "Ignore Mode (Other Command)",
+			name:    "Override Mode (Prune Command)",
 			command: flagparse.Prune,
 			flags:   map[string]any{"mode": "snapshot"},
 			validate: func(t *testing.T, c Config) {
-				if c.Runtime.Mode != "incremental" { // Default
-					t.Errorf("Mode = %v, want incremental (default) because command is Prune", c.Runtime.Mode)
+				if c.Runtime.Mode != "snapshot" {
+					t.Errorf("Mode = %v, want snapshot", c.Runtime.Mode)
+				}
+			},
+		},
+		{
+			name:    "Ignore Mode (Init Command)",
+			command: flagparse.Init,
+			flags:   map[string]any{"mode": "snapshot"},
+			validate: func(t *testing.T, c Config) {
+				if c.Runtime.Mode != "any" { // Default is empty
+					t.Errorf("Mode = %v, want any (default) because command is Init", c.Runtime.Mode)
 				}
 			},
 		},

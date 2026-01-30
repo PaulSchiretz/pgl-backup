@@ -278,8 +278,12 @@ func (r *Runner) ExecutePrune(ctx context.Context, absBasePath string, p *planne
 	plog.Info("Starting prune", "base", absBasePath)
 
 	// Standalone prune logic
+
+	pruneIncremental := p.Mode == planner.Any || p.Mode == planner.Incremental
+	pruneSnapshot := p.Mode == planner.Any || p.Mode == planner.Snapshot
+
 	var pruneErr error
-	if p.RetentionIncremental.Enabled {
+	if pruneIncremental && p.RetentionIncremental.Enabled {
 		var toRetent []metafile.MetafileInfo
 		toRetent, pruneErr = r.fetchBackups(ctx, absBasePath, p.PathsIncremental.RelArchivePathKey, p.PathsIncremental.BackupNamePrefix, []string{})
 		if pruneErr != nil {
@@ -294,7 +298,7 @@ func (r *Runner) ExecutePrune(ctx context.Context, absBasePath string, p *planne
 		}
 	}
 
-	if p.RetentionSnapshot.Enabled {
+	if pruneSnapshot && p.RetentionSnapshot.Enabled {
 		var toRetent []metafile.MetafileInfo
 		toRetent, pruneErr = r.fetchBackups(ctx, absBasePath, p.PathsSnapshot.RelArchivePathKey, p.PathsSnapshot.BackupNamePrefix, []string{})
 		if pruneErr != nil {
@@ -360,32 +364,39 @@ func (r *Runner) ExecuteList(ctx context.Context, absBasePath string, p *planner
 		plog.Info(msg, args...)
 	}
 
-	// 1. Incremental Current
-	if current, err := r.fetchBackup(absBasePath, p.PathsIncremental.RelCurrentPathKey); err == nil {
-		logBackup("Incremental (Current)", current)
-	}
+	showIncremental := p.Mode == planner.Any || p.Mode == planner.Incremental
+	showSnapshot := p.Mode == planner.Any || p.Mode == planner.Snapshot
 
-	// 2. Incremental Archives
-	if archives, err := r.fetchBackups(ctx, absBasePath, p.PathsIncremental.RelArchivePathKey, p.PathsIncremental.BackupNamePrefix, nil); err == nil {
-		for _, b := range archives {
-			logBackup("Incremental (Archive)", b)
+	// 1. Incremental Current
+	if showIncremental {
+		if current, err := r.fetchBackup(absBasePath, p.PathsIncremental.RelCurrentPathKey); err == nil {
+			logBackup("Incremental (Current)", current)
 		}
-	} else {
-		plog.Warn("Could not list incremental archives", "error", err)
+
+		// 2. Incremental Archives
+		if archives, err := r.fetchBackups(ctx, absBasePath, p.PathsIncremental.RelArchivePathKey, p.PathsIncremental.BackupNamePrefix, nil); err == nil {
+			for _, b := range archives {
+				logBackup("Incremental (Archive)", b)
+			}
+		} else {
+			plog.Warn("Could not list incremental archives", "error", err)
+		}
 	}
 
 	// 3. Snapshot Current
-	if current, err := r.fetchBackup(absBasePath, p.PathsSnapshot.RelCurrentPathKey); err == nil {
-		logBackup("Snapshot (Current)", current)
-	}
-
-	// 4. Snapshot Archives
-	if archives, err := r.fetchBackups(ctx, absBasePath, p.PathsSnapshot.RelArchivePathKey, p.PathsSnapshot.BackupNamePrefix, nil); err == nil {
-		for _, b := range archives {
-			logBackup("Snapshot (Archive)", b)
+	if showSnapshot {
+		if current, err := r.fetchBackup(absBasePath, p.PathsSnapshot.RelCurrentPathKey); err == nil {
+			logBackup("Snapshot (Current)", current)
 		}
-	} else {
-		plog.Warn("Could not list snapshot archives", "error", err)
+
+		// 4. Snapshot Archives
+		if archives, err := r.fetchBackups(ctx, absBasePath, p.PathsSnapshot.RelArchivePathKey, p.PathsSnapshot.BackupNamePrefix, nil); err == nil {
+			for _, b := range archives {
+				logBackup("Snapshot (Archive)", b)
+			}
+		} else {
+			plog.Warn("Could not list snapshot archives", "error", err)
+		}
 	}
 
 	// Standalone list logic
@@ -445,24 +456,52 @@ func (r *Runner) ExecuteRestore(ctx context.Context, absBasePath, backupName, ab
 		}
 	}()
 
-	var relBackupPathkey string
-	if backupName == p.Paths.RelCurrentPathKey || strings.ToLower(strings.TrimSpace(backupName)) == "current" {
-		relBackupPathkey = util.NormalizePath(p.Paths.RelCurrentPathKey)
-	} else {
-		relBackupPathkey = util.NormalizePath(filepath.Join(p.Paths.RelArchivePathKey, backupName)) // It's an archived backup
-	}
+	var toRestore metafile.MetafileInfo
+	var relContentPathKey string
+	var lastErr error
 
-	absBackupPath := util.DenormalizePath(filepath.Join(absBasePath, relBackupPathkey))
+	searchIncrementals := p.Mode == planner.Any || p.Mode == planner.Incremental
+	searchSnapshots := p.Mode == planner.Any || p.Mode == planner.Snapshot
 
-	plog.Info("Starting restore", "backup", absBackupPath, "destination", absTargetPath)
-
-	toRestore, err := r.fetchBackup(absBasePath, relBackupPathkey)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("backup not found at %s. Please verify the backup name %q and ensure the mode %q is correct: %w", absBackupPath, backupName, p.Mode, err)
+	// Helper to attempt fetch from a specific path configuration
+	tryFetch := func(paths planner.PathKeys) (metafile.MetafileInfo, error) {
+		var relBackupPathkey string
+		if backupName == paths.RelCurrentPathKey || strings.EqualFold(strings.TrimSpace(backupName), "current") {
+			relBackupPathkey = util.NormalizePath(paths.RelCurrentPathKey)
+		} else {
+			relBackupPathkey = util.NormalizePath(filepath.Join(paths.RelArchivePathKey, backupName))
 		}
-		return fmt.Errorf("failed to read backup metadata from %s: %w", absBackupPath, err)
+		return r.fetchBackup(absBasePath, relBackupPathkey)
 	}
+
+	// 1. Search Incremental
+	if searchIncrementals {
+		toRestore, lastErr = tryFetch(p.PathsIncremental)
+		if lastErr == nil {
+			relContentPathKey = p.PathsIncremental.RelContentPathKey
+			plog.Debug("Found backup in incremental storage", "path", toRestore.RelPathKey)
+		} else if !os.IsNotExist(lastErr) {
+			return fmt.Errorf("failed to read backup metadata: %w", lastErr)
+		}
+	}
+
+	// 2. Search Snapshot (if not found)
+	if toRestore.RelPathKey == "" && searchSnapshots {
+		toRestore, lastErr = tryFetch(p.PathsSnapshot)
+		if lastErr == nil {
+			relContentPathKey = p.PathsSnapshot.RelContentPathKey
+			plog.Debug("Found backup in snapshot storage", "path", toRestore.RelPathKey)
+		} else if !os.IsNotExist(lastErr) {
+			return fmt.Errorf("failed to read backup metadata: %w", lastErr)
+		}
+	}
+
+	if toRestore.RelPathKey == "" {
+		return fmt.Errorf("backup %q not found. Please verify the backup-name is correct", backupName)
+	}
+
+	absBackupPath := util.DenormalizePath(filepath.Join(absBasePath, toRestore.RelPathKey))
+	plog.Info("Starting restore", "backup", absBackupPath, "destination", absTargetPath)
 
 	if toRestore.Metadata.IsCompressed {
 		// Extract
@@ -472,7 +511,7 @@ func (r *Runner) ExecuteRestore(ctx context.Context, absBasePath, backupName, ab
 	} else {
 		// Sync (Flat file restore)
 		// We sync FROM backup content TO absTargetPath.
-		if err := r.syncer.Restore(ctx, absBasePath, p.Paths.RelContentPathKey, toRestore, absTargetPath, p.Sync); err != nil {
+		if err := r.syncer.Restore(ctx, absBasePath, relContentPathKey, toRestore, absTargetPath, p.Sync); err != nil {
 			return fmt.Errorf("restore sync failed: %w", err)
 		}
 	}

@@ -610,9 +610,11 @@ func TestExecuteList(t *testing.T) {
 
 func TestExecuteRestore(t *testing.T) {
 	const (
-		relCurrent = "current_dir"
-		relArchive = "archive_dir"
-		relContent = "content_dir"
+		relCurrent     = "current_dir"
+		relArchive     = "archive_dir"
+		relContent     = "content_dir"
+		relSnapCurrent = "snap_current_dir"
+		relSnapArchive = "snap_archive_dir"
 	)
 
 	tests := []struct {
@@ -666,6 +668,40 @@ func TestExecuteRestore(t *testing.T) {
 			setupFS:     func(t *testing.T, baseDir string) {},
 			expectError: true,
 		},
+		{
+			name:        "Empty Backup Name",
+			backupName:  "",
+			expectError: true,
+		},
+		{
+			name:       "Fallback to Snapshot",
+			backupName: "snapshot_backup",
+			setupFS: func(t *testing.T, baseDir string) {
+				// Create backup in snapshot path
+				path := filepath.Join(baseDir, relSnapArchive, "snapshot_backup")
+				os.MkdirAll(path, 0755)
+				metafile.Write(path, &metafile.MetafileContent{IsCompressed: false})
+			},
+			expectedPath:  filepath.Join(relSnapArchive, "snapshot_backup"),
+			expectExtract: false,
+		},
+		{
+			name:       "Collision Priority (Incremental over Snapshot)",
+			backupName: "collision_backup",
+			setupFS: func(t *testing.T, baseDir string) {
+				// Create backup in Incremental Archive
+				incPath := filepath.Join(baseDir, relArchive, "collision_backup")
+				os.MkdirAll(incPath, 0755)
+				metafile.Write(incPath, &metafile.MetafileContent{IsCompressed: false})
+
+				// Create backup in Snapshot Archive
+				snapPath := filepath.Join(baseDir, relSnapArchive, "collision_backup")
+				os.MkdirAll(snapPath, 0755)
+				metafile.Write(snapPath, &metafile.MetafileContent{IsCompressed: false})
+			},
+			expectedPath:  filepath.Join(relArchive, "collision_backup"),
+			expectExtract: false,
+		},
 	}
 
 	for _, tc := range tests {
@@ -678,9 +714,14 @@ func TestExecuteRestore(t *testing.T) {
 			}
 
 			plan := &planner.RestorePlan{
-				Paths: planner.PathKeys{
+				PathsIncremental: planner.PathKeys{
 					RelCurrentPathKey: relCurrent,
 					RelArchivePathKey: relArchive,
+					RelContentPathKey: relContent,
+				},
+				PathsSnapshot: planner.PathKeys{
+					RelCurrentPathKey: relSnapCurrent,
+					RelArchivePathKey: relSnapArchive,
 					RelContentPathKey: relContent,
 				},
 				Preflight:  &preflight.Plan{},

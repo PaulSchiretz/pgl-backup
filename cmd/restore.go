@@ -37,10 +37,6 @@ func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
 	if !ok || backupName == "" {
 		return fmt.Errorf("the -backup-name flag is required to run a restore")
 	}
-	// NOTE: We require mode explicitly to avoid ambiguity about which backup path to search
-	if _, ok := flagMap["mode"]; !ok {
-		return fmt.Errorf("the -mode flag is required to run a restore ('incremental' or 'snapshot')")
-	}
 
 	var err error
 	// Validate Base

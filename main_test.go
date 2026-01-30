@@ -95,11 +95,6 @@ func TestRun(t *testing.T) {
 			args:          []string{"pgl-backup", "restore", "-base", tmpDir, "-target", tmpDir, "-mode", "incremental"},
 			expectedError: "the -backup-name flag is required",
 		},
-		{
-			name:          "Restore Missing Mode",
-			args:          []string{"pgl-backup", "restore", "-base", tmpDir, "-target", tmpDir, "-backup-name", "current"},
-			expectedError: "the -mode flag is required",
-		},
 	}
 
 	for _, tc := range tests {

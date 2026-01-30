@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `list` command to enumerate all backups in the repository, simplifying the restore process.
 
 ### Changed
+- The `-mode` flag is now optional for the `restore` command. The system now attempts to locate the backup in incremental storage first, falling back to snapshot storage if not found.
 - Refactored core engine functions (`Sync`, `Archive`) to return results explicitly instead of modifying input structs via side effects. This improves data flow clarity and moves metafile writing responsibility to the main runner.
 - Introduced a new internal `hints` package to decouple error handling. The engine now checks for ignorable error *behaviors* (e.g., "task disabled") rather than specific error types from sub-packages, making the system more modular.
 
