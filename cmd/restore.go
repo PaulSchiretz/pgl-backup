@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/buildinfo"
@@ -33,10 +34,7 @@ func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
 	if !ok || target == "" {
 		return fmt.Errorf("the -target flag is required to run a restore")
 	}
-	backupName, ok := flagMap["backup-name"].(string)
-	if !ok || backupName == "" {
-		return fmt.Errorf("the -backup-name flag is required to run a restore")
-	}
+	backupName, _ := flagMap["backup-name"].(string)
 
 	var err error
 	// Validate Base
@@ -103,6 +101,76 @@ func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
 			runConfig.Engine.Performance.BufferSizeKB,
 		),
 	)
+
+	// If backup name is missing, trigger interactive selection
+	if backupName == "" {
+		listPlan, err := planner.GenerateListPlan(runConfig)
+		if err != nil {
+			return fmt.Errorf("failed to generate list plan for interactive backup selection: %w", err)
+		}
+
+		backups, err := runner.ListBackups(ctx, absBasePath, listPlan)
+		if err != nil {
+			return fmt.Errorf("failed to list backups: %w", err)
+		}
+
+		if len(backups) == 0 {
+			plog.Info(buildinfo.Name + " no backups found that can be restored.")
+			return nil
+		}
+
+		totalOptions := len(backups) + 1
+		optionNumberWidth := len(strconv.Itoa(totalOptions))
+
+		// Output the backup table
+
+		// Use a fixed layout without timezone for the rows, moving timezone to header
+		timeLayout := "Mon, 02 Jan 2006 15:04:05" // 25 characters
+		timeZoneLayout := time.Now().Local().Format("MST")
+
+		fmt.Print("Please select a backup to restore:\n\n")
+		// The %-25s format for Timestamp ensures alignment for dates.
+		fmt.Printf("  %*s %-25s %-5s %s\n", optionNumberWidth+1, "#)", fmt.Sprintf("Timestamp (%s)", timeZoneLayout), "Type", "Backup Name")
+		for i, b := range backups {
+			mode := b.Metadata.Mode
+			switch mode {
+			case "incremental":
+				mode = "INC"
+			case "snapshot":
+				mode = "SNP"
+			default:
+				mode = "INV"
+			}
+			fmt.Printf("  %*d) %s [%s] %s\n", optionNumberWidth, i+1, b.Metadata.TimestampUTC.Local().Format(timeLayout), mode, filepath.Base(b.RelPathKey))
+		}
+		fmt.Printf("  %*d) Cancel and exit %s.\n", optionNumberWidth, totalOptions, buildinfo.Name)
+
+		var selection int
+		for {
+			fmt.Printf("\nSelect a backup (1-%d) [%d]: ", totalOptions, totalOptions)
+			var input string
+			_, err := fmt.Scanln(&input)
+			if err != nil {
+				if err.Error() == "unexpected newline" {
+					selection = totalOptions
+					break
+				}
+				return fmt.Errorf("failed to read input: %w", err)
+			}
+			selection, err = strconv.Atoi(input)
+			if err != nil || selection < 1 || selection > totalOptions {
+				fmt.Printf("Invalid selection. Please enter a number between 1 and %d.\n", totalOptions)
+				continue
+			}
+			break
+		}
+
+		if selection == totalOptions {
+			plog.Info(buildinfo.Name + " restore canceled by user.")
+			return nil
+		}
+		backupName = filepath.Base(backups[selection-1].RelPathKey)
+	}
 
 	// Get the Plan
 	restorePlan, err := planner.GenerateRestorePlan(runConfig)

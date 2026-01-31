@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a pre-flight check to verify that the source directory is readable.
 - Added a pre-flight check to detect if source and target paths resolve to the same physical directory (e.g., via symlinks or bind mounts).
 - Added `list` command to enumerate all backups in the repository, simplifying the restore process.
+- Added interactive backup selection to the `restore` command. If `-backup-name` is omitted, a list of available backups is displayed for selection.
 
 ### Changed
 - The `-mode` flag is now optional for the `restore` command. The system now attempts to locate the backup in incremental storage first, falling back to snapshot storage if not found.

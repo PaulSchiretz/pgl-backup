@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -344,16 +345,19 @@ func (r *Runner) ExecuteList(ctx context.Context, absBasePath string, p *planner
 
 	plog.Info("Starting list", "base", absBasePath)
 
-	logBackup := func(category string, b metafile.MetafileInfo) {
-		msg := fmt.Sprintf("Backup (%s)", b.Metadata.TimestampUTC.Local().Format(time.RFC1123))
+	backups, err := r.ListBackups(ctx, absBasePath, p)
+	if err != nil {
+		return fmt.Errorf("failed to list backups: %w", err)
+	}
 
+	for _, b := range backups {
+		msg := fmt.Sprintf("Backup from %s", b.Metadata.TimestampUTC.Local().Format(time.RFC1123))
 		args := []interface{}{
-			"category", category,
-			"name", filepath.Base(b.RelPathKey),
-			"path", b.RelPathKey,
-			"timestamp", b.Metadata.TimestampUTC,
 			"uuid", b.Metadata.UUID,
+			"name", filepath.Base(b.RelPathKey),
 			"mode", b.Metadata.Mode,
+			"timestampUTC", b.Metadata.TimestampUTC,
+			"relPath", b.RelPathKey,
 			"compressed", b.Metadata.IsCompressed,
 		}
 
@@ -364,44 +368,43 @@ func (r *Runner) ExecuteList(ctx context.Context, absBasePath string, p *planner
 		plog.Info(msg, args...)
 	}
 
-	showIncremental := p.Mode == planner.Any || p.Mode == planner.Incremental
-	showSnapshot := p.Mode == planner.Any || p.Mode == planner.Snapshot
-
-	// 1. Incremental Current
-	if showIncremental {
-		if current, err := r.fetchBackup(absBasePath, p.PathsIncremental.RelCurrentPathKey); err == nil {
-			logBackup("Incremental (Current)", current)
-		}
-
-		// 2. Incremental Archives
-		if archives, err := r.fetchBackups(ctx, absBasePath, p.PathsIncremental.RelArchivePathKey, p.PathsIncremental.BackupNamePrefix, nil); err == nil {
-			for _, b := range archives {
-				logBackup("Incremental (Archive)", b)
-			}
-		} else {
-			plog.Warn("Could not list incremental archives", "error", err)
-		}
-	}
-
-	// 3. Snapshot Current
-	if showSnapshot {
-		if current, err := r.fetchBackup(absBasePath, p.PathsSnapshot.RelCurrentPathKey); err == nil {
-			logBackup("Snapshot (Current)", current)
-		}
-
-		// 4. Snapshot Archives
-		if archives, err := r.fetchBackups(ctx, absBasePath, p.PathsSnapshot.RelArchivePathKey, p.PathsSnapshot.BackupNamePrefix, nil); err == nil {
-			for _, b := range archives {
-				logBackup("Snapshot (Archive)", b)
-			}
-		} else {
-			plog.Warn("Could not list snapshot archives", "error", err)
-		}
-	}
-
 	// Standalone list logic
 	plog.Info("List completed")
 	return nil
+}
+
+func (r *Runner) ListBackups(ctx context.Context, absBasePath string, p *planner.ListPlan) ([]metafile.MetafileInfo, error) {
+	var allBackups []metafile.MetafileInfo
+
+	showIncremental := p.Mode == planner.Any || p.Mode == planner.Incremental
+	showSnapshot := p.Mode == planner.Any || p.Mode == planner.Snapshot
+
+	// 1. Incremental
+	if showIncremental {
+		if current, err := r.fetchBackup(absBasePath, p.PathsIncremental.RelCurrentPathKey); err == nil {
+			allBackups = append(allBackups, current)
+		}
+		if archives, err := r.fetchBackups(ctx, absBasePath, p.PathsIncremental.RelArchivePathKey, p.PathsIncremental.BackupNamePrefix, nil); err == nil {
+			allBackups = append(allBackups, archives...)
+		}
+	}
+
+	// 2. Snapshot
+	if showSnapshot {
+		if current, err := r.fetchBackup(absBasePath, p.PathsSnapshot.RelCurrentPathKey); err == nil {
+			allBackups = append(allBackups, current)
+		}
+		if archives, err := r.fetchBackups(ctx, absBasePath, p.PathsSnapshot.RelArchivePathKey, p.PathsSnapshot.BackupNamePrefix, nil); err == nil {
+			allBackups = append(allBackups, archives...)
+		}
+	}
+
+	// Sort by timestamp descending (newest first)
+	sort.Slice(allBackups, func(i, j int) bool {
+		return allBackups[i].Metadata.TimestampUTC.After(allBackups[j].Metadata.TimestampUTC)
+	})
+
+	return allBackups, nil
 }
 
 func (r *Runner) ExecuteRestore(ctx context.Context, absBasePath, backupName, absTargetPath string, p *planner.RestorePlan) error {
