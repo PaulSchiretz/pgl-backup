@@ -720,7 +720,7 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `source` (backup/init) / - | `string` | `""` | The directory to back up. **Required for Backup and Init**. |
 | `target` (restore) / - | `string` | `""` | The destination directory for a restore operation. **Required for Restore**.  |
 | `backup-name` (restore) / - | `string` | `""` | The name of the backup you want to restore.  |
-| `mode` / `runtime.mode` (internal) | `"incremental"` | Backup mode: `"incremental"` or `"snapshot"`. Defaults to `"any"` for list/prune/restore. |
+| `mode` / `runtime.mode` (internal) | `string` | `"incremental"` | Backup mode: `"incremental"` or `"snapshot"`. Defaults to `"any"` for list/prune/restore. |
 | `overwrite` (backup) / `runtime.backupOverwriteBehavior` (internal) | `string` | `"update"` | Overwrite behavior for backup: `'always'`, `'never'`, `'if-newer'`, `'update'`. |
 | `overwrite` (restore) / `runtime.restoreOverwriteBehavior` (internal) | `string` | `"never"` | Overwrite behavior for restore: `'always'`, `'never'`, `'if-newer'`, `'update'`. |
 | `fail-fast` / `engine.failFast` | `bool` | `false` | If true, stops the backup immediately on the first file sync error. |
@@ -730,14 +730,14 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `log-level` / `logLevel` | `string` | `"info"` | Set the logging level: `"debug"`, `"notice"`, `"info"`, `"warn"`, or `"error"`. |
 | `metrics` / `engine.metrics` | `bool` | `true` | If true, enables detailed performance and file-counting metrics. |
 | **Paths** | | | |
-| - / `paths.incremental.archive` | `"PGL_Backup_Incremental_Archive"` | Sub-directory for historical incremental backups. |
-| - / `paths.incremental.current` | `"PGL_Backup_Incremental_Current"` | Sub-directory for the current incremental backup. |
-| - / `paths.incremental.content` | `"PGL_Backup_Content"` | Sub-directory for the content within an incremental backup. |
-| - / `paths.incremental.backupNamePrefix` | `"PGL_Backup_"` | Prefix for timestamped archive directories (incremental). |
-| - / `paths.snapshot.archive` | `"PGL_Backup_Snapshot_Archive"` | Sub-directory for snapshot backups. |
-| - / `paths.snapshot.current` | `"PGL_Backup_Snapshot_Current"` | Sub-directory for the current snapshot backup. |
-| - / `paths.snapshot.content` | `"PGL_Backup_Content"` | Sub-directory for the content within a snapshot backup. |
-| - / `paths.snapshot.backupNamePrefix` | `"PGL_Backup_"` | Prefix for timestamped archive directories (snapshot). |
+| - / `paths.incremental.archive` | `string` | `"PGL_Backup_Incremental_Archive"` | Sub-directory for historical incremental backups. |
+| - / `paths.incremental.current` | `string` | `"PGL_Backup_Incremental_Current"` | Sub-directory for the current incremental backup. |
+| - / `paths.incremental.content` | `string` | `"PGL_Backup_Content"` | Sub-directory for the content within an incremental backup. |
+| - / `paths.incremental.backupNamePrefix` | `string` | `"PGL_Backup_"` | Prefix for timestamped archive directories (incremental). |
+| - / `paths.snapshot.archive` | `string` | `"PGL_Backup_Snapshot_Archive"` | Sub-directory for snapshot backups. |
+| - / `paths.snapshot.current` | `string` | `"PGL_Backup_Snapshot_Current"` | Sub-directory for the current snapshot backup. |
+| - / `paths.snapshot.content` | `string` | `"PGL_Backup_Content"` | Sub-directory for the content within a snapshot backup. |
+| - / `paths.snapshot.backupNamePrefix` | `string` | `"PGL_Backup_"` | Prefix for timestamped archive directories (snapshot). |
 | **Sync Settings** | | | |
 | - / `sync.enabled` | `bool` | `true` | Enable file synchronization. |
 | `sync-engine` / `sync.engine` | `string` | `"native"` | The sync engine to use: `"native"` or `"robocopy"` (Windows only). |
