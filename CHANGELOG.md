@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v1.3.2] - 2026-XX-XX
+## [v1.3.2] - 2026-01-28
 
 ### Added
 - Added a unique identifier (UUID) to the backup metadata (`.pgl-backup.meta.json`) to provide an immutable identity for backups, independent of their file path.
