@@ -183,7 +183,7 @@ func PromptBackupSelection(backups []metafile.MetafileInfo) (string, error) {
 		}
 		fmt.Printf("  %*d) %-*s [%s] %s\n", optionNumColWidth, i+1, timestampColWidth, b.Metadata.TimestampUTC.Local().Format(timestampLayout), mode, filepath.Base(b.RelPathKey))
 	}
-	fmt.Printf("  %*d) Cancel and exit %s.\n", optionNumColWidth, totalNumOptions, buildinfo.Name)
+	fmt.Printf("  %*d) Cancel and exit %s (or type 'q').\n", optionNumColWidth, totalNumOptions, buildinfo.Name)
 
 	var selection int
 	for {
@@ -197,9 +197,16 @@ func PromptBackupSelection(backups []metafile.MetafileInfo) (string, error) {
 			}
 			return "", fmt.Errorf("failed to read input: %w", err)
 		}
+
+		inputLower := strings.ToLower(strings.TrimSpace(input))
+		if inputLower == "q" || inputLower == "quit" {
+			selection = totalNumOptions
+			break
+		}
+
 		selection, err = strconv.Atoi(input)
 		if err != nil || selection < 1 || selection > totalNumOptions {
-			fmt.Printf("Invalid selection. Please enter a number between 1 and %d.\n", totalNumOptions)
+			fmt.Printf("Invalid selection. Please enter a number between 1 and %d, or 'q' to quit.\n", totalNumOptions)
 			continue
 		}
 		break

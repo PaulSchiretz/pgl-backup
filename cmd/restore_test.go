@@ -223,6 +223,12 @@ func TestPromptBackupSelection(t *testing.T) {
 			expectHint:     true,
 		},
 		{
+			name:           "Cancel via 'q'",
+			input:          "q\n",
+			expectedResult: "",
+			expectHint:     true,
+		},
+		{
 			name:           "Invalid Input Retry",
 			input:          "invalid\n1\n",
 			expectedResult: "backup_1",
