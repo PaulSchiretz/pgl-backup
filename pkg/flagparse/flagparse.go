@@ -19,6 +19,9 @@ type cliFlags struct {
 	DryRun   *bool
 	Metrics  *bool
 
+	// Shared: Backup / Restore / List / Prune
+	Mode *string
+
 	// Shared: Backup / Init
 	Source        *string
 	Base          *string
@@ -62,11 +65,13 @@ type cliFlags struct {
 	RetentionSnapshotYears      *int
 
 	// Shared: Backup / Restore
-	Mode              *string
 	OverwriteBehavior *string
 
+	// List specific
+	Sort *string
+
 	// Restore specific
-	BackupName       *string
+	UUID             *string
 	PreRestoreHooks  *string
 	PostRestoreHooks *string
 
@@ -181,13 +186,14 @@ func registerPruneFlags(fs *flag.FlagSet, f *cliFlags) {
 func registerListFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.Base = fs.String("base", "", "Base directory of the backup repository. (Required)")
 	f.Mode = fs.String("mode", "any", "Which backups to list ('incremental' or 'snapshot'). Defaults to 'any' (lists both).")
+	f.Sort = fs.String("sort", "desc", "Sort order: 'desc' (newest first) or 'asc' (oldest first).")
 }
 
 func registerRestoreFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.Base = fs.String("base", "", "Base directory of the backup repository. (Required)")
 	f.Target = fs.String("target", "", "Directory to restore to. (Required)")
-	f.BackupName = fs.String("backup-name", "", "Name of the backup to restore (e.g. 'PGL_Backup_2023...' or 'current') (Required)")
-	f.Mode = fs.String("mode", "any", "Filter the interactive list by mode ('incremental' or 'snapshot'), or restrict search when -backup-name is provided. Defaults to 'any'.")
+	f.UUID = fs.String("uuid", "", "UUID of the backup to restore. If omitted, an interactive list is shown.")
+	f.Mode = fs.String("mode", "any", "Filter the interactive list by mode ('incremental' or 'snapshot'), or restrict search when -uuid is provided. Defaults to 'any'.")
 	f.FailFast = fs.Bool("fail-fast", false, "Stop the restore immediately on the first error.")
 	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
 
@@ -330,12 +336,13 @@ func flagsToMap(c Command, fs *flag.FlagSet, f *cliFlags) (map[string]interface{
 	addIfUsed(flagMap, usedFlags, "metrics", f.Metrics)
 
 	addIfUsed(flagMap, usedFlags, "mode", f.Mode)
+	addIfUsed(flagMap, usedFlags, "sort", f.Sort)
 	addIfUsed(flagMap, usedFlags, "metrics", f.Metrics)
 
 	addIfUsed(flagMap, usedFlags, "base", f.Base)
 	addIfUsed(flagMap, usedFlags, "source", f.Source)
 	addIfUsed(flagMap, usedFlags, "target", f.Target)
-	addIfUsed(flagMap, usedFlags, "backup-name", f.BackupName)
+	addIfUsed(flagMap, usedFlags, "uuid", f.UUID)
 	addIfUsed(flagMap, usedFlags, "overwrite", f.OverwriteBehavior)
 	addIfUsed(flagMap, usedFlags, "fail-fast", f.FailFast)
 	addIfUsed(flagMap, usedFlags, "sync-workers", f.SyncWorkers)

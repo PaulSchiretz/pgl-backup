@@ -189,13 +189,13 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
       "current": "PGL_Backup_Incremental_Current",
       "archive": "PGL_Backup_Incremental_Archive",
       "content": "PGL_Backup_Content",
-      "backupNamePrefix": "PGL_Backup_"
+      "archiveEntryPrefix": "PGL_Backup_"
     },
     "snapshot": {
       "current": "PGL_Backup_Snapshot_Current",
       "archive": "PGL_Backup_Snapshot_Archive",
       "content": "PGL_Backup_Content",
-      "backupNamePrefix": "PGL_Backup_"
+      "archiveEntryPrefix": "PGL_Backup_"
     }
   },
   "engine": {
@@ -369,6 +369,7 @@ pgl-backup list -base="/path/to/your/backup-target"
 **Command Structure:**
 *   `-base`**(Required)**: The root directory of your backup repository (where `pgl-backup.config.json` is located).
 *   `-mode`: Specify the backup mode (`incremental` or `snapshot`). If omitted, `pgl-backup` automatically lists **incremental** and **snapshot** backups.
+*   `-sort`: Sort order for the list (`desc` or `asc`). Defaults to `desc` (newest first).
 
 ## How to Restore a Backup
 
@@ -381,21 +382,21 @@ The `restore` command is the easiest and safest way to restore a backup. It auto
 The `restore` command copies data from a specific backup to a target directory.
 
 ```sh
-pgl-backup restore -base="/path/to/backup-repo" -target="/path/to/restore-location" -backup-name="PGL_Backup_2023-10-27_10-00-00"
+pgl-backup restore -base="/path/to/backup-repo" -target="/path/to/restore-location"
 ```
 
 **Command Structure:**
 *   `-base`**(Required)**: The root directory of your backup repository (where `pgl-backup.config.json` is located).
 *   `-target`**(Required)**: The directory where you want to restore the files.
-*   `-backup-name`: The name of the backup directory you want to restore (e.g., `current` or `PGL_Backup_2023...`). If omitted, `pgl-backup` will display an interactive list of available backups for you to choose from.
-*   `-mode`: Filter the interactive list by backup mode (`incremental` or `snapshot`), or restrict the search when `-backup-name` is provided. If omitted (`any`), `pgl-backup` lists all backups or searches both locations.
+*   `-uuid`: The UUID of the backup you want to restore. If omitted (the default), `pgl-backup` launches an easy-to-use interactive menu where you can browse and select a backup from a list.
+*   `-mode`: Filter the interactive list by backup mode (`incremental` or `snapshot`), or restrict the search when `-uuid` is provided. If omitted (`any`), `pgl-backup` lists all backups or searches both locations.
 *   `-overwrite`: Control overwrite behavior (`always`, `never`, `if-newer`, `update`). If omitted, defaults to `never`, so existing files are not overwritten.
 *   `-fail-fast`: Stop immediately on the first error. If omitted, defaults to `false`.
 
 **Examples:**
 
 **1. Interactive Restore (Default & Easiest):**
-Simply omit the `-backup-name` flag to see a list of all available backups and select one by number.
+Simply omit the `-uuid` flag to see a list of all available backups and select one by number.
 ```sh
 pgl-backup restore -base="/media/backup-drive/MyDocumentsBackup" \
                    -target="$HOME/RestoredDocuments"
@@ -404,29 +405,28 @@ The list displays the backup type:
 * [INC]: Incremental backup.
 * [SNP]: Snapshot backup
 
-**2. Restore a named backup:**
-This finds the backup named `PGL_Backup_2023-10-27...` inside any archive directory, automatically decompresses it if needed, and restores its contents.
+**2. Restore a specific backup by UUID:**
+This finds the backup with the specified UUID, automatically decompresses it if needed, and restores its contents. You can find the UUID using the `list` command.
 ```sh
 pgl-backup restore -base="/media/backup-drive/MyDocumentsBackup" \
                    -target="$HOME/RestoredFromSnapshot" \
-                   -backup-name="PGL_Backup_2023-10-27-14-00-00" \
+                   -uuid="123e4567-e89b-12d3-a456-426614174000" \
 ```
 
-**3. Restore the most recent incremental backup:**
-This restores the contents of the `PGL_Backup_Incremental_Current` directory.
+**3. Restore the latest backup:**
+Automatically selects and restores the most recent backup.
 ```sh
 pgl-backup restore -base="/media/backup-drive/MyDocumentsBackup" \
-                   -target="$HOME/RestoredDocuments" \
-                   -backup-name="current" \
-                   -mode="incremental"
+                   -target="$HOME/RestoredFromSnapshot" \
+                   -uuid="latest" \
 ```
 
 **4. Restore a specific archived snapshot:**
-This finds the backup named `PGL_Backup_2023-10-27...` inside the snapshot archive directory, automatically decompresses it if needed, and restores its contents.
+This finds the backup with the specified UUID inside the snapshot archive directory, automatically decompresses it if needed, and restores its contents.
 ```sh
 pgl-backup restore -base="/media/backup-drive/MyDocumentsBackup" \
                    -target="$HOME/RestoredFromSnapshot" \
-                   -backup-name="PGL_Backup_2023-10-27-14-00-00" \
+                   -uuid="123e4567-e89b-12d3-a456-426614174000" \
                    -mode="snapshot"
 ```
 
@@ -443,9 +443,9 @@ A core design philosophy of `pgl-backup` is zero vendor lock-in. Your data is al
 
 Navigate to your backup target directory. You will see the following structure:
 
-*   **`PGL_Backup_Incremental_Current/`**: Contains the most recent version of your files. You can browse this directory directly and copy files out using your file explorer.
-*   **`PGL_Backup_Incremental_Archive/`**: Contains compressed historical backups (e.g., `PGL_Backup_2023-10-27-14-00-00...tar.zst`).
-*   **`PGL_Backup_Snapshot_Archive/`**: Contains point-in-time snapshots if you use snapshot mode.
+*   **`PGL_Backup_Incremental_Current/`**: Contains the most recent version of your files within the `PGL_Backup_Content` subdirectory. You can browse this directory directly and copy files out using your file explorer.
+*   **`PGL_Backup_Incremental_Archive/`**: Contains compressed historical incremental backups (e.g., `PGL_Backup_2023-10-27-14-00-00...tar.zst`), if compression is disabled all your files are within the `PGL_Backup_Content` subdirectory.
+*   **`PGL_Backup_Snapshot_Archive/`**: Contains point-in-time snapshots if you use snapshot mode. If compression is enabled (e.g., `PGL_Backup_2023-10-27-14-00-00...tar.zst`), if compression is disabled all your files are within the `PGL_Backup_Content` subdirectory.
 
 #### 2. Extract Files from Archives
 
@@ -719,8 +719,9 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `base` / `base` (internal) | `string` | `""` | The base directory where backups are stored. **Required**. |
 | `source` (backup/init) / - | `string` | `""` | The directory to back up. **Required for Backup and Init**. |
 | `target` (restore) / - | `string` | `""` | The destination directory for a restore operation. **Required for Restore**.  |
-| `backup-name` (restore) / - | `string` | `""` | The name of the backup you want to restore.  |
+| `uuid` (restore) / - | `string` | `""` | The UUID of the backup you want to restore.  |
 | `mode` / `runtime.mode` (internal) | `string` | `"incremental"` | Backup mode: `"incremental"` or `"snapshot"`. Defaults to `"any"` for list/prune/restore. |
+| `sort` / `runtime.listSort` (internal) | `string` | `"desc"` | Sort order for list command: `"desc"` or `"asc"`. |
 | `overwrite` (backup) / `runtime.backupOverwriteBehavior` (internal) | `string` | `"update"` | Overwrite behavior for backup: `'always'`, `'never'`, `'if-newer'`, `'update'`. |
 | `overwrite` (restore) / `runtime.restoreOverwriteBehavior` (internal) | `string` | `"never"` | Overwrite behavior for restore: `'always'`, `'never'`, `'if-newer'`, `'update'`. |
 | `fail-fast` / `engine.failFast` | `bool` | `false` | If true, stops the backup immediately on the first file sync error. |
@@ -733,11 +734,11 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | - / `paths.incremental.archive` | `string` | `"PGL_Backup_Incremental_Archive"` | Sub-directory for historical incremental backups. |
 | - / `paths.incremental.current` | `string` | `"PGL_Backup_Incremental_Current"` | Sub-directory for the current incremental backup. |
 | - / `paths.incremental.content` | `string` | `"PGL_Backup_Content"` | Sub-directory for the content within an incremental backup. |
-| - / `paths.incremental.backupNamePrefix` | `string` | `"PGL_Backup_"` | Prefix for timestamped archive directories (incremental). |
+| - / `paths.incremental.archiveEntryPrefix` | `string` | `"PGL_Backup_"` | Prefix for timestamped archive directories (incremental). |
 | - / `paths.snapshot.archive` | `string` | `"PGL_Backup_Snapshot_Archive"` | Sub-directory for snapshot backups. |
 | - / `paths.snapshot.current` | `string` | `"PGL_Backup_Snapshot_Current"` | Sub-directory for the current snapshot backup. |
 | - / `paths.snapshot.content` | `string` | `"PGL_Backup_Content"` | Sub-directory for the content within a snapshot backup. |
-| - / `paths.snapshot.backupNamePrefix` | `string` | `"PGL_Backup_"` | Prefix for timestamped archive directories (snapshot). |
+| - / `paths.snapshot.archiveEntryPrefix` | `string` | `"PGL_Backup_"` | Prefix for timestamped archive directories (snapshot). |
 | **Sync Settings** | | | |
 | - / `sync.enabled` | `bool` | `true` | Enable file synchronization. |
 | `sync-engine` / `sync.engine` | `string` | `"native"` | The sync engine to use: `"native"` or `"robocopy"` (Windows only). |

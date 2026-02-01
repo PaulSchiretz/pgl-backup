@@ -63,7 +63,7 @@ type mockArchiver struct {
 	returnEmptyResult bool
 }
 
-func (m *mockArchiver) Archive(ctx context.Context, absBasePath, relArchivePathKey, backupNamePrefix string, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
+func (m *mockArchiver) Archive(ctx context.Context, absBasePath, relArchivePathKey, archiveEntryPrefix string, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
 	if m.err != nil {
 		return metafile.MetafileInfo{}, m.err
 	}
@@ -176,7 +176,7 @@ func TestExecuteBackup(t *testing.T) {
 				if err := os.MkdirAll(currentPath, 0755); err != nil {
 					t.Fatal(err)
 				}
-				meta := metafile.MetafileContent{TimestampUTC: time.Now()}
+				meta := metafile.MetafileContent{TimestampUTC: time.Now(), UUID: "uuid-inc-happy"}
 				if err := metafile.Write(currentPath, &meta); err != nil {
 					t.Fatal(err)
 				}
@@ -195,7 +195,7 @@ func TestExecuteBackup(t *testing.T) {
 				if err := os.MkdirAll(currentPath, 0755); err != nil {
 					t.Fatal(err)
 				}
-				meta := metafile.MetafileContent{TimestampUTC: time.Now()}
+				meta := metafile.MetafileContent{TimestampUTC: time.Now(), UUID: "uuid-inc-compress"}
 				if err := metafile.Write(currentPath, &meta); err != nil {
 					t.Fatal(err)
 				}
@@ -238,7 +238,7 @@ func TestExecuteBackup(t *testing.T) {
 				// Create 'current' backup so fetchBackup succeeds
 				currentPath := filepath.Join(baseDir, relCurrent)
 				os.MkdirAll(currentPath, 0755)
-				metafile.Write(currentPath, &metafile.MetafileContent{})
+				metafile.Write(currentPath, &metafile.MetafileContent{UUID: "uuid-fail-fast"})
 			},
 			expectError:   true,
 			errorContains: "error during archive",
@@ -252,7 +252,7 @@ func TestExecuteBackup(t *testing.T) {
 			setupFS: func(t *testing.T, baseDir string) {
 				currentPath := filepath.Join(baseDir, relCurrent)
 				os.MkdirAll(currentPath, 0755)
-				metafile.Write(currentPath, &metafile.MetafileContent{})
+				metafile.Write(currentPath, &metafile.MetafileContent{UUID: "uuid-fail-slow"})
 			},
 			expectError: false, // Should continue
 		},
@@ -265,7 +265,7 @@ func TestExecuteBackup(t *testing.T) {
 				// Create 'current' backup so fetchBackup succeeds
 				currentPath := filepath.Join(baseDir, relCurrent)
 				os.MkdirAll(currentPath, 0755)
-				metafile.Write(currentPath, &metafile.MetafileContent{})
+				metafile.Write(currentPath, &metafile.MetafileContent{UUID: "uuid-nothing"})
 			},
 			expectError: false,
 		},
@@ -278,7 +278,7 @@ func TestExecuteBackup(t *testing.T) {
 			setupFS: func(t *testing.T, baseDir string) {
 				currentPath := filepath.Join(baseDir, relCurrent)
 				os.MkdirAll(currentPath, 0755)
-				metafile.Write(currentPath, &metafile.MetafileContent{})
+				metafile.Write(currentPath, &metafile.MetafileContent{UUID: "uuid-empty-result"})
 			},
 			expectError:   true,
 			errorContains: "archive succeeded but ResultInfo is empty",
@@ -310,7 +310,7 @@ func TestExecuteBackup(t *testing.T) {
 			setupFS: func(t *testing.T, baseDir string) {
 				currentPath := filepath.Join(baseDir, relCurrent)
 				os.MkdirAll(currentPath, 0755)
-				metafile.Write(currentPath, &metafile.MetafileContent{})
+				metafile.Write(currentPath, &metafile.MetafileContent{UUID: "uuid-compress-fail"})
 			},
 			expectError:   true,
 			errorContains: "error during compress",
@@ -325,7 +325,7 @@ func TestExecuteBackup(t *testing.T) {
 			setupFS: func(t *testing.T, baseDir string) {
 				currentPath := filepath.Join(baseDir, relCurrent)
 				os.MkdirAll(currentPath, 0755)
-				metafile.Write(currentPath, &metafile.MetafileContent{})
+				metafile.Write(currentPath, &metafile.MetafileContent{UUID: "uuid-compress-fail-slow"})
 			},
 			expectError: false, // Should continue
 		},
@@ -354,7 +354,7 @@ func TestExecuteBackup(t *testing.T) {
 			setupFS: func(t *testing.T, baseDir string) {
 				currentPath := filepath.Join(baseDir, relCurrent)
 				os.MkdirAll(currentPath, 0755)
-				metafile.Write(currentPath, &metafile.MetafileContent{})
+				metafile.Write(currentPath, &metafile.MetafileContent{UUID: "uuid-nothing-compress"})
 			},
 			expectError: false,
 		},
@@ -424,10 +424,10 @@ func TestExecuteBackup(t *testing.T) {
 				DryRun:   tc.dryRun,
 				FailFast: tc.failFast,
 				Paths: planner.PathKeys{
-					RelCurrentPathKey: relCurrent,
-					RelArchivePathKey: relArchive,
-					RelContentPathKey: relContent,
-					BackupNamePrefix:  prefix,
+					RelCurrentPathKey:  relCurrent,
+					RelArchivePathKey:  relArchive,
+					RelContentPathKey:  relContent,
+					ArchiveEntryPrefix: prefix,
 				},
 				Preflight: &preflight.Plan{},
 				Sync: &pathsync.Plan{
@@ -554,7 +554,7 @@ func TestExecuteList(t *testing.T) {
 			},
 			expectError: false,
 			expectedLogMsg: []string{
-				"Backup ",               // Check for the Backup msg at start
+				"Backup found from",     // Check for the Backup msg at start
 				"compressionFormat=zip", // Check for compression format
 			},
 		},
@@ -579,14 +579,14 @@ func TestExecuteList(t *testing.T) {
 
 			plan := &planner.ListPlan{
 				PathsIncremental: planner.PathKeys{
-					RelCurrentPathKey: "PGL_Backup_Incremental_Current",
-					RelArchivePathKey: "PGL_Backup_Incremental_Archive",
-					BackupNamePrefix:  "PGL_Backup_",
+					RelCurrentPathKey:  "PGL_Backup_Incremental_Current",
+					RelArchivePathKey:  "PGL_Backup_Incremental_Archive",
+					ArchiveEntryPrefix: "PGL_Backup_",
 				},
 				PathsSnapshot: planner.PathKeys{
-					RelCurrentPathKey: "PGL_Backup_Snapshot_Current",
-					RelArchivePathKey: "PGL_Backup_Snapshot_Archive",
-					BackupNamePrefix:  "PGL_Backup_",
+					RelCurrentPathKey:  "PGL_Backup_Snapshot_Current",
+					RelArchivePathKey:  "PGL_Backup_Snapshot_Archive",
+					ArchiveEntryPrefix: "PGL_Backup_",
 				},
 				Preflight: &preflight.Plan{},
 			}
@@ -608,6 +608,84 @@ func TestExecuteList(t *testing.T) {
 	}
 }
 
+func TestListBackups_Sorting(t *testing.T) {
+	baseDir := t.TempDir()
+
+	// Setup timestamps
+	now := time.Now()
+	timeNew := now
+	timeMid := now.Add(-1 * time.Hour)
+	timeOld := now.Add(-2 * time.Hour)
+
+	// Create backups in mixed order on disk to ensure sorting works
+
+	// 1. Middle (Incremental Archive)
+	midPath := filepath.Join(baseDir, "archive", "backup_mid")
+	os.MkdirAll(midPath, 0755)
+	metafile.Write(midPath, &metafile.MetafileContent{TimestampUTC: timeMid, UUID: "uuid-mid", Mode: "incremental"})
+
+	// 2. New (Snapshot Current)
+	newPath := filepath.Join(baseDir, "snap_current")
+	os.MkdirAll(newPath, 0755)
+	metafile.Write(newPath, &metafile.MetafileContent{TimestampUTC: timeNew, UUID: "uuid-new", Mode: "snapshot"})
+
+	// 3. Old (Incremental Archive)
+	oldPath := filepath.Join(baseDir, "archive", "backup_old")
+	os.MkdirAll(oldPath, 0755)
+	metafile.Write(oldPath, &metafile.MetafileContent{TimestampUTC: timeOld, UUID: "uuid-old", Mode: "incremental"})
+
+	runner := engine.NewRunner(&mockValidator{}, &mockSyncer{}, &mockArchiver{}, &mockRetainer{}, &mockCompressor{})
+
+	plan := &planner.ListPlan{
+		Mode:      planner.Any,
+		SortOrder: planner.Desc,
+		PathsIncremental: planner.PathKeys{
+			RelCurrentPathKey:  "current",
+			RelArchivePathKey:  "archive",
+			ArchiveEntryPrefix: "backup_",
+		},
+		PathsSnapshot: planner.PathKeys{
+			RelCurrentPathKey:  "snap_current",
+			RelArchivePathKey:  "snap_archive",
+			ArchiveEntryPrefix: "backup_",
+		},
+	}
+
+	backups, err := runner.ListBackups(context.Background(), baseDir, plan)
+	if err != nil {
+		t.Fatalf("ListBackups failed: %v", err)
+	}
+
+	if len(backups) != 3 {
+		t.Fatalf("Expected 3 backups, got %d", len(backups))
+	}
+
+	// Verify Order: New -> Mid -> Old
+	if backups[0].Metadata.UUID != "uuid-new" {
+		t.Errorf("Expected first backup to be uuid-new, got %s", backups[0].Metadata.UUID)
+	}
+	if backups[1].Metadata.UUID != "uuid-mid" {
+		t.Errorf("Expected second backup to be uuid-mid, got %s", backups[1].Metadata.UUID)
+	}
+	if backups[2].Metadata.UUID != "uuid-old" {
+		t.Errorf("Expected third backup to be uuid-old, got %s", backups[2].Metadata.UUID)
+	}
+
+	// Test Asc (OldestFirst)
+	plan.SortOrder = planner.Asc
+	backupsOldest, err := runner.ListBackups(context.Background(), baseDir, plan)
+	if err != nil {
+		t.Fatalf("ListBackups (OldestFirst) failed: %v", err)
+	}
+	if len(backupsOldest) != 3 {
+		t.Fatalf("Expected 3 backups, got %d", len(backupsOldest))
+	}
+	// Verify Order: Old -> Mid -> New
+	if backupsOldest[0].Metadata.UUID != "uuid-old" {
+		t.Errorf("Expected first backup to be uuid-old, got %s", backupsOldest[0].Metadata.UUID)
+	}
+}
+
 func TestExecuteRestore(t *testing.T) {
 	const (
 		relCurrent     = "current_dir"
@@ -619,7 +697,7 @@ func TestExecuteRestore(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		backupName    string
+		uuid          string
 		isCompressed  bool
 		setupFS       func(t *testing.T, baseDir string)
 		expectedPath  string // The relative path key expected to be passed to Syncer/Compressor
@@ -628,79 +706,79 @@ func TestExecuteRestore(t *testing.T) {
 	}{
 		{
 			name:         "Restore Current (Uncompressed)",
-			backupName:   "current",
+			uuid:         "uuid-current",
 			isCompressed: false,
 			setupFS: func(t *testing.T, baseDir string) {
 				path := filepath.Join(baseDir, relCurrent)
 				os.MkdirAll(path, 0755)
-				metafile.Write(path, &metafile.MetafileContent{IsCompressed: false})
+				metafile.Write(path, &metafile.MetafileContent{IsCompressed: false, UUID: "uuid-current"})
 			},
 			expectedPath:  relCurrent,
 			expectExtract: false,
 		},
 		{
 			name:         "Restore Archive (Compressed)",
-			backupName:   "backup_123",
+			uuid:         "uuid-123",
 			isCompressed: true,
 			setupFS: func(t *testing.T, baseDir string) {
 				path := filepath.Join(baseDir, relArchive, "backup_123")
 				os.MkdirAll(path, 0755)
-				metafile.Write(path, &metafile.MetafileContent{IsCompressed: true})
+				metafile.Write(path, &metafile.MetafileContent{IsCompressed: true, UUID: "uuid-123"})
 			},
 			expectedPath:  filepath.Join(relArchive, "backup_123"),
 			expectExtract: true,
 		},
 		{
 			name:         "Restore Archive (Uncompressed)",
-			backupName:   "backup_456",
+			uuid:         "uuid-456",
 			isCompressed: false,
 			setupFS: func(t *testing.T, baseDir string) {
 				path := filepath.Join(baseDir, relArchive, "backup_456")
 				os.MkdirAll(path, 0755)
-				metafile.Write(path, &metafile.MetafileContent{IsCompressed: false})
+				metafile.Write(path, &metafile.MetafileContent{IsCompressed: false, UUID: "uuid-456"})
 			},
 			expectedPath:  filepath.Join(relArchive, "backup_456"),
 			expectExtract: false,
 		},
 		{
 			name:        "Backup Not Found",
-			backupName:  "missing",
+			uuid:        "missing-uuid",
 			setupFS:     func(t *testing.T, baseDir string) {},
 			expectError: true,
 		},
 		{
-			name:        "Empty Backup Name",
-			backupName:  "",
+			name:        "Empty Backup UUID",
+			uuid:        "",
 			expectError: true,
 		},
 		{
-			name:       "Fallback to Snapshot",
-			backupName: "snapshot_backup",
+			name: "Fallback to Snapshot",
+			uuid: "uuid-snapshot",
 			setupFS: func(t *testing.T, baseDir string) {
 				// Create backup in snapshot path
 				path := filepath.Join(baseDir, relSnapArchive, "snapshot_backup")
 				os.MkdirAll(path, 0755)
-				metafile.Write(path, &metafile.MetafileContent{IsCompressed: false})
+				metafile.Write(path, &metafile.MetafileContent{IsCompressed: false, UUID: "uuid-snapshot"})
 			},
 			expectedPath:  filepath.Join(relSnapArchive, "snapshot_backup"),
 			expectExtract: false,
 		},
 		{
-			name:       "Collision Priority (Incremental over Snapshot)",
-			backupName: "collision_backup",
+			name: "Backup With Invalid UUID Format In Metafile",
+			uuid: "123e4567-e89b-12d3-a456-426614174000", // Valid UUID we are looking for
 			setupFS: func(t *testing.T, baseDir string) {
-				// Create backup in Incremental Archive
-				incPath := filepath.Join(baseDir, relArchive, "collision_backup")
-				os.MkdirAll(incPath, 0755)
-				metafile.Write(incPath, &metafile.MetafileContent{IsCompressed: false})
-
-				// Create backup in Snapshot Archive
-				snapPath := filepath.Join(baseDir, relSnapArchive, "collision_backup")
-				os.MkdirAll(snapPath, 0755)
-				metafile.Write(snapPath, &metafile.MetafileContent{IsCompressed: false})
+				path := filepath.Join(baseDir, relArchive, "backup_bad_uuid")
+				os.MkdirAll(path, 0755)
+				// Manually write metafile with invalid UUID format
+				metaJSON := `{
+					"version": "1.0.0",
+					"timestampUTC": "2023-01-01T00:00:00Z",
+					"mode": "incremental",
+					"uuid": "this-is-not-a-valid-uuid"
+				}`
+				os.WriteFile(filepath.Join(path, metafile.MetaFileName), []byte(metaJSON), 0644)
 			},
-			expectedPath:  filepath.Join(relArchive, "collision_backup"),
-			expectExtract: false,
+			expectError: true,
 		},
 	}
 
@@ -737,7 +815,7 @@ func TestExecuteRestore(t *testing.T) {
 
 			runner := engine.NewRunner(v, s, a, r, c)
 
-			err := runner.ExecuteRestore(context.Background(), baseDir, tc.backupName, targetDir, plan)
+			err := runner.ExecuteRestore(context.Background(), baseDir, tc.uuid, targetDir, plan)
 
 			if tc.expectError {
 				if err == nil {
@@ -776,27 +854,27 @@ func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
 	// Create 'current' backup so fetchBackup succeeds and Archive is called
 	currentPath := filepath.Join(baseDir, relCurrent)
 	os.MkdirAll(currentPath, 0755)
-	metafile.Write(currentPath, &metafile.MetafileContent{TimestampUTC: time.Now()})
+	metafile.Write(currentPath, &metafile.MetafileContent{TimestampUTC: time.Now(), UUID: "uuid-current"})
 
 	// 1. Create an OLD backup on disk (should be pruned)
-	oldBackupName := prefix + "old"
-	oldBackupPath := filepath.Join(archivePath, oldBackupName)
-	os.MkdirAll(oldBackupPath, 0755)
-	metafile.Write(oldBackupPath, &metafile.MetafileContent{TimestampUTC: time.Now().Add(-24 * time.Hour)})
+	oldArchiveEntryName := prefix + "old"
+	oldArchiveEntryPath := filepath.Join(archivePath, oldArchiveEntryName)
+	os.MkdirAll(oldArchiveEntryPath, 0755)
+	metafile.Write(oldArchiveEntryPath, &metafile.MetafileContent{TimestampUTC: time.Now().Add(-24 * time.Hour), UUID: "uuid-old"})
 
 	// 2. Create the NEW backup on disk (simulating what Archiver just did)
-	newBackupRelPath := filepath.Join(relArchive, prefix+"new")
-	newBackupPath := filepath.Join(baseDir, newBackupRelPath)
-	os.MkdirAll(newBackupPath, 0755)
-	metafile.Write(newBackupPath, &metafile.MetafileContent{TimestampUTC: time.Now()})
+	newArchiveEntryRelPath := filepath.Join(relArchive, prefix+"new")
+	newArchiveEntryPath := filepath.Join(baseDir, newArchiveEntryRelPath)
+	os.MkdirAll(newArchiveEntryPath, 0755)
+	metafile.Write(newArchiveEntryPath, &metafile.MetafileContent{TimestampUTC: time.Now(), UUID: "uuid-new"})
 
 	// Plan
 	plan := &planner.BackupPlan{
 		Mode: planner.Incremental,
 		Paths: planner.PathKeys{
-			RelArchivePathKey: relArchive,
-			RelCurrentPathKey: relCurrent,
-			BackupNamePrefix:  prefix,
+			RelArchivePathKey:  relArchive,
+			RelCurrentPathKey:  relCurrent,
+			ArchiveEntryPrefix: prefix,
 		},
 		Preflight:   &preflight.Plan{},
 		Sync:        &pathsync.Plan{Enabled: true},
@@ -813,7 +891,7 @@ func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
 
 	// Mock Archiver that returns the path of the NEW backup we created
 	a := &mockArchiver{
-		resultPath: newBackupRelPath,
+		resultPath: newArchiveEntryRelPath,
 	}
 
 	r := &mockRetainer{}
@@ -832,7 +910,7 @@ func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
 	if len(r.toPrune) != 1 {
 		t.Errorf("Expected 1 backup to prune, got %d", len(r.toPrune))
 	} else {
-		expectedKey := util.NormalizePath(filepath.Join(relArchive, oldBackupName))
+		expectedKey := util.NormalizePath(filepath.Join(relArchive, oldArchiveEntryName))
 		if r.toPrune[0].RelPathKey != expectedKey {
 			t.Errorf("Expected to prune %s, got %s", expectedKey, r.toPrune[0].RelPathKey)
 		}
@@ -906,12 +984,12 @@ func TestExecutePrune(t *testing.T) {
 			plan := &planner.PrunePlan{
 				Preflight: &preflight.Plan{},
 				PathsIncremental: planner.PathKeys{
-					RelArchivePathKey: relArchiveInc,
-					BackupNamePrefix:  prefix,
+					RelArchivePathKey:  relArchiveInc,
+					ArchiveEntryPrefix: prefix,
 				},
 				PathsSnapshot: planner.PathKeys{
-					RelArchivePathKey: relArchiveSnap,
-					BackupNamePrefix:  prefix,
+					RelArchivePathKey:  relArchiveSnap,
+					ArchiveEntryPrefix: prefix,
 				},
 				RetentionIncremental: &pathretention.Plan{
 					Enabled: tc.retentionIncEnabled,

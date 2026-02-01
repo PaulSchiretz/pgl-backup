@@ -126,11 +126,11 @@ func TestRestore_NoMetafile(t *testing.T) {
 	srcBase := t.TempDir()
 	restoreTarget := t.TempDir()
 
-	// Setup a mock backup structure: base/backup_name/content/file.txt
-	backupName := "my_backup"
+	// Setup a mock backup structure: base/entry_name/content/file.txt
+	entryName := "my_backup"
 	relContentPath := "content"
 
-	contentDir := filepath.Join(srcBase, backupName, relContentPath)
+	contentDir := filepath.Join(srcBase, entryName, relContentPath)
 	if err := os.MkdirAll(contentDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestRestore_NoMetafile(t *testing.T) {
 	}
 
 	toRestore := metafile.MetafileInfo{
-		RelPathKey: backupName,
+		RelPathKey: entryName,
 	}
 
 	plan := &Plan{

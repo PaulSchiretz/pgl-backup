@@ -27,10 +27,10 @@ var systemExcludeFilePatterns = []string{metafile.MetaFileName, lockfile.LockFil
 var systemExcludeDirPatterns = []string{}
 
 type PathConfig struct {
-	Current          string `json:"current"`
-	Archive          string `json:"archive"`
-	Content          string `json:"content"`
-	BackupNamePrefix string `json:"backupNamePrefix"`
+	Current            string `json:"current"`
+	Archive            string `json:"archive"`
+	Content            string `json:"content"`
+	ArchiveEntryPrefix string `json:"archiveEntryPrefix"`
 }
 
 type PathsConfig struct {
@@ -116,6 +116,7 @@ type RuntimeConfig struct {
 	Mode                     string
 	DryRun                   bool
 	BackupOverwriteBehavior  string
+	ListSort                 string
 	RestoreOverwriteBehavior string
 }
 
@@ -149,16 +150,16 @@ func NewDefault() Config {
 		},
 		Paths: PathsConfig{
 			Incremental: PathConfig{
-				Current:          "PGL_Backup_Incremental_Current", // Default name for the incremental current sub-directory.
-				Archive:          "PGL_Backup_Incremental_Archive", // Default name for the incremental archive sub-directory.
-				Content:          "PGL_Backup_Content",             // Default name for the incremental content sub-directory.
-				BackupNamePrefix: "PGL_Backup_",
+				Current:            "PGL_Backup_Incremental_Current", // Default name for the incremental current sub-directory.
+				Archive:            "PGL_Backup_Incremental_Archive", // Default name for the incremental archive sub-directory.
+				Content:            "PGL_Backup_Content",             // Default name for the incremental content sub-directory.
+				ArchiveEntryPrefix: "PGL_Backup_",
 			},
 			Snapshot: PathConfig{
-				Current:          "PGL_Backup_Snapshot_Current", // Default name for the snapshot current sub-directory.
-				Archive:          "PGL_Backup_Snapshot_Archive", // Default name for the snapshot archive sub-directory.
-				Content:          "PGL_Backup_Content",          // Default name for the snapshot content sub-directory.
-				BackupNamePrefix: "PGL_Backup_",
+				Current:            "PGL_Backup_Snapshot_Current", // Default name for the snapshot current sub-directory.
+				Archive:            "PGL_Backup_Snapshot_Archive", // Default name for the snapshot archive sub-directory.
+				Content:            "PGL_Backup_Content",          // Default name for the snapshot content sub-directory.
+				ArchiveEntryPrefix: "PGL_Backup_",
 			},
 		},
 		Engine: EngineConfig{
@@ -301,6 +302,7 @@ func (c *Config) Validate() error {
 	c.Compression.Level = strings.ToLower(c.Compression.Level)
 	c.Sync.Engine = strings.ToLower(c.Sync.Engine)
 	c.Runtime.BackupOverwriteBehavior = strings.ToLower(c.Runtime.BackupOverwriteBehavior)
+	c.Runtime.ListSort = strings.ToLower(c.Runtime.ListSort)
 	c.Runtime.RestoreOverwriteBehavior = strings.ToLower(c.Runtime.RestoreOverwriteBehavior)
 
 	// --- Validate Shared Settings ---
@@ -438,7 +440,7 @@ func (c *Config) Validate() error {
 
 // LogSummary prints a user-friendly summary of the configuration to the
 // provided logger. It respects the 'Quiet' setting.
-func (c *Config) LogSummary(command flagparse.Command, absBasePath, absSourcePath, absTargetPath, backupName string) {
+func (c *Config) LogSummary(command flagparse.Command, absBasePath, absSourcePath, absTargetPath, uuid string) {
 	logArgs := []interface{}{
 		"log_level", c.LogLevel,
 		"base", absBasePath,
@@ -529,7 +531,7 @@ func (c *Config) LogSummary(command flagparse.Command, absBasePath, absSourcePat
 
 	case flagparse.Restore:
 		logArgs = append(logArgs, "target", absTargetPath)
-		logArgs = append(logArgs, "backup_name", backupName)
+		logArgs = append(logArgs, "uuid", uuid)
 		logArgs = append(logArgs, "mode", c.Runtime.Mode)
 		logArgs = append(logArgs, "sync_workers", c.Engine.Performance.SyncWorkers)
 		logArgs = append(logArgs, "buffer_size_kb", c.Engine.Performance.BufferSizeKB)
@@ -579,6 +581,9 @@ func (c *Config) LogSummary(command flagparse.Command, absBasePath, absSourcePat
 				c.Retention.Snapshot.Months, c.Retention.Snapshot.Years)
 			logArgs = append(logArgs, "retention_snapshot", snapshotRetentionSummary)
 		}
+	case flagparse.List:
+		logArgs = append(logArgs, "mode", c.Runtime.Mode)
+		logArgs = append(logArgs, "sort", c.Runtime.ListSort)
 	}
 	plog.Info("Configuration loaded", logArgs...)
 }
@@ -625,6 +630,8 @@ func MergeConfigWithFlags(command flagparse.Command, base Config, setFlags map[s
 			if command != flagparse.Init {
 				merged.Runtime.Mode = value.(string)
 			}
+		case "sort":
+			merged.Runtime.ListSort = value.(string)
 		case "dry-run":
 			merged.Runtime.DryRun = value.(bool)
 		case "overwrite":

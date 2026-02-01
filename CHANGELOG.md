@@ -12,11 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a pre-flight check to verify that the source directory is readable.
 - Added a pre-flight check to detect if source and target paths resolve to the same physical directory (e.g., via symlinks or bind mounts).
 - Added `list` command to enumerate all backups in the repository, simplifying the restore process.
-- Added interactive backup selection to the `restore` command. If `-backup-name` is omitted, a list of available backups is displayed for selection.
+- Added `-sort` flag to the `list` command to control the display order (`desc` or `asc`).
+- Added interactive backup selection to the `restore` command. If `-uuid` is omitted, a list of available backups is displayed for selection.
 
 ### Changed
 - The `-mode` flag is now optional for the `restore` command. The system now attempts to locate the backup in incremental storage first, falling back to snapshot storage if not found.
 - Refactored core engine functions (`Sync`, `Archive`) to return results explicitly instead of modifying input structs via side effects. This improves data flow clarity and moves metafile writing responsibility to the main runner.
+- **BREAKING CHANGE**: The `restore` command now uses `-uuid` instead of `-backup-name` to identify backups. This ensures unambiguous selection of backups regardless of directory naming or location.
+- **BREAKING CHANGE**: Renamed configuration field `paths.*.backupNamePrefix` to `paths.*.archiveEntryPrefix` to better reflect that it controls the naming of directories within the archive.
 - Introduced a new internal `hints` package to decouple error handling. The engine now checks for ignorable error *behaviors* (e.g., "task disabled") rather than specific error types from sub-packages, making the system more modular.
 
 ### Fixed

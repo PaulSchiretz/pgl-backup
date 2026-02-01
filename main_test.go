@@ -82,12 +82,12 @@ func TestRun(t *testing.T) {
 		},
 		{
 			name:          "Restore Missing Base",
-			args:          []string{"pgl-backup", "restore", "-target", tmpDir, "-backup-name", "current", "-mode", "incremental"},
+			args:          []string{"pgl-backup", "restore", "-target", tmpDir, "-uuid", "uuid-123", "-mode", "incremental"},
 			expectedError: "the -base flag is required",
 		},
 		{
 			name:          "Restore Missing Target",
-			args:          []string{"pgl-backup", "restore", "-base", tmpDir, "-backup-name", "current", "-mode", "incremental"},
+			args:          []string{"pgl-backup", "restore", "-base", tmpDir, "-uuid", "uuid-123", "-mode", "incremental"},
 			expectedError: "the -target flag is required",
 		},
 	}

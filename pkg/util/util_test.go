@@ -316,3 +316,48 @@ func TestIsPathCaseSensitive(t *testing.T) {
 		t.Errorf("detected case sensitivity for file path (%v) does not match expected for OS %s (%v)", isSensitiveFile, runtime.GOOS, expectedIsSensitive)
 	}
 }
+
+func TestGenerateUUID_Uniqueness(t *testing.T) {
+	// Generate a large number of UUIDs and ensure no duplicates.
+	// While not a mathematical proof of uniqueness, it catches implementation errors
+	// like static seeds or fixed buffers.
+	const iterations = 10000
+	seen := make(map[string]struct{}, iterations)
+
+	for i := 0; i < iterations; i++ {
+		uuid, err := GenerateUUID()
+		if err != nil {
+			t.Fatalf("GenerateUUID failed: %v", err)
+		}
+
+		// Basic format validation (8-4-4-4-12)
+		if len(uuid) != 36 {
+			t.Errorf("UUID length mismatch: got %d, want 36", len(uuid))
+		}
+		if uuid[8] != '-' || uuid[13] != '-' || uuid[18] != '-' || uuid[23] != '-' {
+			t.Errorf("UUID format invalid (missing hyphens): %s", uuid)
+		}
+
+		// Version 4 check (byte 6 high nibble is 4)
+		// 00000000-0000-4000-8000-000000000000
+		//               ^ index 14
+		if uuid[14] != '4' {
+			t.Errorf("UUID version mismatch: expected version 4, got %c in %s", uuid[14], uuid)
+		}
+
+		// Variant check (byte 8 high nibble is 8, 9, a, or b)
+		// 00000000-0000-4000-8000-000000000000
+		//                    ^ index 19
+		switch uuid[19] {
+		case '8', '9', 'a', 'b':
+			// Valid variant 1 (RFC 4122)
+		default:
+			t.Errorf("UUID variant mismatch: expected 8, 9, a, or b, got %c in %s", uuid[19], uuid)
+		}
+
+		if _, exists := seen[uuid]; exists {
+			t.Fatalf("Duplicate UUID generated: %s", uuid)
+		}
+		seen[uuid] = struct{}{}
+	}
+}

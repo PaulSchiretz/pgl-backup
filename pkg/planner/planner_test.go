@@ -174,6 +174,39 @@ func TestGenerateBackupPlan(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "Retention Policy Mapping",
+			configMod: func(c *config.Config) {
+				c.Runtime.Mode = "incremental"
+				c.Retention.Incremental.Enabled = true
+				c.Retention.Incremental.Hours = 1
+				c.Retention.Incremental.Days = 2
+				c.Retention.Incremental.Weeks = 3
+				c.Retention.Incremental.Months = 4
+				c.Retention.Incremental.Years = 5
+			},
+			expectedMode: planner.Incremental,
+			validate: func(t *testing.T, p *planner.BackupPlan) {
+				if !p.Retention.Enabled {
+					t.Error("Expected Retention Enabled")
+				}
+				if p.Retention.Hours != 1 {
+					t.Errorf("Expected Retention Hours 1, got %d", p.Retention.Hours)
+				}
+				if p.Retention.Days != 2 {
+					t.Errorf("Expected Retention Days 2, got %d", p.Retention.Days)
+				}
+				if p.Retention.Weeks != 3 {
+					t.Errorf("Expected Retention Weeks 3, got %d", p.Retention.Weeks)
+				}
+				if p.Retention.Months != 4 {
+					t.Errorf("Expected Retention Months 4, got %d", p.Retention.Months)
+				}
+				if p.Retention.Years != 5 {
+					t.Errorf("Expected Retention Years 5, got %d", p.Retention.Years)
+				}
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -204,11 +237,182 @@ func TestGenerateBackupPlan(t *testing.T) {
 	}
 }
 
+func TestGenerateRestorePlan(t *testing.T) {
+	tests := []struct {
+		name         string
+		configMod    func(*config.Config)
+		expectedMode planner.Mode
+		expectError  bool
+		validate     func(*testing.T, *planner.RestorePlan)
+	}{
+		{
+			name:         "Default Configuration",
+			configMod:    nil,
+			expectedMode: planner.Any,
+		},
+		{
+			name: "Explicit Incremental Mode",
+			configMod: func(c *config.Config) {
+				c.Runtime.Mode = "incremental"
+			},
+			expectedMode: planner.Incremental,
+		},
+		{
+			name: "Explicit Snapshot Mode",
+			configMod: func(c *config.Config) {
+				c.Runtime.Mode = "snapshot"
+			},
+			expectedMode: planner.Snapshot,
+		},
+		{
+			name: "Invalid Mode",
+			configMod: func(c *config.Config) {
+				c.Runtime.Mode = "invalid"
+			},
+			expectError: true,
+		},
+		{
+			name: "Overwrite Behavior Parsing",
+			configMod: func(c *config.Config) {
+				c.Runtime.RestoreOverwriteBehavior = "if-newer"
+			},
+			expectedMode: planner.Any,
+			validate: func(t *testing.T, p *planner.RestorePlan) {
+				if p.Sync.OverwriteBehavior != pathsync.OverwriteIfNewer {
+					t.Errorf("Expected Sync OverwriteBehavior IfNewer, got %v", p.Sync.OverwriteBehavior)
+				}
+				if p.Extraction.OverwriteBehavior != pathcompression.OverwriteIfNewer {
+					t.Errorf("Expected Extraction OverwriteBehavior IfNewer, got %v", p.Extraction.OverwriteBehavior)
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.NewDefault()
+			if tc.configMod != nil {
+				tc.configMod(&cfg)
+			}
+
+			plan, err := planner.GenerateRestorePlan(cfg)
+
+			if tc.expectError {
+				if err == nil {
+					t.Error("Expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				if plan.Mode != tc.expectedMode {
+					t.Errorf("Expected mode %v, got %v", tc.expectedMode, plan.Mode)
+				}
+				if tc.validate != nil {
+					tc.validate(t, plan)
+				}
+			}
+		})
+	}
+}
+
+func TestGenerateListPlan(t *testing.T) {
+	tests := []struct {
+		name         string
+		configMod    func(*config.Config)
+		expectedSort planner.SortOrder
+		expectedMode planner.Mode
+		expectError  bool
+	}{
+		{
+			name:         "Default Configuration",
+			configMod:    nil,
+			expectedSort: planner.Desc,
+			expectedMode: planner.Any,
+		},
+		{
+			name: "Explicit Asc Sort Order",
+			configMod: func(c *config.Config) {
+				c.Runtime.ListSort = "asc"
+			},
+			expectedSort: planner.Asc,
+			expectedMode: planner.Any,
+		},
+		{
+			name: "Explicit Desc Sort Order",
+			configMod: func(c *config.Config) {
+				c.Runtime.ListSort = "desc"
+			},
+			expectedSort: planner.Desc,
+			expectedMode: planner.Any,
+		},
+		{
+			name: "Explicit Incremental Mode",
+			configMod: func(c *config.Config) {
+				c.Runtime.Mode = "incremental"
+			},
+			expectedSort: planner.Desc,
+			expectedMode: planner.Incremental,
+		},
+		{
+			name: "Explicit Snapshot Mode",
+			configMod: func(c *config.Config) {
+				c.Runtime.Mode = "snapshot"
+			},
+			expectedSort: planner.Desc,
+			expectedMode: planner.Snapshot,
+		},
+		{
+			name: "Invalid Sort Order",
+			configMod: func(c *config.Config) {
+				c.Runtime.ListSort = "invalid"
+			},
+			expectError: true,
+		},
+		{
+			name: "Invalid Mode",
+			configMod: func(c *config.Config) {
+				c.Runtime.Mode = "invalid"
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.NewDefault()
+			if tc.configMod != nil {
+				tc.configMod(&cfg)
+			}
+
+			plan, err := planner.GenerateListPlan(cfg)
+
+			if tc.expectError {
+				if err == nil {
+					t.Error("Expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				if plan.SortOrder != tc.expectedSort {
+					t.Errorf("Expected sort order %v, got %v", tc.expectedSort, plan.SortOrder)
+				}
+				if plan.Mode != tc.expectedMode {
+					t.Errorf("Expected mode %v, got %v", tc.expectedMode, plan.Mode)
+				}
+			}
+		})
+	}
+}
+
 func TestGeneratePrunePlan(t *testing.T) {
 	tests := []struct {
-		name      string
-		configMod func(*config.Config)
-		validate  func(*testing.T, *planner.PrunePlan)
+		name         string
+		configMod    func(*config.Config)
+		expectedMode planner.Mode
+		expectError  bool
+		validate     func(*testing.T, *planner.PrunePlan)
 	}{
 		{
 			name: "Basic Mapping",
@@ -222,6 +426,7 @@ func TestGeneratePrunePlan(t *testing.T) {
 				c.Runtime.DryRun = true
 				c.Engine.FailFast = true
 			},
+			expectedMode: planner.Any,
 			validate: func(t *testing.T, p *planner.PrunePlan) {
 				if !p.RetentionIncremental.Enabled {
 					t.Error("Expected Incremental Retention Enabled")
@@ -249,6 +454,87 @@ func TestGeneratePrunePlan(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "Explicit Incremental Mode",
+			configMod: func(c *config.Config) {
+				c.Runtime.Mode = "incremental"
+			},
+			expectedMode: planner.Incremental,
+		},
+		{
+			name: "Explicit Snapshot Mode",
+			configMod: func(c *config.Config) {
+				c.Runtime.Mode = "snapshot"
+			},
+			expectedMode: planner.Snapshot,
+		},
+		{
+			name: "Invalid Mode",
+			configMod: func(c *config.Config) {
+				c.Runtime.Mode = "invalid"
+			},
+			expectError: true,
+		},
+		{
+			name: "Retention Policy Mapping",
+			configMod: func(c *config.Config) {
+				c.Retention.Incremental.Enabled = true
+				c.Retention.Incremental.Hours = 1
+				c.Retention.Incremental.Days = 2
+				c.Retention.Incremental.Weeks = 3
+				c.Retention.Incremental.Months = 4
+				c.Retention.Incremental.Years = 5
+
+				c.Retention.Snapshot.Enabled = true
+				c.Retention.Snapshot.Hours = 6
+				c.Retention.Snapshot.Days = 7
+				c.Retention.Snapshot.Weeks = 8
+				c.Retention.Snapshot.Months = 9
+				c.Retention.Snapshot.Years = 10
+			},
+			expectedMode: planner.Any,
+			validate: func(t *testing.T, p *planner.PrunePlan) {
+				// Incremental
+				if !p.RetentionIncremental.Enabled {
+					t.Error("Expected Incremental Retention Enabled")
+				}
+				if p.RetentionIncremental.Hours != 1 {
+					t.Errorf("Expected Incremental Hours 1, got %d", p.RetentionIncremental.Hours)
+				}
+				if p.RetentionIncremental.Days != 2 {
+					t.Errorf("Expected Incremental Days 2, got %d", p.RetentionIncremental.Days)
+				}
+				if p.RetentionIncremental.Weeks != 3 {
+					t.Errorf("Expected Incremental Weeks 3, got %d", p.RetentionIncremental.Weeks)
+				}
+				if p.RetentionIncremental.Months != 4 {
+					t.Errorf("Expected Incremental Months 4, got %d", p.RetentionIncremental.Months)
+				}
+				if p.RetentionIncremental.Years != 5 {
+					t.Errorf("Expected Incremental Years 5, got %d", p.RetentionIncremental.Years)
+				}
+
+				// Snapshot
+				if !p.RetentionSnapshot.Enabled {
+					t.Error("Expected Snapshot Retention Enabled")
+				}
+				if p.RetentionSnapshot.Hours != 6 {
+					t.Errorf("Expected Snapshot Hours 6, got %d", p.RetentionSnapshot.Hours)
+				}
+				if p.RetentionSnapshot.Days != 7 {
+					t.Errorf("Expected Snapshot Days 7, got %d", p.RetentionSnapshot.Days)
+				}
+				if p.RetentionSnapshot.Weeks != 8 {
+					t.Errorf("Expected Snapshot Weeks 8, got %d", p.RetentionSnapshot.Weeks)
+				}
+				if p.RetentionSnapshot.Months != 9 {
+					t.Errorf("Expected Snapshot Months 9, got %d", p.RetentionSnapshot.Months)
+				}
+				if p.RetentionSnapshot.Years != 10 {
+					t.Errorf("Expected Snapshot Years 10, got %d", p.RetentionSnapshot.Years)
+				}
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -259,11 +545,21 @@ func TestGeneratePrunePlan(t *testing.T) {
 			}
 
 			plan, err := planner.GeneratePrunePlan(cfg)
-			if err != nil {
-				t.Fatalf("Unexpected error: %v", err)
-			}
-			if tc.validate != nil {
-				tc.validate(t, plan)
+
+			if tc.expectError {
+				if err == nil {
+					t.Error("Expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				if plan.Mode != tc.expectedMode {
+					t.Errorf("Expected mode %v, got %v", tc.expectedMode, plan.Mode)
+				}
+				if tc.validate != nil {
+					tc.validate(t, plan)
+				}
 			}
 		})
 	}

@@ -122,7 +122,7 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 				plog.Warn("Error reading backup for archive, skipping", "error", archiveErr)
 			}
 		} else {
-			archiveResult, archiveErr = r.archiver.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupNamePrefix, toArchive, p.Archive, timestampUTC)
+			archiveResult, archiveErr = r.archiver.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, toArchive, p.Archive, timestampUTC)
 			if archiveErr != nil {
 				if hints.IsHint(archiveErr) {
 					plog.Debug("Archiving skipped", "reason", archiveErr)
@@ -177,7 +177,7 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 	if syncErr == nil && p.Archive.Enabled && p.Mode == planner.Snapshot {
 		var toArchive metafile.MetafileInfo
 		toArchive = syncResult
-		archiveResult, archiveErr = r.archiver.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupNamePrefix, toArchive, p.Archive, timestampUTC)
+		archiveResult, archiveErr = r.archiver.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, toArchive, p.Archive, timestampUTC)
 		if archiveErr != nil {
 			if hints.Is(archiveErr, patharchive.ErrDisabled) {
 				plog.Debug("Archiving skipped", "reason", archiveErr)
@@ -203,7 +203,7 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 
 		// Fetch backups that might need pruning
 		var toRetent []metafile.MetafileInfo
-		toRetent, pruneErr = r.fetchBackups(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.BackupNamePrefix, relPathExclusionKeys)
+		toRetent, pruneErr = r.fetchBackups(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, relPathExclusionKeys)
 		if pruneErr != nil {
 			if p.FailFast {
 				return fmt.Errorf("error reading backups for prune: %w", pruneErr)
@@ -286,7 +286,7 @@ func (r *Runner) ExecutePrune(ctx context.Context, absBasePath string, p *planne
 	var pruneErr error
 	if pruneIncremental && p.RetentionIncremental.Enabled {
 		var toRetent []metafile.MetafileInfo
-		toRetent, pruneErr = r.fetchBackups(ctx, absBasePath, p.PathsIncremental.RelArchivePathKey, p.PathsIncremental.BackupNamePrefix, []string{})
+		toRetent, pruneErr = r.fetchBackups(ctx, absBasePath, p.PathsIncremental.RelArchivePathKey, p.PathsIncremental.ArchiveEntryPrefix, []string{})
 		if pruneErr != nil {
 			return fmt.Errorf("fatal error during prune incremental: %w", pruneErr)
 		}
@@ -301,7 +301,7 @@ func (r *Runner) ExecutePrune(ctx context.Context, absBasePath string, p *planne
 
 	if pruneSnapshot && p.RetentionSnapshot.Enabled {
 		var toRetent []metafile.MetafileInfo
-		toRetent, pruneErr = r.fetchBackups(ctx, absBasePath, p.PathsSnapshot.RelArchivePathKey, p.PathsSnapshot.BackupNamePrefix, []string{})
+		toRetent, pruneErr = r.fetchBackups(ctx, absBasePath, p.PathsSnapshot.RelArchivePathKey, p.PathsSnapshot.ArchiveEntryPrefix, []string{})
 		if pruneErr != nil {
 			return fmt.Errorf("fatal error during prune snapshot: %w", pruneErr)
 		}
@@ -351,10 +351,9 @@ func (r *Runner) ExecuteList(ctx context.Context, absBasePath string, p *planner
 	}
 
 	for _, b := range backups {
-		msg := fmt.Sprintf("Backup from %s", b.Metadata.TimestampUTC.Local().Format(time.RFC1123))
+		msg := fmt.Sprintf("Backup found from %s", b.Metadata.TimestampUTC.Local().Format(time.RFC1123))
 		args := []interface{}{
 			"uuid", b.Metadata.UUID,
-			"name", filepath.Base(b.RelPathKey),
 			"mode", b.Metadata.Mode,
 			"timestampUTC", b.Metadata.TimestampUTC,
 			"relPath", b.RelPathKey,
@@ -384,7 +383,7 @@ func (r *Runner) ListBackups(ctx context.Context, absBasePath string, p *planner
 		if current, err := r.fetchBackup(absBasePath, p.PathsIncremental.RelCurrentPathKey); err == nil {
 			allBackups = append(allBackups, current)
 		}
-		if archives, err := r.fetchBackups(ctx, absBasePath, p.PathsIncremental.RelArchivePathKey, p.PathsIncremental.BackupNamePrefix, nil); err == nil {
+		if archives, err := r.fetchBackups(ctx, absBasePath, p.PathsIncremental.RelArchivePathKey, p.PathsIncremental.ArchiveEntryPrefix, nil); err == nil {
 			allBackups = append(allBackups, archives...)
 		}
 	}
@@ -394,20 +393,23 @@ func (r *Runner) ListBackups(ctx context.Context, absBasePath string, p *planner
 		if current, err := r.fetchBackup(absBasePath, p.PathsSnapshot.RelCurrentPathKey); err == nil {
 			allBackups = append(allBackups, current)
 		}
-		if archives, err := r.fetchBackups(ctx, absBasePath, p.PathsSnapshot.RelArchivePathKey, p.PathsSnapshot.BackupNamePrefix, nil); err == nil {
+		if archives, err := r.fetchBackups(ctx, absBasePath, p.PathsSnapshot.RelArchivePathKey, p.PathsSnapshot.ArchiveEntryPrefix, nil); err == nil {
 			allBackups = append(allBackups, archives...)
 		}
 	}
 
-	// Sort by timestamp descending (newest first)
+	// Sort by timestamp
 	sort.Slice(allBackups, func(i, j int) bool {
+		if p.SortOrder == planner.Asc {
+			return allBackups[i].Metadata.TimestampUTC.Before(allBackups[j].Metadata.TimestampUTC)
+		}
 		return allBackups[i].Metadata.TimestampUTC.After(allBackups[j].Metadata.TimestampUTC)
 	})
 
 	return allBackups, nil
 }
 
-func (r *Runner) ExecuteRestore(ctx context.Context, absBasePath, backupName, absTargetPath string, p *planner.RestorePlan) error {
+func (r *Runner) ExecuteRestore(ctx context.Context, absBasePath, uuid, absTargetPath string, p *planner.RestorePlan) error {
 	// Check for cancellation at the very beginning.
 	select {
 	case <-ctx.Done():
@@ -415,8 +417,8 @@ func (r *Runner) ExecuteRestore(ctx context.Context, absBasePath, backupName, ab
 	default:
 	}
 
-	if backupName == "" {
-		return fmt.Errorf("backup name cannot be empty")
+	if uuid == "" {
+		return fmt.Errorf("backup UUID cannot be empty")
 	}
 
 	// save the execution timestamp
@@ -461,46 +463,47 @@ func (r *Runner) ExecuteRestore(ctx context.Context, absBasePath, backupName, ab
 
 	var toRestore metafile.MetafileInfo
 	var relContentPathKey string
-	var lastErr error
 
 	searchIncrementals := p.Mode == planner.Any || p.Mode == planner.Incremental
 	searchSnapshots := p.Mode == planner.Any || p.Mode == planner.Snapshot
 
-	// Helper to attempt fetch from a specific path configuration
-	tryFetch := func(paths planner.PathKeys) (metafile.MetafileInfo, error) {
-		var relBackupPathkey string
-		if backupName == paths.RelCurrentPathKey || strings.EqualFold(strings.TrimSpace(backupName), "current") {
-			relBackupPathkey = util.NormalizePath(paths.RelCurrentPathKey)
-		} else {
-			relBackupPathkey = util.NormalizePath(filepath.Join(paths.RelArchivePathKey, backupName))
+	// Helper to scan a specific path configuration for the UUID
+	scanLocation := func(paths planner.PathKeys) error {
+		// 1. Check Current
+		if current, err := r.fetchBackup(absBasePath, paths.RelCurrentPathKey); err == nil {
+			if current.Metadata.UUID == uuid {
+				toRestore = current
+				relContentPathKey = paths.RelContentPathKey
+				return nil // Found
+			}
 		}
-		return r.fetchBackup(absBasePath, relBackupPathkey)
+
+		// 2. Check Archives
+		archives, err := r.fetchBackups(ctx, absBasePath, paths.RelArchivePathKey, paths.ArchiveEntryPrefix, nil)
+		if err != nil {
+			return err
+		}
+		for _, b := range archives {
+			if b.Metadata.UUID == uuid {
+				toRestore = b
+				relContentPathKey = paths.RelContentPathKey
+				return nil // Found
+			}
+		}
+		return nil
 	}
 
 	// 1. Search Incremental
-	if searchIncrementals {
-		toRestore, lastErr = tryFetch(p.PathsIncremental)
-		if lastErr == nil {
-			relContentPathKey = p.PathsIncremental.RelContentPathKey
-			plog.Debug("Found backup in incremental storage", "path", toRestore.RelPathKey)
-		} else if !os.IsNotExist(lastErr) {
-			return fmt.Errorf("failed to read backup metadata: %w", lastErr)
-		}
+	if searchIncrementals && toRestore.RelPathKey == "" {
+		_ = scanLocation(p.PathsIncremental)
 	}
-
-	// 2. Search Snapshot (if not found)
-	if toRestore.RelPathKey == "" && searchSnapshots {
-		toRestore, lastErr = tryFetch(p.PathsSnapshot)
-		if lastErr == nil {
-			relContentPathKey = p.PathsSnapshot.RelContentPathKey
-			plog.Debug("Found backup in snapshot storage", "path", toRestore.RelPathKey)
-		} else if !os.IsNotExist(lastErr) {
-			return fmt.Errorf("failed to read backup metadata: %w", lastErr)
-		}
+	// 2. Search Snapshot
+	if searchSnapshots && toRestore.RelPathKey == "" {
+		_ = scanLocation(p.PathsSnapshot)
 	}
 
 	if toRestore.RelPathKey == "" {
-		return fmt.Errorf("backup %q not found. Please verify the backup-name is correct", backupName)
+		return fmt.Errorf("backup with UUID %q not found", uuid)
 	}
 
 	absBackupPath := util.DenormalizePath(filepath.Join(absBasePath, toRestore.RelPathKey))
@@ -547,7 +550,7 @@ func (r *Runner) acquireTargetLock(ctx context.Context, absBasePath string) (fun
 // It relies exclusively on the `.pgl-backup.meta.json` file; directories without a
 // readable metafile are ignored.
 // The relPathExclusionKeys are Relative to the absBasePath, and filtered internally.
-func (r *Runner) fetchBackups(ctx context.Context, absBasePath, relArchivePathKey, backupNamePrefix string, relPathExclusionKeys []string) ([]metafile.MetafileInfo, error) {
+func (r *Runner) fetchBackups(ctx context.Context, absBasePath, relArchivePathKey, archiveEntryPrefix string, relPathExclusionKeys []string) ([]metafile.MetafileInfo, error) {
 
 	absArchivePath := util.DenormalizePath(filepath.Join(absBasePath, relArchivePathKey))
 	entries, err := os.ReadDir(absArchivePath)
@@ -587,7 +590,7 @@ func (r *Runner) fetchBackups(ctx context.Context, absBasePath, relArchivePathKe
 		}
 
 		dirName := entry.Name()
-		if !entry.IsDir() || !strings.HasPrefix(dirName, backupNamePrefix) {
+		if !entry.IsDir() || !strings.HasPrefix(dirName, archiveEntryPrefix) {
 			continue
 		}
 

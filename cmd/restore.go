@@ -37,7 +37,7 @@ func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
 	if !ok || target == "" {
 		return fmt.Errorf("the -target flag is required to run a restore")
 	}
-	backupName, _ := flagMap["backup-name"].(string)
+	uuid, _ := flagMap["uuid"].(string)
 
 	var err error
 	// Validate Base
@@ -86,7 +86,7 @@ func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
 	plog.SetLevel(plog.LevelFromString(runConfig.LogLevel))
 
 	// Log the Summary
-	runConfig.LogSummary(flagparse.Restore, absBasePath, "", absTargetPath, backupName)
+	runConfig.LogSummary(flagparse.Restore, absBasePath, "", absTargetPath, uuid)
 
 	// Create the runner and feed it with our leaf workers
 	runner := engine.NewRunner(
@@ -105,12 +105,16 @@ func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
 		),
 	)
 
-	// If backup name is missing, trigger interactive selection
-	if backupName == "" {
+	// If backup uuid is missing or "latest", trigger selection logic
+	if uuid == "" || strings.ToLower(uuid) == "latest" {
 		listPlan, err := planner.GenerateListPlan(runConfig)
 		if err != nil {
-			return fmt.Errorf("failed to generate list plan for interactive backup selection: %w", err)
+			return fmt.Errorf("failed to generate list plan for backup selection: %w", err)
 		}
+
+		// Ensure consistent sorting (Newest First) so that index 0 is always the latest backup.
+		// This is critical for the "latest" alias and consistent interactive listing.
+		listPlan.SortOrder = planner.Desc
 
 		backups, err := runner.ListBackups(ctx, absBasePath, listPlan)
 		if err != nil {
@@ -126,14 +130,23 @@ func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
 			return nil
 		}
 
-		backupName, err = PromptBackupSelection(backups)
-		if err != nil {
-			if hints.IsHint(err) {
-				plog.Debug("Interactive selection canceled", "reason", err)
-				plog.Info(buildinfo.Name + " restore canceled by user.")
+		if strings.ToLower(uuid) == "latest" {
+			// ListBackups returns sorted by timestamp descending (newest first)
+			latest := backups[0]
+			uuid = latest.Metadata.UUID
+			plog.Info("Resolving 'latest' alias to backup", "uuid", uuid, "timestamp", latest.Metadata.TimestampUTC)
+		} else {
+			uuid, err = PromptBackupSelection(backups)
+			if err != nil {
+				if hints.IsHint(err) {
+					plog.Info(buildinfo.Name + " restore canceled by user.")
+					return nil
+				}
+				return err
+			}
+			if uuid == "" {
 				return nil
 			}
-			return err
 		}
 	}
 
@@ -145,7 +158,7 @@ func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
 
 	// Execute the plan
 	startTime := time.Now()
-	err = runner.ExecuteRestore(ctx, absBasePath, backupName, absTargetPath, restorePlan)
+	err = runner.ExecuteRestore(ctx, absBasePath, uuid, absTargetPath, restorePlan)
 	duration := time.Since(startTime).Round(time.Millisecond)
 	if err != nil {
 		return err
@@ -156,6 +169,7 @@ func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
 
 // PromptBackupSelection handles the interactive selection of a backup from the list.
 func PromptBackupSelection(backups []metafile.MetafileInfo) (string, error) {
+
 	// Output the backup selection table
 	totalNumOptions := len(backups) + 1
 	optionNumColWidth := len(strconv.Itoa(totalNumOptions))
@@ -170,7 +184,7 @@ func PromptBackupSelection(backups []metafile.MetafileInfo) (string, error) {
 
 	fmt.Print("Please select a backup to restore:\n\n")
 	// The %-*s format for Timestamp ensures alignment for dates.
-	fmt.Printf("  %*s %-*s %-5s %s\n", optionNumColWidth+1, "#)", timestampColWidth, timestampHeaderTitle, "Type", "Backup Name")
+	fmt.Printf("  %*s %-*s %-5s %-36s %s\n", optionNumColWidth+1, "#)", timestampColWidth, timestampHeaderTitle, "Type", "UUID", "Rel Path")
 	for i, b := range backups {
 		mode := strings.ToLower(b.Metadata.Mode)
 		switch mode {
@@ -181,7 +195,7 @@ func PromptBackupSelection(backups []metafile.MetafileInfo) (string, error) {
 		default:
 			mode = "INV"
 		}
-		fmt.Printf("  %*d) %-*s [%s] %s\n", optionNumColWidth, i+1, timestampColWidth, b.Metadata.TimestampUTC.Local().Format(timestampLayout), mode, filepath.Base(b.RelPathKey))
+		fmt.Printf("  %*d) %-*s [%s] %s %s\n", optionNumColWidth, i+1, timestampColWidth, b.Metadata.TimestampUTC.Local().Format(timestampLayout), mode, b.Metadata.UUID, b.RelPathKey)
 	}
 	fmt.Printf("  %*d) Cancel and exit %s (or type 'q').\n", optionNumColWidth, totalNumOptions, buildinfo.Name)
 
@@ -200,8 +214,7 @@ func PromptBackupSelection(backups []metafile.MetafileInfo) (string, error) {
 
 		inputLower := strings.ToLower(strings.TrimSpace(input))
 		if inputLower == "q" || inputLower == "quit" {
-			selection = totalNumOptions
-			break
+			return "", hints.New("restore canceled by user")
 		}
 
 		selection, err = strconv.Atoi(input)
@@ -213,7 +226,7 @@ func PromptBackupSelection(backups []metafile.MetafileInfo) (string, error) {
 	}
 
 	if selection == totalNumOptions {
-		return "", hints.New("selection canceled by user")
+		return "", hints.New("restore canceled by user")
 	}
-	return filepath.Base(backups[selection-1].RelPathKey), nil
+	return backups[selection-1].Metadata.UUID, nil
 }

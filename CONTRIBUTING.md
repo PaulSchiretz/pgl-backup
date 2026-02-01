@@ -49,4 +49,4 @@ To maximize I/O throughput, especially on high-latency network drives, the Sync,
 
 ### 3. Configuration & State
 *   **Stateless Source**: The source path is never persisted in the configuration file or backup metadata. This ensures privacy and allows the backup repository to be portable across different machines or mount points. The source must be provided explicitly via CLI flags for operations that require it.
-*   **Separation of Concerns**: Runtime parameters (like `source`, `target` for restore, `backup-name`) are strictly separated from persisted repository configuration (like retention policies and exclusion rules).
+*   **Separation of Concerns**: Runtime parameters (like `source`, `target` for restore, `uuid`) are strictly separated from persisted repository configuration (like retention policies and exclusion rules).

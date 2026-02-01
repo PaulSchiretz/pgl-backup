@@ -27,7 +27,7 @@ type Syncer interface {
 // Archiver is an interface for the archive leaf package.
 // Responsible for turning the the 'current' state into a permanent historical record.
 type Archiver interface {
-	Archive(ctx context.Context, absBasePath, relArchivePathKey, backupNamePrefix string, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error)
+	Archive(ctx context.Context, absBasePath, relArchivePathKey, archiveEntryPrefix string, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error)
 }
 
 // Retainer is an interface for the retention leaf package.
