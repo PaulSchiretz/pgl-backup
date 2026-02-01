@@ -388,7 +388,7 @@ pgl-backup restore -base="/path/to/backup-repo" -target="/path/to/restore-locati
 *   `-base`**(Required)**: The root directory of your backup repository (where `pgl-backup.config.json` is located).
 *   `-target`**(Required)**: The directory where you want to restore the files.
 *   `-backup-name`: The name of the backup directory you want to restore (e.g., `current` or `PGL_Backup_2023...`). If omitted, `pgl-backup` will display an interactive list of available backups for you to choose from.
-*   `-mode`: Where to search for the backup specified by -backup-name (`incremental` or `snapshot`). If omitted, `pgl-backup` searches **incremental** backups first, then **snapshot** backups; in the unlikely event of a name collision, the incremental version takes precedence.
+*   `-mode`: Filter the interactive list by backup mode (`incremental` or `snapshot`), or restrict the search when `-backup-name` is provided. If omitted (`any`), `pgl-backup` lists all backups or searches both locations.
 *   `-overwrite`: Control overwrite behavior (`always`, `never`, `if-newer`, `update`). If omitted, defaults to `never`, so existing files are not overwritten.
 *   `-fail-fast`: Stop immediately on the first error. If omitted, defaults to `false`.
 

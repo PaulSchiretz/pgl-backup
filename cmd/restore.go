@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/buildinfo"
@@ -115,7 +116,11 @@ func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
 		}
 
 		if len(backups) == 0 {
-			plog.Info(buildinfo.Name + " no backups found that can be restored.")
+			if runConfig.Runtime.Mode != "any" {
+				plog.Info(fmt.Sprintf("%s no %s backups found that can be restored.", buildinfo.Name, runConfig.Runtime.Mode))
+			} else {
+				plog.Info(buildinfo.Name + " no backups found that can be restored.")
+			}
 			return nil
 		}
 
@@ -132,7 +137,7 @@ func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
 		// The %-25s format for Timestamp ensures alignment for dates.
 		fmt.Printf("  %*s %-25s %-5s %s\n", optionNumberWidth+1, "#)", fmt.Sprintf("Timestamp (%s)", timeZoneLayout), "Type", "Backup Name")
 		for i, b := range backups {
-			mode := b.Metadata.Mode
+			mode := strings.ToLower(b.Metadata.Mode)
 			switch mode {
 			case "incremental":
 				mode = "INC"

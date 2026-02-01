@@ -187,7 +187,7 @@ func registerRestoreFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.Base = fs.String("base", "", "Base directory of the backup repository. (Required)")
 	f.Target = fs.String("target", "", "Directory to restore to. (Required)")
 	f.BackupName = fs.String("backup-name", "", "Name of the backup to restore (e.g. 'PGL_Backup_2023...' or 'current') (Required)")
-	f.Mode = fs.String("mode", "any", "Where to search for the backup specified by -backup-name. Defaults to 'any' (searches incremental first, then snapshot).")
+	f.Mode = fs.String("mode", "any", "Filter the interactive list by mode ('incremental' or 'snapshot'), or restrict search when -backup-name is provided. Defaults to 'any'.")
 	f.FailFast = fs.Bool("fail-fast", false, "Stop the restore immediately on the first error.")
 	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
 
