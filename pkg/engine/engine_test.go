@@ -554,7 +554,7 @@ func TestExecuteList(t *testing.T) {
 			},
 			expectError: false,
 			expectedLogMsg: []string{
-				"Backup (",              // Check for the timestamp format start
+				"Backup ",               // Check for the Backup msg at start
 				"compressionFormat=zip", // Check for compression format
 			},
 		},

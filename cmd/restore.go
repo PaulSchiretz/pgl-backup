@@ -13,6 +13,8 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/config"
 	"github.com/paulschiretz/pgl-backup/pkg/engine"
 	"github.com/paulschiretz/pgl-backup/pkg/flagparse"
+	"github.com/paulschiretz/pgl-backup/pkg/hints"
+	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/patharchive"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
 	"github.com/paulschiretz/pgl-backup/pkg/pathretention"
@@ -124,57 +126,15 @@ func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
 			return nil
 		}
 
-		totalOptions := len(backups) + 1
-		optionNumberWidth := len(strconv.Itoa(totalOptions))
-
-		// Output the backup table
-
-		// Use a fixed layout without timezone for the rows, moving timezone to header
-		timeLayout := "Mon, 02 Jan 2006 15:04:05" // 25 characters
-		timeZoneLayout := time.Now().Local().Format("MST")
-
-		fmt.Print("Please select a backup to restore:\n\n")
-		// The %-25s format for Timestamp ensures alignment for dates.
-		fmt.Printf("  %*s %-25s %-5s %s\n", optionNumberWidth+1, "#)", fmt.Sprintf("Timestamp (%s)", timeZoneLayout), "Type", "Backup Name")
-		for i, b := range backups {
-			mode := strings.ToLower(b.Metadata.Mode)
-			switch mode {
-			case "incremental":
-				mode = "INC"
-			case "snapshot":
-				mode = "SNP"
-			default:
-				mode = "INV"
+		backupName, err = PromptBackupSelection(backups)
+		if err != nil {
+			if hints.IsHint(err) {
+				plog.Debug("Interactive selection canceled", "reason", err)
+				plog.Info(buildinfo.Name + " restore canceled by user.")
+				return nil
 			}
-			fmt.Printf("  %*d) %s [%s] %s\n", optionNumberWidth, i+1, b.Metadata.TimestampUTC.Local().Format(timeLayout), mode, filepath.Base(b.RelPathKey))
+			return err
 		}
-		fmt.Printf("  %*d) Cancel and exit %s.\n", optionNumberWidth, totalOptions, buildinfo.Name)
-
-		var selection int
-		for {
-			fmt.Printf("\nSelect a backup (1-%d) [%d]: ", totalOptions, totalOptions)
-			var input string
-			_, err := fmt.Scanln(&input)
-			if err != nil {
-				if err.Error() == "unexpected newline" {
-					selection = totalOptions
-					break
-				}
-				return fmt.Errorf("failed to read input: %w", err)
-			}
-			selection, err = strconv.Atoi(input)
-			if err != nil || selection < 1 || selection > totalOptions {
-				fmt.Printf("Invalid selection. Please enter a number between 1 and %d.\n", totalOptions)
-				continue
-			}
-			break
-		}
-
-		if selection == totalOptions {
-			plog.Info(buildinfo.Name + " restore canceled by user.")
-			return nil
-		}
-		backupName = filepath.Base(backups[selection-1].RelPathKey)
 	}
 
 	// Get the Plan
@@ -192,4 +152,61 @@ func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
 	}
 	plog.Info(buildinfo.Name+" restore finished successfully.", "duration", duration)
 	return nil
+}
+
+// PromptBackupSelection handles the interactive selection of a backup from the list.
+func PromptBackupSelection(backups []metafile.MetafileInfo) (string, error) {
+	// Output the backup selection table
+	totalNumOptions := len(backups) + 1
+	optionNumColWidth := len(strconv.Itoa(totalNumOptions))
+
+	timestampLayout := "Mon, 02 Jan 2006 15:04:05"
+	timestampColWidth := len(timestampLayout)
+	timestampHeaderTitle := fmt.Sprintf("Timestamp (%s)", time.Now().Local().Format("MST"))
+	// Ensure column is wide enough for both the data (timestampLayout) and the header (timestampHeaderLayout)
+	if len(timestampHeaderTitle) > timestampColWidth {
+		timestampColWidth = len(timestampHeaderTitle)
+	}
+
+	fmt.Print("Please select a backup to restore:\n\n")
+	// The %-*s format for Timestamp ensures alignment for dates.
+	fmt.Printf("  %*s %-*s %-5s %s\n", optionNumColWidth+1, "#)", timestampColWidth, timestampHeaderTitle, "Type", "Backup Name")
+	for i, b := range backups {
+		mode := strings.ToLower(b.Metadata.Mode)
+		switch mode {
+		case "incremental":
+			mode = "INC"
+		case "snapshot":
+			mode = "SNP"
+		default:
+			mode = "INV"
+		}
+		fmt.Printf("  %*d) %-*s [%s] %s\n", optionNumColWidth, i+1, timestampColWidth, b.Metadata.TimestampUTC.Local().Format(timestampLayout), mode, filepath.Base(b.RelPathKey))
+	}
+	fmt.Printf("  %*d) Cancel and exit %s.\n", optionNumColWidth, totalNumOptions, buildinfo.Name)
+
+	var selection int
+	for {
+		fmt.Printf("\nSelect a backup (1-%d) [%d]: ", totalNumOptions, totalNumOptions)
+		var input string
+		_, err := fmt.Scanln(&input)
+		if err != nil {
+			if err.Error() == "unexpected newline" {
+				selection = totalNumOptions
+				break
+			}
+			return "", fmt.Errorf("failed to read input: %w", err)
+		}
+		selection, err = strconv.Atoi(input)
+		if err != nil || selection < 1 || selection > totalNumOptions {
+			fmt.Printf("Invalid selection. Please enter a number between 1 and %d.\n", totalNumOptions)
+			continue
+		}
+		break
+	}
+
+	if selection == totalNumOptions {
+		return "", hints.New("selection canceled by user")
+	}
+	return filepath.Base(backups[selection-1].RelPathKey), nil
 }

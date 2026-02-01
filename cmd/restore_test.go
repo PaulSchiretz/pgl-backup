@@ -10,6 +10,7 @@ import (
 
 	"github.com/paulschiretz/pgl-backup/cmd"
 	"github.com/paulschiretz/pgl-backup/pkg/config"
+	"github.com/paulschiretz/pgl-backup/pkg/hints"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
@@ -168,5 +169,117 @@ func TestRunRestore_Interactive_DefaultCancel(t *testing.T) {
 
 	if err != nil {
 		t.Fatalf("RunRestore failed (expected nil for cancel): %v", err)
+	}
+}
+
+func TestPromptBackupSelection(t *testing.T) {
+	// Silence logs
+	plog.SetOutput(io.Discard)
+
+	now := time.Now()
+	backups := []metafile.MetafileInfo{
+		{
+			RelPathKey: "path/to/backup_1",
+			Metadata: metafile.MetafileContent{
+				TimestampUTC: now,
+				Mode:         "incremental",
+			},
+		},
+		{
+			RelPathKey: "path/to/backup_2",
+			Metadata: metafile.MetafileContent{
+				TimestampUTC: now.Add(-1 * time.Hour),
+				Mode:         "snapshot",
+			},
+		},
+	}
+
+	tests := []struct {
+		name           string
+		input          string
+		expectedResult string
+		expectHint     bool
+	}{
+		{
+			name:           "Select First",
+			input:          "1\n",
+			expectedResult: "backup_1",
+		},
+		{
+			name:           "Select Second",
+			input:          "2\n",
+			expectedResult: "backup_2",
+		},
+		{
+			name:           "Cancel via Option",
+			input:          "3\n",
+			expectedResult: "",
+			expectHint:     true,
+		},
+		{
+			name:           "Cancel via Default (Enter)",
+			input:          "\n",
+			expectedResult: "",
+			expectHint:     true,
+		},
+		{
+			name:           "Invalid Input Retry",
+			input:          "invalid\n1\n",
+			expectedResult: "backup_1",
+		},
+		{
+			name:           "Out of Range Retry",
+			input:          "0\n4\n1\n",
+			expectedResult: "backup_1",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Mock Stdin/Stdout
+			rIn, wIn, _ := os.Pipe()
+			rOut, wOut, _ := os.Pipe()
+
+			origStdin := os.Stdin
+			origStdout := os.Stdout
+			defer func() {
+				os.Stdin = origStdin
+				os.Stdout = origStdout
+			}()
+			os.Stdin = rIn
+			os.Stdout = wOut
+
+			// Write input in a goroutine
+			go func() {
+				defer wIn.Close()
+				io.WriteString(wIn, tc.input)
+			}()
+
+			// Consume output in a goroutine to prevent blocking
+			go func() {
+				defer rOut.Close()
+				io.Copy(io.Discard, rOut)
+			}()
+
+			result, err := cmd.PromptBackupSelection(backups)
+			wOut.Close() // Ensure stdout is closed
+
+			if tc.expectHint {
+				if err == nil {
+					t.Fatal("Expected hint error, got nil")
+				}
+				if !hints.IsHint(err) {
+					t.Fatalf("Expected hint error, got: %v", err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+			}
+
+			if result != tc.expectedResult {
+				t.Errorf("Expected result %q, got %q", tc.expectedResult, result)
+			}
+		})
 	}
 }
