@@ -61,6 +61,10 @@ func main() {
 	}()
 
 	if err := run(ctx); err != nil {
+		if errors.Is(err, context.Canceled) {
+			plog.Info(buildinfo.Name + " canceled by user")
+			os.Exit(130)
+		}
 		plog.Error(buildinfo.Name+" exited with error", "error", err)
 		os.Exit(1)
 	}

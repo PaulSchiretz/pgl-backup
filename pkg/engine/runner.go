@@ -124,6 +124,9 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 		} else {
 			archiveResult, archiveErr = r.archiver.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, toArchive, p.Archive, timestampUTC)
 			if archiveErr != nil {
+				if errors.Is(archiveErr, context.Canceled) {
+					return archiveErr
+				}
 				if hints.IsHint(archiveErr) {
 					plog.Debug("Archiving skipped", "reason", archiveErr)
 				} else {
@@ -147,6 +150,9 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 	if p.Sync.Enabled {
 		syncResult, syncErr = r.syncer.Sync(ctx, absBasePath, absSourcePath, p.Paths.RelCurrentPathKey, p.Paths.RelContentPathKey, p.Sync, timestampUTC)
 		if syncErr != nil {
+			if errors.Is(syncErr, context.Canceled) {
+				return syncErr
+			}
 			if hints.IsHint(syncErr) {
 				plog.Debug("Sync skipped", "reason", syncErr)
 			} else {
@@ -179,6 +185,9 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 		toArchive = syncResult
 		archiveResult, archiveErr = r.archiver.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, toArchive, p.Archive, timestampUTC)
 		if archiveErr != nil {
+			if errors.Is(archiveErr, context.Canceled) {
+				return archiveErr
+			}
 			if hints.Is(archiveErr, patharchive.ErrDisabled) {
 				plog.Debug("Archiving skipped", "reason", archiveErr)
 			} else {
@@ -205,12 +214,18 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 		var toRetent []metafile.MetafileInfo
 		toRetent, pruneErr = r.fetchBackups(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, relPathExclusionKeys)
 		if pruneErr != nil {
+			if errors.Is(pruneErr, context.Canceled) {
+				return pruneErr
+			}
 			if p.FailFast {
 				return fmt.Errorf("error reading backups for prune: %w", pruneErr)
 			}
 			plog.Warn("Error reading backups for prune, skipping", "error", pruneErr)
 		}
 		if pruneErr = r.retainer.Prune(ctx, absBasePath, toRetent, p.Retention, timestampUTC); pruneErr != nil {
+			if errors.Is(pruneErr, context.Canceled) {
+				return pruneErr
+			}
 			if hints.IsHint(pruneErr) {
 				plog.Debug("Retention skipped", "reason", pruneErr)
 			} else {
@@ -230,6 +245,9 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 		}
 
 		if compressErr = r.compressor.Compress(ctx, absBasePath, p.Paths.RelContentPathKey, toCompress, p.Compression, timestampUTC); compressErr != nil {
+			if errors.Is(compressErr, context.Canceled) {
+				return compressErr
+			}
 			if hints.IsHint(compressErr) {
 				plog.Debug("Compression skipped", "reason", compressErr)
 			} else {
