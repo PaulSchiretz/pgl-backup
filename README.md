@@ -27,10 +27,12 @@
     *   [Step 3: Run Your First Backup](#step-3-run-your-first-backup)
 *   [Usage and Examples](#usage-and-examples)
     *   [Basic Backup](#basic-backup)
+    *   [Protable Usage (Plug-and-Play)](#portable-usage-plug-and-play)
     *   [Dry Run](#dry-run)
     *   [One-Off Snapshot Backup](#one-off-snapshot-backup)
     *   [Excluding Files and Directories](#excluding-files-and-directories)
     *   [Using Pre- and Post-Backup Hooks](#using-pre--and-post-backup-hooks)
+*   [Automation](#automation)
 *   [How to Restore a Backup](#how-to-restore-a-backup)
     *   [1. Locate Your Backup](#1-locate-your-backup)
     *   [2. Extract Files from Archives](#2-extract-files-from-archives)
@@ -63,6 +65,7 @@
 *   **Automatic and Resilient Compression**: To save disk space, you can enable automatic compression of backups into `.tar.zst`, `.zip` or `.tar.gz` archives. If compression fails (e.g., due to a corrupt file), the original backup is left untouched.
 *   **Concurrency Safe**: A robust file-locking mechanism prevents multiple backup instances from running against the same target directory simultaneously, protecting data integrity.
 *   **Symbolic Link Support**: Preserves symbolic links in the destination. On Windows, creating symlinks requires the user to have the appropriate privileges (Run as Administrator) or Developer Mode enabled.
+*   **Plug and Play**: The binary is static and self-contained. You can run it directly from an external drive without installation, making it perfect for portable backup workflows.
 *   **Pre- and Post-Backup Hooks**: Execute custom shell commands before the sync begins or after it completes, perfect for tasks like dumping a database or sending a notification.
 *   **Adjustable Configuration**: Configure backups using a simple `pgl-backup.config.json` JSON file, and override any setting with command-line flags for one-off tasks.
 *   **Multiple Sync Engines**:
@@ -310,6 +313,41 @@ Once configured, this is the only command you need for your backup script, cron 
 ```sh
 pgl-backup backup -base="/path/to/your/backup-target" -source="/path/to/your/source-data"
 ```
+### Portable Usage (Plug-and-Play)
+
+You can store the `pgl-backup` binary directly on your external backup drive alongside your data. This allows you to plug the drive into any computer and run backups immediately without installing any software.
+
+For example, you can place the binary and a simple script on your external drive:
+
+**Directory Structure:** 
+
+```
+X:\ (External Drive)
+├── pgl-backup.exe (Windows binary)
+├── pgl-backup (Linux/macOS binary)
+├── run_backup.bat
+├── run_backup.sh
+└── MyBackups\
+```
+
+**Windows (`run_backup.bat`):**
+
+```bat
+:: Set working directory to where the .bat file is
+cd /d "%~dp0"
+:: Run pgl-backup using a relative path for the base
+pgl-backup.exe backup -base=".\MyBackups" -source="C:\Users\YourUser\Documents"
+pause
+```
+
+**Linux / macOS (`run_backup.sh`):**
+
+```sh
+#!/bin/sh
+cd "$(dirname "$0")"
+./pgl-backup backup -base="./MyBackups" -source="$HOME/Documents"
+```
+
 
 ### Dry Run
 
@@ -370,6 +408,35 @@ pgl-backup list -base="/path/to/your/backup-target"
 *   `-base`**(Required)**: The root directory of your backup repository (where `pgl-backup.config.json` is located).
 *   `-mode`: Specify the backup mode (`incremental` or `snapshot`). If omitted, `pgl-backup` automatically lists **incremental** and **snapshot** backups.
 *   `-sort`: Sort order for the list (`desc` or `asc`). Defaults to `desc` (newest first).
+
+## Automation
+
+You can easily automate your backups using your operating system's built-in scheduler.
+
+### Windows Task Scheduler
+
+1.  Open **Task Scheduler** and click **Create Basic Task**.
+2.  Name it "Daily Backup" and click **Next**.
+3.  Choose your trigger (e.g., **Daily**) and set the time.
+4.  Select **Start a program** as the action.
+5.  **Program/script**: Browse to your `pgl-backup.exe`.
+6.  **Add arguments**: Enter your backup command flags.
+    ```
+    backup -base="D:\Backups" -source="C:\Users\YourName\Documents"
+    ```
+7.  Finish the wizard.
+
+### Linux / macOS (Cron)
+
+Edit your crontab file (`crontab -e`) and add a line to run the backup daily (e.g., at 2:00 AM):
+
+```cron
+0 2 * * * /usr/local/bin/pgl-backup backup -base="/mnt/backup-drive" -source="/home/yourname/Documents" >> /var/log/pgl-backup.log 2>&1
+```
+
+### Note on External Drives
+
+If your backup target is an external drive and it is not connected when the scheduled task runs, pgl-backup will detect this during its pre-flight checks and exit safely with an error. No data will be lost, and the backup will simply be skipped until the next scheduled run when the drive is available. 
 
 ## How to Restore a Backup
 
