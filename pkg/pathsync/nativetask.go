@@ -173,6 +173,20 @@ type nativeTask struct {
 
 // --- Helpers ---
 
+// syncMetricWriter wraps an io.Writer and updates metrics on every write.
+type syncMetricWriter struct {
+	w       io.Writer
+	metrics pathsyncmetrics.Metrics
+}
+
+func (mw *syncMetricWriter) Write(p []byte) (n int, err error) {
+	n, err = mw.w.Write(p)
+	if n > 0 {
+		mw.metrics.AddBytesWritten(int64(n))
+	}
+	return
+}
+
 // copyFileHelper handles the low-level details of copying a single file.
 // It ensures atomicity by writing to a temporary file first and then renaming it.
 func (t *nativeTask) copyFileHelper(absSrcPath, absTrgPath string, task *syncTask, retryCount int, retryWait time.Duration) error {
@@ -217,8 +231,9 @@ func (t *nativeTask) copyFileHelper(absSrcPath, absTrgPath string, task *syncTas
 			bufPtr := t.ioBufferPool.Get().(*[]byte)
 			defer t.ioBufferPool.Put(bufPtr)
 
+			mw := &syncMetricWriter{w: out, metrics: t.metrics}
 			// 3. Copy content
-			if _, err := io.CopyBuffer(out, in, *bufPtr); err != nil {
+			if _, err := io.CopyBuffer(mw, in, *bufPtr); err != nil {
 				out.Close() // Close before returning on error, buffer is released by defer
 				return fmt.Errorf("failed to copy content from %s to %s: %w", absSrcPath, absTempPath, err)
 			}
@@ -555,7 +570,6 @@ func (t *nativeTask) processFileSync(task *syncTask) error {
 
 	plog.Notice("COPY", "path", task.RelPathKey)
 	t.metrics.AddFilesCopied(1)
-	t.metrics.AddBytesCopied(task.PathInfo.Size)
 	return nil // File was actually copied/updated
 }
 

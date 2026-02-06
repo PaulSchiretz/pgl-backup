@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
@@ -27,6 +28,8 @@ func TestArchiveMetrics_Log(t *testing.T) {
 
 		m := &ArchiveMetrics{}
 		m.AddArchivesCreated(10)
+		m.StartProgress("Test", time.Hour) // Initialize startTime
+		m.StopProgress()                   // Stop immediately to avoid leaks
 		m.LogSummary("Test Archive Summary")
 
 		output := logBuf.String()
@@ -35,6 +38,9 @@ func TestArchiveMetrics_Log(t *testing.T) {
 		}
 		if !strings.Contains(output, "archives_created=10") {
 			t.Errorf("expected log output to contain 'archives_created=10', but it didn't. Got: %s", output)
+		}
+		if !strings.Contains(output, "duration=") {
+			t.Errorf("expected log output to contain 'duration=', but it didn't. Got: %s", output)
 		}
 	})
 }

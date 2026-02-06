@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
@@ -36,6 +37,8 @@ func TestRetentionMetrics_Log(t *testing.T) {
 		m := &RetentionMetrics{}
 		m.AddBackupsDeleted(10)
 		m.AddBackupsFailed(3)
+		m.StartProgress("Test", time.Hour) // Initialize startTime
+		m.StopProgress()                   // Stop immediately to avoid leaks
 		m.LogSummary("Test Retention Summary")
 
 		// --- Assert ---
@@ -49,6 +52,9 @@ func TestRetentionMetrics_Log(t *testing.T) {
 		}
 		if !strings.Contains(output, "backups_failed=3") {
 			t.Errorf("expected log output to contain 'backups_failed=3', but it didn't. Got: %s", output)
+		}
+		if !strings.Contains(output, "duration=") {
+			t.Errorf("expected log output to contain 'duration=', but it didn't. Got: %s", output)
 		}
 	})
 }

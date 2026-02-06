@@ -21,13 +21,15 @@ type RetentionMetrics struct {
 	BackupsDeleted atomic.Int64
 	BackupsFailed  atomic.Int64
 
-	stopChan chan struct{}
+	stopChan  chan struct{}
+	startTime time.Time
 }
 
 func (m *RetentionMetrics) AddBackupsDeleted(n int64) { m.BackupsDeleted.Add(n) }
 func (m *RetentionMetrics) AddBackupsFailed(n int64)  { m.BackupsFailed.Add(n) }
 
 func (m *RetentionMetrics) StartProgress(msg string, interval time.Duration) {
+	m.startTime = time.Now()
 	m.stopChan = make(chan struct{})
 	ticker := time.NewTicker(interval)
 	go func() {
@@ -50,9 +52,15 @@ func (m *RetentionMetrics) StopProgress() {
 }
 
 func (m *RetentionMetrics) LogSummary(msg string) {
+	duration := time.Duration(0)
+	if !m.startTime.IsZero() {
+		duration = time.Since(m.startTime)
+	}
+
 	plog.Info(msg,
 		"backups_deleted", m.BackupsDeleted.Load(),
 		"backups_failed", m.BackupsFailed.Load(),
+		"duration", duration.Round(time.Millisecond),
 	)
 }
 

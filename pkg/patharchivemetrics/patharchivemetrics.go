@@ -19,11 +19,13 @@ type Metrics interface {
 type ArchiveMetrics struct {
 	ArchivesCreated atomic.Int64
 	stopChan        chan struct{}
+	startTime       time.Time
 }
 
 func (m *ArchiveMetrics) AddArchivesCreated(n int64) { m.ArchivesCreated.Add(n) }
 
 func (m *ArchiveMetrics) StartProgress(msg string, interval time.Duration) {
+	m.startTime = time.Now()
 	m.stopChan = make(chan struct{})
 	ticker := time.NewTicker(interval)
 	go func() {
@@ -46,8 +48,14 @@ func (m *ArchiveMetrics) StopProgress() {
 }
 
 func (m *ArchiveMetrics) LogSummary(msg string) {
+	duration := time.Duration(0)
+	if !m.startTime.IsZero() {
+		duration = time.Since(m.startTime)
+	}
+
 	plog.Info(msg,
 		"archives_created", m.ArchivesCreated.Load(),
+		"duration", duration.Round(time.Millisecond),
 	)
 }
 

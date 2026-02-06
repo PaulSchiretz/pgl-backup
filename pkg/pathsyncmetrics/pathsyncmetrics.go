@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 // Metrics defines the interface for collecting and reporting synchronization statistics.
@@ -13,7 +14,7 @@ type Metrics interface {
 	AddFilesDeleted(n int64)
 	AddFilesExcluded(n int64)
 	AddFilesUpToDate(n int64)
-	AddBytesCopied(n int64)
+	AddBytesWritten(n int64)
 	AddDirsCreated(n int64)
 	AddDirsDeleted(n int64)
 	AddDirsExcluded(n int64)
@@ -31,26 +32,28 @@ type SyncMetrics struct {
 	FilesDeleted     atomic.Int64
 	FilesExcluded    atomic.Int64
 	FilesUpToDate    atomic.Int64
-	BytesCopied      atomic.Int64
+	BytesWritten     atomic.Int64
 	DirsCreated      atomic.Int64
 	DirsDeleted      atomic.Int64
 	DirsExcluded     atomic.Int64
 	EntriesProcessed atomic.Int64
 
-	stopChan chan struct{}
+	stopChan  chan struct{}
+	startTime time.Time
 }
 
 func (m *SyncMetrics) AddFilesCopied(n int64)      { m.FilesCopied.Add(n) }
 func (m *SyncMetrics) AddFilesDeleted(n int64)     { m.FilesDeleted.Add(n) }
 func (m *SyncMetrics) AddFilesExcluded(n int64)    { m.FilesExcluded.Add(n) }
 func (m *SyncMetrics) AddFilesUpToDate(n int64)    { m.FilesUpToDate.Add(n) }
-func (m *SyncMetrics) AddBytesCopied(n int64)      { m.BytesCopied.Add(n) }
+func (m *SyncMetrics) AddBytesWritten(n int64)     { m.BytesWritten.Add(n) }
 func (m *SyncMetrics) AddDirsCreated(n int64)      { m.DirsCreated.Add(n) }
 func (m *SyncMetrics) AddDirsDeleted(n int64)      { m.DirsDeleted.Add(n) }
 func (m *SyncMetrics) AddDirsExcluded(n int64)     { m.DirsExcluded.Add(n) }
 func (m *SyncMetrics) AddEntriesProcessed(n int64) { m.EntriesProcessed.Add(n) }
 
 func (m *SyncMetrics) StartProgress(msg string, interval time.Duration) {
+	m.startTime = time.Now()
 	m.stopChan = make(chan struct{})
 	ticker := time.NewTicker(interval)
 	go func() {
@@ -75,16 +78,22 @@ func (m *SyncMetrics) StopProgress() {
 // Log prints a summary of the sync operation with a custom message.
 // This can be called by a background ticker or at the end of the run.
 func (m *SyncMetrics) LogSummary(msg string) {
+	duration := time.Duration(0)
+	if !m.startTime.IsZero() {
+		duration = time.Since(m.startTime)
+	}
+
 	plog.Info(msg,
-		"entriesProcessed", m.EntriesProcessed.Load(),
-		"filesCopied", m.FilesCopied.Load(),
-		"bytesCopied", m.BytesCopied.Load(),
-		"filesUpToDate", m.FilesUpToDate.Load(),
-		"filesDeleted", m.FilesDeleted.Load(),
-		"filesExcluded", m.FilesExcluded.Load(),
-		"dirsCreated", m.DirsCreated.Load(),
-		"dirsDeleted", m.DirsDeleted.Load(),
-		"dirsExcluded", m.DirsExcluded.Load(),
+		"entries_processed", m.EntriesProcessed.Load(),
+		"files_copied", m.FilesCopied.Load(),
+		"bytes_written", util.ByteCountIEC(m.BytesWritten.Load()),
+		"files_uptodate", m.FilesUpToDate.Load(),
+		"files_deleted", m.FilesDeleted.Load(),
+		"files_excluded", m.FilesExcluded.Load(),
+		"dirs_created", m.DirsCreated.Load(),
+		"dirs_deleted", m.DirsDeleted.Load(),
+		"dirs_excluded", m.DirsExcluded.Load(),
+		"duration", duration.Round(time.Millisecond),
 	)
 }
 
@@ -96,7 +105,7 @@ func (m *NoopMetrics) AddFilesCopied(n int64)                           {}
 func (m *NoopMetrics) AddFilesDeleted(n int64)                          {}
 func (m *NoopMetrics) AddFilesExcluded(n int64)                         {}
 func (m *NoopMetrics) AddFilesUpToDate(n int64)                         {}
-func (m *NoopMetrics) AddBytesCopied(n int64)                           {}
+func (m *NoopMetrics) AddBytesWritten(n int64)                          {}
 func (m *NoopMetrics) AddDirsCreated(n int64)                           {}
 func (m *NoopMetrics) AddDirsDeleted(n int64)                           {}
 func (m *NoopMetrics) AddDirsExcluded(n int64)                          {}

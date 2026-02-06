@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 // Metrics defines the interface for collecting and reporting synchronization statistics.
@@ -13,8 +14,8 @@ type Metrics interface {
 	AddArchivesCreated(n int64)
 	AddArchivesExtracted(n int64)
 	AddArchivesFailed(n int64)
-	AddOriginalBytes(n int64)
-	AddCompressedBytes(n int64)
+	AddBytesRead(n int64)
+	AddBytesWritten(n int64)
 	AddEntriesProcessed(n int64)
 	LogSummary(msg string)
 	StartProgress(msg string, interval time.Duration)
@@ -27,21 +28,23 @@ type CompressionMetrics struct {
 	ArchivesCreated   atomic.Int64
 	ArchivesExtracted atomic.Int64
 	ArchivesFailed    atomic.Int64
-	OriginalBytes     atomic.Int64
-	CompressedBytes   atomic.Int64
+	BytesRead         atomic.Int64
+	BytesWritten      atomic.Int64
 	EntriesProcessed  atomic.Int64
 
-	stopChan chan struct{}
+	stopChan  chan struct{}
+	startTime time.Time
 }
 
 func (m *CompressionMetrics) AddArchivesCreated(n int64)   { m.ArchivesCreated.Add(n) }
 func (m *CompressionMetrics) AddArchivesExtracted(n int64) { m.ArchivesExtracted.Add(n) }
 func (m *CompressionMetrics) AddArchivesFailed(n int64)    { m.ArchivesFailed.Add(n) }
-func (m *CompressionMetrics) AddOriginalBytes(n int64)     { m.OriginalBytes.Add(n) }
-func (m *CompressionMetrics) AddCompressedBytes(n int64)   { m.CompressedBytes.Add(n) }
+func (m *CompressionMetrics) AddBytesRead(n int64)         { m.BytesRead.Add(n) }
+func (m *CompressionMetrics) AddBytesWritten(n int64)      { m.BytesWritten.Add(n) }
 func (m *CompressionMetrics) AddEntriesProcessed(n int64)  { m.EntriesProcessed.Add(n) }
 
 func (m *CompressionMetrics) StartProgress(msg string, interval time.Duration) {
+	m.startTime = time.Now()
 	m.stopChan = make(chan struct{})
 	ticker := time.NewTicker(interval)
 	go func() {
@@ -66,13 +69,18 @@ func (m *CompressionMetrics) StopProgress() {
 // LogSummary logs the current state of the metrics.
 // This can be called by a background ticker or at the end of the run.
 func (m *CompressionMetrics) LogSummary(msg string) {
-	orig := m.OriginalBytes.Load()
-	comp := m.CompressedBytes.Load()
+	read := m.BytesRead.Load()
+	written := m.BytesWritten.Load()
 
-	// Calculate compression ratio (avoid division by zero)
+	// Calculate I/O ratio (avoid division by zero)
 	var ratio float64
-	if orig > 0 {
-		ratio = float64(comp) / float64(orig) * 100.0
+	if read > 0 {
+		ratio = float64(written) / float64(read) * 100.0
+	}
+
+	duration := time.Duration(0)
+	if !m.startTime.IsZero() {
+		duration = time.Since(m.startTime)
 	}
 
 	plog.Info(msg,
@@ -80,9 +88,10 @@ func (m *CompressionMetrics) LogSummary(msg string) {
 		"archives_created", m.ArchivesCreated.Load(),
 		"archives_extracted", m.ArchivesExtracted.Load(),
 		"archives_failed", m.ArchivesFailed.Load(),
-		"original_bytes", fmt.Sprintf("%d", orig),
-		"compressed_bytes", fmt.Sprintf("%d", comp),
-		"ratio_pct", fmt.Sprintf("%.2f%%", ratio),
+		"bytes_read", util.ByteCountIEC(read),
+		"bytes_written", util.ByteCountIEC(written),
+		"io_ratio_pct", fmt.Sprintf("%.2f%%", ratio),
+		"duration", duration.Round(time.Millisecond),
 	)
 }
 
@@ -93,8 +102,8 @@ type NoopMetrics struct{}
 func (m *NoopMetrics) AddArchivesCreated(n int64)                       {}
 func (m *NoopMetrics) AddArchivesExtracted(n int64)                     {}
 func (m *NoopMetrics) AddArchivesFailed(n int64)                        {}
-func (m *NoopMetrics) AddOriginalBytes(n int64)                         {}
-func (m *NoopMetrics) AddCompressedBytes(n int64)                       {}
+func (m *NoopMetrics) AddBytesRead(n int64)                             {}
+func (m *NoopMetrics) AddBytesWritten(n int64)                          {}
 func (m *NoopMetrics) AddEntriesProcessed(n int64)                      {}
 func (m *NoopMetrics) LogSummary(msg string)                            {}
 func (m *NoopMetrics) StartProgress(msg string, interval time.Duration) {}

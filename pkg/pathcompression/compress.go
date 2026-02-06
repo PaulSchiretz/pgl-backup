@@ -24,6 +24,34 @@ type compressor interface {
 	Compress(ctx context.Context, sourceDir, archivePath string, writerPool, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics) error
 }
 
+// compressMetricWriter wraps an io.Writer and updates metrics on every write.
+type compressMetricWriter struct {
+	w       io.Writer
+	metrics pathcompressionmetrics.Metrics
+}
+
+func (mw *compressMetricWriter) Write(p []byte) (n int, err error) {
+	n, err = mw.w.Write(p)
+	if n > 0 {
+		mw.metrics.AddBytesWritten(int64(n))
+	}
+	return
+}
+
+// compressMetricReader wraps an io.Reader and updates metrics on every read.
+type compressMetricReader struct {
+	r       io.Reader
+	metrics pathcompressionmetrics.Metrics
+}
+
+func (mr *compressMetricReader) Read(p []byte) (n int, err error) {
+	n, err = mr.r.Read(p)
+	if n > 0 {
+		mr.metrics.AddBytesRead(int64(n))
+	}
+	return
+}
+
 // newCompressor returns the correct implementation based on the format.
 func newCompressor(format Format, level Level) (compressor, error) {
 	switch format {
@@ -69,11 +97,6 @@ func (c *zipCompressor) Compress(ctx context.Context, absSourcePath, absArchiveF
 		return fmt.Errorf("failed to close temp file: %w", err)
 	}
 
-	// Capture compressed size
-	if info, err := os.Stat(tempName); err == nil {
-		metrics.AddCompressedBytes(info.Size())
-	}
-
 	// 4. Atomic Rename
 	if err := os.Rename(tempName, absArchiveFilePath); err != nil {
 		return fmt.Errorf("failed to rename temp archive to final path: %w", err)
@@ -85,8 +108,9 @@ func (c *zipCompressor) Compress(ctx context.Context, absSourcePath, absArchiveF
 func (c *zipCompressor) writeArchive(ctx context.Context, absSourcePath string, targetF *os.File, writerPool, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics) (retErr error) {
 
 	// Get a Buffer from the pool
+	mw := &compressMetricWriter{w: targetF, metrics: metrics}
 	bufWriter := writerPool.Get().(*bufio.Writer)
-	bufWriter.Reset(targetF)
+	bufWriter.Reset(mw)
 	defer func() {
 		bufWriter.Reset(io.Discard)
 		writerPool.Put(bufWriter)
@@ -147,7 +171,8 @@ func (c *zipCompressor) writeArchive(ctx context.Context, absSourcePath string, 
 			return fmt.Errorf("file changed during backup (possible security attack): %s", absSrcPath)
 		}
 
-		_, err = io.CopyBuffer(writer, fileToZip, buf)
+		mr := &compressMetricReader{r: fileToZip, metrics: metrics}
+		_, err = io.CopyBuffer(writer, mr, buf)
 		return err
 	}, func(absSrcPath, relPath string, info os.FileInfo) error {
 		// Add Symlink Logic
@@ -155,6 +180,7 @@ func (c *zipCompressor) writeArchive(ctx context.Context, absSourcePath string, 
 		if err != nil {
 			return fmt.Errorf("failed to read link target for %s: %w", absSrcPath, err)
 		}
+		metrics.AddBytesRead(int64(len(target)))
 
 		header, err := zip.FileInfoHeader(info)
 		if err != nil {
@@ -203,11 +229,6 @@ func (c *tarCompressor) Compress(ctx context.Context, absSourcePath, absArchiveF
 		return fmt.Errorf("failed to close temp file: %w", err)
 	}
 
-	// Capture compressed size
-	if info, err := os.Stat(tempName); err == nil {
-		metrics.AddCompressedBytes(info.Size())
-	}
-
 	// 4. Atomic Rename
 	if err := os.Rename(tempName, absArchiveFilePath); err != nil {
 		return fmt.Errorf("failed to rename temp archive to final path: %w", err)
@@ -218,8 +239,9 @@ func (c *tarCompressor) Compress(ctx context.Context, absSourcePath, absArchiveF
 
 func (c *tarCompressor) writeArchive(ctx context.Context, absSourcePath string, targetF *os.File, writerPool, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics) (retErr error) {
 
+	mw := &compressMetricWriter{w: targetF, metrics: metrics}
 	bufWriter := writerPool.Get().(*bufio.Writer)
-	bufWriter.Reset(targetF)
+	bufWriter.Reset(mw)
 	defer func() {
 		bufWriter.Reset(io.Discard)
 		writerPool.Put(bufWriter)
@@ -307,7 +329,8 @@ func (c *tarCompressor) writeArchive(ctx context.Context, absSourcePath string, 
 			return fmt.Errorf("file changed during backup (possible security attack): %s", absSrcPath)
 		}
 
-		_, err = io.CopyBuffer(tarWriter, fileToTar, buf)
+		mr := &compressMetricReader{r: fileToTar, metrics: metrics}
+		_, err = io.CopyBuffer(tarWriter, mr, buf)
 		return err
 	}, func(absSrcPath, relPath string, info os.FileInfo) error {
 		// Add Symlink Logic
@@ -315,6 +338,7 @@ func (c *tarCompressor) writeArchive(ctx context.Context, absSourcePath string, 
 		if err != nil {
 			return fmt.Errorf("failed to read link target for %s: %w", absSrcPath, err)
 		}
+		metrics.AddBytesRead(int64(len(target)))
 
 		header, err := tar.FileInfoHeader(info, target)
 		if err != nil {
@@ -363,7 +387,6 @@ func walkAndCompress(
 
 		plog.Notice("ADD", "source", absSourcePath, "file", relTargetPathKey)
 		metrics.AddEntriesProcessed(1)
-		metrics.AddOriginalBytes(info.Size())
 
 		if info.Mode()&os.ModeSymlink != 0 {
 			return addSymlink(absSourcePathEntry, relTargetPathKey, info)

@@ -180,7 +180,7 @@ type expectedMetrics struct {
 	deleted          int64 // filesDeleted
 	excluded         int64 // filesExcluded
 	upToDate         int64
-	bytesCopied      int64
+	bytesWritten     int64
 	dirsCreated      int64
 	dirsDeleted      int64
 	dirsExcluded     int64
@@ -708,7 +708,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				deleted:          1,  // obsolete.txt
 				excluded:         2,  // app.log, config.json
 				upToDate:         1,  // uptodate.txt
-				bytesCopied:      14, // "new" (3) + "new content" (11)
+				bytesWritten:     14, // "new" (3) + "new content" (11)
 				dirsCreated:      1,  // dir1
 				dirsDeleted:      1,  // obsolete_dir
 				dirsExcluded:     1,  // ignored_dir
@@ -739,8 +739,8 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			// Expect all metrics to be zero because NoopMetrics was used.
 			expectedMetrics: &expectedMetrics{
 				copied: 0, deleted: 0, excluded: 0, upToDate: 0,
-				bytesCopied: 0,
-				dirsCreated: 0, dirsDeleted: 0, dirsExcluded: 0,
+				bytesWritten: 0,
+				dirsCreated:  0, dirsDeleted: 0, dirsExcluded: 0,
 				entriesProcessed: 0,
 			},
 		},
@@ -924,13 +924,13 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 
 				// If m is nil (because metrics were disabled), all .Load() calls will panic.
 				// We need to handle this case.
-				var copied, deleted, excluded, upToDate, bytesCopied, dirsCreated, dirsDeleted, dirsExcluded, entriesProcessed int64
+				var copied, deleted, excluded, upToDate, bytesWritten, dirsCreated, dirsDeleted, dirsExcluded, entriesProcessed int64
 				if m != nil {
 					copied = m.FilesCopied.Load()
 					deleted = m.FilesDeleted.Load()
 					excluded = m.FilesExcluded.Load()
 					upToDate = m.FilesUpToDate.Load()
-					bytesCopied = m.BytesCopied.Load()
+					bytesWritten = m.BytesWritten.Load()
 					dirsCreated = m.DirsCreated.Load()
 					dirsDeleted = m.DirsDeleted.Load()
 					dirsExcluded = m.DirsExcluded.Load()
@@ -940,8 +940,8 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				if got := copied; got != tc.expectedMetrics.copied {
 					t.Errorf("metric 'copied': expected %d, got %d", tc.expectedMetrics.copied, got)
 				}
-				if got := bytesCopied; got != tc.expectedMetrics.bytesCopied {
-					t.Errorf("metric 'bytesCopied': expected %d, got %d", tc.expectedMetrics.bytesCopied, got)
+				if got := bytesWritten; got != tc.expectedMetrics.bytesWritten {
+					t.Errorf("metric 'bytesWritten': expected %d, got %d", tc.expectedMetrics.bytesWritten, got)
 				}
 				if got := deleted; got != tc.expectedMetrics.deleted {
 					t.Errorf("metric 'deleted': expected %d, got %d", tc.expectedMetrics.deleted, got)

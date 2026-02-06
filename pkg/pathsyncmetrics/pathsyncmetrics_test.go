@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"bytes"
 
@@ -18,7 +19,7 @@ func TestSyncMetrics_Adders(t *testing.T) {
 		m.AddFilesDeleted(3)
 		m.AddFilesExcluded(2)
 		m.AddFilesUpToDate(10)
-		m.AddBytesCopied(1024)
+		m.AddBytesWritten(1024)
 		m.AddDirsCreated(4)
 		m.AddDirsDeleted(1)
 		m.AddDirsExcluded(6)
@@ -35,8 +36,8 @@ func TestSyncMetrics_Adders(t *testing.T) {
 		if got := m.FilesUpToDate.Load(); got != 10 {
 			t.Errorf("expected FilesUpToDate to be 10, got %d", got)
 		}
-		if got := m.BytesCopied.Load(); got != 1024 {
-			t.Errorf("expected BytesCopied to be 1024, got %d", got)
+		if got := m.BytesWritten.Load(); got != 1024 {
+			t.Errorf("expected BytesWritten to be 1024, got %d", got)
 		}
 		if got := m.DirsCreated.Load(); got != 4 {
 			t.Errorf("expected DirsCreated to be 4, got %d", got)
@@ -61,7 +62,9 @@ func TestSyncMetrics_Log(t *testing.T) {
 		m := &SyncMetrics{}
 		m.AddFilesCopied(10)
 		m.AddFilesUpToDate(20)
-		m.AddBytesCopied(500)
+		m.AddBytesWritten(500)
+		m.StartProgress("Test", time.Hour) // Initialize startTime
+		m.StopProgress()                   // Stop immediately to avoid leaks
 		m.LogSummary("Test Summary")
 
 		// --- Assert ---
@@ -71,18 +74,21 @@ func TestSyncMetrics_Log(t *testing.T) {
 		if !strings.Contains(output, "msg=\"Test Summary\"") {
 			t.Errorf("expected log output to contain 'msg=\"Test Summary\"', but it didn't. Got: %s", output)
 		}
-		if !strings.Contains(output, "filesCopied=10") {
-			t.Errorf("expected log output to contain 'filesCopied=10', but it didn't. Got: %s", output)
+		if !strings.Contains(output, "files_copied=10") {
+			t.Errorf("expected log output to contain 'files_copied=10', but it didn't. Got: %s", output)
 		}
-		if !strings.Contains(output, "bytesCopied=500") {
-			t.Errorf("expected log output to contain 'bytesCopied=500', but it didn't. Got: %s", output)
+		if !strings.Contains(output, "bytes_written=\"500 B\"") {
+			t.Errorf("expected log output to contain 'bytes_written=\"500 B\"', but it didn't. Got: %s", output)
 		}
-		if !strings.Contains(output, "filesUpToDate=20") {
-			t.Errorf("expected log output to contain 'filesUpToDate=20', but it didn't. Got: %s", output)
+		if !strings.Contains(output, "files_uptodate=20") {
+			t.Errorf("expected log output to contain 'files_uptodate=20', but it didn't. Got: %s", output)
 		}
 		// Check a zero value to ensure it's also logged correctly
-		if !strings.Contains(output, "filesDeleted=0") {
-			t.Errorf("expected log output to contain 'filesDeleted=0', but it didn't. Got: %s", output)
+		if !strings.Contains(output, "files_deleted=0") {
+			t.Errorf("expected log output to contain 'files_deleted=0', but it didn't. Got: %s", output)
+		}
+		if !strings.Contains(output, "duration=") {
+			t.Errorf("expected log output to contain 'duration=', but it didn't. Got: %s", output)
 		}
 	})
 }
@@ -105,7 +111,7 @@ func TestNoopMetrics(t *testing.T) {
 		m.AddFilesDeleted(1)
 		m.AddFilesExcluded(1)
 		m.AddFilesUpToDate(1)
-		m.AddBytesCopied(1)
+		m.AddBytesWritten(1)
 		m.AddDirsCreated(1)
 		m.AddDirsDeleted(1)
 		m.AddDirsExcluded(1)
