@@ -131,13 +131,13 @@ Every release includes a `checksums.txt` file containing the SHA256 hashes of th
 shasum -a 256 -c checksums.txt
 
 # Or manually check a specific file:
-shasum -a 256 pgl-backup_v1.3.2_darwin_arm64.tar.gz
+shasum -a 256 pgl-backup_v1.3.3_darwin_arm64.tar.gz
 # Compare output with the content of checksums.txt
 ```
 
 **Windows (PowerShell):**
 ```powershell
-Get-FileHash .\pgl-backup_v1.3.2_windows_amd64.zip -Algorithm SHA256
+Get-FileHash .\pgl-backup_v1.3.3_windows_amd64.zip -Algorithm SHA256
 # Compare the hash with the content of checksums.txt
 ```
 
@@ -182,7 +182,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
 
 ```json
 {
-  "version": "1.3.2",
+  "version": "1.3.3",
   "logLevel": "info",
   "paths": {
     "incremental": {
@@ -523,7 +523,7 @@ You can define your own list of files and directories to exclude using the `user
 
 *   **`error`**: Only shows critical errors that cause the backup process to halt. Use this if you only want to be alerted to complete failures.
 *   **`warn`**: Shows errors and warnings. Warnings are non-critical issues that the application has recovered from but that you should be aware of (e.g., a single file failed to copy, a configuration mismatch).
-*   **`info` (Default)**: Provides a high-level summary of the backup process. It shows the start and end of major phases like synchronization, compression, and retention cleanup. This is the recommended level for daily use and cron jobs, as it provides a clean, readable overview.
+*   **`info` (Default)**: Provides a high-level summary of the backup process. It shows the start, periodic progress, and end of major phases like synchronization, compression, and retention cleanup. This is the recommended level for daily use and cron jobs, as it provides a clean, readable overview.
 *   **`notice`**: Shows everything from `info` plus detailed, per-item operational messages. Use this level to see a log of every file being copied, deleted, archived, or compressed. It's useful for verifying that specific files are being handled correctly without the full verbosity of `debug`.
 *   **`debug`**: The most verbose level. Includes everything from `notice` plus detailed developer-oriented information for tracing execution flow and diagnosing complex issues.
 
