@@ -1170,16 +1170,10 @@ func (t *nativeTask) handleMirror() error {
 		if err := os.Remove(absPathToDelete); err == nil {
 			t.metrics.AddDirsDeleted(1)
 		} else {
-			// Attempt os.RemoveAll fallback
-			// This might happen if a file inside couldn't be deleted earlier due to permissions,
-			// leaving the directory non-empty. As a fallback, try a recursive removal.
-			if err := os.RemoveAll(absPathToDelete); err == nil {
-				t.metrics.AddDirsDeleted(1)
-			} else {
-				// If even RemoveAll fails, log a warning. This indicates a more
-				// serious issue like permissions on the directory itself.
-				plog.Warn("Directory removal failed", "path", relPathKey, "error", err)
-			}
+			// If os.Remove fails, the directory is likely not empty (e.g., contains excluded files
+			// or files that failed to delete). We MUST NOT use os.RemoveAll here, as that would
+			// force-delete excluded files that the user explicitly wanted to keep.
+			plog.Debug("Directory removal skipped (not empty)", "path", relPathKey, "error", err)
 		}
 	}
 
