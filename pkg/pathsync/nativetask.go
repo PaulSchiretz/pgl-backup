@@ -1027,10 +1027,16 @@ func (t *nativeTask) mirrorTaskProducer() {
 			return nil // Path exists in source, keep it.
 		}
 
+		// CLEANUP: Check for stale temp files from previous crashed runs.
+		// These are files like "pgl-backup-12345.tmp". Since handleMirror runs
+		// strictly after handleSync is finished, any such file found here is stale.
+		// We identify them here to bypass exclusion rules (e.g. *.tmp) and ensure deletion.
+		isStaleTemp := !d.IsDir() && strings.HasPrefix(d.Name(), "pgl-backup-") && strings.HasSuffix(d.Name(), ".tmp")
+
 		// Check for exclusions.
 		// `relPathKey` is already normalized, but `d.Name()` is the raw basename from the filesystem
 		// and is passed directly to `isExcluded`, which handles all normalization.
-		if t.isExcluded(relPathKey, d.Name(), d.IsDir()) {
+		if !isStaleTemp && t.isExcluded(relPathKey, d.Name(), d.IsDir()) {
 			if d.IsDir() { // Do not log excluded directories during mirror, as they are not actioned upon.
 				return filepath.SkipDir // Excluded dir, leave it and its contents.
 			}
