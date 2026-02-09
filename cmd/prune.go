@@ -66,6 +66,31 @@ func RunPrune(ctx context.Context, flagMap map[string]interface{}) error {
 	// Log the Summary
 	runConfig.LogSummary(flagparse.Prune, absBasePath, "", "", "")
 
+	// Check for force flag to bypass confirmation
+	force := false
+	if f, ok := flagMap["force"]; ok {
+		force = f.(bool)
+	}
+
+	if !runConfig.Runtime.DryRun && !force {
+		fmt.Printf("This operation will permanently delete outdated backups based on the configured retention policy:\n")
+
+		mode := runConfig.Runtime.Mode
+		if (mode == "any" || mode == "incremental") && runConfig.Retention.Incremental.Enabled {
+			r := runConfig.Retention.Incremental
+			fmt.Printf("  Incremental Policy: Keep %dh, %dd, %dw, %dm, %dy\n", r.Hours, r.Days, r.Weeks, r.Months, r.Years)
+		}
+		if (mode == "any" || mode == "snapshot") && runConfig.Retention.Snapshot.Enabled {
+			r := runConfig.Retention.Snapshot
+			fmt.Printf("  Snapshot Policy:    Keep %dh, %dd, %dw, %dm, %dy\n", r.Hours, r.Days, r.Weeks, r.Months, r.Years)
+		}
+
+		if !PromptForConfirmation("Are you sure you want to continue?", false) {
+			plog.Info(buildinfo.Name + " prune operation canceled.")
+			return nil
+		}
+	}
+
 	// Create the runner and feed it with our leaf workers
 	runner := engine.NewRunner(
 		preflight.NewValidator(),
