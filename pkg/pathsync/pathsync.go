@@ -232,9 +232,12 @@ func (s *PathSyncer) runNativeTask(ctx context.Context, absSourcePath, absSyncTa
 		discoveredPaths:   discoveredPaths,
 		discoveredDirInfo: discoveredDirInfo,
 		syncedDirCache:    syncedDirCache,
-		// Buffer 'syncTasksChan' to absorb bursts of small files discovered by the walker.
-		syncTasksChan:          make(chan *syncTask, s.numSyncWorkers*100),
-		mirrorTasksChan:        make(chan *mirrorTask, s.numMirrorWorkers*100),
+		// Buffer 'syncTasksChan' and 'mirrorTasksChan' to absorb bursts of small files discovered by the walker.
+		// Our syncTask struct is very small (a string and a few int64/bool fields), roughly ~48-64 bytes.
+		// Our default config uses 4 workers using a buffer of 4096 items increases memory usage by roughly (4096 * 64 bytes) ≈ 263 KB.
+		syncTasksChan:   make(chan *syncTask, s.numSyncWorkers*1024),
+		mirrorTasksChan: make(chan *mirrorTask, s.numMirrorWorkers*1024),
+
 		criticalSyncErrsChan:   make(chan error, 1),
 		syncErrs:               syncErrs,
 		criticalMirrorErrsChan: make(chan error, 1),
