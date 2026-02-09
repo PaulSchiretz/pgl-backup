@@ -67,6 +67,9 @@ type cliFlags struct {
 	// Shared: Backup / Restore
 	OverwriteBehavior *string
 
+	// Shared: Backup / Prune
+	Force *bool
+
 	// List specific
 	Sort *string
 
@@ -76,7 +79,6 @@ type cliFlags struct {
 	PostRestoreHooks *string
 
 	// Init specific
-	Force   *bool
 	Default *bool
 }
 
@@ -181,6 +183,7 @@ func registerPruneFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.Base = fs.String("base", "", "Base directory of the backup repository. (Required)")
 	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
 	f.Mode = fs.String("mode", "any", "Which backups to prune ('incremental' or 'snapshot'). Defaults to 'any' (prunes both).")
+	f.Force = fs.Bool("force", false, "Bypass confirmation prompts.")
 }
 
 func registerListFlags(fs *flag.FlagSet, f *cliFlags) {
