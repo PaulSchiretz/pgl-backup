@@ -10,7 +10,7 @@ const numMapShards = 64 // Power of 2 for fast bitwise mod
 
 type mapShard struct {
 	mu    sync.RWMutex
-	items map[string]interface{}
+	items map[string]any
 }
 
 type ShardedMap []*mapShard
@@ -20,8 +20,8 @@ func NewShardedMap() (*ShardedMap, error) {
 		return nil, fmt.Errorf("numMapShards must be a power of 2")
 	}
 	s := make(ShardedMap, numMapShards)
-	for i := 0; i < numMapShards; i++ {
-		s[i] = &mapShard{items: make(map[string]interface{})}
+	for i := range numMapShards {
+		s[i] = &mapShard{items: make(map[string]any)}
 	}
 	return &s, nil
 }
@@ -32,7 +32,7 @@ func (s *ShardedMap) getShard(key string) *mapShard {
 }
 
 // Store adds a key-value pair to the map.
-func (s *ShardedMap) Store(key string, value interface{}) {
+func (s *ShardedMap) Store(key string, value any) {
 	shard := s.getShard(key)
 	shard.mu.Lock()
 	// Store the interface{} value
@@ -42,7 +42,7 @@ func (s *ShardedMap) Store(key string, value interface{}) {
 
 // Load retrieves the value associated with a key.
 // It returns the value and a boolean indicating if the key was present.
-func (s *ShardedMap) Load(key string) (value interface{}, ok bool) {
+func (s *ShardedMap) Load(key string) (value any, ok bool) {
 	shard := s.getShard(key)
 	shard.mu.RLock()
 	// Access the map using the standard Go map return pattern
@@ -63,7 +63,7 @@ func (s *ShardedMap) Has(key string) bool {
 // LoadOrStore returns the existing value for the key if present.
 // Otherwise, it stores and returns the given value.
 // The loaded result is true if the value was loaded, false if stored.
-func (s *ShardedMap) LoadOrStore(key string, value interface{}) (actual interface{}, loaded bool) {
+func (s *ShardedMap) LoadOrStore(key string, value any) (actual any, loaded bool) {
 	shard := s.getShard(key)
 	shard.mu.Lock()
 	actual, loaded = shard.items[key]
@@ -85,7 +85,7 @@ func (s *ShardedMap) Delete(key string) {
 // Count returns the total number of elements in the map.
 func (s *ShardedMap) Count() int {
 	count := 0
-	for i := 0; i < numMapShards; i++ {
+	for i := range numMapShards {
 		shard := (*s)[i]
 		shard.mu.RLock()
 		count += len(shard.items)
@@ -99,7 +99,7 @@ func (s *ShardedMap) Count() int {
 func (s *ShardedMap) Keys() []string {
 	// Pre-allocate the slice with the total number of elements to avoid re-allocations.
 	keys := make([]string, 0, s.Count())
-	for i := 0; i < numMapShards; i++ {
+	for i := range numMapShards {
 		shard := (*s)[i]
 		shard.mu.RLock()
 		for k := range shard.items {
@@ -112,10 +112,10 @@ func (s *ShardedMap) Keys() []string {
 
 // Items returns a map containing all key-value pairs.
 // This creates a snapshot of the map's data at the time of the call.
-func (s *ShardedMap) Items() map[string]interface{} {
+func (s *ShardedMap) Items() map[string]any {
 	// Pre-allocate the map with the total number of elements to avoid re-allocations.
-	items := make(map[string]interface{}, s.Count())
-	for i := 0; i < numMapShards; i++ {
+	items := make(map[string]any, s.Count())
+	for i := range numMapShards {
 		shard := (*s)[i]
 		shard.mu.RLock()
 		for k, v := range shard.items {
@@ -132,8 +132,8 @@ func (s *ShardedMap) Items() map[string]interface{} {
 // The iteration is performed by locking one shard at a time, so it does not
 // block the entire map. However, the map should not be modified by the
 // callback function f.
-func (s *ShardedMap) Range(f func(key string, value interface{}) bool) {
-	for i := 0; i < numMapShards; i++ {
+func (s *ShardedMap) Range(f func(key string, value any) bool) {
+	for i := range numMapShards {
 		shard := (*s)[i]
 		shard.mu.RLock()
 		for k, v := range shard.items {
@@ -148,10 +148,10 @@ func (s *ShardedMap) Range(f func(key string, value interface{}) bool) {
 
 // Clear removes all key-value pairs from the map.
 func (s *ShardedMap) Clear() {
-	for i := 0; i < numMapShards; i++ {
+	for i := range numMapShards {
 		shard := (*s)[i]
 		shard.mu.Lock()
-		shard.items = make(map[string]interface{})
+		shard.items = make(map[string]any)
 		shard.mu.Unlock()
 	}
 }

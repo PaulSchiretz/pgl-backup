@@ -56,8 +56,8 @@ func TestContention(t *testing.T) {
 	}
 
 	// Check that the error is the specific ErrLockActive type
-	var lockErr *ErrLockActive
-	if !errors.As(err, &lockErr) {
+	lockErr, ok := errors.AsType[*ErrLockActive](err)
+	if !ok {
 		t.Fatalf("expected error of type *ErrLockActive, but got %T: %v", err, err)
 	}
 
@@ -191,8 +191,7 @@ func TestHeartbeatEffect(t *testing.T) {
 		t.Fatal("expected lock acquisition to fail, but it succeeded")
 	}
 
-	var lockErr *ErrLockActive
-	if !errors.As(err, &lockErr) {
+	if _, ok := errors.AsType[*ErrLockActive](err); !ok {
 		t.Fatalf("expected ErrLockActive, but got %T", err)
 	}
 }

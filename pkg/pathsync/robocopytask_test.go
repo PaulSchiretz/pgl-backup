@@ -90,8 +90,15 @@ func TestRobocopySync_Integration(t *testing.T) {
 	}
 
 	t.Run("Simple copy", func(t *testing.T) {
-		srcDir := t.TempDir()
-		baseDir := t.TempDir()
+		artifactDir := t.ArtifactDir()
+		srcDir := filepath.Join(artifactDir, "src")
+		baseDir := filepath.Join(artifactDir, "base")
+		if err := os.MkdirAll(srcDir, 0755); err != nil {
+			t.Fatalf("failed to create src dir: %v", err)
+		}
+		if err := os.MkdirAll(baseDir, 0755); err != nil {
+			t.Fatalf("failed to create base dir: %v", err)
+		}
 
 		// Create a source file
 		srcFile := filepath.Join(srcDir, "file.txt")
@@ -127,8 +134,15 @@ func TestRobocopySync_Integration(t *testing.T) {
 	})
 
 	t.Run("No Mirror - Extra files preserved", func(t *testing.T) {
-		srcDir := t.TempDir()
-		baseDir := t.TempDir()
+		artifactDir := t.ArtifactDir()
+		srcDir := filepath.Join(artifactDir, "src")
+		baseDir := filepath.Join(artifactDir, "base")
+		if err := os.MkdirAll(srcDir, 0755); err != nil {
+			t.Fatalf("failed to create src dir: %v", err)
+		}
+		if err := os.MkdirAll(baseDir, 0755); err != nil {
+			t.Fatalf("failed to create base dir: %v", err)
+		}
 
 		// Create a source file
 		srcFile := filepath.Join(srcDir, "file.txt")
@@ -172,8 +186,15 @@ func TestRobocopySync_Integration(t *testing.T) {
 	})
 
 	t.Run("OverwriteNever - Skips newer source", func(t *testing.T) {
-		srcDir := t.TempDir()
-		baseDir := t.TempDir()
+		artifactDir := t.ArtifactDir()
+		srcDir := filepath.Join(artifactDir, "src")
+		baseDir := filepath.Join(artifactDir, "base")
+		if err := os.MkdirAll(srcDir, 0755); err != nil {
+			t.Fatalf("failed to create src dir: %v", err)
+		}
+		if err := os.MkdirAll(baseDir, 0755); err != nil {
+			t.Fatalf("failed to create base dir: %v", err)
+		}
 
 		// Create a source file with "newer" content
 		srcFile := filepath.Join(srcDir, "file.txt")
@@ -214,8 +235,15 @@ func TestRobocopySync_Integration(t *testing.T) {
 	})
 
 	t.Run("OverwriteIfNewer - Updates older destination", func(t *testing.T) {
-		srcDir := t.TempDir()
-		baseDir := t.TempDir()
+		artifactDir := t.ArtifactDir()
+		srcDir := filepath.Join(artifactDir, "src")
+		baseDir := filepath.Join(artifactDir, "base")
+		if err := os.MkdirAll(srcDir, 0755); err != nil {
+			t.Fatalf("failed to create src dir: %v", err)
+		}
+		if err := os.MkdirAll(baseDir, 0755); err != nil {
+			t.Fatalf("failed to create base dir: %v", err)
+		}
 
 		// Create a source file with "newer" content
 		srcFile := filepath.Join(srcDir, "file.txt")

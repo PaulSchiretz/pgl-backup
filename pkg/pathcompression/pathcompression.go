@@ -46,14 +46,13 @@ func NewPathCompressor(bufferSizeKB int) *PathCompressor {
 	bufferSize := bufferSizeKB * 1024
 	return &PathCompressor{
 		ioWriterPool: &sync.Pool{
-			New: func() interface{} {
+			New: func() any {
 				return bufio.NewWriterSize(io.Discard, bufferSize)
 			},
 		},
 		ioBufferPool: &sync.Pool{
-			New: func() interface{} {
-				b := make([]byte, bufferSize)
-				return &b
+			New: func() any {
+				return new(make([]byte, bufferSize))
 			},
 		},
 	}

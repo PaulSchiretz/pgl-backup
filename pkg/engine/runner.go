@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -370,7 +370,7 @@ func (r *Runner) ExecuteList(ctx context.Context, absBasePath string, p *planner
 
 	for _, b := range backups {
 		msg := fmt.Sprintf("Backup found from %s", b.Metadata.TimestampUTC.Local().Format(time.RFC1123))
-		args := []interface{}{
+		args := []any{
 			"uuid", b.Metadata.UUID,
 			"mode", b.Metadata.Mode,
 			"timestampUTC", b.Metadata.TimestampUTC,
@@ -417,11 +417,11 @@ func (r *Runner) ListBackups(ctx context.Context, absBasePath string, p *planner
 	}
 
 	// Sort by timestamp
-	sort.Slice(allBackups, func(i, j int) bool {
+	slices.SortFunc(allBackups, func(a, b metafile.MetafileInfo) int {
 		if p.SortOrder == planner.Asc {
-			return allBackups[i].Metadata.TimestampUTC.Before(allBackups[j].Metadata.TimestampUTC)
+			return a.Metadata.TimestampUTC.Compare(b.Metadata.TimestampUTC)
 		}
-		return allBackups[i].Metadata.TimestampUTC.After(allBackups[j].Metadata.TimestampUTC)
+		return b.Metadata.TimestampUTC.Compare(a.Metadata.TimestampUTC)
 	})
 
 	return allBackups, nil
@@ -552,8 +552,7 @@ func (r *Runner) acquireTargetLock(ctx context.Context, absBasePath string) (fun
 	plog.Debug("Attempting to acquire lock", "path", absBasePath)
 	lock, err := lockfile.Acquire(ctx, absBasePath, appID)
 	if err != nil {
-		var lockErr *lockfile.ErrLockActive
-		if errors.As(err, &lockErr) {
+		if lockErr, ok := errors.AsType[*lockfile.ErrLockActive](err); ok {
 			plog.Warn("Operation is already running for this target, skipping run.", "details", lockErr.Error())
 			return nil, nil // Return nil error to indicate a graceful exit.
 		}

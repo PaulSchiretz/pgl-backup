@@ -26,7 +26,7 @@ import (
 )
 
 // RunRestore handles the logic for the restore command.
-func RunRestore(ctx context.Context, flagMap map[string]interface{}) error {
+func RunRestore(ctx context.Context, flagMap map[string]any) error {
 
 	// Define mandatory flags
 	base, ok := flagMap["base"].(string)

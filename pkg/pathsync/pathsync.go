@@ -39,18 +39,17 @@ func NewPathSyncer(bufferSizeKB int, numSyncWorkers int, numMirrorWorkers int) *
 		numSyncWorkers:   numSyncWorkers,
 		numMirrorWorkers: numMirrorWorkers,
 		ioBufferPool: &sync.Pool{
-			New: func() interface{} {
-				b := make([]byte, bufferSize)
-				return &b
+			New: func() any {
+				return new(make([]byte, bufferSize))
 			},
 		},
 		syncTaskPool: &sync.Pool{
-			New: func() interface{} {
+			New: func() any {
 				return new(syncTask)
 			},
 		},
 		mirrorTaskPool: &sync.Pool{
-			New: func() interface{} {
+			New: func() any {
 				return new(mirrorTask)
 			},
 		},

@@ -142,8 +142,13 @@ type nativeSyncTestRunner struct {
 }
 
 func (r *nativeSyncTestRunner) setup() {
-	r.srcDir = r.t.TempDir()
-	r.baseDir = r.t.TempDir()
+	artifactDir := r.t.ArtifactDir()
+	r.srcDir = filepath.Join(artifactDir, "src")
+	r.baseDir = filepath.Join(artifactDir, "base")
+
+	if err := os.MkdirAll(r.srcDir, 0755); err != nil {
+		r.t.Fatalf("failed to create src dir: %v", err)
+	}
 
 	if err := os.RemoveAll(r.baseDir); err != nil {
 		r.t.Fatalf("failed to clean up dst dir before test: %v", err)
@@ -276,7 +281,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			name:                  "OverwriteIfNewer with ModTimeWindow",
 			mirror:                false,
 			preserveSourceDirName: false,
-			modTimeWindow:         func() *int { i := 2; return &i }(), // 2 seconds window
+			modTimeWindow:         new(int(2)), // 2 seconds window
 			overwriteBehavior:     OverwriteIfNewer,
 			srcFiles: []testFile{
 				// Source is 1.5s newer than base. With 2s window, they should truncate to same time.

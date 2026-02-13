@@ -79,7 +79,7 @@ func Acquire(ctx context.Context, dirPath string, appID string) (*Lock, error) {
 	// We will attempt to acquire multiple times in case of race conditions during cleanup
 	maxAttempts := 3
 
-	for i := 0; i < maxAttempts; i++ {
+	for range maxAttempts {
 		// Check context cancellation
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -400,7 +400,7 @@ func readLockContentSafely(absLockFilePath string) (LockContent, error) {
 	var lastEmptyOrCorruptErr error
 	// Try reading a few times if we encounter JSON syntax errors or empty files
 	// which happen during the updateContent() write cycle.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		f, err := os.Open(absLockFilePath)
 		if err != nil {
 			return LockContent{}, err
@@ -415,7 +415,7 @@ func readLockContentSafely(absLockFilePath string) (LockContent, error) {
 		}
 
 		if len(data) == 0 {
-			lastEmptyOrCorruptErr = errors.New("lock file is empty")
+			lastEmptyOrCorruptErr = fmt.Errorf("lock file is empty")
 			time.Sleep(50 * time.Millisecond)
 			continue
 		}

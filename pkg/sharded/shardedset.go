@@ -20,7 +20,7 @@ func NewShardedSet() (*ShardedSet, error) {
 		return nil, fmt.Errorf("numSetShards must be a power of 2")
 	}
 	s := make(ShardedSet, numSetShards)
-	for i := 0; i < numSetShards; i++ {
+	for i := range numSetShards {
 		s[i] = &setShard{items: make(map[string]struct{})}
 	}
 	return &s, nil
@@ -71,7 +71,7 @@ func (s *ShardedSet) Delete(key string) {
 // Count returns the total number of elements in the set.
 func (s *ShardedSet) Count() int {
 	count := 0
-	for i := 0; i < numSetShards; i++ {
+	for i := range numSetShards {
 		shard := (*s)[i]
 		shard.mu.RLock()
 		count += len(shard.items)
@@ -85,7 +85,7 @@ func (s *ShardedSet) Count() int {
 func (s *ShardedSet) Keys() []string {
 	// Pre-allocate the slice with the total number of elements to avoid re-allocations.
 	keys := make([]string, 0, s.Count())
-	for i := 0; i < numSetShards; i++ {
+	for i := range numSetShards {
 		shard := (*s)[i]
 		shard.mu.RLock()
 		for k := range shard.items {
@@ -103,7 +103,7 @@ func (s *ShardedSet) Keys() []string {
 // block the entire set. However, the set should not be modified by the
 // callback function f.
 func (s *ShardedSet) Range(f func(key string) bool) {
-	for i := 0; i < numSetShards; i++ {
+	for i := range numSetShards {
 		shard := (*s)[i]
 		shard.mu.RLock()
 		for k := range shard.items {
@@ -118,7 +118,7 @@ func (s *ShardedSet) Range(f func(key string) bool) {
 
 // Clear removes all keys from the set.
 func (s *ShardedSet) Clear() {
-	for i := 0; i < numSetShards; i++ {
+	for i := range numSetShards {
 		shard := (*s)[i]
 		shard.mu.Lock()
 		shard.items = make(map[string]struct{})

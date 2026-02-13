@@ -63,7 +63,7 @@ func (t *task) execute() error {
 	}()
 
 	// Start workers
-	for i := 0; i < t.numWorkers; i++ {
+	for range t.numWorkers {
 		t.deleteWg.Add(1)
 		go t.deleteWorker()
 	}

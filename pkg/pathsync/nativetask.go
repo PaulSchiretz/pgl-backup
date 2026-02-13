@@ -35,12 +35,13 @@ package pathsync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -191,7 +192,7 @@ func (mw *syncMetricWriter) Write(p []byte) (n int, err error) {
 // It ensures atomicity by writing to a temporary file first and then renaming it.
 func (t *nativeTask) copyFileHelper(absSrcPath, absTrgPath string, task *syncTask, retryCount int, retryWait time.Duration) error {
 	var lastErr error
-	for i := 0; i <= retryCount; i++ {
+	for i := range retryCount + 1 {
 		if i > 0 {
 			plog.Warn("Retrying file copy", "file", absSrcPath, "attempt", fmt.Sprintf("%d/%d", i, retryCount), "after", retryWait)
 			time.Sleep(retryWait)
@@ -281,7 +282,7 @@ func (t *nativeTask) copyFileHelper(absSrcPath, absTrgPath string, task *syncTas
 // It ensures atomicity by creating a temporary link first and then renaming it.
 func (t *nativeTask) copySymlinkHelper(target, absTrgPath string, retryCount int, retryWait time.Duration) error {
 	var lastErr error
-	for i := 0; i <= retryCount; i++ {
+	for i := range retryCount + 1 {
 		if i > 0 {
 			plog.Warn("Retrying symlink creation", "file", absTrgPath, "attempt", fmt.Sprintf("%d/%d", i, retryCount), "after", retryWait)
 			time.Sleep(retryWait)
@@ -740,7 +741,7 @@ func (t *nativeTask) syncTaskProducer() {
 
 		if err != nil {
 			// Check if the error is due to context cancellation.
-			if err == context.Canceled || err == context.DeadlineExceeded {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				plog.Debug("Sync walker cancelled", "path", absSrcPath)
 				return err // Propagate cancellation.
 			}
@@ -955,7 +956,7 @@ func (t *nativeTask) handleSync() error {
 	plog.Notice("SYN", "from", t.src, "to", t.trg)
 	// 1. Start syncWorkers (Consumers).
 	// They read from 'syncTasks' and store results in a concurrent map.
-	for i := 0; i < t.numSyncWorkers; i++ {
+	for range t.numSyncWorkers {
 		t.syncWg.Add(1)
 		go t.syncWorker()
 	}
@@ -1129,7 +1130,7 @@ func (t *nativeTask) handleMirror() error {
 	plog.Notice("MIR", "from", t.src, "to", t.trg)
 	// --- Phase 2A: Concurrent Deletion of Files ---
 	// Start mirror workers.
-	for i := 0; i < t.numMirrorWorkers; i++ {
+	for range t.numMirrorWorkers {
 		t.mirrorWg.Add(1)
 		go t.mirrorWorker()
 	}
@@ -1154,8 +1155,9 @@ func (t *nativeTask) handleMirror() error {
 	// By deleting longest paths first, we guarantee that we never attempt to delete a parent directory
 	// before its children are gone, preventing "directory not empty" errors.
 	relPathKeyDirsToDelete := t.mirrorDirsToDelete.Keys()
-	sort.Slice(relPathKeyDirsToDelete, func(i, j int) bool {
-		return len(relPathKeyDirsToDelete[i]) > len(relPathKeyDirsToDelete[j])
+	// Sort descending from longest to shortest
+	slices.SortFunc(relPathKeyDirsToDelete, func(a, b string) int {
+		return len(b) - len(a)
 	})
 
 	for _, relPathKey := range relPathKeyDirsToDelete {

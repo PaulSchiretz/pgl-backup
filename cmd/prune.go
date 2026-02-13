@@ -22,7 +22,7 @@ import (
 )
 
 // RunPrune handles the logic for the prune command.
-func RunPrune(ctx context.Context, flagMap map[string]interface{}) error {
+func RunPrune(ctx context.Context, flagMap map[string]any) error {
 	// Define mandatory flags
 	base, ok := flagMap["base"].(string)
 	if !ok || base == "" {

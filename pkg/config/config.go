@@ -441,7 +441,7 @@ func (c *Config) Validate() error {
 // LogSummary prints a user-friendly summary of the configuration to the
 // provided logger. It respects the 'Quiet' setting.
 func (c *Config) LogSummary(command flagparse.Command, absBasePath, absSourcePath, absTargetPath, uuid string) {
-	logArgs := []interface{}{
+	logArgs := []any{
 		"log_level", c.LogLevel,
 		"base", absBasePath,
 		"dry_run", c.Runtime.DryRun,

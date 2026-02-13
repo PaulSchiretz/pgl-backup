@@ -18,7 +18,7 @@ import (
 )
 
 // RunInit handles the logic for the 'init' command.
-func RunInit(ctx context.Context, flagMap map[string]interface{}) error {
+func RunInit(ctx context.Context, flagMap map[string]any) error {
 	// Define mandatory flags
 	base, ok := flagMap["base"].(string)
 	if !ok || base == "" {

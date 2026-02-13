@@ -214,7 +214,7 @@ func registerRestoreFlags(fs *flag.FlagSet, f *cliFlags) {
 }
 
 // Parse parses the provided arguments (usually os.Args[1:]) and returns the action and config map.
-func Parse(args []string) (Command, map[string]interface{}, error) {
+func Parse(args []string) (Command, map[string]any, error) {
 	// Handle top-level help
 	// If no arguments provided, print help and exit.
 	if len(args) == 0 {
@@ -326,7 +326,7 @@ func Parse(args []string) (Command, map[string]interface{}, error) {
 	}
 }
 
-func flagsToMap(c Command, fs *flag.FlagSet, f *cliFlags) (map[string]interface{}, error) {
+func flagsToMap(c Command, fs *flag.FlagSet, f *cliFlags) (map[string]any, error) {
 	// Create a map of the flags that were explicitly set by the user, along with their values.
 	// This map is used to selectively override the base configuration.
 	usedFlags := make(map[string]bool)
@@ -395,14 +395,14 @@ func flagsToMap(c Command, fs *flag.FlagSet, f *cliFlags) (map[string]interface{
 }
 
 // addIfUsed adds the value of ptr to flagMap if ptr is not nil and the flag was set.
-func addIfUsed[T any](flagMap map[string]interface{}, usedFlags map[string]bool, name string, ptr *T) {
+func addIfUsed[T any](flagMap map[string]any, usedFlags map[string]bool, name string, ptr *T) {
 	if ptr != nil && usedFlags[name] {
 		flagMap[name] = *ptr
 	}
 }
 
 // addParsedIfUsed adds the parsed value of ptr to flagMap if ptr is not nil and the flag was set.
-func addParsedIfUsed(flagMap map[string]interface{}, usedFlags map[string]bool, name string, ptr *string, parser func(string) []string) {
+func addParsedIfUsed(flagMap map[string]any, usedFlags map[string]bool, name string, ptr *string, parser func(string) []string) {
 	if ptr != nil && usedFlags[name] {
 		flagMap[name] = parser(*ptr)
 	}

@@ -22,7 +22,7 @@ import (
 )
 
 // RunBackup handles the logic for the main backup execution.
-func RunBackup(ctx context.Context, flagMap map[string]interface{}) error {
+func RunBackup(ctx context.Context, flagMap map[string]any) error {
 	// Define mandatory flags
 	base, ok := flagMap["base"].(string)
 	if !ok || base == "" {

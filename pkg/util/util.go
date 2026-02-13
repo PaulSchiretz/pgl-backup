@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 )
@@ -106,21 +107,14 @@ func InvertMap[K comparable, V comparable](m map[K]V) map[V]K {
 
 // MergeAndDeduplicate combines multiple string slices into a single slice,
 // removing any duplicate entries.
-func MergeAndDeduplicate(slices ...[]string) []string {
-	// Use a map to automatically handle duplicates.
-	combined := make(map[string]struct{})
-	for _, s := range slices {
-		for _, item := range s {
-			combined[item] = struct{}{}
-		}
+func MergeAndDeduplicate(inputs ...[]string) []string {
+	// Flatten, sort, and compact to remove duplicates.
+	flat := slices.Concat(inputs...)
+	if len(flat) == 0 {
+		return []string{}
 	}
-
-	// Convert map keys back to a slice.
-	result := make([]string, 0, len(combined))
-	for item := range combined {
-		result = append(result, item)
-	}
-	return result
+	slices.Sort(flat)
+	return slices.Compact(flat)
 }
 
 // IsPathCaseSensitive checks if the filesystem at the given path is case-sensitive.

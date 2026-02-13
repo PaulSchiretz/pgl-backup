@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.3.4] - 2026-XX-XX
+
+### Changed
+- Updated codebase to utilize Go 1.26 language features and standard library improvements.
+- Refactored `MergeAndDeduplicate` to use the `slices` package for better performance and readability.
+- Replaced `sort.Slice` with `slices.SortFunc` and `time.Time.Compare` for type-safe sorting.
+- Modernized loops using range over integers and adopted the `any` alias.
+- Improved error handling using `errors.AsType` and optimized error strings with `fmt.Errorf`.
+- Enhanced integration tests to use `testing.T.ArtifactDir` for better debugging artifact management.
+
 ## [v1.3.3] - 2026-02-06
 
 ### Changed

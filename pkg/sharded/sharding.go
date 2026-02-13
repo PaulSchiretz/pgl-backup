@@ -13,7 +13,7 @@ const prime32 = 16777619
 // numShards must be a power of 2 for the bitwise AND optimization.
 func getShardIndex(key string, numShards int) int {
 	var hash uint32 = offset32
-	for i := 0; i < len(key); i++ {
+	for i := range len(key) {
 		hash ^= uint32(key[i])
 		hash *= prime32
 	}

@@ -22,7 +22,7 @@ import (
 )
 
 // RunList handles the logic for the list command.
-func RunList(ctx context.Context, flagMap map[string]interface{}) error {
+func RunList(ctx context.Context, flagMap map[string]any) error {
 	// Define mandatory flags
 	base, ok := flagMap["base"].(string)
 	if !ok || base == "" {

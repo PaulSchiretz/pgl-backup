@@ -4,6 +4,7 @@ package pathsync
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -16,7 +17,7 @@ import (
 // isRobocopySuccessHelper checks if a robocopy error is actually a success code.
 // Robocopy returns exit codes < 8 for successful operations that involved copying/deleting files.
 func isRobocopySuccessHelper(err error) bool {
-	if exitErr, ok := err.(*exec.ExitError); ok {
+	if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 		// Exit codes 0-7 are considered success by robocopy.
 		if exitErr.ExitCode() < 8 {
 			return true

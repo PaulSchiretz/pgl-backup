@@ -15,7 +15,7 @@ package pathretention
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/hints"
@@ -69,8 +69,8 @@ func (r *PathRetainer) Prune(ctx context.Context, absBasePath string, toPrune []
 	}
 
 	// Sort all backups from newest to oldest for consistent processing.
-	sort.Slice(toPrune, func(i, j int) bool {
-		return toPrune[i].Metadata.TimestampUTC.After(toPrune[j].Metadata.TimestampUTC)
+	slices.SortFunc(toPrune, func(a, b metafile.MetafileInfo) int {
+		return b.Metadata.TimestampUTC.Compare(a.Metadata.TimestampUTC)
 	})
 
 	var m pathretentionmetrics.Metrics

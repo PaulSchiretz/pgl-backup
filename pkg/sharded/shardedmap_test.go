@@ -216,7 +216,7 @@ func TestShardedMap_Range(t *testing.T) {
 	}
 
 	// Populate the map
-	expectedItems := map[string]interface{}{
+	expectedItems := map[string]any{
 		"key1": 1,
 		"key2": "two",
 		"key3": true,
@@ -228,8 +228,8 @@ func TestShardedMap_Range(t *testing.T) {
 
 	// 1. Test full iteration
 	t.Run("FullIteration", func(t *testing.T) {
-		visitedItems := make(map[string]interface{})
-		m.Range(func(key string, value interface{}) bool {
+		visitedItems := make(map[string]any)
+		m.Range(func(key string, value any) bool {
 			visitedItems[key] = value
 			return true // Continue iteration
 		})
@@ -248,7 +248,7 @@ func TestShardedMap_Range(t *testing.T) {
 	// 2. Test early exit
 	t.Run("EarlyExit", func(t *testing.T) {
 		visitedCount := 0
-		m.Range(func(key string, value interface{}) bool {
+		m.Range(func(key string, value any) bool {
 			visitedCount++
 			return false // Stop iteration immediately
 		})
@@ -272,7 +272,7 @@ func TestShardedMap_Items(t *testing.T) {
 	}
 
 	// 2. Test after adding items
-	expectedItems := map[string]interface{}{
+	expectedItems := map[string]any{
 		"key1": 123,
 		"key2": "value2",
 		"key3": true,
