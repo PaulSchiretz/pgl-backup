@@ -1,6 +1,7 @@
 package util
 
 import (
+	"cmp"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -105,13 +106,13 @@ func InvertMap[K comparable, V comparable](m map[K]V) map[V]K {
 	return inv
 }
 
-// MergeAndDeduplicate combines multiple string slices into a single slice,
+// MergeAndDeduplicate combines multiple slices into a single slice,
 // removing any duplicate entries.
-func MergeAndDeduplicate(inputs ...[]string) []string {
+func MergeAndDeduplicate[T cmp.Ordered](inputs ...[]T) []T {
 	// Flatten, sort, and compact to remove duplicates.
 	flat := slices.Concat(inputs...)
 	if len(flat) == 0 {
-		return []string{}
+		return []T{}
 	}
 	slices.Sort(flat)
 	return slices.Compact(flat)

@@ -278,6 +278,17 @@ func TestMergeAndDeduplicate(t *testing.T) {
 	}
 }
 
+func TestMergeAndDeduplicate_Ints(t *testing.T) {
+	input1 := []int{1, 5, 2}
+	input2 := []int{5, 3, 4}
+	expected := []int{1, 2, 3, 4, 5}
+
+	result := MergeAndDeduplicate(input1, input2)
+	if !reflect.DeepEqual(result, expected) {
+		t.Errorf("expected %v, but got %v", expected, result)
+	}
+}
+
 func TestIsPathCaseSensitive(t *testing.T) {
 	// This test checks the case-sensitivity of the filesystem where the tests are running.
 	// It doesn't mock different filesystem types, but validates that the detection

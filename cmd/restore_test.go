@@ -87,7 +87,7 @@ func TestRunRestore_Interactive(t *testing.T) {
 	// 4. Run Restore
 	plog.SetOutput(io.Discard)
 
-	flags := map[string]interface{}{
+	flags := map[string]any{
 		"base":   baseDir,
 		"target": targetDir,
 		// "uuid" is intentionally omitted to trigger interactive mode
@@ -161,7 +161,7 @@ func TestRunRestore_Interactive_DefaultCancel(t *testing.T) {
 	// 4. Run Restore
 	plog.SetOutput(io.Discard)
 
-	flags := map[string]interface{}{
+	flags := map[string]any{
 		"base":   baseDir,
 		"target": targetDir,
 		// "uuid" is intentionally omitted to trigger interactive mode
@@ -231,7 +231,7 @@ func TestRunRestore_Interactive_ExplicitEmptyUUID(t *testing.T) {
 	// 4. Run Restore
 	plog.SetOutput(io.Discard)
 
-	flags := map[string]interface{}{
+	flags := map[string]any{
 		"base":   baseDir,
 		"target": targetDir,
 		"uuid":   "", // Explicitly empty string, simulating -uuid=""
@@ -284,7 +284,7 @@ func TestRunRestore_LatestAlias(t *testing.T) {
 	// 3. Run Restore with "latest"
 	plog.SetOutput(io.Discard)
 
-	flags := map[string]interface{}{
+	flags := map[string]any{
 		"base":   baseDir,
 		"target": targetDir,
 		"uuid":   "latest",
@@ -321,7 +321,7 @@ func TestRunRestore_LatestAlias_NoBackups(t *testing.T) {
 	// 3. Run Restore with "latest"
 	plog.SetOutput(io.Discard)
 
-	flags := map[string]interface{}{
+	flags := map[string]any{
 		"base":   baseDir,
 		"target": targetDir,
 		"uuid":   "latest",

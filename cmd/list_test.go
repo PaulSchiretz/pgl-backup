@@ -83,7 +83,7 @@ func TestRunList_Sort(t *testing.T) {
 			plog.SetOutput(&logBuf)
 			defer plog.SetOutput(os.Stderr)
 
-			flags := map[string]interface{}{
+			flags := map[string]any{
 				"base": baseDir,
 				"sort": tc.sortFlag,
 			}

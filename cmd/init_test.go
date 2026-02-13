@@ -86,7 +86,7 @@ func TestRunInit(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		flags         map[string]interface{}
+		flags         map[string]any
 		preSetup      func(t *testing.T, baseDir string) context.CancelFunc
 		stdinInput    string
 		expectError   bool
@@ -95,7 +95,7 @@ func TestRunInit(t *testing.T) {
 	}{
 		{
 			name: "Happy Path - Success",
-			flags: map[string]interface{}{
+			flags: map[string]any{
 				"source": srcDir,
 			},
 			validate: func(t *testing.T, baseDir string) {
@@ -113,7 +113,7 @@ func TestRunInit(t *testing.T) {
 		},
 		{
 			name: "Failure - Locked Directory",
-			flags: map[string]interface{}{
+			flags: map[string]any{
 				"source": srcDir,
 			},
 			preSetup: func(t *testing.T, targetDir string) context.CancelFunc {
@@ -135,7 +135,7 @@ func TestRunInit(t *testing.T) {
 		},
 		{
 			name: "Dry Run - No Changes",
-			flags: map[string]interface{}{
+			flags: map[string]any{
 				"source":  srcDir,
 				"dry-run": true,
 			},
@@ -154,7 +154,7 @@ func TestRunInit(t *testing.T) {
 		},
 		{
 			name: "Failure - Source Does Not Exist",
-			flags: map[string]interface{}{
+			flags: map[string]any{
 				"source": filepath.Join(srcDir, "nonexistent"),
 			},
 			expectError:   true,
@@ -162,7 +162,7 @@ func TestRunInit(t *testing.T) {
 		},
 		{
 			name: "Overwrite with Default + Force",
-			flags: map[string]interface{}{
+			flags: map[string]any{
 				"source":  srcDir,
 				"default": true,
 				"force":   true,
@@ -190,7 +190,7 @@ func TestRunInit(t *testing.T) {
 		},
 		{
 			name: "Overwrite with Default (Interactive Yes)",
-			flags: map[string]interface{}{
+			flags: map[string]any{
 				"source":  srcDir,
 				"default": true,
 			},
@@ -218,7 +218,7 @@ func TestRunInit(t *testing.T) {
 		},
 		{
 			name: "Overwrite with Default (Interactive No)",
-			flags: map[string]interface{}{
+			flags: map[string]any{
 				"source":  srcDir,
 				"default": true,
 			},
@@ -251,7 +251,7 @@ func TestRunInit(t *testing.T) {
 			baseDir := t.TempDir()
 			// Inject base into flags
 			if tc.flags == nil {
-				tc.flags = make(map[string]interface{})
+				tc.flags = make(map[string]any)
 			}
 			tc.flags["base"] = baseDir
 
