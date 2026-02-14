@@ -174,27 +174,9 @@ type nativeTask struct {
 
 // --- Helpers ---
 
-// syncMetricWriter wraps an io.Writer and updates metrics on every write.
-type syncMetricWriter struct {
-	w       io.Writer
-	metrics pathsyncmetrics.Metrics
-}
-
-func (mw *syncMetricWriter) Write(p []byte) (n int, err error) {
-	n, err = mw.w.Write(p)
-	if n > 0 {
-		mw.metrics.AddBytesWritten(int64(n))
-	}
-	return
-}
-
-func (mw *syncMetricWriter) Reset(w io.Writer) {
-	mw.w = w
-}
-
 // copyFileHelper handles the low-level details of copying a single file.
 // It ensures atomicity by writing to a temporary file first and then renaming it.
-func (t *nativeTask) copyFileHelper(absSrcPath, absTrgPath string, task *syncTask, retryCount int, retryWait time.Duration, mw *syncMetricWriter) error {
+func (t *nativeTask) copyFileHelper(absSrcPath, absTrgPath string, task *syncTask, retryCount int, retryWait time.Duration) error {
 	var lastErr error
 	for i := range retryCount + 1 {
 		if i > 0 {
@@ -227,22 +209,25 @@ func (t *nativeTask) copyFileHelper(absSrcPath, absTrgPath string, task *syncTas
 				}
 			}()
 
-			// Optimization: Pre-allocate file size to reduce fragmentation.
+			// Pre-allocate file size to reduce fragmentation.
 			if task.PathInfo.Size > 0 {
 				_ = out.Truncate(task.PathInfo.Size)
 			}
 
+			// 3. Copy content
+
+			var bytesWritten int64
 			// Get a buffer from the pool for the copy operation.
 			bufPtr := t.ioBufferPool.Get().(*[]byte)
 			defer t.ioBufferPool.Put(bufPtr)
 
-			mw.Reset(out)
-			defer mw.Reset(nil)
-			// 3. Copy content
-			if _, err := io.CopyBuffer(mw, in, *bufPtr); err != nil {
+			if bytesWritten, err = io.CopyBuffer(out, in, *bufPtr); err != nil {
 				out.Close() // Close before returning on error, buffer is released by defer
 				return fmt.Errorf("failed to copy content from %s to %s: %w", absSrcPath, absTempPath, err)
 			}
+
+			// update metrics
+			t.metrics.AddBytesWritten(int64(bytesWritten))
 
 			// 4. Copy file permissions from the source.
 			// CRITICAL: We must ensure the user always has write permission on the destination file
@@ -515,7 +500,7 @@ func (t *nativeTask) isExcluded(relPathKey, relPathBasename string, isDir bool) 
 
 // processFileSync checks if a file needs to be copied (based on size/time)
 // and triggers the copy operation if needed.
-func (t *nativeTask) processFileSync(task *syncTask, mw *syncMetricWriter) error {
+func (t *nativeTask) processFileSync(task *syncTask) error {
 	if t.dryRun {
 		plog.Notice("[DRY RUN] COPY", "path", task.RelPathKey)
 		return nil
@@ -570,7 +555,7 @@ func (t *nativeTask) processFileSync(task *syncTask, mw *syncMetricWriter) error
 		return fmt.Errorf("failed to lstat destination file %s: %w", absTrgPath, err)
 	}
 
-	if err := t.copyFileHelper(absSrcPath, absTrgPath, task, t.retryCount, t.retryWait, mw); err != nil {
+	if err := t.copyFileHelper(absSrcPath, absTrgPath, task, t.retryCount, t.retryWait); err != nil {
 		return fmt.Errorf("failed to copy file to %s: %w", absTrgPath, err)
 	}
 
@@ -868,8 +853,6 @@ func (t *nativeTask) syncTaskProducer() {
 func (t *nativeTask) syncWorker() {
 	defer t.syncWg.Done()
 
-	mw := &syncMetricWriter{metrics: t.metrics}
-
 	for {
 		select {
 		case <-t.ctx.Done():
@@ -922,7 +905,7 @@ func (t *nativeTask) syncWorker() {
 				if task.PathInfo.IsSymlink {
 					err = t.processSymlinkSync(task)
 				} else {
-					err = t.processFileSync(task, mw)
+					err = t.processFileSync(task)
 				}
 
 				if err != nil {

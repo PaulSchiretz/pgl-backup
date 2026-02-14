@@ -245,6 +245,7 @@ func (s *PathSyncer) runNativeTask(ctx context.Context, absSourcePath, absSyncTa
 		ctx:                    ctx,
 		metrics:                m, // Use the selected metrics implementation.
 	}
+
 	s.lastNativeTask = t // Store the run instance for testing.
 	return t.execute()
 }
