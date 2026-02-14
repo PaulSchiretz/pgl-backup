@@ -21,7 +21,7 @@ import (
 
 // maxPreReadSize defines the threshold (4MB). Files smaller than this
 // will be read fully into memory to parallelize IO.
-const maxPreReadSize = 4 * 1024 * 1024
+const maxPreReadSize = 4 * 1024 * 1024 // TODO add to compression plan and config!!!
 
 // compressor defines the interface for compressing a directory into an archive file.
 type compressor interface {
