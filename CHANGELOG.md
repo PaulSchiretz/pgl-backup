@@ -14,7 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Modernized loops using range over integers and adopted the `any` alias.
 - Improved error handling using `errors.AsType` and optimized error strings with `fmt.Errorf`.
 - Enhanced integration tests to use `testing.T.ArtifactDir` for better debugging artifact management.
-- Fixed performance issue when using `zip` as compression format
+- Fixed performance issue when using `zip` as compression format.
+- Implemented parallel read buffering for compression to saturate I/O and reduce bottleneck on sequential file reading.
+- Optimized `zip` compression by reusing the deflate compressor instance, significantly reducing GC pressure.
+- Reduced memory allocations during compression and synchronization by reusing metric writers and readers.
+
+### Fixed
+- Fixed a potential panic in `tar` compressor caused by uninitialized context.
 
 ## [v1.3.3] - 2026-02-06
 
