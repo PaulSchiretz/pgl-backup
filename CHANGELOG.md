@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Modernized loops using range over integers and adopted the `any` alias.
 - Improved error handling using `errors.AsType` and optimized error strings with `fmt.Errorf`.
 - Enhanced integration tests to use `testing.T.ArtifactDir` for better debugging artifact management.
+- Fixed performance issue when using `zip` as compression format
 
 ## [v1.3.3] - 2026-02-06
 

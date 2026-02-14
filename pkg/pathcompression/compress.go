@@ -116,20 +116,29 @@ func (c *zipCompressor) writeArchive(ctx context.Context, absSourcePath string, 
 		writerPool.Put(bufWriter)
 	}()
 
+	var lvl int
+	switch c.level {
+	case Fastest:
+		lvl = flate.BestSpeed
+	case Better:
+		lvl = 6 // Good balance
+	case Best:
+		lvl = flate.BestCompression
+	default:
+		lvl = flate.DefaultCompression
+	}
+
+	// Pre-allocate the flate writer to reuse its buffer for every file in the zip.
+	// This significantly reduces memory allocations (GC churn) for archives with many small files.
+	fw, err := flate.NewWriter(io.Discard, lvl)
+	if err != nil {
+		return fmt.Errorf("failed to create flate writer: %w", err)
+	}
+
 	zipWriter := zip.NewWriter(bufWriter)
 	zipWriter.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
-		var lvl int
-		switch c.level {
-		case Fastest:
-			lvl = flate.BestSpeed
-		case Better:
-			lvl = 6 // Good balance
-		case Best:
-			lvl = flate.BestCompression
-		default:
-			lvl = flate.DefaultCompression
-		}
-		return flate.NewWriter(out, lvl)
+		fw.Reset(out)
+		return fw, nil
 	})
 
 	// Robust cleanup
