@@ -46,24 +46,6 @@ func (mw *compressMetricWriter) Reset(w io.Writer) {
 	mw.w = w
 }
 
-// compressMetricReader wraps an io.Reader and updates metrics on every read.
-type compressMetricReader struct {
-	r       io.Reader
-	metrics pathcompressionmetrics.Metrics
-}
-
-func (mr *compressMetricReader) Read(p []byte) (n int, err error) {
-	n, err = mr.r.Read(p)
-	if n > 0 {
-		mr.metrics.AddBytesRead(int64(n))
-	}
-	return
-}
-
-func (mr *compressMetricReader) Reset(r io.Reader) {
-	mr.r = r
-}
-
 // newCompressor returns the correct implementation based on the format.
 func newCompressor(format Format, level Level, writerPool, bufferPool *sync.Pool, numWorkers int, metrics pathcompressionmetrics.Metrics) (compressor, error) {
 	switch format {
@@ -322,8 +304,6 @@ func (c *zipCompressor) zipWorker() {
 	bufPtr := c.ioBufferPool.Get().(*[]byte)
 	defer c.ioBufferPool.Put(bufPtr)
 
-	mr := &compressMetricReader{metrics: c.metrics}
-
 	for t := range c.zipTasksChan {
 		select {
 		case <-c.ctx.Done():
@@ -339,7 +319,7 @@ func (c *zipCompressor) zipWorker() {
 		} else if t.info.Size() <= maxPreReadSize {
 			err = c.writeFileDirect(t.absSrcPath, t.relPathKey, t.info)
 		} else {
-			err = c.writeFileStream(t.absSrcPath, t.relPathKey, t.info, *bufPtr, mr)
+			err = c.writeFileStream(t.absSrcPath, t.relPathKey, t.info, *bufPtr)
 		}
 
 		if err != nil {
@@ -417,7 +397,7 @@ func (c *zipCompressor) writeFileDirect(absSrcPath, relPathKey string, info os.F
 	return err
 }
 
-func (c *zipCompressor) writeFileStream(absSrcPath, relPathKey string, info os.FileInfo, buf []byte, mr *compressMetricReader) error {
+func (c *zipCompressor) writeFileStream(absSrcPath, relPathKey string, info os.FileInfo, buf []byte) error {
 	// 1. Parallel Prep: Open the file (pre-lock)
 	// Security: TOCTOU check
 	fileToZip, err := secureFileOpen(absSrcPath, info)
@@ -442,9 +422,8 @@ func (c *zipCompressor) writeFileStream(absSrcPath, relPathKey string, info os.F
 		return fmt.Errorf("failed to write zip header for %s: %w", relPathKey, err)
 	}
 
-	mr.Reset(fileToZip)
-	defer mr.Reset(nil)
-	_, err = io.CopyBuffer(w, mr, buf)
+	n, err := io.CopyBuffer(w, fileToZip, buf)
+	c.metrics.AddBytesRead(int64(n))
 	return err
 }
 
@@ -668,8 +647,6 @@ func (c *tarCompressor) tarWorker() {
 	bufPtr := c.ioBufferPool.Get().(*[]byte)
 	defer c.ioBufferPool.Put(bufPtr)
 
-	mr := &compressMetricReader{metrics: c.metrics}
-
 	for t := range c.tarTasksChan {
 		select {
 		case <-c.ctx.Done():
@@ -685,7 +662,7 @@ func (c *tarCompressor) tarWorker() {
 		} else if t.info.Size() <= maxPreReadSize {
 			err = c.writeFileDirect(t.absSrcPath, t.relPathKey, t.info)
 		} else {
-			err = c.writeFileStream(t.absSrcPath, t.relPathKey, t.info, *bufPtr, mr)
+			err = c.writeFileStream(t.absSrcPath, t.relPathKey, t.info, *bufPtr)
 		}
 
 		if err != nil {
@@ -754,7 +731,7 @@ func (c *tarCompressor) writeFileDirect(absSrcPath, relPathKey string, info os.F
 	return err
 }
 
-func (c *tarCompressor) writeFileStream(absSrcPath, relPathKey string, info os.FileInfo, buf []byte, mr *compressMetricReader) error {
+func (c *tarCompressor) writeFileStream(absSrcPath, relPathKey string, info os.FileInfo, buf []byte) error {
 
 	// 1. Parallel Prep: Open the file (pre-lock)
 	// Security: TOCTOU check
@@ -778,9 +755,8 @@ func (c *tarCompressor) writeFileStream(absSrcPath, relPathKey string, info os.F
 		return fmt.Errorf("failed to write tar header for %s: %w", relPathKey, err)
 	}
 
-	mr.Reset(fileToTar)
-	defer mr.Reset(nil)
-	_, err = io.CopyBuffer(c.tw, mr, buf)
+	n, err := io.CopyBuffer(c.tw, fileToTar, buf)
+	c.metrics.AddBytesRead(int64(n))
 	return err
 }
 

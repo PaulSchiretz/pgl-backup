@@ -76,24 +76,6 @@ func handleOverwrite(absTargetPath string, archiveFileModTime time.Time, archive
 	return true, nil
 }
 
-// extractMetricWriter wraps an io.Writer and updates metrics on every write.
-type extractMetricWriter struct {
-	w       io.Writer
-	metrics pathcompressionmetrics.Metrics
-}
-
-func (mw *extractMetricWriter) Write(p []byte) (n int, err error) {
-	n, err = mw.w.Write(p)
-	if n > 0 {
-		mw.metrics.AddBytesWritten(int64(n))
-	}
-	return
-}
-
-func (mw *extractMetricWriter) Reset(w io.Writer) {
-	mw.w = w
-}
-
 // extractMetricReader wraps an io.Reader and updates metrics on every read.
 type extractMetricReader struct {
 	r       io.Reader
@@ -187,8 +169,6 @@ func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 		return fmt.Errorf("failed to create zip reader: %w", err)
 	}
 
-	mw := &extractMetricWriter{metrics: e.metrics}
-
 	for _, f := range r.File {
 		select {
 		case <-ctx.Done():
@@ -274,10 +254,10 @@ func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 			return err
 		}
 
-		mw.Reset(outFile)
 		bufPtr := e.bufferPool.Get().(*[]byte)
-		_, err = io.CopyBuffer(mw, rc, *bufPtr)
+		n, err := io.CopyBuffer(outFile, rc, *bufPtr)
 		e.bufferPool.Put(bufPtr)
+		e.metrics.AddBytesWritten(n)
 		outFile.Close()
 		rc.Close()
 		if err != nil {
@@ -324,7 +304,6 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 	}
 
 	tr := tar.NewReader(r)
-	mw := &extractMetricWriter{metrics: e.metrics}
 
 	for {
 		select {
@@ -381,10 +360,10 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 			if err != nil {
 				return err
 			}
-			mw.Reset(outFile)
 			bufPtr := e.bufferPool.Get().(*[]byte)
-			_, err = io.CopyBuffer(mw, tr, *bufPtr)
+			n, err := io.CopyBuffer(outFile, tr, *bufPtr)
 			e.bufferPool.Put(bufPtr)
+			e.metrics.AddBytesWritten(n)
 			outFile.Close()
 			if err != nil {
 				return err
