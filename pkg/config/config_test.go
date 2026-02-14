@@ -283,6 +283,16 @@ func TestMergeConfigWithFlags(t *testing.T) {
 			},
 		},
 		{
+			name:    "Override IgnoreCaseMismatch",
+			command: flagparse.Backup,
+			flags:   map[string]any{"ignore-case-mismatch": true},
+			validate: func(t *testing.T, c Config) {
+				if !c.Runtime.IgnoreCaseMismatch {
+					t.Errorf("IgnoreCaseMismatch = %v, want true", c.Runtime.IgnoreCaseMismatch)
+				}
+			},
+		},
+		{
 			name:    "Override Slice (UserExcludeFiles)",
 			command: flagparse.Backup,
 			flags:   map[string]any{"user-exclude-files": []string{"flag.txt"}},

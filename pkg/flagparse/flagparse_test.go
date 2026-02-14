@@ -297,6 +297,21 @@ func TestParse(t *testing.T) {
 		}
 	})
 
+	t.Run("Set Ignore Case Mismatch Flag", func(t *testing.T) {
+		args := []string{"backup", "-ignore-case-mismatch"}
+		_, setFlags, err := flagparse.Parse(args)
+		if err != nil {
+			t.Fatalf("expected no error, but got: %v", err)
+		}
+		val, ok := setFlags["ignore-case-mismatch"]
+		if !ok {
+			t.Fatal("expected 'ignore-case-mismatch' flag to be in setFlags map")
+		}
+		if boolVal, typeOK := val.(bool); !typeOK || !boolVal {
+			t.Errorf("expected ignore-case-mismatch to be true, but got %v (type %T)", val, val)
+		}
+	})
+
 	t.Run("Parse Compression Flags", func(t *testing.T) {
 		args := []string{
 			"backup",

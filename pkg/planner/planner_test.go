@@ -175,6 +175,19 @@ func TestGenerateBackupPlan(t *testing.T) {
 			},
 		},
 		{
+			name: "Ignore Case Mismatch",
+			configMod: func(c *config.Config) {
+				c.Runtime.Mode = "incremental"
+				c.Runtime.IgnoreCaseMismatch = true
+			},
+			expectedMode: planner.Incremental,
+			validate: func(t *testing.T, p *planner.BackupPlan) {
+				if p.Preflight.CaseMismatch {
+					t.Error("Expected Preflight.CaseMismatch to be false when IgnoreCaseMismatch is true")
+				}
+			},
+		},
+		{
 			name: "Retention Policy Mapping",
 			configMod: func(c *config.Config) {
 				c.Runtime.Mode = "incremental"

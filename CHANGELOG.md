@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v1.3.4] - 2026-XX-XX
 
+### Added
+- Added `ignore-case-mismatch` flag to bypass preflight check
+
 ### Changed
 - Updated codebase to utilize Go 1.26 language features and standard library improvements.
 - Refactored `MergeAndDeduplicate` to use the `slices` package for better performance and readability.

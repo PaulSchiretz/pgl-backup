@@ -119,6 +119,7 @@ type RuntimeConfig struct {
 	BackupOverwriteBehavior  string
 	ListSort                 string
 	RestoreOverwriteBehavior string
+	IgnoreCaseMismatch       bool
 }
 
 type Config struct {
@@ -715,6 +716,8 @@ func MergeConfigWithFlags(command flagparse.Command, base Config, setFlags map[s
 			merged.Compression.Format = value.(string)
 		case "compression-level":
 			merged.Compression.Level = value.(string)
+		case "ignore-case-mismatch":
+			merged.Runtime.IgnoreCaseMismatch = value.(bool)
 		default:
 			plog.Debug("unhandled flag in MergeConfigWithFlags", "flag", name)
 		}

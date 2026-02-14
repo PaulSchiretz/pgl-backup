@@ -202,7 +202,7 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 			SourceAccessible:   true,
 			TargetAccessible:   true,
 			TargetWriteable:    true,
-			CaseMismatch:       true,
+			CaseMismatch:       !cfg.Runtime.IgnoreCaseMismatch,
 			PathNesting:        true,
 			EnsureTargetExists: true,
 			// Global Flags
@@ -373,7 +373,7 @@ func GenerateRestorePlan(cfg config.Config) (*RestorePlan, error) {
 			SourceAccessible:   true,
 			TargetAccessible:   true,
 			TargetWriteable:    true,
-			CaseMismatch:       true,
+			CaseMismatch:       !cfg.Runtime.IgnoreCaseMismatch,
 			PathNesting:        true,
 			EnsureTargetExists: true,
 			// Global Flags

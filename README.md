@@ -793,6 +793,7 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `overwrite` (backup) / `runtime.backupOverwriteBehavior` (internal) | `string` | `"update"` | Overwrite behavior for backup: `'always'`, `'never'`, `'if-newer'`, `'update'`. |
 | `overwrite` (restore) / `runtime.restoreOverwriteBehavior` (internal) | `string` | `"never"` | Overwrite behavior for restore: `'always'`, `'never'`, `'if-newer'`, `'update'`. |
 | `fail-fast` / `engine.failFast` | `bool` | `false` | If true, stops the backup immediately on the first file sync error. |
+| `ignore-case-mismatch` / `runtime.ignoreCaseMismatch` (internal) | `bool` | `false` | Bypass the case-sensitivity safety check (use with caution). |
 | `default` / - | `false` | Used with `init` command. Overwrite existing configuration with defaults. |
 | `force` / - | `false` | Bypass confirmation prompts (e.g., for init -default). |
 | `dry-run` / `runtime.dryRun` (internal) | `false` | If true, simulates the backup without making changes. |

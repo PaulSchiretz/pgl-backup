@@ -69,7 +69,8 @@ type cliFlags struct {
 	OverwriteBehavior *string
 
 	// Shared: Backup / Prune
-	Force *bool
+	Force              *bool
+	IgnoreCaseMismatch *bool
 
 	// List specific
 	Sort *string
@@ -108,6 +109,7 @@ func registerBackupFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.SyncModTimeWindow = fs.Int("sync-mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
 	f.SyncPreserveSourceDirName = fs.Bool("sync-preserve-source-dir-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
 
+	f.IgnoreCaseMismatch = fs.Bool("ignore-case-mismatch", false, "Bypass the case-sensitivity safety check (use with caution).")
 	f.UserExcludeFiles = fs.String("user-exclude-files", "", "Comma-separated list of case-insensitive file names to exclude (supports glob patterns).")
 	f.UserExcludeDirs = fs.String("user-exclude-dirs", "", "Comma-separated list of case-insensitive directory names to exclude (supports glob patterns).")
 	f.PreBackupHooks = fs.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
@@ -155,6 +157,7 @@ func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.SyncModTimeWindow = fs.Int("sync-mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
 	f.SyncPreserveSourceDirName = fs.Bool("sync-preserve-source-dir-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
 
+	f.IgnoreCaseMismatch = fs.Bool("ignore-case-mismatch", false, "Bypass the case-sensitivity safety check (use with caution).")
 	f.UserExcludeFiles = fs.String("user-exclude-files", "", "Comma-separated list of case-insensitive file names to exclude (supports glob patterns).")
 	f.UserExcludeDirs = fs.String("user-exclude-dirs", "", "Comma-separated list of case-insensitive directory names to exclude (supports glob patterns).")
 	f.PreBackupHooks = fs.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
@@ -209,6 +212,7 @@ func registerRestoreFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.SyncWorkers = fs.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
 	f.BufferSizeKB = fs.Int("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes.")
 
+	f.IgnoreCaseMismatch = fs.Bool("ignore-case-mismatch", false, "Bypass the case-sensitivity safety check (use with caution).")
 	f.UserExcludeFiles = fs.String("user-exclude-files", "", "Comma-separated list of case-insensitive file names to exclude (supports glob patterns).")
 	f.UserExcludeDirs = fs.String("user-exclude-dirs", "", "Comma-separated list of case-insensitive directory names to exclude (supports glob patterns).")
 	f.PreRestoreHooks = fs.String("pre-restore-hooks", "", "Comma-separated list of commands to run before the restore.")
@@ -385,6 +389,7 @@ func flagsToMap(c Command, fs *flag.FlagSet, f *cliFlags) (map[string]any, error
 	addIfUsed(flagMap, usedFlags, "retention-snapshot-years", f.RetentionSnapshotYears)
 
 	addIfUsed(flagMap, usedFlags, "force", f.Force)
+	addIfUsed(flagMap, usedFlags, "ignore-case-mismatch", f.IgnoreCaseMismatch)
 	addIfUsed(flagMap, usedFlags, "default", f.Default)
 
 	// Handle flags that require parsing/validation.
