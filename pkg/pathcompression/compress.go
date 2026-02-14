@@ -317,7 +317,7 @@ func (c *zipCompressor) zipWorker() {
 		if t.info.Mode()&os.ModeSymlink != 0 {
 			err = c.writeSymlink(t.absSrcPath, t.relPathKey, t.info)
 		} else if t.info.Size() <= maxPreReadSize {
-			err = c.writeFileDirect(t.absSrcPath, t.relPathKey, t.info)
+			err = c.writeFilePreRead(t.absSrcPath, t.relPathKey, t.info)
 		} else {
 			err = c.writeFileStream(t.absSrcPath, t.relPathKey, t.info, *bufPtr)
 		}
@@ -358,7 +358,7 @@ func (c *zipCompressor) writeSymlink(absSrcPath, relPathKey string, info os.File
 	return err
 }
 
-func (c *zipCompressor) writeFileDirect(absSrcPath, relPathKey string, info os.FileInfo) error {
+func (c *zipCompressor) writeFilePreRead(absSrcPath, relPathKey string, info os.FileInfo) error {
 
 	// 1. Parallel: Read file into memory (the expensive part)
 	// Security: TOCTOU check
@@ -660,7 +660,7 @@ func (c *tarCompressor) tarWorker() {
 		if t.info.Mode()&os.ModeSymlink != 0 {
 			err = c.writeSymlink(t.absSrcPath, t.relPathKey, t.info)
 		} else if t.info.Size() <= maxPreReadSize {
-			err = c.writeFileDirect(t.absSrcPath, t.relPathKey, t.info)
+			err = c.writeFilePreRead(t.absSrcPath, t.relPathKey, t.info)
 		} else {
 			err = c.writeFileStream(t.absSrcPath, t.relPathKey, t.info, *bufPtr)
 		}
@@ -694,7 +694,7 @@ func (c *tarCompressor) writeSymlink(absSrcPath, relPathKey string, info os.File
 	return c.tw.WriteHeader(header)
 }
 
-func (c *tarCompressor) writeFileDirect(absSrcPath, relPathKey string, info os.FileInfo) error {
+func (c *tarCompressor) writeFilePreRead(absSrcPath, relPathKey string, info os.FileInfo) error {
 
 	// 1. Parallel: Read file into memory (the expensive part)
 	// Security: TOCTOU check
