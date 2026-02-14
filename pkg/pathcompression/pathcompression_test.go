@@ -176,7 +176,7 @@ func TestCompress(t *testing.T) {
 			targetBase := t.TempDir()
 			toCompress := tc.setup(t, targetBase)
 
-			compressor := pathcompression.NewPathCompressor(256)
+			compressor := pathcompression.NewPathCompressor(256, 4)
 
 			err := compressor.Compress(context.Background(), targetBase, testContentDir, toCompress, &tc.plan, time.Now().UTC())
 
@@ -280,7 +280,7 @@ func TestExtract(t *testing.T) {
 				Enabled: true,
 				Format:  tc.format,
 			}
-			compressor := pathcompression.NewPathCompressor(256)
+			compressor := pathcompression.NewPathCompressor(256, 4)
 
 			err := compressor.Compress(context.Background(), targetBase, testContentDir, toCompress, compressPlan, time.Now().UTC())
 			if err != nil {
@@ -320,7 +320,7 @@ func TestExtract_OverwriteBehavior(t *testing.T) {
 		t.Fatalf("Failed to create content file2: %v", err)
 	}
 
-	compressor := pathcompression.NewPathCompressor(256)
+	compressor := pathcompression.NewPathCompressor(256, 4)
 	compressPlan := &pathcompression.CompressPlan{
 		Enabled: true,
 		Format:  pathcompression.Zip,
@@ -441,7 +441,7 @@ func TestExtract_FormatMismatch(t *testing.T) {
 	targetBase := t.TempDir()
 	toCompress := createTestBackup(t, targetBase, "mismatch_test", false, "")
 
-	compressor := pathcompression.NewPathCompressor(256)
+	compressor := pathcompression.NewPathCompressor(256, 4)
 	compressPlan := &pathcompression.CompressPlan{
 		Enabled: true,
 		Format:  pathcompression.Zip,
@@ -490,7 +490,7 @@ func TestExtract_AutoDetect_CorruptMeta(t *testing.T) {
 	targetBase := t.TempDir()
 	toCompress := createTestBackup(t, targetBase, "autodetect_test", false, "")
 
-	compressor := pathcompression.NewPathCompressor(256)
+	compressor := pathcompression.NewPathCompressor(256, 4)
 	compressPlan := &pathcompression.CompressPlan{
 		Enabled: true,
 		Format:  pathcompression.Zip,
@@ -557,7 +557,7 @@ func TestExtract_AutoDetect_Failure(t *testing.T) {
 		Metadata:   meta,
 	}
 
-	compressor := pathcompression.NewPathCompressor(256)
+	compressor := pathcompression.NewPathCompressor(256, 4)
 	extractPath := filepath.Join(targetBase, "extracted")
 	extractPlan := &pathcompression.ExtractPlan{
 		Enabled:           true,

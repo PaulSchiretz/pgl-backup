@@ -80,6 +80,7 @@ func RunList(ctx context.Context, flagMap map[string]any) error {
 		),
 		pathcompression.NewPathCompressor(
 			runConfig.Engine.Performance.BufferSizeKB,
+			runConfig.Engine.Performance.CompressWorkers,
 		),
 	)
 

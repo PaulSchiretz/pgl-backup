@@ -90,6 +90,10 @@ func (mw *extractMetricWriter) Write(p []byte) (n int, err error) {
 	return
 }
 
+func (mw *extractMetricWriter) Reset(w io.Writer) {
+	mw.w = w
+}
+
 // extractMetricReader wraps an io.Reader and updates metrics on every read.
 type extractMetricReader struct {
 	r       io.Reader
@@ -102,6 +106,10 @@ func (mr *extractMetricReader) Read(p []byte) (n int, err error) {
 		mr.metrics.AddBytesRead(int64(n))
 	}
 	return
+}
+
+func (mr *extractMetricReader) Reset(r io.Reader) {
+	mr.r = r
 }
 
 // extractMetricReaderAt wraps an io.ReaderAt and updates metrics on every read.
@@ -120,26 +128,48 @@ func (mr *extractMetricReaderAt) ReadAt(p []byte, off int64) (n int, err error) 
 
 // extractor defines the interface for extracting archives to a target directory.
 type extractor interface {
-	Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) error
+	Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string) error
 }
 
 // newExtractor returns the correct implementation based on the format.
-func newExtractor(format Format) (extractor, error) {
+func newExtractor(format Format, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) (extractor, error) {
 	switch format {
 	case Zip:
-		return &zipExtractor{}, nil
+		return &zipExtractor{
+			bufferPool:    bufferPool,
+			metrics:       metrics,
+			overwrite:     overwrite,
+			modTimeWindow: modTimeWindow,
+		}, nil
 	case TarGz:
-		return &tarExtractor{compression: TarGz}, nil
+		return &tarExtractor{
+			compression:   TarGz,
+			bufferPool:    bufferPool,
+			metrics:       metrics,
+			overwrite:     overwrite,
+			modTimeWindow: modTimeWindow,
+		}, nil
 	case TarZst:
-		return &tarExtractor{compression: TarZst}, nil
+		return &tarExtractor{
+			compression:   TarZst,
+			bufferPool:    bufferPool,
+			metrics:       metrics,
+			overwrite:     overwrite,
+			modTimeWindow: modTimeWindow,
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported format: %s", format)
 	}
 }
 
-type zipExtractor struct{}
+type zipExtractor struct {
+	bufferPool    *sync.Pool
+	metrics       pathcompressionmetrics.Metrics
+	overwrite     OverwriteBehavior
+	modTimeWindow time.Duration
+}
 
-func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) error {
+func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string) error {
 	f, err := os.Open(absArchiveFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to open zip file: %w", err)
@@ -151,11 +181,13 @@ func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 		return fmt.Errorf("failed to stat zip file: %w", err)
 	}
 
-	mr := &extractMetricReaderAt{r: f, metrics: metrics}
+	mr := &extractMetricReaderAt{r: f, metrics: e.metrics}
 	r, err := zip.NewReader(mr, info.Size())
 	if err != nil {
 		return fmt.Errorf("failed to create zip reader: %w", err)
 	}
+
+	mw := &extractMetricWriter{metrics: e.metrics}
 
 	for _, f := range r.File {
 		select {
@@ -164,7 +196,7 @@ func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 		default:
 		}
 
-		metrics.AddEntriesProcessed(1)
+		e.metrics.AddEntriesProcessed(1)
 
 		// Security: Zip Slip protection:
 		// Ensure that the target path is within the extraction directory.
@@ -201,9 +233,9 @@ func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 			if err != nil {
 				return err
 			}
-			metrics.AddBytesWritten(int64(len(linkTarget)))
+			e.metrics.AddBytesWritten(int64(len(linkTarget)))
 
-			shouldWrite, err := handleOverwrite(absTarget, f.Modified, int64(f.UncompressedSize64), overwrite, modTimeWindow)
+			shouldWrite, err := handleOverwrite(absTarget, f.Modified, int64(f.UncompressedSize64), e.overwrite, e.modTimeWindow)
 			if err != nil {
 				return err
 			}
@@ -222,7 +254,7 @@ func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 
 		// Handle Regular Files
 
-		shouldWrite, err := handleOverwrite(absTarget, f.Modified, int64(f.UncompressedSize64), overwrite, modTimeWindow)
+		shouldWrite, err := handleOverwrite(absTarget, f.Modified, int64(f.UncompressedSize64), e.overwrite, e.modTimeWindow)
 		if err != nil {
 			rc.Close()
 			return err
@@ -242,10 +274,10 @@ func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 			return err
 		}
 
-		mw := &extractMetricWriter{w: outFile, metrics: metrics}
-		bufPtr := bufferPool.Get().(*[]byte)
+		mw.Reset(outFile)
+		bufPtr := e.bufferPool.Get().(*[]byte)
 		_, err = io.CopyBuffer(mw, rc, *bufPtr)
-		bufferPool.Put(bufPtr)
+		e.bufferPool.Put(bufPtr)
 		outFile.Close()
 		rc.Close()
 		if err != nil {
@@ -258,17 +290,21 @@ func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 }
 
 type tarExtractor struct {
-	compression Format
+	compression   Format
+	bufferPool    *sync.Pool
+	metrics       pathcompressionmetrics.Metrics
+	overwrite     OverwriteBehavior
+	modTimeWindow time.Duration
 }
 
-func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) error {
+func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string) error {
 	f, err := os.Open(absArchiveFilePath)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	mr := &extractMetricReader{r: f, metrics: metrics}
+	mr := &extractMetricReader{r: f, metrics: e.metrics}
 	var r io.Reader = mr
 	switch e.compression {
 	case TarGz:
@@ -288,6 +324,8 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 	}
 
 	tr := tar.NewReader(r)
+	mw := &extractMetricWriter{metrics: e.metrics}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -303,7 +341,7 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 			return err
 		}
 
-		metrics.AddEntriesProcessed(1)
+		e.metrics.AddEntriesProcessed(1)
 
 		// Security: Zip Slip protection:
 		// Ensure that the target path is within the extraction directory.
@@ -327,7 +365,7 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 				return err
 			}
 
-			shouldWrite, err := handleOverwrite(absTarget, header.ModTime, header.Size, overwrite, modTimeWindow)
+			shouldWrite, err := handleOverwrite(absTarget, header.ModTime, header.Size, e.overwrite, e.modTimeWindow)
 			if err != nil {
 				return err
 			}
@@ -343,10 +381,10 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 			if err != nil {
 				return err
 			}
-			mw := &extractMetricWriter{w: outFile, metrics: metrics}
-			bufPtr := bufferPool.Get().(*[]byte)
+			mw.Reset(outFile)
+			bufPtr := e.bufferPool.Get().(*[]byte)
 			_, err = io.CopyBuffer(mw, tr, *bufPtr)
-			bufferPool.Put(bufPtr)
+			e.bufferPool.Put(bufPtr)
 			outFile.Close()
 			if err != nil {
 				return err
@@ -357,7 +395,7 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 				return err
 			}
 
-			shouldWrite, err := handleOverwrite(absTarget, header.ModTime, header.Size, overwrite, modTimeWindow)
+			shouldWrite, err := handleOverwrite(absTarget, header.ModTime, header.Size, e.overwrite, e.modTimeWindow)
 			if err != nil {
 				return err
 			}

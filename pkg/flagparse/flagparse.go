@@ -23,14 +23,15 @@ type cliFlags struct {
 	Mode *string
 
 	// Shared: Backup / Init
-	Source        *string
-	Base          *string
-	Target        *string
-	FailFast      *bool
-	SyncWorkers   *int
-	MirrorWorkers *int
-	DeleteWorkers *int
-	BufferSizeKB  *int
+	Source          *string
+	Base            *string
+	Target          *string
+	FailFast        *bool
+	SyncWorkers     *int
+	MirrorWorkers   *int
+	DeleteWorkers   *int
+	CompressWorkers *int
+	BufferSizeKB    *int
 
 	SyncEngine                *string
 	SyncRetryCount            *int
@@ -98,6 +99,7 @@ func registerBackupFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.SyncWorkers = fs.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
 	f.MirrorWorkers = fs.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
 	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
+	f.CompressWorkers = fs.Int("compress-workers", 0, "Number of worker goroutines for compressing backups.")
 	f.BufferSizeKB = fs.Int("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression.")
 
 	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
@@ -144,6 +146,7 @@ func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.SyncWorkers = fs.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
 	f.MirrorWorkers = fs.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
 	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
+	f.CompressWorkers = fs.Int("compress-workers", 0, "Number of worker goroutines for compressing backups.")
 	f.BufferSizeKB = fs.Int("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression.")
 
 	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
@@ -351,6 +354,7 @@ func flagsToMap(c Command, fs *flag.FlagSet, f *cliFlags) (map[string]any, error
 	addIfUsed(flagMap, usedFlags, "sync-workers", f.SyncWorkers)
 	addIfUsed(flagMap, usedFlags, "mirror-workers", f.MirrorWorkers)
 	addIfUsed(flagMap, usedFlags, "delete-workers", f.DeleteWorkers)
+	addIfUsed(flagMap, usedFlags, "compress-workers", f.CompressWorkers)
 	addIfUsed(flagMap, usedFlags, "buffer-size-kb", f.BufferSizeKB)
 
 	addIfUsed(flagMap, usedFlags, "sync-engine", f.SyncEngine)

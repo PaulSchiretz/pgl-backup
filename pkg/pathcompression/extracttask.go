@@ -76,12 +76,12 @@ func (t *extractTask) extractBackup(absToExtractPath, absExtractTargetPath strin
 	archiveFileName := filepath.Base(absToExtractPath) + "." + format.String()
 	absArchiveFilePath := util.DenormalizePath(filepath.Join(absToExtractPath, archiveFileName))
 
-	extractor, err := newExtractor(format)
+	extractor, err := newExtractor(format, t.ioBufferPool, t.metrics, t.overwriteBehavior, t.modTimeWindow)
 	if err != nil {
 		return err
 	}
 
-	if err := extractor.Extract(t.ctx, absArchiveFilePath, absExtractTargetPath, t.ioBufferPool, t.metrics, t.overwriteBehavior, t.modTimeWindow); err != nil {
+	if err := extractor.Extract(t.ctx, absArchiveFilePath, absExtractTargetPath); err != nil {
 		return err
 	}
 	return nil

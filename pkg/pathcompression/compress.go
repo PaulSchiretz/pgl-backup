@@ -2,7 +2,6 @@ package pathcompression
 
 import (
 	"archive/tar"
-	"archive/zip"
 	"bufio"
 	"context"
 	"fmt"
@@ -12,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/klauspost/compress/flate"
+	"github.com/klauspost/compress/zip"
 	"github.com/klauspost/compress/zstd"
 	"github.com/klauspost/pgzip"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompressionmetrics"
@@ -19,9 +19,13 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
+// maxPreReadSize defines the threshold (4MB). Files smaller than this
+// will be read fully into memory to parallelize IO.
+const maxPreReadSize = 4 * 1024 * 1024
+
 // compressor defines the interface for compressing a directory into an archive file.
 type compressor interface {
-	Compress(ctx context.Context, sourceDir, archivePath string, writerPool, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics) error
+	Compress(ctx context.Context, sourceDir, archivePath string) error
 }
 
 // compressMetricWriter wraps an io.Writer and updates metrics on every write.
@@ -38,6 +42,10 @@ func (mw *compressMetricWriter) Write(p []byte) (n int, err error) {
 	return
 }
 
+func (mw *compressMetricWriter) Reset(w io.Writer) {
+	mw.w = w
+}
+
 // compressMetricReader wraps an io.Reader and updates metrics on every read.
 type compressMetricReader struct {
 	r       io.Reader
@@ -52,68 +60,151 @@ func (mr *compressMetricReader) Read(p []byte) (n int, err error) {
 	return
 }
 
+func (mr *compressMetricReader) Reset(r io.Reader) {
+	mr.r = r
+}
+
 // newCompressor returns the correct implementation based on the format.
-func newCompressor(format Format, level Level) (compressor, error) {
+func newCompressor(format Format, level Level, writerPool, bufferPool *sync.Pool, numWorkers int, metrics pathcompressionmetrics.Metrics) (compressor, error) {
 	switch format {
 	case Zip:
-		return &zipCompressor{level: level}, nil
+		return &zipCompressor{
+			level:         level,
+			ioWriterPool:  writerPool,
+			ioBufferPool:  bufferPool,
+			numZipWorkers: numWorkers,
+			metrics:       metrics,
+			zipTasksChan:  make(chan *zipTask, numWorkers*4),
+			zipErrsChan:   make(chan error, 1),
+		}, nil
 	case TarGz:
-		return &tarCompressor{compression: TarGz, level: level}, nil
+		return &tarCompressor{
+			compression:   TarGz,
+			level:         level,
+			ioWriterPool:  writerPool,
+			ioBufferPool:  bufferPool,
+			numTarWorkers: numWorkers,
+			metrics:       metrics,
+			tarTasksChan:  make(chan *tarTask, numWorkers*4),
+			tarErrsChan:   make(chan error, 1),
+		}, nil
 	case TarZst:
-		return &tarCompressor{compression: TarZst, level: level}, nil
+		return &tarCompressor{
+			compression:   TarZst,
+			level:         level,
+			ioWriterPool:  writerPool,
+			ioBufferPool:  bufferPool,
+			numTarWorkers: numWorkers,
+			metrics:       metrics,
+			tarTasksChan:  make(chan *tarTask, numWorkers*4),
+			tarErrsChan:   make(chan error, 1),
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported format: %s", format)
 	}
 }
 
 type zipCompressor struct {
+	ioWriterPool *sync.Pool
+	ioBufferPool *sync.Pool
+
 	level Level
+	mu    sync.Mutex
+	zw    *zip.Writer
+
+	metrics pathcompressionmetrics.Metrics
+
+	// ctx is the cancellable context for the entire run.
+	ctx context.Context
+
+	src  string
+	trgF *os.File
+
+	numZipWorkers int
+
+	// zipWg waits for the zipTaskProducer and zipWorkers to finish processing all zip tasks.
+	zipWg sync.WaitGroup
+
+	// zipTasksChan is the channel where the Walker sends pre-processed tasks.
+	zipTasksChan chan *zipTask
+
+	// zipErrsChan captures the first critical, unrecoverable error (e.g., walker failure)
+	zipErrsChan chan error
+
+	// Pool for flate writers to reduce GC pressure
+	zipFlatePool sync.Pool
 }
 
-func (c *zipCompressor) Compress(ctx context.Context, absSourcePath, absArchiveFilePath string, writerPool, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics) (retErr error) {
+// Wrapper to return flate writer to pool on close
+type pooledFlateWriter struct {
+	*flate.Writer
+	pool *sync.Pool
+}
+
+func (w *pooledFlateWriter) Close() error {
+	err := w.Writer.Close()
+	w.pool.Put(w.Writer)
+	return err
+}
+
+// ZipTask struct for zip workers
+type zipTask struct {
+	absSrcPath string
+	relPathKey string
+	info       os.FileInfo
+}
+
+func (c *zipCompressor) Compress(ctx context.Context, absSourcePath, absArchiveFilePath string) (retErr error) {
 	// 1. Create Temp File
 	// We create it in the same directory as the target to ensure atomic rename.
-	targetF, err := os.CreateTemp(filepath.Dir(absArchiveFilePath), "pgl-backup-*.tmp")
+	var err error
+
+	c.ctx = ctx
+
+	// store the source path
+	c.src = absSourcePath
+
+	c.trgF, err = os.CreateTemp(filepath.Dir(absArchiveFilePath), "pgl-backup-*.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create temp archive: %w", err)
 	}
-	tempName := targetF.Name()
+	tempTrgPath := c.trgF.Name()
 
 	// Ensure cleanup on error
 	defer func() {
 		if retErr != nil {
-			targetF.Close()     // Ensure closed
-			os.Remove(tempName) // Delete temp file
+			c.trgF.Close()         // Ensure closed
+			os.Remove(tempTrgPath) // Delete temp file
 		}
 	}()
 
 	// 2. Write Archive Content
-	if err := c.writeArchive(ctx, absSourcePath, targetF, writerPool, bufferPool, metrics); err != nil {
+	if err := c.handleZip(); err != nil {
 		return err
 	}
 
 	// 3. Close explicitly to flush to disk before rename
-	if err := targetF.Close(); err != nil {
+	if err := c.trgF.Close(); err != nil {
 		return fmt.Errorf("failed to close temp file: %w", err)
 	}
 
 	// 4. Atomic Rename
-	if err := os.Rename(tempName, absArchiveFilePath); err != nil {
+	if err := os.Rename(tempTrgPath, absArchiveFilePath); err != nil {
 		return fmt.Errorf("failed to rename temp archive to final path: %w", err)
 	}
 
 	return nil
 }
 
-func (c *zipCompressor) writeArchive(ctx context.Context, absSourcePath string, targetF *os.File, writerPool, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics) (retErr error) {
+func (c *zipCompressor) handleZip() (retErr error) {
 
 	// Get a Buffer from the pool
-	mw := &compressMetricWriter{w: targetF, metrics: metrics}
-	bufWriter := writerPool.Get().(*bufio.Writer)
+	mw := &compressMetricWriter{w: c.trgF, metrics: c.metrics}
+	bufWriter := c.ioWriterPool.Get().(*bufio.Writer)
 	bufWriter.Reset(mw)
 	defer func() {
 		bufWriter.Reset(io.Discard)
-		writerPool.Put(bufWriter)
+		c.ioWriterPool.Put(bufWriter)
 	}()
 
 	var lvl int
@@ -128,22 +219,26 @@ func (c *zipCompressor) writeArchive(ctx context.Context, absSourcePath string, 
 		lvl = flate.DefaultCompression
 	}
 
-	// Pre-allocate the flate writer to reuse its buffer for every file in the zip.
-	// This significantly reduces memory allocations (GC churn) for archives with many small files.
-	fw, err := flate.NewWriter(io.Discard, lvl)
-	if err != nil {
-		return fmt.Errorf("failed to create flate writer: %w", err)
+	// Init the flate pool
+	c.zipFlatePool = sync.Pool{
+		New: func() interface{} {
+			fw, _ := flate.NewWriter(io.Discard, lvl)
+			return fw
+		},
 	}
 
-	zipWriter := zip.NewWriter(bufWriter)
-	zipWriter.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
+	c.zw = zip.NewWriter(bufWriter)
+
+	// Optimization: Register compressor using the Pool
+	c.zw.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
+		fw := c.zipFlatePool.Get().(*flate.Writer)
 		fw.Reset(out)
-		return fw, nil
+		return &pooledFlateWriter{Writer: fw, pool: &c.zipFlatePool}, nil
 	})
 
 	// Robust cleanup
 	defer func() {
-		if err := zipWriter.Close(); err != nil && retErr == nil {
+		if err := c.zw.Close(); err != nil && retErr == nil {
 			retErr = fmt.Errorf("zip writer close failed: %w", err)
 		}
 		if err := bufWriter.Flush(); err != nil && retErr == nil {
@@ -151,109 +246,296 @@ func (c *zipCompressor) writeArchive(ctx context.Context, absSourcePath string, 
 		}
 	}()
 
-	return walkAndCompress(ctx, absSourcePath, bufferPool, metrics, func(absSrcPath, relPath string, info os.FileInfo, buf []byte) error {
-		// Add File Logic
-		header, err := zip.FileInfoHeader(info)
-		if err != nil {
-			return fmt.Errorf("failed to create zip header for %s: %w", relPath, err)
-		}
-		header.Name = relPath
-		header.Method = zip.Deflate
+	// 1. Start zipWorkers (Consumers).
+	for range c.numZipWorkers {
+		c.zipWg.Add(1)
+		go c.zipWorker()
+	}
 
-		writer, err := zipWriter.CreateHeader(header)
-		if err != nil {
-			return fmt.Errorf("failed to create entry for %s: %w", relPath, err)
-		}
+	// 2. Start the zipTaskProducer (Producer)
+	// This goroutine walks the file tree and feeds paths into 'zipTasks'.
+	go c.zipTaskProducer()
 
-		fileToZip, err := os.Open(absSrcPath)
-		if err != nil {
-			return fmt.Errorf("failed to open file %s: %w", absSrcPath, err)
-		}
-		defer fileToZip.Close()
+	// 3. Wait for all workers to finish processing all tasks.
+	c.zipWg.Wait()
 
-		// Security: TOCTOU check
-		// Ensure the file we opened is the same one we discovered in the walk.
-		// This prevents attacks where a file is swapped for a symlink after discovery.
-		if openedInfo, err := fileToZip.Stat(); err != nil {
-			return fmt.Errorf("failed to stat opened file %s: %w", absSrcPath, err)
-		} else if !os.SameFile(info, openedInfo) {
-			return fmt.Errorf("file changed during backup (possible security attack): %s", absSrcPath)
-		}
-
-		mr := &compressMetricReader{r: fileToZip, metrics: metrics}
-		_, err = io.CopyBuffer(writer, mr, buf)
+	// 4. Check for any errors captured by workers.
+	select {
+	case err := <-c.zipErrsChan:
 		return err
-	}, func(absSrcPath, relPath string, info os.FileInfo) error {
-		// Add Symlink Logic
-		target, err := os.Readlink(absSrcPath)
-		if err != nil {
-			return fmt.Errorf("failed to read link target for %s: %w", absSrcPath, err)
-		}
-		metrics.AddBytesRead(int64(len(target)))
+	default:
+	}
+	return nil
+}
 
-		header, err := zip.FileInfoHeader(info)
-		if err != nil {
-			return fmt.Errorf("failed to create zip header for %s: %w", relPath, err)
+func (c *zipCompressor) zipTaskProducer() {
+	defer close(c.zipTasksChan)
+	walkErr := filepath.WalkDir(c.src, func(absSrcPath string, d os.DirEntry, walkErr error) error {
+		select {
+		case <-c.ctx.Done():
+			return context.Canceled
+		default:
 		}
-		header.Name = relPath
-		header.Method = zip.Store // Symlinks are stored, not compressed
 
-		writer, err := zipWriter.CreateHeader(header)
-		if err != nil {
-			return fmt.Errorf("failed to create entry for %s: %w", relPath, err)
+		if walkErr != nil {
+			return walkErr
 		}
-		_, err = writer.Write([]byte(target))
-		return err
+
+		if d.IsDir() {
+			return nil
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return fmt.Errorf("failed to get file info for %s: %w", absSrcPath, err)
+		}
+
+		relPathKey, err := filepath.Rel(c.src, absSrcPath)
+		if err != nil {
+			return fmt.Errorf("failed to get relative path for %s: %w", absSrcPath, err)
+		}
+		relPathKey = util.NormalizePath(relPathKey)
+
+		plog.Notice("ADD", "source", c.src, "file", relPathKey)
+		c.metrics.AddEntriesProcessed(1)
+
+		select {
+		case c.zipTasksChan <- &zipTask{absSrcPath: absSrcPath, relPathKey: relPathKey, info: info}:
+			return nil
+		case <-c.ctx.Done():
+			return c.ctx.Err()
+		}
 	})
+
+	if walkErr != nil {
+		select {
+		case c.zipErrsChan <- walkErr:
+		default:
+		}
+	}
+}
+
+func (c *zipCompressor) zipWorker() {
+	defer c.zipWg.Done()
+
+	// Use buffer from pool for large file copying
+	bufPtr := c.ioBufferPool.Get().(*[]byte)
+	defer c.ioBufferPool.Put(bufPtr)
+
+	mr := &compressMetricReader{metrics: c.metrics}
+
+	for t := range c.zipTasksChan {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-c.zipErrsChan:
+			return
+		default:
+		}
+
+		var err error
+		if t.info.Mode()&os.ModeSymlink != 0 {
+			err = c.writeSymlink(t.absSrcPath, t.relPathKey, t.info)
+		} else if t.info.Size() <= maxPreReadSize {
+			err = c.writeFileDirect(t.absSrcPath, t.relPathKey, t.info)
+		} else {
+			err = c.writeFileStream(t.absSrcPath, t.relPathKey, t.info, *bufPtr, mr)
+		}
+
+		if err != nil {
+			c.sendErr(err)
+			return
+		}
+	}
+}
+
+// Internal helpers
+func (c *zipCompressor) writeSymlink(absSrcPath, relPathKey string, info os.FileInfo) error {
+
+	// 1. Parallel: Read the link target
+	linkTarget, err := os.Readlink(absSrcPath)
+	if err != nil {
+		return fmt.Errorf("failed to read link %s: %w", absSrcPath, err)
+	}
+
+	// 2. Serial: Lock and Write
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.metrics.AddBytesRead(int64(len(linkTarget)))
+	header, err := zip.FileInfoHeader(info)
+	if err != nil {
+		return fmt.Errorf("failed to create zip header for %s: %w", relPathKey, err)
+	}
+	header.Name = relPathKey
+	header.Method = zip.Store // Symplincs are stored not compressed!
+
+	w, err := c.zw.CreateHeader(header)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write([]byte(linkTarget))
+	return err
+}
+
+func (c *zipCompressor) writeFileDirect(absSrcPath, relPathKey string, info os.FileInfo) error {
+
+	// 1. Parallel: Read file into memory (the expensive part)
+	// Security: TOCTOU check
+	fileToZip, err := secureFileOpen(absSrcPath, info)
+	if err != nil {
+		return fmt.Errorf("failed to open file %s: %w", absSrcPath, err)
+	}
+	defer fileToZip.Close()
+
+	// Read All data
+	data, err := io.ReadAll(fileToZip)
+	fileToZip.Close() // Close explicitly! Do not use defer in a loop.
+	if err != nil {
+		return fmt.Errorf("failed to read file %s: %w", absSrcPath, err)
+	}
+
+	// 2. Serial: Lock and Write
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	header, err := zip.FileInfoHeader(info)
+	if err != nil {
+		return fmt.Errorf("failed to create zip header for %s: %w", relPathKey, err)
+	}
+	header.Name = relPathKey
+	header.Method = zip.Deflate
+
+	w, err := c.zw.CreateHeader(header)
+	if err != nil {
+		return fmt.Errorf("failed to write zip header for %s: %w", relPathKey, err)
+	}
+	_, err = w.Write(data)
+	if err == nil {
+		c.metrics.AddBytesRead(int64(len(data)))
+	}
+	return err
+}
+
+func (c *zipCompressor) writeFileStream(absSrcPath, relPathKey string, info os.FileInfo, buf []byte, mr *compressMetricReader) error {
+	// 1. Parallel Prep: Open the file (pre-lock)
+	// Security: TOCTOU check
+	fileToZip, err := secureFileOpen(absSrcPath, info)
+	if err != nil {
+		return fmt.Errorf("failed to open file %s: %w", absSrcPath, err)
+	}
+	defer fileToZip.Close()
+
+	// 2. Serial: Lock and Write
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	header, err := zip.FileInfoHeader(info)
+	if err != nil {
+		return fmt.Errorf("failed to create zip header for %s: %w", relPathKey, err)
+	}
+	header.Name = relPathKey
+	header.Method = zip.Deflate
+
+	w, err := c.zw.CreateHeader(header)
+	if err != nil {
+		return fmt.Errorf("failed to write zip header for %s: %w", relPathKey, err)
+	}
+
+	mr.Reset(fileToZip)
+	defer mr.Reset(nil)
+	_, err = io.CopyBuffer(w, mr, buf)
+	return err
+}
+
+func (c *zipCompressor) sendErr(err error) {
+	select {
+	case c.zipErrsChan <- err:
+	default:
+	}
 }
 
 type tarCompressor struct {
-	compression Format
-	level       Level
+	ioWriterPool *sync.Pool
+	ioBufferPool *sync.Pool
+	compression  Format
+	level        Level
+	mu           sync.Mutex
+	tw           *tar.Writer
+	metrics      pathcompressionmetrics.Metrics
+
+	// ctx is the cancellable context for the entire run.
+	ctx context.Context
+
+	src  string
+	trgF *os.File
+
+	numTarWorkers int
+
+	// tarWg waits for the tarTaskProducer and tarWorkers to finish processing all tar tasks.
+	tarWg sync.WaitGroup
+
+	// tarTasksChan is the channel where the Walker sends pre-processed tasks.
+	tarTasksChan chan *tarTask
+
+	// tarErrsChan captures the first critical, unrecoverable error (e.g., walker failure)
+	tarErrsChan chan error
 }
 
-func (c *tarCompressor) Compress(ctx context.Context, absSourcePath, absArchiveFilePath string, writerPool, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics) (retErr error) {
+// tarTask struct for tar workers
+type tarTask struct {
+	absSrcPath string
+	relPathKey string
+	info       os.FileInfo
+}
+
+func (c *tarCompressor) Compress(ctx context.Context, absSourcePath, absArchiveFilePath string) (retErr error) {
 	// 1. Create Temp File
-	targetF, err := os.CreateTemp(filepath.Dir(absArchiveFilePath), "pgl-backup-*.tmp")
+	var err error
+
+	c.ctx = ctx
+	c.src = absSourcePath
+
+	c.trgF, err = os.CreateTemp(filepath.Dir(absArchiveFilePath), "pgl-backup-*.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create temp archive: %w", err)
 	}
-	tempName := targetF.Name()
+	tempTrgPath := c.trgF.Name()
 
 	// Ensure cleanup on error
 	defer func() {
 		if retErr != nil {
-			targetF.Close()
-			os.Remove(tempName)
+			c.trgF.Close()
+			os.Remove(tempTrgPath)
 		}
 	}()
 
 	// 2. Write Archive Content
-	if err := c.writeArchive(ctx, absSourcePath, targetF, writerPool, bufferPool, metrics); err != nil {
+	if err := c.handleTar(); err != nil {
 		return err
 	}
 
 	// 3. Close explicitly
-	if err := targetF.Close(); err != nil {
+	if err := c.trgF.Close(); err != nil {
 		return fmt.Errorf("failed to close temp file: %w", err)
 	}
 
 	// 4. Atomic Rename
-	if err := os.Rename(tempName, absArchiveFilePath); err != nil {
+	if err := os.Rename(tempTrgPath, absArchiveFilePath); err != nil {
 		return fmt.Errorf("failed to rename temp archive to final path: %w", err)
 	}
 
 	return nil
 }
 
-func (c *tarCompressor) writeArchive(ctx context.Context, absSourcePath string, targetF *os.File, writerPool, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics) (retErr error) {
+func (c *tarCompressor) handleTar() (retErr error) {
 
-	mw := &compressMetricWriter{w: targetF, metrics: metrics}
-	bufWriter := writerPool.Get().(*bufio.Writer)
+	mw := &compressMetricWriter{w: c.trgF, metrics: c.metrics}
+	bufWriter := c.ioWriterPool.Get().(*bufio.Writer)
 	bufWriter.Reset(mw)
 	defer func() {
 		bufWriter.Reset(io.Discard)
-		writerPool.Put(bufWriter)
+		c.ioWriterPool.Put(bufWriter)
 	}()
 
 	var compressedWriter io.WriteCloser
@@ -297,6 +579,7 @@ func (c *tarCompressor) writeArchive(ctx context.Context, absSourcePath string, 
 	}
 
 	tarWriter := tar.NewWriter(compressedWriter)
+	c.tw = tarWriter
 
 	// Robust cleanup
 	defer func() {
@@ -311,66 +594,33 @@ func (c *tarCompressor) writeArchive(ctx context.Context, absSourcePath string, 
 		}
 	}()
 
-	return walkAndCompress(ctx, absSourcePath, bufferPool, metrics, func(absSrcPath, relPath string, info os.FileInfo, buf []byte) error {
-		// Add File Logic
-		header, err := tar.FileInfoHeader(info, "")
-		if err != nil {
-			return fmt.Errorf("failed to create tar header for %s: %w", absSrcPath, err)
-		}
-		header.Name = relPath
+	// 1. Start tarWorkers (Consumers).
+	for range c.numTarWorkers {
+		c.tarWg.Add(1)
+		go c.tarWorker()
+	}
 
-		if err := tarWriter.WriteHeader(header); err != nil {
-			return fmt.Errorf("failed to write tar header for %s: %w", relPath, err)
-		}
+	// 2. Start the tarTaskProducer (Producer)
+	// This goroutine walks the file tree and feeds paths into 'tarTasks'.
+	go c.tarTaskProducer()
 
-		fileToTar, err := os.Open(absSrcPath)
-		if err != nil {
-			return fmt.Errorf("failed to open file %s: %w", absSrcPath, err)
-		}
-		defer fileToTar.Close()
+	// 3. Wait for all workers to finish processing all tasks.
+	c.tarWg.Wait()
 
-		// Security: TOCTOU check
-		// Ensure the file we opened is the same one we discovered in the walk.
-		// This prevents attacks where a file is swapped for a symlink after discovery.
-		if openedInfo, err := fileToTar.Stat(); err != nil {
-			return fmt.Errorf("failed to stat opened file %s: %w", absSrcPath, err)
-		} else if !os.SameFile(info, openedInfo) {
-			return fmt.Errorf("file changed during backup (possible security attack): %s", absSrcPath)
-		}
-
-		mr := &compressMetricReader{r: fileToTar, metrics: metrics}
-		_, err = io.CopyBuffer(tarWriter, mr, buf)
+	// 4. Check for any errors captured by workers.
+	select {
+	case err := <-c.tarErrsChan:
 		return err
-	}, func(absSrcPath, relPath string, info os.FileInfo) error {
-		// Add Symlink Logic
-		target, err := os.Readlink(absSrcPath)
-		if err != nil {
-			return fmt.Errorf("failed to read link target for %s: %w", absSrcPath, err)
-		}
-		metrics.AddBytesRead(int64(len(target)))
-
-		header, err := tar.FileInfoHeader(info, target)
-		if err != nil {
-			return fmt.Errorf("failed to create tar header for %s: %w", absSrcPath, err)
-		}
-		header.Name = relPath
-
-		return tarWriter.WriteHeader(header)
-	})
+	default:
+	}
+	return nil
 }
 
-// walkAndCompress is a helper to reduce code duplication between zip and tar walkers.
-func walkAndCompress(
-	ctx context.Context,
-	absSourcePath string,
-	bufferPool *sync.Pool,
-	metrics pathcompressionmetrics.Metrics,
-	addFile func(absSourcePathEntry, relTargetPathKey string, info os.FileInfo, buf []byte) error,
-	addSymlink func(absSourcePathEntry, relTargetPathKey string, info os.FileInfo) error,
-) error {
-	return filepath.WalkDir(absSourcePath, func(absSourcePathEntry string, d os.DirEntry, walkErr error) error {
+func (c *tarCompressor) tarTaskProducer() {
+	defer close(c.tarTasksChan)
+	walkErr := filepath.WalkDir(c.src, func(absSrcPath string, d os.DirEntry, walkErr error) error {
 		select {
-		case <-ctx.Done():
+		case <-c.ctx.Done():
 			return context.Canceled
 		default:
 		}
@@ -385,27 +635,181 @@ func walkAndCompress(
 
 		info, err := d.Info()
 		if err != nil {
-			return fmt.Errorf("failed to get file info for %s: %w", absSourcePathEntry, err)
+			return fmt.Errorf("failed to get file info for %s: %w", absSrcPath, err)
 		}
 
-		relTargetPathKey, err := filepath.Rel(absSourcePath, absSourcePathEntry)
+		relPathKey, err := filepath.Rel(c.src, absSrcPath)
 		if err != nil {
-			return fmt.Errorf("failed to get relative path for %s: %w", absSourcePathEntry, err)
+			return fmt.Errorf("failed to get relative path for %s: %w", absSrcPath, err)
 		}
-		relTargetPathKey = util.NormalizePath(relTargetPathKey)
+		relPathKey = util.NormalizePath(relPathKey)
 
-		plog.Notice("ADD", "source", absSourcePath, "file", relTargetPathKey)
-		metrics.AddEntriesProcessed(1)
+		plog.Notice("ADD", "source", c.src, "file", relPathKey)
+		c.metrics.AddEntriesProcessed(1)
 
-		if info.Mode()&os.ModeSymlink != 0 {
-			return addSymlink(absSourcePathEntry, relTargetPathKey, info)
+		select {
+		case c.tarTasksChan <- &tarTask{absSrcPath: absSrcPath, relPathKey: relPathKey, info: info}:
+			return nil
+		case <-c.ctx.Done():
+			return c.ctx.Err()
 		}
-
-		// Handle Regular Files
-		return func() error {
-			bufPtr := bufferPool.Get().(*[]byte)
-			defer bufferPool.Put(bufPtr)
-			return addFile(absSourcePathEntry, relTargetPathKey, info, *bufPtr)
-		}()
 	})
+
+	if walkErr != nil {
+		select {
+		case c.tarErrsChan <- walkErr:
+		default:
+		}
+	}
+}
+
+func (c *tarCompressor) tarWorker() {
+	defer c.tarWg.Done()
+	bufPtr := c.ioBufferPool.Get().(*[]byte)
+	defer c.ioBufferPool.Put(bufPtr)
+
+	mr := &compressMetricReader{metrics: c.metrics}
+
+	for t := range c.tarTasksChan {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-c.tarErrsChan:
+			return
+		default:
+		}
+
+		var err error
+		if t.info.Mode()&os.ModeSymlink != 0 {
+			err = c.writeSymlink(t.absSrcPath, t.relPathKey, t.info)
+		} else if t.info.Size() <= maxPreReadSize {
+			err = c.writeFileDirect(t.absSrcPath, t.relPathKey, t.info)
+		} else {
+			err = c.writeFileStream(t.absSrcPath, t.relPathKey, t.info, *bufPtr, mr)
+		}
+
+		if err != nil {
+			c.sendErr(err)
+			return
+		}
+	}
+}
+
+// Internal helpers
+func (c *tarCompressor) writeSymlink(absSrcPath, relPathKey string, info os.FileInfo) error {
+
+	// 1. Parallel: Read the link target
+	linkTarget, err := os.Readlink(absSrcPath)
+	if err != nil {
+		return fmt.Errorf("failed to read link %s: %w", absSrcPath, err)
+	}
+
+	// 2. Serial: Lock and Write
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.metrics.AddBytesRead(int64(len(linkTarget)))
+	header, err := tar.FileInfoHeader(info, linkTarget)
+	if err != nil {
+		return fmt.Errorf("failed to create tar header for %s: %w", relPathKey, err)
+	}
+	header.Name = relPathKey
+	return c.tw.WriteHeader(header)
+}
+
+func (c *tarCompressor) writeFileDirect(absSrcPath, relPathKey string, info os.FileInfo) error {
+
+	// 1. Parallel: Read file into memory (the expensive part)
+	// Security: TOCTOU check
+	fileToTar, err := secureFileOpen(absSrcPath, info)
+	if err != nil {
+		return fmt.Errorf("failed to open file %s: %w", absSrcPath, err)
+	}
+	defer fileToTar.Close()
+
+	// Read All data
+	data, err := io.ReadAll(fileToTar)
+	fileToTar.Close() // Close explicitly! Do not use defer in a loop.
+	if err != nil {
+		return fmt.Errorf("failed to read file %s: %w", absSrcPath, err)
+	}
+
+	// 2. Serial: Lock and Write
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	header, err := tar.FileInfoHeader(info, "")
+	if err != nil {
+		return fmt.Errorf("failed to create tar header for %s: %w", relPathKey, err)
+	}
+	header.Name = relPathKey
+
+	if err := c.tw.WriteHeader(header); err != nil {
+		return fmt.Errorf("failed to write tar header for %s: %w", relPathKey, err)
+	}
+	_, err = c.tw.Write(data)
+	if err == nil {
+		c.metrics.AddBytesRead(int64(len(data)))
+	}
+	return err
+}
+
+func (c *tarCompressor) writeFileStream(absSrcPath, relPathKey string, info os.FileInfo, buf []byte, mr *compressMetricReader) error {
+
+	// 1. Parallel Prep: Open the file (pre-lock)
+	// Security: TOCTOU check
+	fileToTar, err := secureFileOpen(absSrcPath, info)
+	if err != nil {
+		return fmt.Errorf("failed to open file %s: %w", absSrcPath, err)
+	}
+	defer fileToTar.Close()
+
+	// 2. Serial: Lock and Write
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	header, err := tar.FileInfoHeader(info, "")
+	if err != nil {
+		return fmt.Errorf("failed to create tar header for %s: %w", relPathKey, err)
+	}
+	header.Name = relPathKey
+
+	if err := c.tw.WriteHeader(header); err != nil {
+		return fmt.Errorf("failed to write tar header for %s: %w", relPathKey, err)
+	}
+
+	mr.Reset(fileToTar)
+	defer mr.Reset(nil)
+	_, err = io.CopyBuffer(c.tw, mr, buf)
+	return err
+}
+
+func (c *tarCompressor) sendErr(err error) {
+	select {
+	case c.tarErrsChan <- err:
+	default:
+	}
+}
+
+// secureFileOpen verifies that the file at path is the same one we expected(TOCTOU check).
+// Ensure the file we opened is the same one we discovered in the walk.
+// This prevents attacks where a file is swapped for a symlink after discovery.
+func secureFileOpen(absFilePath string, expected os.FileInfo) (*os.File, error) {
+	f, err := os.Open(absFilePath)
+	if err != nil {
+		return nil, err
+	}
+
+	openedInfo, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("failed to stat opened file: %w", err)
+	}
+
+	if !os.SameFile(expected, openedInfo) {
+		f.Close()
+		return nil, fmt.Errorf("file changed during backup (TOCTOU): %s", absFilePath)
+	}
+
+	return f, nil
 }

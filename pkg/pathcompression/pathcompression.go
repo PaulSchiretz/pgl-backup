@@ -37,14 +37,16 @@ var ErrNothingToCompress = hints.New("nothing to compress")
 var ErrNothingToExtract = hints.New("nothing to extract")
 
 type PathCompressor struct {
-	ioWriterPool *sync.Pool
-	ioBufferPool *sync.Pool
+	ioWriterPool       *sync.Pool
+	ioBufferPool       *sync.Pool
+	numCompressWorkers int
 }
 
 // NewPathCompressor creates a new PathCompressor with the given configuration.
-func NewPathCompressor(bufferSizeKB int) *PathCompressor {
+func NewPathCompressor(bufferSizeKB int, numCompressWorkers int) *PathCompressor {
 	bufferSize := bufferSizeKB * 1024
 	return &PathCompressor{
+		numCompressWorkers: numCompressWorkers,
 		ioWriterPool: &sync.Pool{
 			New: func() any {
 				return bufio.NewWriterSize(io.Discard, bufferSize)

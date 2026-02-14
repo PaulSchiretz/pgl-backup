@@ -188,9 +188,13 @@ func (mw *syncMetricWriter) Write(p []byte) (n int, err error) {
 	return
 }
 
+func (mw *syncMetricWriter) Reset(w io.Writer) {
+	mw.w = w
+}
+
 // copyFileHelper handles the low-level details of copying a single file.
 // It ensures atomicity by writing to a temporary file first and then renaming it.
-func (t *nativeTask) copyFileHelper(absSrcPath, absTrgPath string, task *syncTask, retryCount int, retryWait time.Duration) error {
+func (t *nativeTask) copyFileHelper(absSrcPath, absTrgPath string, task *syncTask, retryCount int, retryWait time.Duration, mw *syncMetricWriter) error {
 	var lastErr error
 	for i := range retryCount + 1 {
 		if i > 0 {
@@ -232,7 +236,8 @@ func (t *nativeTask) copyFileHelper(absSrcPath, absTrgPath string, task *syncTas
 			bufPtr := t.ioBufferPool.Get().(*[]byte)
 			defer t.ioBufferPool.Put(bufPtr)
 
-			mw := &syncMetricWriter{w: out, metrics: t.metrics}
+			mw.Reset(out)
+			defer mw.Reset(nil)
 			// 3. Copy content
 			if _, err := io.CopyBuffer(mw, in, *bufPtr); err != nil {
 				out.Close() // Close before returning on error, buffer is released by defer
@@ -510,7 +515,7 @@ func (t *nativeTask) isExcluded(relPathKey, relPathBasename string, isDir bool) 
 
 // processFileSync checks if a file needs to be copied (based on size/time)
 // and triggers the copy operation if needed.
-func (t *nativeTask) processFileSync(task *syncTask) error {
+func (t *nativeTask) processFileSync(task *syncTask, mw *syncMetricWriter) error {
 	if t.dryRun {
 		plog.Notice("[DRY RUN] COPY", "path", task.RelPathKey)
 		return nil
@@ -565,7 +570,7 @@ func (t *nativeTask) processFileSync(task *syncTask) error {
 		return fmt.Errorf("failed to lstat destination file %s: %w", absTrgPath, err)
 	}
 
-	if err := t.copyFileHelper(absSrcPath, absTrgPath, task, t.retryCount, t.retryWait); err != nil {
+	if err := t.copyFileHelper(absSrcPath, absTrgPath, task, t.retryCount, t.retryWait, mw); err != nil {
 		return fmt.Errorf("failed to copy file to %s: %w", absTrgPath, err)
 	}
 
@@ -863,6 +868,8 @@ func (t *nativeTask) syncTaskProducer() {
 func (t *nativeTask) syncWorker() {
 	defer t.syncWg.Done()
 
+	mw := &syncMetricWriter{metrics: t.metrics}
+
 	for {
 		select {
 		case <-t.ctx.Done():
@@ -915,7 +922,7 @@ func (t *nativeTask) syncWorker() {
 				if task.PathInfo.IsSymlink {
 					err = t.processSymlinkSync(task)
 				} else {
-					err = t.processFileSync(task)
+					err = t.processFileSync(task, mw)
 				}
 
 				if err != nil {
