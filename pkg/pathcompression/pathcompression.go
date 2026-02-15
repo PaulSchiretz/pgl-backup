@@ -20,13 +20,12 @@
 package pathcompression
 
 import (
-	"bufio"
 	"context"
-	"io"
 	"sync"
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/hints"
+	"github.com/paulschiretz/pgl-backup/pkg/limiter"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompressionmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
@@ -37,26 +36,29 @@ var ErrNothingToCompress = hints.New("nothing to compress")
 var ErrNothingToExtract = hints.New("nothing to extract")
 
 type PathCompressor struct {
-	ioWriterPool       *sync.Pool
-	ioBufferPool       *sync.Pool
+	ioBufferPool *sync.Pool
+	ioBufferSize int64
+
+	readAheadLimiter   *limiter.Memory
+	readAheadLimitSize int64
+
 	numCompressWorkers int
 }
 
 // NewPathCompressor creates a new PathCompressor with the given configuration.
-func NewPathCompressor(bufferSizeKB int, numCompressWorkers int) *PathCompressor {
-	bufferSize := bufferSizeKB * 1024
+func NewPathCompressor(bufferSizeKB, readAheadLimitKB int64, numCompressWorkers int) *PathCompressor {
+	ioBufferSize := bufferSizeKB * 1024
+	readAheadLimitSize := readAheadLimitKB * 1024
 	return &PathCompressor{
-		numCompressWorkers: numCompressWorkers,
-		ioWriterPool: &sync.Pool{
-			New: func() any {
-				return bufio.NewWriterSize(io.Discard, bufferSize)
-			},
-		},
 		ioBufferPool: &sync.Pool{
 			New: func() any {
-				return new(make([]byte, bufferSize))
+				return new(make([]byte, ioBufferSize))
 			},
 		},
+		ioBufferSize:       ioBufferSize,
+		readAheadLimiter:   limiter.NewMemory(readAheadLimitSize),
+		readAheadLimitSize: readAheadLimitSize,
+		numCompressWorkers: numCompressWorkers,
 	}
 }
 

@@ -209,7 +209,8 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
       "mirrorWorkers": 4,
       "deleteWorkers": 4,
       "compressWorkers": 4,
-      "bufferSizeKB": 256
+      "bufferSizeKB": 256,
+      "readAheadLimitKB": 262144
     }
   },
   "sync": {
@@ -849,8 +850,8 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `mirror-workers` / `engine.performance.mirrorWorkers` | `int` | `4` | Number of concurrent workers for file deletions in mirror mode. |
 | `delete-workers` / `engine.performance.deleteWorkers` | `int` | `4` | Number of concurrent workers for deleting outdated backups. |
 | `compress-workers` / `engine.performance.compressWorkers` | `int` | `4` | Number of concurrent workers for compressing backups. |
-| `buffer-size-kb` / `engine.performance.bufferSizeKB` | `int` | `256` | Size of the I/O buffer in kilobytes for file copies and compression. |
-
+| `buffer-size-kb` / `engine.performance.bufferSizeKB` | `int64` | `256` | Size of the I/O buffer in kilobytes for file copies and compression. |
+| `readahead-limit-kb` / `engine.performance.readAheadLimitKB` | `int64` | `262144` | Limit of the I/O readahead in kilobytes for file compression. 0 disables the readahead on systems with very low memory |
 ## Troubleshooting
 
 ### Error: "Unrecognized Developer" or "Untrusted" warning on startup

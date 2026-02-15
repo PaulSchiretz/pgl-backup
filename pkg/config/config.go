@@ -56,11 +56,12 @@ type HooksConfig struct {
 }
 
 type EnginePerformanceConfig struct {
-	SyncWorkers     int `json:"syncWorkers"`
-	MirrorWorkers   int `json:"mirrorWorkers"`
-	DeleteWorkers   int `json:"deleteWorkers"`
-	CompressWorkers int `json:"compressWorkers"`
-	BufferSizeKB    int `json:"bufferSizeKB" comment:"Size of the I/O buffer in kilobytes for file copies and compression. Default is 256 (256KB)."`
+	SyncWorkers      int   `json:"syncWorkers"`
+	MirrorWorkers    int   `json:"mirrorWorkers"`
+	DeleteWorkers    int   `json:"deleteWorkers"`
+	CompressWorkers  int   `json:"compressWorkers"`
+	BufferSizeKB     int64 `json:"bufferSizeKB" comment:"Size of the I/O buffer in kilobytes for file copies and compression. Default is 256 (256KB)."`
+	ReadAheadLimitKB int64 `json:"readAheadLimitKB" comment:"Limit of the I/O readahead in kilobytes for file compression. Default is 262144 (256MB)."`
 }
 
 type EngineConfig struct {
@@ -168,11 +169,12 @@ func NewDefault() Config {
 			FailFast: false,
 			Metrics:  true, // Default to enabled for detailed performance and file-counting metrics.
 			Performance: EnginePerformanceConfig{ // Initialize performance settings here
-				SyncWorkers:     4,   // Default to 4. Safe for HDDs (prevents thrashing), decent for SSDs.
-				MirrorWorkers:   4,   // Default to 4.
-				DeleteWorkers:   4,   // A sensible default for deleting entire backup sets.
-				CompressWorkers: 4,   // Default to 4.
-				BufferSizeKB:    256, // Default to 256KB buffer. Keep it between 64KB-4MB
+				SyncWorkers:      4,      // Default to 4. Safe for HDDs (prevents thrashing), decent for SSDs.
+				MirrorWorkers:    4,      // Default to 4.
+				DeleteWorkers:    4,      // A sensible default for deleting entire backup sets.
+				CompressWorkers:  4,      // Default to 4.
+				BufferSizeKB:     256,    // Default to 256KB buffer. Keep it between 64KB-4MB
+				ReadAheadLimitKB: 262144, // Default to 256MB buffer.
 			}},
 		Sync: SyncConfig{
 			Enabled:               true, // Enabled by default.
@@ -408,6 +410,9 @@ func (c *Config) Validate() error {
 	if c.Engine.Performance.BufferSizeKB <= 0 {
 		return fmt.Errorf("engine.performance.bufferSizeKB must be greater than 0")
 	}
+	if c.Engine.Performance.ReadAheadLimitKB < 0 { // 0 means disabled
+		return fmt.Errorf("engine.performance.readAheadLimitKB must be at least 0")
+	}
 
 	if err := validateGlobPatterns("defaultExcludeFiles", c.Sync.DefaultExcludeFiles); err != nil {
 		return err
@@ -466,6 +471,7 @@ func (c *Config) LogSummary(command flagparse.Command, absBasePath, absSourcePat
 		logArgs = append(logArgs, "delete_workers", c.Engine.Performance.DeleteWorkers)
 		logArgs = append(logArgs, "delete_workers", c.Engine.Performance.CompressWorkers)
 		logArgs = append(logArgs, "buffer_size_kb", c.Engine.Performance.BufferSizeKB)
+		logArgs = append(logArgs, "readahead_limit_kb", c.Engine.Performance.ReadAheadLimitKB)
 		logArgs = append(logArgs, "overwrite", c.Runtime.BackupOverwriteBehavior)
 
 		if c.Sync.Enabled {
@@ -542,6 +548,7 @@ func (c *Config) LogSummary(command flagparse.Command, absBasePath, absSourcePat
 		logArgs = append(logArgs, "mode", c.Runtime.Mode)
 		logArgs = append(logArgs, "sync_workers", c.Engine.Performance.SyncWorkers)
 		logArgs = append(logArgs, "buffer_size_kb", c.Engine.Performance.BufferSizeKB)
+		logArgs = append(logArgs, "readahead_limit_kb", c.Engine.Performance.ReadAheadLimitKB)
 		logArgs = append(logArgs, "overwrite", c.Runtime.RestoreOverwriteBehavior)
 
 		if c.Sync.Enabled {
@@ -657,7 +664,9 @@ func MergeConfigWithFlags(command flagparse.Command, base Config, setFlags map[s
 		case "compress-workers":
 			merged.Engine.Performance.CompressWorkers = value.(int)
 		case "buffer-size-kb":
-			merged.Engine.Performance.BufferSizeKB = value.(int)
+			merged.Engine.Performance.BufferSizeKB = value.(int64)
+		case "readahead-limit-kb":
+			merged.Engine.Performance.ReadAheadLimitKB = value.(int64)
 		case "sync-engine":
 			merged.Sync.Engine = value.(string)
 		case "sync-retry-count":

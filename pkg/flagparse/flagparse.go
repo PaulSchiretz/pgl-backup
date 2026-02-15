@@ -23,15 +23,16 @@ type cliFlags struct {
 	Mode *string
 
 	// Shared: Backup / Init
-	Source          *string
-	Base            *string
-	Target          *string
-	FailFast        *bool
-	SyncWorkers     *int
-	MirrorWorkers   *int
-	DeleteWorkers   *int
-	CompressWorkers *int
-	BufferSizeKB    *int
+	Source           *string
+	Base             *string
+	Target           *string
+	FailFast         *bool
+	SyncWorkers      *int
+	MirrorWorkers    *int
+	DeleteWorkers    *int
+	CompressWorkers  *int
+	BufferSizeKB     *int64
+	ReadAheadLimitKB *int64
 
 	SyncEngine                *string
 	SyncRetryCount            *int
@@ -101,7 +102,8 @@ func registerBackupFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.MirrorWorkers = fs.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
 	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
 	f.CompressWorkers = fs.Int("compress-workers", 0, "Number of worker goroutines for compressing backups.")
-	f.BufferSizeKB = fs.Int("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression.")
+	f.BufferSizeKB = fs.Int64("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression.")
+	f.ReadAheadLimitKB = fs.Int64("readahead-limit-kb", 0, "Limit of the I/O readahead in kilobytes for file compression.")
 
 	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
 	f.SyncRetryCount = fs.Int("sync-retry-count", 0, "Number of retries for failed file copies.")
@@ -149,7 +151,8 @@ func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.MirrorWorkers = fs.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
 	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
 	f.CompressWorkers = fs.Int("compress-workers", 0, "Number of worker goroutines for compressing backups.")
-	f.BufferSizeKB = fs.Int("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression.")
+	f.BufferSizeKB = fs.Int64("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression.")
+	f.ReadAheadLimitKB = fs.Int64("readahead-limit-kb", 0, "Limit of the I/O readahead in kilobytes for file compression.")
 
 	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
 	f.SyncRetryCount = fs.Int("sync-retry-count", 0, "Number of retries for failed file copies.")
@@ -210,7 +213,8 @@ func registerRestoreFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.SyncRetryWait = fs.Int("sync-retry-wait", 0, "Seconds to wait between retries.")
 	f.SyncModTimeWindow = fs.Int("sync-mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
 	f.SyncWorkers = fs.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
-	f.BufferSizeKB = fs.Int("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes.")
+	f.BufferSizeKB = fs.Int64("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes.")
+	f.ReadAheadLimitKB = fs.Int64("readahead-limit-kb", 0, "Limit of the I/O readahead in kilobytes for file compression.")
 
 	f.IgnoreCaseMismatch = fs.Bool("ignore-case-mismatch", false, "Bypass the case-sensitivity safety check (use with caution).")
 	f.UserExcludeFiles = fs.String("user-exclude-files", "", "Comma-separated list of case-insensitive file names to exclude (supports glob patterns).")
@@ -360,6 +364,7 @@ func flagsToMap(c Command, fs *flag.FlagSet, f *cliFlags) (map[string]any, error
 	addIfUsed(flagMap, usedFlags, "delete-workers", f.DeleteWorkers)
 	addIfUsed(flagMap, usedFlags, "compress-workers", f.CompressWorkers)
 	addIfUsed(flagMap, usedFlags, "buffer-size-kb", f.BufferSizeKB)
+	addIfUsed(flagMap, usedFlags, "readahead-limit-kb", f.ReadAheadLimitKB)
 
 	addIfUsed(flagMap, usedFlags, "sync-engine", f.SyncEngine)
 	addIfUsed(flagMap, usedFlags, "sync-retry-count", f.SyncRetryCount)

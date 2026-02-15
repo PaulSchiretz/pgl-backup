@@ -22,9 +22,12 @@ var ErrDisabled = hints.New("sync is disabled")
 
 // PathSyncer orchestrates the file synchronization process.
 type PathSyncer struct {
-	ioBufferPool     *sync.Pool // pointer to avoid copying the noCopy field if the struct is ever passed by value
-	syncTaskPool     *sync.Pool
-	mirrorTaskPool   *sync.Pool
+	ioBufferPool *sync.Pool // pointer to avoid copying the noCopy field if the struct is ever passed by value
+	ioBufferSize int64
+
+	syncTaskPool   *sync.Pool
+	mirrorTaskPool *sync.Pool
+
 	numSyncWorkers   int
 	numMirrorWorkers int
 
@@ -33,16 +36,15 @@ type PathSyncer struct {
 }
 
 // NewPathSyncer creates a new PathSyncer with the given configuration.
-func NewPathSyncer(bufferSizeKB int, numSyncWorkers int, numMirrorWorkers int) *PathSyncer {
-	bufferSize := bufferSizeKB * 1024 // Buffer size is configured in KB, so multiply by 1024.
+func NewPathSyncer(bufferSizeKB int64, numSyncWorkers int, numMirrorWorkers int) *PathSyncer {
+	ioBufferSize := bufferSizeKB * 1024 // Buffer size is configured in KB, so multiply by 1024.
 	return &PathSyncer{
-		numSyncWorkers:   numSyncWorkers,
-		numMirrorWorkers: numMirrorWorkers,
 		ioBufferPool: &sync.Pool{
 			New: func() any {
-				return new(make([]byte, bufferSize))
+				return new(make([]byte, ioBufferSize))
 			},
 		},
+		ioBufferSize: ioBufferSize,
 		syncTaskPool: &sync.Pool{
 			New: func() any {
 				return new(syncTask)
@@ -53,6 +55,8 @@ func NewPathSyncer(bufferSizeKB int, numSyncWorkers int, numMirrorWorkers int) *
 				return new(mirrorTask)
 			},
 		},
+		numSyncWorkers:   numSyncWorkers,
+		numMirrorWorkers: numMirrorWorkers,
 	}
 }
 

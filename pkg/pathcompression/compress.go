@@ -14,14 +14,11 @@ import (
 	"github.com/klauspost/compress/zip"
 	"github.com/klauspost/compress/zstd"
 	"github.com/klauspost/pgzip"
+	"github.com/paulschiretz/pgl-backup/pkg/limiter"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompressionmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
-
-// maxPreReadSize defines the threshold (4MB). Files smaller than this
-// will be read fully into memory to parallelize IO.
-const maxPreReadSize = 4 * 1024 * 1024 // TODO add to compression plan and config!!!
 
 // compressor defines the interface for compressing a directory into an archive file.
 type compressor interface {
@@ -47,39 +44,45 @@ func (mw *compressMetricWriter) Reset(w io.Writer) {
 }
 
 // newCompressor returns the correct implementation based on the format.
-func newCompressor(format Format, level Level, writerPool, bufferPool *sync.Pool, numWorkers int, metrics pathcompressionmetrics.Metrics) (compressor, error) {
+func newCompressor(format Format, level Level, ioBufferPool *sync.Pool, ioBufferSize int64, readAheadLimiter *limiter.Memory, readAheadLimitSize int64, numWorkers int, metrics pathcompressionmetrics.Metrics) (compressor, error) {
 	switch format {
 	case Zip:
 		return &zipCompressor{
-			level:         level,
-			ioWriterPool:  writerPool,
-			ioBufferPool:  bufferPool,
-			numZipWorkers: numWorkers,
-			metrics:       metrics,
-			zipTasksChan:  make(chan *zipTask, numWorkers*4),
-			zipErrsChan:   make(chan error, 1),
+			level:              level,
+			numZipWorkers:      numWorkers,
+			metrics:            metrics,
+			zipTasksChan:       make(chan *zipTask, numWorkers*4),
+			zipErrsChan:        make(chan error, 1),
+			ioBufferPool:       ioBufferPool,
+			ioBufferSize:       ioBufferSize,
+			readAheadLimiter:   readAheadLimiter,
+			readAheadLimitSize: readAheadLimitSize,
 		}, nil
 	case TarGz:
 		return &tarCompressor{
-			compression:   TarGz,
-			level:         level,
-			ioWriterPool:  writerPool,
-			ioBufferPool:  bufferPool,
-			numTarWorkers: numWorkers,
-			metrics:       metrics,
-			tarTasksChan:  make(chan *tarTask, numWorkers*4),
-			tarErrsChan:   make(chan error, 1),
+			compression:        TarGz,
+			level:              level,
+			numTarWorkers:      numWorkers,
+			metrics:            metrics,
+			tarTasksChan:       make(chan *tarTask, numWorkers*4),
+			tarErrsChan:        make(chan error, 1),
+			ioBufferPool:       ioBufferPool,
+			ioBufferSize:       ioBufferSize,
+			readAheadLimiter:   readAheadLimiter,
+			readAheadLimitSize: readAheadLimitSize,
 		}, nil
 	case TarZst:
 		return &tarCompressor{
-			compression:   TarZst,
-			level:         level,
-			ioWriterPool:  writerPool,
-			ioBufferPool:  bufferPool,
-			numTarWorkers: numWorkers,
-			metrics:       metrics,
-			tarTasksChan:  make(chan *tarTask, numWorkers*4),
-			tarErrsChan:   make(chan error, 1),
+			compression:        TarZst,
+			level:              level,
+			numTarWorkers:      numWorkers,
+			metrics:            metrics,
+			tarTasksChan:       make(chan *tarTask, numWorkers*4),
+			tarErrsChan:        make(chan error, 1),
+			ioBufferPool:       ioBufferPool,
+			ioBufferSize:       ioBufferSize,
+			readAheadLimiter:   readAheadLimiter,
+			readAheadLimitSize: readAheadLimitSize,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported format: %s", format)
@@ -87,8 +90,13 @@ func newCompressor(format Format, level Level, writerPool, bufferPool *sync.Pool
 }
 
 type zipCompressor struct {
-	ioWriterPool *sync.Pool
+	// Read buffer pool
 	ioBufferPool *sync.Pool
+	ioBufferSize int64
+
+	// Memory limiter for file readahead
+	readAheadLimiter   *limiter.Memory
+	readAheadLimitSize int64
 
 	level Level
 	mu    sync.Mutex
@@ -182,12 +190,7 @@ func (c *zipCompressor) handleZip() (retErr error) {
 
 	// Get a Buffer from the pool
 	mw := &compressMetricWriter{w: c.trgF, metrics: c.metrics}
-	bufWriter := c.ioWriterPool.Get().(*bufio.Writer)
-	bufWriter.Reset(mw)
-	defer func() {
-		bufWriter.Reset(io.Discard)
-		c.ioWriterPool.Put(bufWriter)
-	}()
+	bufWriter := bufio.NewWriterSize(mw, int(c.ioBufferSize))
 
 	var lvl int
 	switch c.level {
@@ -316,10 +319,21 @@ func (c *zipCompressor) zipWorker() {
 		var err error
 		if t.info.Mode()&os.ModeSymlink != 0 {
 			err = c.writeSymlink(t.absSrcPath, t.relPathKey, t.info)
-		} else if t.info.Size() <= maxPreReadSize {
-			err = c.writeFilePreRead(t.absSrcPath, t.relPathKey, t.info)
 		} else {
-			err = c.writeFileStream(t.absSrcPath, t.relPathKey, t.info, *bufPtr)
+			fSize := t.info.Size()
+			// Attempt to acquire readahead budget for this file
+			if c.readAheadLimiter.TryAcquire(fSize) {
+				// Happy Path: We have budget. Read fully to RAM.
+				// We wrap this in a func to ensure Release happens immediately after processing
+				err = func() error {
+					defer c.readAheadLimiter.Release(fSize)
+					return c.writeFilePreRead(t.absSrcPath, t.relPathKey, t.info)
+				}()
+			} else {
+				// Fallback: Budget full or file too big. Stream serially.
+				// This holds the lock longer but uses minimal RAM.
+				err = c.writeFileStream(t.absSrcPath, t.relPathKey, t.info, *bufPtr)
+			}
 		}
 
 		if err != nil {
@@ -435,13 +449,19 @@ func (c *zipCompressor) sendErr(err error) {
 }
 
 type tarCompressor struct {
-	ioWriterPool *sync.Pool
+	// Read buffer pool
 	ioBufferPool *sync.Pool
-	compression  Format
-	level        Level
-	mu           sync.Mutex
-	tw           *tar.Writer
-	metrics      pathcompressionmetrics.Metrics
+	ioBufferSize int64
+
+	// Memory limiter for file readahead
+	readAheadLimiter   *limiter.Memory
+	readAheadLimitSize int64
+
+	compression Format
+	level       Level
+	mu          sync.Mutex
+	tw          *tar.Writer
+	metrics     pathcompressionmetrics.Metrics
 
 	// ctx is the cancellable context for the entire run.
 	ctx context.Context
@@ -510,12 +530,7 @@ func (c *tarCompressor) Compress(ctx context.Context, absSourcePath, absArchiveF
 func (c *tarCompressor) handleTar() (retErr error) {
 
 	mw := &compressMetricWriter{w: c.trgF, metrics: c.metrics}
-	bufWriter := c.ioWriterPool.Get().(*bufio.Writer)
-	bufWriter.Reset(mw)
-	defer func() {
-		bufWriter.Reset(io.Discard)
-		c.ioWriterPool.Put(bufWriter)
-	}()
+	bufWriter := bufio.NewWriterSize(mw, int(c.ioBufferSize))
 
 	var compressedWriter io.WriteCloser
 	if c.compression == TarZst {
@@ -659,12 +674,22 @@ func (c *tarCompressor) tarWorker() {
 		var err error
 		if t.info.Mode()&os.ModeSymlink != 0 {
 			err = c.writeSymlink(t.absSrcPath, t.relPathKey, t.info)
-		} else if t.info.Size() <= maxPreReadSize {
-			err = c.writeFilePreRead(t.absSrcPath, t.relPathKey, t.info)
 		} else {
-			err = c.writeFileStream(t.absSrcPath, t.relPathKey, t.info, *bufPtr)
+			fSize := t.info.Size()
+			// Attempt to acquire readahead budget for this file
+			if c.readAheadLimiter.TryAcquire(fSize) {
+				// Happy Path: We have budget. Read fully to RAM.
+				// We wrap this in a func to ensure Release happens immediately after processing
+				err = func() error {
+					defer c.readAheadLimiter.Release(fSize)
+					return c.writeFilePreRead(t.absSrcPath, t.relPathKey, t.info)
+				}()
+			} else {
+				// Fallback: Budget full or file too big. Stream serially.
+				// This holds the lock longer but uses minimal RAM.
+				err = c.writeFileStream(t.absSrcPath, t.relPathKey, t.info, *bufPtr)
+			}
 		}
-
 		if err != nil {
 			c.sendErr(err)
 			return
