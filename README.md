@@ -27,7 +27,7 @@
     *   [Step 3: Run Your First Backup](#step-3-run-your-first-backup)
 *   [Usage and Examples](#usage-and-examples)
     *   [Basic Backup](#basic-backup)
-    *   [Protable Usage (Plug-and-Play)](#portable-usage-plug-and-play)
+    *   [Portable Usage (Plug-and-Play)](#portable-usage-plug-and-play)
     *   [Dry Run](#dry-run)
     *   [One-Off Snapshot Backup](#one-off-snapshot-backup)
     *   [Excluding Files and Directories](#excluding-files-and-directories)
@@ -852,6 +852,7 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `compress-workers` / `engine.performance.compressWorkers` | `int` | `4` | Number of concurrent workers for compressing backups. |
 | `buffer-size-kb` / `engine.performance.bufferSizeKB` | `int64` | `256` | Size of the I/O buffer in kilobytes for file copies and compression. |
 | `readahead-limit-kb` / `engine.performance.readAheadLimitKB` | `int64` | `262144` | Limit of the I/O readahead in kilobytes for file compression. 0 disables the readahead on systems with very low memory |
+
 ## Troubleshooting
 
 ### Error: "Unrecognized Developer" or "Untrusted" warning on startup
