@@ -272,16 +272,28 @@ func (l *Lock) heartbeat() {
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
+	// Track the last successful update to detect if we've effectively lost the lock
+	lastSuccess := time.Now()
+
 	for {
 		select {
 		case <-l.ctx.Done():
 			return
 		case <-ticker.C:
+			// If we haven't updated the lock file within the stale timeout window,
+			// we must assume we've lost the lock (or IO is broken).
+			if time.Since(lastSuccess) > staleTimeout {
+				plog.Error("Lost lock ownership due to persistent I/O failures; aborting", "path", l.path)
+				l.cancel() // Cancel the context to stop the application
+				return
+			}
+
 			// Update the timestamp on our internal content and update the file
 			l.content.LastUpdate = time.Now().UTC()
 			if err := updateLockFileAtomic(l.path, l.content); err != nil {
 				plog.Warn("Heartbeat failed to update lock file", "error", err)
-				// Note: We do not exit the loop. We try again next tick.
+			} else {
+				lastSuccess = time.Now()
 			}
 		}
 	}
