@@ -602,6 +602,10 @@ func (c *Config) LogSummary(command flagparse.Command, absBasePath, absSourcePat
 		logArgs = append(logArgs, "sort", c.Runtime.ListSort)
 	}
 	plog.Info("Configuration loaded", logArgs...)
+
+	if c.Sync.Enabled && c.Sync.DisableSafeCopy && (command == flagparse.Backup || command == flagparse.Restore) {
+		plog.Warn("Safe Copy is DISABLED. Atomicity is not guaranteed. Power loss during backup/restore may result in corrupt files.")
+	}
 }
 
 // validateGlobPatterns checks if a list of strings are valid glob patterns.
