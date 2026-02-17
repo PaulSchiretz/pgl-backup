@@ -35,6 +35,7 @@ type cliFlags struct {
 	ReadAheadLimitKB *int64
 
 	SyncEngine                *string
+	SyncDisableSafeCopy       *bool
 	SyncRetryCount            *int
 	SyncRetryWait             *int
 	SyncModTimeWindow         *int
@@ -106,6 +107,7 @@ func registerBackupFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.ReadAheadLimitKB = fs.Int64("readahead-limit-kb", 0, "Limit of the I/O readahead in kilobytes for file compression.")
 
 	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
+	f.SyncDisableSafeCopy = fs.Bool("sync-disable-safe-copy", false, "Disable 'copy then rename' for secure file syncing (faster but less safe).")
 	f.SyncRetryCount = fs.Int("sync-retry-count", 0, "Number of retries for failed file copies.")
 	f.SyncRetryWait = fs.Int("sync-retry-wait", 0, "Seconds to wait between retries.")
 	f.SyncModTimeWindow = fs.Int("sync-mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
@@ -155,6 +157,7 @@ func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.ReadAheadLimitKB = fs.Int64("readahead-limit-kb", 0, "Limit of the I/O readahead in kilobytes for file compression.")
 
 	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
+	f.SyncDisableSafeCopy = fs.Bool("sync-disable-safe-copy", false, "Disable 'copy then rename' for secure file syncing (faster but less safe).")
 	f.SyncRetryCount = fs.Int("sync-retry-count", 0, "Number of retries for failed file copies.")
 	f.SyncRetryWait = fs.Int("sync-retry-wait", 0, "Seconds to wait between retries.")
 	f.SyncModTimeWindow = fs.Int("sync-mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
@@ -209,6 +212,7 @@ func registerRestoreFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.FailFast = fs.Bool("fail-fast", false, "Stop the restore immediately on the first error.")
 	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
 
+	f.SyncDisableSafeCopy = fs.Bool("sync-disable-safe-copy", false, "Disable 'copy then rename' for secure file syncing (faster but less safe).")
 	f.SyncRetryCount = fs.Int("sync-retry-count", 0, "Number of retries for failed file copies.")
 	f.SyncRetryWait = fs.Int("sync-retry-wait", 0, "Seconds to wait between retries.")
 	f.SyncModTimeWindow = fs.Int("sync-mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
@@ -367,6 +371,8 @@ func flagsToMap(c Command, fs *flag.FlagSet, f *cliFlags) (map[string]any, error
 	addIfUsed(flagMap, usedFlags, "readahead-limit-kb", f.ReadAheadLimitKB)
 
 	addIfUsed(flagMap, usedFlags, "sync-engine", f.SyncEngine)
+
+	addIfUsed(flagMap, usedFlags, "sync-disable-safe-copy", f.SyncDisableSafeCopy)
 	addIfUsed(flagMap, usedFlags, "sync-retry-count", f.SyncRetryCount)
 	addIfUsed(flagMap, usedFlags, "sync-retry-wait", f.SyncRetryWait)
 	addIfUsed(flagMap, usedFlags, "sync-mod-time-window", f.SyncModTimeWindow)

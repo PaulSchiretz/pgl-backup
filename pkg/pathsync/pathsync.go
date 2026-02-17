@@ -220,13 +220,14 @@ func (s *PathSyncer) runNativeTask(ctx context.Context, absSourcePath, absSyncTa
 	}
 
 	t := &nativeTask{
-		PathSyncer:   s, // Just pass the compressor pointer
-		src:          absSourcePath,
-		trg:          absSyncTargetPath,
-		dryRun:       p.DryRun,
-		failFast:     p.FailFast,
-		fileExcludes: preProcessExclusions(p.ExcludeFiles),
-		dirExcludes:  preProcessExclusions(p.ExcludeDirs),
+		PathSyncer:      s, // Just pass the compressor pointer
+		src:             absSourcePath,
+		trg:             absSyncTargetPath,
+		dryRun:          p.DryRun,
+		failFast:        p.FailFast,
+		disableSafeCopy: p.DisableSafeCopy,
+		fileExcludes:    preProcessExclusions(p.ExcludeFiles),
+		dirExcludes:     preProcessExclusions(p.ExcludeDirs),
 
 		retryCount:    p.RetryCount,
 		retryWait:     p.RetryWait,

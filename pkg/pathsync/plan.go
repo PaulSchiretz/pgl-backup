@@ -10,6 +10,7 @@ type Plan struct {
 	Engine                Engine
 	PreserveSourceDirName bool
 	Mirror                bool
+	DisableSafeCopy       bool
 
 	RetryCount        int
 	RetryWait         time.Duration

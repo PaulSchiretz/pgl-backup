@@ -74,6 +74,7 @@ type SyncConfig struct {
 	Enabled               bool     `json:"enabled"`
 	PreserveSourceDirName bool     `json:"preserveSourceDirName"`
 	Engine                string   `json:"engine"`
+	DisableSafeCopy       bool     `json:"disableSafeCopy"`
 	RetryCount            int      `json:"retryCount"`
 	RetryWaitSeconds      int      `json:"retryWaitSeconds"`
 	ModTimeWindowSeconds  int      `json:"modTimeWindowSeconds" comment:"Time window in seconds to consider file modification times equal. Handles filesystem timestamp precision differences. Default is 1s. 0 means exact match."`
@@ -179,6 +180,7 @@ func NewDefault() Config {
 		Sync: SyncConfig{
 			Enabled:               true, // Enabled by default.
 			Engine:                "native",
+			DisableSafeCopy:       false,      // Default use safe copy (rename/copy)
 			RetryCount:            3,          // Default retries on failure.
 			RetryWaitSeconds:      5,          // Default wait time between retries.
 			ModTimeWindowSeconds:  1,          // Set the default to 1 second
@@ -669,6 +671,8 @@ func MergeConfigWithFlags(command flagparse.Command, base Config, setFlags map[s
 			merged.Engine.Performance.ReadAheadLimitKB = value.(int64)
 		case "sync-engine":
 			merged.Sync.Engine = value.(string)
+		case "sync-disable-safe-copy":
+			merged.Sync.DisableSafeCopy = value.(bool)
 		case "sync-retry-count":
 			merged.Sync.RetryCount = value.(int)
 		case "sync-retry-wait":

@@ -217,6 +217,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
     "enabled": true,
     "preserveSourceDirName": true,
     "engine": "native",
+    "disableSafeCopy": false,
     "retryCount": 3,
     "retryWaitSeconds": 5,
     "modTimeWindowSeconds": 1,
@@ -812,6 +813,7 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | **Sync Settings** | | | |
 | - / `sync.enabled` | `bool` | `true` | Enable file synchronization. |
 | `sync-engine` / `sync.engine` | `string` | `"native"` | The sync engine to use: `"native"` or `"robocopy"` (Windows only). |
+| `sync-disable-safe-copy` / `sync.disableSafeCopy` | `bool` | `false` | Disable 'copy then rename' for secure file syncing (faster but less safe). |
 | `sync-retry-count` / `sync.retryCount` | `int` | `3` | Number of retries for failed file copies. |
 | `sync-retry-wait` / `sync.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries. |
 | `sync-mod-time-window` / `sync.modTimeWindowSeconds` | `int` | `1` | Time window in seconds to consider file modification times equal. |
@@ -889,6 +891,9 @@ This occurs because the binaries are currently unsigned. Please refer to the [Se
     *   Adjust the `sync-workers` and `buffer-size-kb` settings in your `pgl-backup.config.json` file.
     *   For systems with slow I/O (like a single spinning disk or a high-latency network share), *decreasing* the number of `sync-workers` (e.g., to `1` or `2`) is recommended to minimize seek latency, as higher concurrency can cause significant thrashing.
     *   For systems with very fast I/O (like a local NVMe SSD), increasing `sync-workers` might yield better results.
+*   **Cause**: The default "Safe Copy" mechanism ensures atomicity but increases metadata operations (create temp file + rename). This can be slow on high-latency network shares or with many small files.
+*   **Solution**:
+    *   Try disabling Safe Copy by setting `"disableSafeCopy": true` in your config or using `-sync-disable-safe-copy`. This switches to direct writes, improving performance at the cost of atomicity (a power loss during copy might leave a partial file, which will be fixed on the next run).
 
 ### Error: `failed to create symlink (requires Admin or Developer Mode)`
 

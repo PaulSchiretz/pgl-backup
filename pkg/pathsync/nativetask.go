@@ -110,11 +110,12 @@ type nativeTask struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	src, trg     string
-	dryRun       bool
-	failFast     bool
-	fileExcludes exclusionSet
-	dirExcludes  exclusionSet
+	src, trg        string
+	dryRun          bool
+	failFast        bool
+	disableSafeCopy bool
+	fileExcludes    exclusionSet
+	dirExcludes     exclusionSet
 
 	retryCount        int
 	retryWait         time.Duration
@@ -174,9 +175,9 @@ type nativeTask struct {
 
 // --- Helpers ---
 
-// copyFileHelper handles the low-level details of copying a single file.
+// copyFileSafe handles the low-level details of copying a single file.
 // It ensures atomicity by writing to a temporary file first and then renaming it.
-func (t *nativeTask) copyFileHelper(absSrcPath, absTrgPath string, task *syncTask, retryCount int, retryWait time.Duration) error {
+func (t *nativeTask) copyFileSafe(absSrcPath, absTrgPath string, task *syncTask, retryCount int, retryWait time.Duration) error {
 	var lastErr error
 	for i := range retryCount + 1 {
 		if i > 0 {
@@ -264,6 +265,66 @@ func (t *nativeTask) copyFileHelper(absSrcPath, absTrgPath string, task *syncTas
 
 			// 8. Clear tempPath to prevent the deferred os.Remove from running.
 			absTempPath = ""
+			return nil
+		}()
+
+		if lastErr == nil {
+			return nil // Success
+		}
+	}
+	return fmt.Errorf("failed to copy file from '%s' to '%s' after %d attempts: %w", absSrcPath, absTrgPath, retryCount, lastErr)
+}
+
+// copyFileDirect copies a file directly to the destination, avoiding temporary files and renames.
+// This is faster (fewer metadata ops) but less safe against interruptions.
+func (t *nativeTask) copyFileDirect(absSrcPath, absTrgPath string, task *syncTask, retryCount int, retryWait time.Duration) error {
+	var lastErr error
+	for i := range retryCount + 1 {
+		if i > 0 {
+			plog.Warn("Retrying file copy", "file", absSrcPath, "attempt", fmt.Sprintf("%d/%d", i, retryCount), "after", retryWait)
+			time.Sleep(retryWait)
+		}
+
+		lastErr = func() error {
+			in, err := os.Open(absSrcPath)
+			if err != nil {
+				return fmt.Errorf("failed to open source file %s: %w", absSrcPath, err)
+			}
+			defer in.Close()
+
+			// Open destination file directly. os.O_TRUNC will clear the file if it exists.
+			// The permissions from the source file are used, with the user-write bit always set.
+			out, err := os.OpenFile(absTrgPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, util.WithUserWritePermission(task.PathInfo.Mode))
+			if err != nil {
+				return fmt.Errorf("failed to open destination file %s: %w", absTrgPath, err)
+			}
+			defer out.Close() // Ensure closed on error.
+
+			// Pre-allocate file size to reduce fragmentation.
+			if task.PathInfo.Size > 0 {
+				_ = out.Truncate(task.PathInfo.Size)
+			}
+
+			var bytesWritten int64
+			bufPtr := t.ioBufferPool.Get().(*[]byte)
+			defer t.ioBufferPool.Put(bufPtr)
+			buf := *bufPtr
+			buf = buf[:cap(buf)]
+
+			if bytesWritten, err = io.CopyBuffer(out, in, buf); err != nil {
+				return fmt.Errorf("failed to copy content from %s to %s: %w", absSrcPath, absTrgPath, err)
+			}
+
+			t.metrics.AddBytesWritten(int64(bytesWritten))
+
+			// Close the file to flush data to disk before setting timestamps.
+			if err := out.Close(); err != nil {
+				return fmt.Errorf("failed to close destination file %s: %w", absTrgPath, err)
+			}
+
+			if err := os.Chtimes(absTrgPath, time.Unix(0, task.PathInfo.ModTime), time.Unix(0, task.PathInfo.ModTime)); err != nil {
+				return fmt.Errorf("failed to set timestamps on %s: %w", absTrgPath, err)
+			}
 			return nil
 		}()
 
@@ -512,6 +573,8 @@ func (t *nativeTask) processFileSync(task *syncTask) error {
 		return nil
 	}
 
+	useSafeCopy := !t.disableSafeCopy
+
 	// Convert the paths to the OS-native format for file access
 	absSrcPath := t.denormalizedAbsPath(t.src, task.RelPathKey)
 	absTrgPath := t.denormalizedAbsPath(t.trg, task.RelPathKey)
@@ -552,17 +615,27 @@ func (t *nativeTask) processFileSync(task *syncTask) error {
 			if err := os.RemoveAll(absTrgPath); err != nil {
 				return fmt.Errorf("failed to remove directory at destination %s: %w", absTrgPath, err)
 			}
+			useSafeCopy = true // Use safe copy for this file
 		} else {
-			// Destination is a symlink or special file. os.Rename will overwrite it atomically.
+			// Destination is a symlink or special file. os.Rename will overwrite it atomically, BUT only in safe mode.
 			plog.Warn("Destination is not a regular file, overwriting", "path", task.RelPathKey, "type", trgInfo.Mode().String())
+			useSafeCopy = true // Use safe copy for this file
 		}
 	} else if !os.IsNotExist(err) {
 		// An unexpected error occurred while Lstat-ing the destination.
 		return fmt.Errorf("failed to lstat destination file %s: %w", absTrgPath, err)
 	}
 
-	if err := t.copyFileHelper(absSrcPath, absTrgPath, task, t.retryCount, t.retryWait); err != nil {
-		return fmt.Errorf("failed to copy file to %s: %w", absTrgPath, err)
+	if useSafeCopy {
+		// Use Safe Copy for security.
+		if err := t.copyFileSafe(absSrcPath, absTrgPath, task, t.retryCount, t.retryWait); err != nil {
+			return fmt.Errorf("failed to copy file to %s: %w", absTrgPath, err)
+		}
+	} else {
+		// Use Direct Copy for performance.
+		if err := t.copyFileDirect(absSrcPath, absTrgPath, task, t.retryCount, t.retryWait); err != nil {
+			return fmt.Errorf("failed to copy file to %s: %w", absTrgPath, err)
+		}
 	}
 
 	plog.Notice("COPY", "path", task.RelPathKey)

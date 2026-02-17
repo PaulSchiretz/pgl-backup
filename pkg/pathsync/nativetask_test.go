@@ -217,6 +217,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 		expectedMetrics         *expectedMetrics                    // Optional metrics verification.
 		expectedErrorContains   string                              // If non-empty, asserts that the sync error contains this string.
 		overwriteBehavior       OverwriteBehavior                   // Optional override for overwrite behavior.
+		disableSafeCopy         bool                                // Optional override for safe copy.
 	}{
 		{
 			name:                  "Simple Copy",
@@ -229,6 +230,30 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			expectedDstFiles: map[string]testFile{
 				"file1.txt":        {path: "file1.txt", content: "hello", modTime: baseTime},
 				"subdir/file2.txt": {path: "subdir/file2.txt", content: "world", modTime: baseTime},
+			},
+		},
+		{
+			name:                  "Simple Copy (Safe Mode)",
+			mirror:                false,
+			preserveSourceDirName: false,
+			disableSafeCopy:       false,
+			srcFiles: []testFile{
+				{path: "safe.txt", content: "safe content", modTime: baseTime},
+			},
+			expectedDstFiles: map[string]testFile{
+				"safe.txt": {path: "safe.txt", content: "safe content", modTime: baseTime},
+			},
+		},
+		{
+			name:                  "Simple Copy (Direct Mode)",
+			mirror:                false,
+			preserveSourceDirName: false,
+			disableSafeCopy:       true,
+			srcFiles: []testFile{
+				{path: "direct.txt", content: "direct content", modTime: baseTime},
+			},
+			expectedDstFiles: map[string]testFile{
+				"direct.txt": {path: "direct.txt", content: "direct content", modTime: baseTime},
 			},
 		},
 		{
@@ -811,6 +836,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				Engine:                Native,
 				PreserveSourceDirName: tc.preserveSourceDirName,
 				Mirror:                tc.mirror,
+				DisableSafeCopy:       tc.disableSafeCopy,
 				RetryCount:            3,
 				RetryWait:             5 * time.Second,
 				ExcludeFiles:          tc.excludeFiles,
