@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v1.3.4] - 2026-XX-XX
+## [v1.3.4] - 2026-02-17
 
 ### Added
 - Added `ignore-case-mismatch` flag to bypass preflight check
@@ -23,9 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Implemented parallel read buffering for compression to saturate I/O and reduce bottleneck on sequential file reading.
 - Optimized `zip` compression by reusing the deflate compressor instance, significantly reducing GC pressure.
 - Reduced memory allocations during compression and synchronization by reusing metric writers and readers.
+- Reduced GC pressure during compression by reusing worker buffers for small files.
 
 ### Fixed
 - Fixed a potential panic in `tar` compressor caused by uninitialized context.
+- Fixed a race condition in the native sync engine on Windows where concurrent directory creation could cause "Access is denied" errors.
 
 ## [v1.3.3] - 2026-02-06
 
