@@ -202,7 +202,7 @@ func (s *PathSyncer) runNativeTask(ctx context.Context, absSourcePath, absSyncTa
 	if err != nil {
 		return err
 	}
-	syncedDirCache, err := sharded.NewShardedSet()
+	syncedDirCache, err := sharded.NewShardedMap()
 	if err != nil {
 		return err
 	}
