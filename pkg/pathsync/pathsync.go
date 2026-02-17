@@ -41,7 +41,9 @@ func NewPathSyncer(bufferSizeKB int64, numSyncWorkers int, numMirrorWorkers int)
 	return &PathSyncer{
 		ioBufferPool: &sync.Pool{
 			New: func() any {
-				return new(make([]byte, ioBufferSize))
+				// Allocate a slice with a specific capacity
+				b := make([]byte, ioBufferSize)
+				return &b // We store a pointer to the slice header
 			},
 		},
 		ioBufferSize: ioBufferSize,

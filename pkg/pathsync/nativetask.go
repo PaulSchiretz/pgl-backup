@@ -220,8 +220,14 @@ func (t *nativeTask) copyFileHelper(absSrcPath, absTrgPath string, task *syncTas
 			// Get a buffer from the pool for the copy operation.
 			bufPtr := t.ioBufferPool.Get().(*[]byte)
 			defer t.ioBufferPool.Put(bufPtr)
+			// Dereference the bufPtr to get the actual slice
+			buf := *bufPtr
+			// IMPORTANT: Ensure length is maxed out before use
+			// In case someone messed with it, always reset len to cap
+			// strictly for io.Read/Copy purposes.
+			buf = buf[:cap(buf)]
 
-			if bytesWritten, err = io.CopyBuffer(out, in, *bufPtr); err != nil {
+			if bytesWritten, err = io.CopyBuffer(out, in, buf); err != nil {
 				out.Close() // Close before returning on error, buffer is released by defer
 				return fmt.Errorf("failed to copy content from %s to %s: %w", absSrcPath, absTempPath, err)
 			}
@@ -706,14 +712,15 @@ func (t *nativeTask) ensureParentDirectoryExists(relPathKey string) error {
 	dirInfo := val.(compactPathInfo)
 
 	// 3. Create a synthetic directory task for the parent.
-	parentTask := syncTask{
-		RelPathKey: relPathKey, // The relative path key of the parent directory
-		PathInfo:   dirInfo,    // The cached PathInfo for the parent directory
-	}
+	// Use the pool to avoid allocation in this hot path.
+	parentTask := t.syncTaskPool.Get().(*syncTask)
+	defer t.syncTaskPool.Put(parentTask) // Ensure it's returned.
+	parentTask.RelPathKey = relPathKey   // The relative path key of the parent directory
+	parentTask.PathInfo = dirInfo        // The cached PathInfo for the parent directory
 
 	// 4. Perform the I/O using the main directory handler.
 	// If this fails, the file copy cannot proceed.
-	return t.processDirectorySync(&parentTask)
+	return t.processDirectorySync(parentTask)
 }
 
 // syncTaskProducer is a dedicated goroutine that walks the source directory tree,

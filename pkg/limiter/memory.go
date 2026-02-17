@@ -8,16 +8,18 @@ import (
 // based on memory usage rather than just a fixed number of workers.
 // It is thread-safe.
 type Memory struct {
-	mu        sync.Mutex
-	available int64
-	capacity  int64
+	mu                sync.Mutex
+	available         int64
+	capacity          int64
+	priorityThreshold int64 // Data smaller than this bypasses strict limits
 }
 
 // NewMemory creates a new memory limiter with the specified total capacity in bytes.
-func NewMemory(limit int64) *Memory {
+func NewMemory(limit int64, priorityThreshold int64) *Memory {
 	return &Memory{
-		available: limit,
-		capacity:  limit,
+		available:         limit,
+		capacity:          limit,
+		priorityThreshold: priorityThreshold,
 	}
 }
 
@@ -29,8 +31,15 @@ func (m *Memory) TryAcquire(n int64) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// If the request is larger than the total capacity, it can never be satisfied.
-	// We reject it immediately so the caller can fall back to another approach.
+	// LOGIC A: The Priority Path (Greedy)
+	// If the data is tiny, we take it even if we are out of budget.
+	if n <= m.priorityThreshold {
+		m.available -= n
+		return true
+	}
+
+	// LOGIC B: The Strict Path
+	// For large files, we only allow it if it fits in the remaining capacity.
 	if n > m.capacity {
 		return false
 	}
@@ -51,8 +60,8 @@ func (m *Memory) Release(n int64) {
 
 	m.available += n
 
-	// Sanity check: prevent available memory from exceeding capacity
-	// in case of logic errors in the caller (e.g., double release).
+	// IMPORTANT: Sanity check, prevent available memory from exceeding capacity
+	// in case we have a lot of data < priorityThreshold this could happen
 	if m.available > m.capacity {
 		m.available = m.capacity
 	}

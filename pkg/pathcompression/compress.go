@@ -57,6 +57,11 @@ func newCompressor(format Format, level Level, ioBufferPool *sync.Pool, ioBuffer
 			ioBufferSize:       ioBufferSize,
 			readAheadLimiter:   readAheadLimiter,
 			readAheadLimitSize: readAheadLimitSize,
+			zipTaskPool: &sync.Pool{
+				New: func() any {
+					return new(zipTask)
+				},
+			},
 		}, nil
 	case TarGz:
 		return &tarCompressor{
@@ -70,6 +75,11 @@ func newCompressor(format Format, level Level, ioBufferPool *sync.Pool, ioBuffer
 			ioBufferSize:       ioBufferSize,
 			readAheadLimiter:   readAheadLimiter,
 			readAheadLimitSize: readAheadLimitSize,
+			tarTaskPool: &sync.Pool{
+				New: func() any {
+					return new(tarTask)
+				},
+			},
 		}, nil
 	case TarZst:
 		return &tarCompressor{
@@ -83,6 +93,11 @@ func newCompressor(format Format, level Level, ioBufferPool *sync.Pool, ioBuffer
 			ioBufferSize:       ioBufferSize,
 			readAheadLimiter:   readAheadLimiter,
 			readAheadLimitSize: readAheadLimitSize,
+			tarTaskPool: &sync.Pool{
+				New: func() any {
+					return new(tarTask)
+				},
+			},
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported format: %s", format)
@@ -123,6 +138,9 @@ type zipCompressor struct {
 
 	// Pool for flate writers to reduce GC pressure
 	zipFlatePool sync.Pool
+
+	// Pool for zipTask structs to reduce GC pressure
+	zipTaskPool *sync.Pool
 }
 
 // Wrapper to return flate writer to pool on close
@@ -284,10 +302,16 @@ func (c *zipCompressor) zipTaskProducer() {
 		plog.Notice("ADD", "source", c.src, "file", relPathKey)
 		c.metrics.AddEntriesProcessed(1)
 
+		task := c.zipTaskPool.Get().(*zipTask)
+		task.absSrcPath = absSrcPath
+		task.relPathKey = relPathKey
+		task.info = info
+
 		select {
-		case c.zipTasksChan <- &zipTask{absSrcPath: absSrcPath, relPathKey: relPathKey, info: info}:
+		case c.zipTasksChan <- task:
 			return nil
 		case <-c.ctx.Done():
+			c.zipTaskPool.Put(task) // Return to pool on cancellation
 			return c.ctx.Err()
 		}
 	})
@@ -307,38 +331,55 @@ func (c *zipCompressor) zipWorker() {
 	bufPtr := c.ioBufferPool.Get().(*[]byte)
 	defer c.ioBufferPool.Put(bufPtr)
 
-	for t := range c.zipTasksChan {
+	// Dereference the bufPtr to get the actual slice
+	buf := *bufPtr
+	// IMPORTANT: Ensure length is maxed out before use
+	// In case someone messed with it, always reset len to cap
+	// strictly for io.Read/Copy purposes.
+	buf = buf[:cap(buf)]
+
+	for {
 		select {
 		case <-c.ctx.Done():
 			return
 		case <-c.zipErrsChan:
 			return
-		default:
-		}
-
-		var err error
-		if t.info.Mode()&os.ModeSymlink != 0 {
-			err = c.writeSymlink(t.absSrcPath, t.relPathKey, t.info)
-		} else {
-			fSize := t.info.Size()
-			// Attempt to acquire readahead budget for this file
-			if c.readAheadLimiter.TryAcquire(fSize) {
-				// Happy Path: We have budget. Read fully to RAM.
-				// We wrap this in a func to ensure Release happens immediately after processing
-				err = func() error {
-					defer c.readAheadLimiter.Release(fSize)
-					return c.writeFilePreRead(t.absSrcPath, t.relPathKey, t.info)
-				}()
-			} else {
-				// Fallback: Budget full or file too big. Stream serially.
-				// This holds the lock longer but uses minimal RAM.
-				err = c.writeFileStream(t.absSrcPath, t.relPathKey, t.info, *bufPtr)
+		case t, ok := <-c.zipTasksChan:
+			if !ok {
+				return // Channel closed
 			}
-		}
 
-		if err != nil {
-			c.sendErr(err)
-			return
+			// Use an IIFE to ensure the task is always returned to the pool.
+			func() {
+				defer c.zipTaskPool.Put(t)
+
+				var err error
+				if t.info.Mode()&os.ModeSymlink != 0 {
+					err = c.writeSymlink(t.absSrcPath, t.relPathKey, t.info)
+				} else {
+					fSize := t.info.Size()
+					// Attempt to acquire readahead budget for this file
+					if c.readAheadLimiter.TryAcquire(fSize) {
+						// Happy Path: We have budget. Read fully to RAM.
+						// We wrap this in a func to ensure Release happens immediately after processing
+						err = func() error {
+							defer c.readAheadLimiter.Release(fSize)
+							return c.writeFileBuffered(t.absSrcPath, t.relPathKey, t.info)
+						}()
+					} else {
+						// Fallback: Budget full or file too big. Stream serially.
+						// This holds the lock longer but uses minimal RAM.
+						err = c.writeFileStreamed(t.absSrcPath, t.relPathKey, t.info, buf)
+					}
+				}
+
+				if err != nil {
+					c.sendErr(err)
+					// The return here is from the anonymous func, not zipWorker.
+					// The worker will continue to the next loop iteration unless
+					// the error channel is read, which will break the outer loop.
+				}
+			}()
 		}
 	}
 }
@@ -372,7 +413,7 @@ func (c *zipCompressor) writeSymlink(absSrcPath, relPathKey string, info os.File
 	return err
 }
 
-func (c *zipCompressor) writeFilePreRead(absSrcPath, relPathKey string, info os.FileInfo) error {
+func (c *zipCompressor) writeFileBuffered(absSrcPath, relPathKey string, info os.FileInfo) error {
 
 	// 1. Parallel: Read file into memory (the expensive part)
 	// Security: TOCTOU check
@@ -380,25 +421,35 @@ func (c *zipCompressor) writeFilePreRead(absSrcPath, relPathKey string, info os.
 	if err != nil {
 		return fmt.Errorf("failed to open file %s: %w", absSrcPath, err)
 	}
+	// We only defer if we plan to return early.
+	// If we close manually later, we can rely on the deferred call
+	// to be a "safety net" (no-op if already closed).
 	defer fileToZip.Close()
 
 	// Read All data
-	data, err := io.ReadAll(fileToZip)
-	fileToZip.Close() // Close explicitly! Do not use defer in a loop.
+	fSize := info.Size()
+	data := make([]byte, fSize)
+	_, err = io.ReadFull(fileToZip, data)
 	if err != nil {
 		return fmt.Errorf("failed to read file %s: %w", absSrcPath, err)
 	}
 
-	// 2. Serial: Lock and Write
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	// Check the error on the explicit close
+	if err := fileToZip.Close(); err != nil {
+		return fmt.Errorf("failed to close file: %w", err)
+	}
 
+	// Prepare the header data
 	header, err := zip.FileInfoHeader(info)
 	if err != nil {
 		return fmt.Errorf("failed to create zip header for %s: %w", relPathKey, err)
 	}
 	header.Name = relPathKey
 	header.Method = zip.Deflate
+
+	// 2. Serial: Lock and Write
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	w, err := c.zw.CreateHeader(header)
 	if err != nil {
@@ -411,7 +462,7 @@ func (c *zipCompressor) writeFilePreRead(absSrcPath, relPathKey string, info os.
 	return err
 }
 
-func (c *zipCompressor) writeFileStream(absSrcPath, relPathKey string, info os.FileInfo, buf []byte) error {
+func (c *zipCompressor) writeFileStreamed(absSrcPath, relPathKey string, info os.FileInfo, buf []byte) error {
 	// 1. Parallel Prep: Open the file (pre-lock)
 	// Security: TOCTOU check
 	fileToZip, err := secureFileOpen(absSrcPath, info)
@@ -420,16 +471,17 @@ func (c *zipCompressor) writeFileStream(absSrcPath, relPathKey string, info os.F
 	}
 	defer fileToZip.Close()
 
-	// 2. Serial: Lock and Write
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	// Prepare the header data
 	header, err := zip.FileInfoHeader(info)
 	if err != nil {
 		return fmt.Errorf("failed to create zip header for %s: %w", relPathKey, err)
 	}
 	header.Name = relPathKey
 	header.Method = zip.Deflate
+
+	// 2. Serial: Lock and Write
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	w, err := c.zw.CreateHeader(header)
 	if err != nil {
@@ -479,6 +531,9 @@ type tarCompressor struct {
 
 	// tarErrsChan captures the first critical, unrecoverable error (e.g., walker failure)
 	tarErrsChan chan error
+
+	// Pool for tarTask structs to reduce GC pressure
+	tarTaskPool *sync.Pool
 }
 
 // tarTask struct for tar workers
@@ -641,10 +696,16 @@ func (c *tarCompressor) tarTaskProducer() {
 		plog.Notice("ADD", "source", c.src, "file", relPathKey)
 		c.metrics.AddEntriesProcessed(1)
 
+		task := c.tarTaskPool.Get().(*tarTask)
+		task.absSrcPath = absSrcPath
+		task.relPathKey = relPathKey
+		task.info = info
+
 		select {
-		case c.tarTasksChan <- &tarTask{absSrcPath: absSrcPath, relPathKey: relPathKey, info: info}:
+		case c.tarTasksChan <- task:
 			return nil
 		case <-c.ctx.Done():
+			c.tarTaskPool.Put(task) // Return to pool on cancellation
 			return c.ctx.Err()
 		}
 	})
@@ -662,37 +723,54 @@ func (c *tarCompressor) tarWorker() {
 	bufPtr := c.ioBufferPool.Get().(*[]byte)
 	defer c.ioBufferPool.Put(bufPtr)
 
-	for t := range c.tarTasksChan {
+	// Dereference the bufPtr to get the actual slice
+	buf := *bufPtr
+	// IMPORTANT: Ensure length is maxed out before use
+	// In case someone messed with it, always reset len to cap
+	// strictly for io.Read/Copy purposes.
+	buf = buf[:cap(buf)]
+
+	for {
 		select {
 		case <-c.ctx.Done():
 			return
 		case <-c.tarErrsChan:
 			return
-		default:
-		}
-
-		var err error
-		if t.info.Mode()&os.ModeSymlink != 0 {
-			err = c.writeSymlink(t.absSrcPath, t.relPathKey, t.info)
-		} else {
-			fSize := t.info.Size()
-			// Attempt to acquire readahead budget for this file
-			if c.readAheadLimiter.TryAcquire(fSize) {
-				// Happy Path: We have budget. Read fully to RAM.
-				// We wrap this in a func to ensure Release happens immediately after processing
-				err = func() error {
-					defer c.readAheadLimiter.Release(fSize)
-					return c.writeFilePreRead(t.absSrcPath, t.relPathKey, t.info)
-				}()
-			} else {
-				// Fallback: Budget full or file too big. Stream serially.
-				// This holds the lock longer but uses minimal RAM.
-				err = c.writeFileStream(t.absSrcPath, t.relPathKey, t.info, *bufPtr)
+		case t, ok := <-c.tarTasksChan:
+			if !ok {
+				return // Channel closed
 			}
-		}
-		if err != nil {
-			c.sendErr(err)
-			return
+
+			// Use an IIFE to ensure the task is always returned to the pool.
+			func() {
+				defer c.tarTaskPool.Put(t)
+
+				var err error
+				if t.info.Mode()&os.ModeSymlink != 0 {
+					err = c.writeSymlink(t.absSrcPath, t.relPathKey, t.info)
+				} else {
+					fSize := t.info.Size()
+					// Attempt to acquire readahead budget for this file
+					if c.readAheadLimiter.TryAcquire(fSize) {
+						// Happy Path: We have budget. Read fully to RAM.
+						// We wrap this in a func to ensure Release happens immediately after processing
+						err = func() error {
+							defer c.readAheadLimiter.Release(fSize)
+							return c.writeFileBuffered(t.absSrcPath, t.relPathKey, t.info)
+						}()
+					} else {
+						// Fallback: Budget full or file too big. Stream serially.
+						// This holds the lock longer but uses minimal RAM.
+						err = c.writeFileStreamed(t.absSrcPath, t.relPathKey, t.info, buf)
+					}
+				}
+				if err != nil {
+					c.sendErr(err)
+					// The return here is from the anonymous func, not tarWorker.
+					// The worker will continue to the next loop iteration unless
+					// the error channel is read, which will break the outer loop.
+				}
+			}()
 		}
 	}
 }
@@ -719,7 +797,7 @@ func (c *tarCompressor) writeSymlink(absSrcPath, relPathKey string, info os.File
 	return c.tw.WriteHeader(header)
 }
 
-func (c *tarCompressor) writeFilePreRead(absSrcPath, relPathKey string, info os.FileInfo) error {
+func (c *tarCompressor) writeFileBuffered(absSrcPath, relPathKey string, info os.FileInfo) error {
 
 	// 1. Parallel: Read file into memory (the expensive part)
 	// Security: TOCTOU check
@@ -727,24 +805,34 @@ func (c *tarCompressor) writeFilePreRead(absSrcPath, relPathKey string, info os.
 	if err != nil {
 		return fmt.Errorf("failed to open file %s: %w", absSrcPath, err)
 	}
+	// We only defer if we plan to return early.
+	// If we close manually later, we can rely on the deferred call
+	// to be a "safety net" (no-op if already closed).
 	defer fileToTar.Close()
 
 	// Read All data
-	data, err := io.ReadAll(fileToTar)
-	fileToTar.Close() // Close explicitly! Do not use defer in a loop.
+	fSize := info.Size()
+	data := make([]byte, fSize)
+	_, err = io.ReadFull(fileToTar, data)
 	if err != nil {
 		return fmt.Errorf("failed to read file %s: %w", absSrcPath, err)
 	}
 
-	// 2. Serial: Lock and Write
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	// Check the error on the explicit close
+	if err := fileToTar.Close(); err != nil {
+		return fmt.Errorf("failed to close file: %w", err)
+	}
 
+	// Prepare the header data
 	header, err := tar.FileInfoHeader(info, "")
 	if err != nil {
 		return fmt.Errorf("failed to create tar header for %s: %w", relPathKey, err)
 	}
 	header.Name = relPathKey
+
+	// 2. Serial: Lock and Write
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	if err := c.tw.WriteHeader(header); err != nil {
 		return fmt.Errorf("failed to write tar header for %s: %w", relPathKey, err)
@@ -756,7 +844,7 @@ func (c *tarCompressor) writeFilePreRead(absSrcPath, relPathKey string, info os.
 	return err
 }
 
-func (c *tarCompressor) writeFileStream(absSrcPath, relPathKey string, info os.FileInfo, buf []byte) error {
+func (c *tarCompressor) writeFileStreamed(absSrcPath, relPathKey string, info os.FileInfo, buf []byte) error {
 
 	// 1. Parallel Prep: Open the file (pre-lock)
 	// Security: TOCTOU check
@@ -766,15 +854,16 @@ func (c *tarCompressor) writeFileStream(absSrcPath, relPathKey string, info os.F
 	}
 	defer fileToTar.Close()
 
-	// 2. Serial: Lock and Write
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	// Prepare the header data
 	header, err := tar.FileInfoHeader(info, "")
 	if err != nil {
 		return fmt.Errorf("failed to create tar header for %s: %w", relPathKey, err)
 	}
 	header.Name = relPathKey
+
+	// 2. Serial: Lock and Write
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	if err := c.tw.WriteHeader(header); err != nil {
 		return fmt.Errorf("failed to write tar header for %s: %w", relPathKey, err)
@@ -807,9 +896,18 @@ func secureFileOpen(absFilePath string, expected os.FileInfo) (*os.File, error) 
 		return nil, fmt.Errorf("failed to stat opened file: %w", err)
 	}
 
+	// 1. Check if it's the same physical file (Inode check)
 	if !os.SameFile(expected, openedInfo) {
 		f.Close()
 		return nil, fmt.Errorf("file changed during backup (TOCTOU): %s", absFilePath)
+	}
+
+	// 2. Check if the size changed (Tar Header Integrity check)
+	// If you already calculated the Tar header based on 'expected',
+	// a size change will corrupt the archive.
+	if openedInfo.Size() != expected.Size() {
+		f.Close()
+		return nil, fmt.Errorf("file size changed during backup: %s", absFilePath)
 	}
 
 	return f, nil

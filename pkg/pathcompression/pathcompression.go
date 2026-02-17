@@ -52,11 +52,13 @@ func NewPathCompressor(bufferSizeKB, readAheadLimitKB int64, numCompressWorkers 
 	return &PathCompressor{
 		ioBufferPool: &sync.Pool{
 			New: func() any {
-				return new(make([]byte, ioBufferSize))
+				// Allocate a slice with a specific capacity
+				b := make([]byte, ioBufferSize)
+				return &b // We store a pointer to the slice header
 			},
 		},
 		ioBufferSize:       ioBufferSize,
-		readAheadLimiter:   limiter.NewMemory(readAheadLimitSize),
+		readAheadLimiter:   limiter.NewMemory(readAheadLimitSize, ioBufferSize),
 		readAheadLimitSize: readAheadLimitSize,
 		numCompressWorkers: numCompressWorkers,
 	}
