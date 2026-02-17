@@ -364,7 +364,7 @@ func (c *zipCompressor) zipWorker() {
 						// We wrap this in a func to ensure Release happens immediately after processing
 						err = func() error {
 							defer c.readAheadLimiter.Release(fSize)
-							return c.writeFileBuffered(t.absSrcPath, t.relPathKey, t.info)
+							return c.writeFileBuffered(t.absSrcPath, t.relPathKey, t.info, buf)
 						}()
 					} else {
 						// Fallback: Budget full or file too big. Stream serially.
@@ -413,7 +413,7 @@ func (c *zipCompressor) writeSymlink(absSrcPath, relPathKey string, info os.File
 	return err
 }
 
-func (c *zipCompressor) writeFileBuffered(absSrcPath, relPathKey string, info os.FileInfo) error {
+func (c *zipCompressor) writeFileBuffered(absSrcPath, relPathKey string, info os.FileInfo, buf []byte) error {
 
 	// 1. Parallel: Read file into memory (the expensive part)
 	// Security: TOCTOU check
@@ -428,7 +428,14 @@ func (c *zipCompressor) writeFileBuffered(absSrcPath, relPathKey string, info os
 
 	// Read All data
 	fSize := info.Size()
-	data := make([]byte, fSize)
+	var data []byte
+	// Optimization: Reuse the worker's buffer if the file fits.
+	// This significantly reduces GC pressure for small files in the "fast path".
+	if fSize <= int64(len(buf)) {
+		data = buf[:fSize]
+	} else {
+		data = make([]byte, fSize)
+	}
 	_, err = io.ReadFull(fileToZip, data)
 	if err != nil {
 		return fmt.Errorf("failed to read file %s: %w", absSrcPath, err)
@@ -756,7 +763,7 @@ func (c *tarCompressor) tarWorker() {
 						// We wrap this in a func to ensure Release happens immediately after processing
 						err = func() error {
 							defer c.readAheadLimiter.Release(fSize)
-							return c.writeFileBuffered(t.absSrcPath, t.relPathKey, t.info)
+							return c.writeFileBuffered(t.absSrcPath, t.relPathKey, t.info, buf)
 						}()
 					} else {
 						// Fallback: Budget full or file too big. Stream serially.
@@ -797,7 +804,7 @@ func (c *tarCompressor) writeSymlink(absSrcPath, relPathKey string, info os.File
 	return c.tw.WriteHeader(header)
 }
 
-func (c *tarCompressor) writeFileBuffered(absSrcPath, relPathKey string, info os.FileInfo) error {
+func (c *tarCompressor) writeFileBuffered(absSrcPath, relPathKey string, info os.FileInfo, buf []byte) error {
 
 	// 1. Parallel: Read file into memory (the expensive part)
 	// Security: TOCTOU check
@@ -812,7 +819,14 @@ func (c *tarCompressor) writeFileBuffered(absSrcPath, relPathKey string, info os
 
 	// Read All data
 	fSize := info.Size()
-	data := make([]byte, fSize)
+	var data []byte
+	// Optimization: Reuse the worker's buffer if the file fits.
+	// This significantly reduces GC pressure for small files in the "fast path".
+	if fSize <= int64(len(buf)) {
+		data = buf[:fSize]
+	} else {
+		data = make([]byte, fSize)
+	}
 	_, err = io.ReadFull(fileToTar, data)
 	if err != nil {
 		return fmt.Errorf("failed to read file %s: %w", absSrcPath, err)
