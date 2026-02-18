@@ -29,6 +29,11 @@ type compressTask struct {
 	dryRun            bool
 }
 
+// compressor defines the interface for compressing a directory into an archive file.
+type compressor interface {
+	Compress(ctx context.Context, sourceDir, archivePath string) error
+}
+
 // execute runs the compression task.
 func (t *compressTask) execute() error {
 	if t.toCompress.RelPathKey == "" {

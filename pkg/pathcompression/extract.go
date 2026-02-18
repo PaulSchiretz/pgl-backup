@@ -108,11 +108,6 @@ func (mr *extractMetricReaderAt) ReadAt(p []byte, off int64) (n int, err error) 
 	return
 }
 
-// extractor defines the interface for extracting archives to a target directory.
-type extractor interface {
-	Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string) error
-}
-
 type zipExtractor struct {
 	format        Format
 	bufferPool    *sync.Pool

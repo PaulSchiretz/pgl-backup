@@ -20,11 +20,6 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
-// compressor defines the interface for compressing a directory into an archive file.
-type compressor interface {
-	Compress(ctx context.Context, sourceDir, archivePath string) error
-}
-
 // compressMetricWriter wraps an io.Writer and updates metrics on every write.
 type compressMetricWriter struct {
 	w       io.Writer
@@ -77,7 +72,7 @@ type zipCompressor struct {
 	zipErrsChan chan error
 
 	// Pool for flate writers to reduce GC pressure
-	zipFlatePool sync.Pool
+	zipFlatePool *sync.Pool
 
 	// Pool for zipTask structs to reduce GC pressure
 	zipTaskPool *sync.Pool
@@ -103,6 +98,20 @@ type zipTask struct {
 }
 
 func newZipCompressor(format Format, level Level, ioBufferPool *sync.Pool, ioBufferSize int64, readAheadLimiter *limiter.Memory, readAheadLimitSize int64, numWorkers int, metrics pathcompressionmetrics.Metrics) *zipCompressor {
+
+	// Map the compression level
+	var lvl int
+	switch level {
+	case Fastest:
+		lvl = flate.BestSpeed
+	case Better:
+		lvl = 6 // Good balance
+	case Best:
+		lvl = flate.BestCompression
+	default:
+		lvl = flate.DefaultCompression
+	}
+
 	return &zipCompressor{
 		format:             format,
 		level:              level,
@@ -117,6 +126,12 @@ func newZipCompressor(format Format, level Level, ioBufferPool *sync.Pool, ioBuf
 		zipTaskPool: &sync.Pool{
 			New: func() any {
 				return new(zipTask)
+			},
+		},
+		zipFlatePool: &sync.Pool{
+			New: func() interface{} {
+				fw, _ := flate.NewWriter(io.Discard, lvl)
+				return fw
 			},
 		},
 	}
@@ -170,33 +185,13 @@ func (c *zipCompressor) handleZip() (retErr error) {
 	mw := &compressMetricWriter{w: c.trgF, metrics: c.metrics}
 	bufWriter := bufio.NewWriterSize(mw, int(c.ioBufferSize))
 
-	var lvl int
-	switch c.level {
-	case Fastest:
-		lvl = flate.BestSpeed
-	case Better:
-		lvl = 6 // Good balance
-	case Best:
-		lvl = flate.BestCompression
-	default:
-		lvl = flate.DefaultCompression
-	}
-
-	// Init the flate pool
-	c.zipFlatePool = sync.Pool{
-		New: func() interface{} {
-			fw, _ := flate.NewWriter(io.Discard, lvl)
-			return fw
-		},
-	}
-
 	c.zw = zip.NewWriter(bufWriter)
 
 	// Optimization: Register compressor using the Pool
 	c.zw.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
 		fw := c.zipFlatePool.Get().(*flate.Writer)
 		fw.Reset(out)
-		return &pooledFlateWriter{Writer: fw, pool: &c.zipFlatePool}, nil
+		return &pooledFlateWriter{Writer: fw, pool: c.zipFlatePool}, nil
 	})
 
 	// Robust cleanup

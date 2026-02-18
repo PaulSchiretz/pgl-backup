@@ -27,6 +27,11 @@ type extractTask struct {
 	dryRun               bool
 }
 
+// extractor defines the interface for extracting archives to a target directory.
+type extractor interface {
+	Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string) error
+}
+
 func (t *extractTask) execute() error {
 
 	if t.toExtract.RelPathKey == "" {
