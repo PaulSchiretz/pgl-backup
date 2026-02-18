@@ -43,67 +43,6 @@ func (mw *compressMetricWriter) Reset(w io.Writer) {
 	mw.w = w
 }
 
-// newCompressor returns the correct implementation based on the format.
-func newCompressor(format Format, level Level, ioBufferPool *sync.Pool, ioBufferSize int64, readAheadLimiter *limiter.Memory, readAheadLimitSize int64, numWorkers int, metrics pathcompressionmetrics.Metrics) (compressor, error) {
-	switch format {
-	case Zip:
-		return &zipCompressor{
-			level:              level,
-			numZipWorkers:      numWorkers,
-			metrics:            metrics,
-			zipTasksChan:       make(chan *zipTask, numWorkers*4),
-			zipErrsChan:        make(chan error, 1),
-			ioBufferPool:       ioBufferPool,
-			ioBufferSize:       ioBufferSize,
-			readAheadLimiter:   readAheadLimiter,
-			readAheadLimitSize: readAheadLimitSize,
-			zipTaskPool: &sync.Pool{
-				New: func() any {
-					return new(zipTask)
-				},
-			},
-		}, nil
-	case TarGz:
-		return &tarCompressor{
-			compression:        TarGz,
-			level:              level,
-			numTarWorkers:      numWorkers,
-			metrics:            metrics,
-			tarTasksChan:       make(chan *tarTask, numWorkers*4),
-			tarErrsChan:        make(chan error, 1),
-			ioBufferPool:       ioBufferPool,
-			ioBufferSize:       ioBufferSize,
-			readAheadLimiter:   readAheadLimiter,
-			readAheadLimitSize: readAheadLimitSize,
-			tarTaskPool: &sync.Pool{
-				New: func() any {
-					return new(tarTask)
-				},
-			},
-		}, nil
-	case TarZst:
-		return &tarCompressor{
-			compression:        TarZst,
-			level:              level,
-			numTarWorkers:      numWorkers,
-			metrics:            metrics,
-			tarTasksChan:       make(chan *tarTask, numWorkers*4),
-			tarErrsChan:        make(chan error, 1),
-			ioBufferPool:       ioBufferPool,
-			ioBufferSize:       ioBufferSize,
-			readAheadLimiter:   readAheadLimiter,
-			readAheadLimitSize: readAheadLimitSize,
-			tarTaskPool: &sync.Pool{
-				New: func() any {
-					return new(tarTask)
-				},
-			},
-		}, nil
-	default:
-		return nil, fmt.Errorf("unsupported format: %s", format)
-	}
-}
-
 type zipCompressor struct {
 	// Read buffer pool
 	ioBufferPool *sync.Pool
@@ -113,9 +52,10 @@ type zipCompressor struct {
 	readAheadLimiter   *limiter.Memory
 	readAheadLimitSize int64
 
-	level Level
-	mu    sync.Mutex
-	zw    *zip.Writer
+	format Format
+	level  Level
+	mu     sync.Mutex
+	zw     *zip.Writer
 
 	metrics pathcompressionmetrics.Metrics
 
@@ -160,6 +100,26 @@ type zipTask struct {
 	absSrcPath string
 	relPathKey string
 	info       os.FileInfo
+}
+
+func newZipCompressor(format Format, level Level, ioBufferPool *sync.Pool, ioBufferSize int64, readAheadLimiter *limiter.Memory, readAheadLimitSize int64, numWorkers int, metrics pathcompressionmetrics.Metrics) *zipCompressor {
+	return &zipCompressor{
+		format:             format,
+		level:              level,
+		numZipWorkers:      numWorkers,
+		metrics:            metrics,
+		zipTasksChan:       make(chan *zipTask, numWorkers*4),
+		zipErrsChan:        make(chan error, 1),
+		ioBufferPool:       ioBufferPool,
+		ioBufferSize:       ioBufferSize,
+		readAheadLimiter:   readAheadLimiter,
+		readAheadLimitSize: readAheadLimitSize,
+		zipTaskPool: &sync.Pool{
+			New: func() any {
+				return new(zipTask)
+			},
+		},
+	}
 }
 
 func (c *zipCompressor) Compress(ctx context.Context, absSourcePath, absArchiveFilePath string) (retErr error) {
@@ -516,11 +476,11 @@ type tarCompressor struct {
 	readAheadLimiter   *limiter.Memory
 	readAheadLimitSize int64
 
-	compression Format
-	level       Level
-	mu          sync.Mutex
-	tw          *tar.Writer
-	metrics     pathcompressionmetrics.Metrics
+	format  Format
+	level   Level
+	mu      sync.Mutex
+	tw      *tar.Writer
+	metrics pathcompressionmetrics.Metrics
 
 	// ctx is the cancellable context for the entire run.
 	ctx context.Context
@@ -548,6 +508,26 @@ type tarTask struct {
 	absSrcPath string
 	relPathKey string
 	info       os.FileInfo
+}
+
+func newTarCompressor(format Format, level Level, ioBufferPool *sync.Pool, ioBufferSize int64, readAheadLimiter *limiter.Memory, readAheadLimitSize int64, numWorkers int, metrics pathcompressionmetrics.Metrics) *tarCompressor {
+	return &tarCompressor{
+		format:             format,
+		level:              level,
+		numTarWorkers:      numWorkers,
+		metrics:            metrics,
+		tarTasksChan:       make(chan *tarTask, numWorkers*4),
+		tarErrsChan:        make(chan error, 1),
+		ioBufferPool:       ioBufferPool,
+		ioBufferSize:       ioBufferSize,
+		readAheadLimiter:   readAheadLimiter,
+		readAheadLimitSize: readAheadLimitSize,
+		tarTaskPool: &sync.Pool{
+			New: func() any {
+				return new(tarTask)
+			},
+		},
+	}
 }
 
 func (c *tarCompressor) Compress(ctx context.Context, absSourcePath, absArchiveFilePath string) (retErr error) {
@@ -595,7 +575,7 @@ func (c *tarCompressor) handleTar() (retErr error) {
 	bufWriter := bufio.NewWriterSize(mw, int(c.ioBufferSize))
 
 	var compressedWriter io.WriteCloser
-	if c.compression == TarZst {
+	if c.format == TarZst {
 		opts := []zstd.EOption{}
 		var encoderLevel zstd.EncoderLevel
 		switch c.level {

@@ -113,42 +113,22 @@ type extractor interface {
 	Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string) error
 }
 
-// newExtractor returns the correct implementation based on the format.
-func newExtractor(format Format, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) (extractor, error) {
-	switch format {
-	case Zip:
-		return &zipExtractor{
-			bufferPool:    bufferPool,
-			metrics:       metrics,
-			overwrite:     overwrite,
-			modTimeWindow: modTimeWindow,
-		}, nil
-	case TarGz:
-		return &tarExtractor{
-			compression:   TarGz,
-			bufferPool:    bufferPool,
-			metrics:       metrics,
-			overwrite:     overwrite,
-			modTimeWindow: modTimeWindow,
-		}, nil
-	case TarZst:
-		return &tarExtractor{
-			compression:   TarZst,
-			bufferPool:    bufferPool,
-			metrics:       metrics,
-			overwrite:     overwrite,
-			modTimeWindow: modTimeWindow,
-		}, nil
-	default:
-		return nil, fmt.Errorf("unsupported format: %s", format)
-	}
-}
-
 type zipExtractor struct {
+	format        Format
 	bufferPool    *sync.Pool
 	metrics       pathcompressionmetrics.Metrics
 	overwrite     OverwriteBehavior
 	modTimeWindow time.Duration
+}
+
+func newZipExtractor(format Format, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) *zipExtractor {
+	return &zipExtractor{
+		format:        Zip,
+		bufferPool:    bufferPool,
+		metrics:       metrics,
+		overwrite:     overwrite,
+		modTimeWindow: modTimeWindow,
+	}
 }
 
 func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string) error {
@@ -270,11 +250,21 @@ func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 }
 
 type tarExtractor struct {
-	compression   Format
+	format        Format
 	bufferPool    *sync.Pool
 	metrics       pathcompressionmetrics.Metrics
 	overwrite     OverwriteBehavior
 	modTimeWindow time.Duration
+}
+
+func newTarExtractor(format Format, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) *tarExtractor {
+	return &tarExtractor{
+		format:        format,
+		bufferPool:    bufferPool,
+		metrics:       metrics,
+		overwrite:     overwrite,
+		modTimeWindow: modTimeWindow,
+	}
 }
 
 func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string) error {
@@ -286,7 +276,7 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 
 	mr := &extractMetricReader{r: f, metrics: e.metrics}
 	var r io.Reader = mr
-	switch e.compression {
+	switch e.format {
 	case TarGz:
 		gz, err := pgzip.NewReader(r)
 		if err != nil {

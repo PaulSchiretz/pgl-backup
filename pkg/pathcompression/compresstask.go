@@ -95,12 +95,16 @@ func (t *compressTask) compressBackup(absToCompressPath, absToCompressContentPat
 	// Cleanup stale tmp files from crashed runs.
 	defer t.cleanupStaleTempFiles(absToCompressPath)
 
-	compressor, err := newCompressor(t.format, t.level, t.ioBufferPool, t.ioBufferSize, t.readAheadLimiter, t.readAheadLimitSize, t.numCompressWorkers, t.metrics)
-	if err != nil {
-		return err
+	var comp compressor
+	switch t.format {
+	case Zip:
+		comp = newZipCompressor(t.format, t.level, t.ioBufferPool, t.ioBufferSize, t.readAheadLimiter, t.readAheadLimitSize, t.numCompressWorkers, t.metrics)
+	case TarGz, TarZst:
+		comp = newTarCompressor(t.format, t.level, t.ioBufferPool, t.ioBufferSize, t.readAheadLimiter, t.readAheadLimitSize, t.numCompressWorkers, t.metrics)
+	default:
+		return fmt.Errorf("unsupported format: %s", t.format)
 	}
-
-	if err := compressor.Compress(t.ctx, absToCompressContentPath, absArchiveFilePath); err != nil {
+	if err := comp.Compress(t.ctx, absToCompressContentPath, absArchiveFilePath); err != nil {
 		return err
 	}
 	return nil

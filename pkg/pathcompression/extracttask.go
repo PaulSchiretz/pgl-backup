@@ -76,12 +76,17 @@ func (t *extractTask) extractBackup(absToExtractPath, absExtractTargetPath strin
 	archiveFileName := filepath.Base(absToExtractPath) + "." + format.String()
 	absArchiveFilePath := util.DenormalizePath(filepath.Join(absToExtractPath, archiveFileName))
 
-	extractor, err := newExtractor(format, t.ioBufferPool, t.metrics, t.overwriteBehavior, t.modTimeWindow)
-	if err != nil {
-		return err
+	var extr extractor
+	switch format {
+	case Zip:
+		extr = newZipExtractor(format, t.ioBufferPool, t.metrics, t.overwriteBehavior, t.modTimeWindow)
+	case TarGz, TarZst:
+		extr = newTarExtractor(format, t.ioBufferPool, t.metrics, t.overwriteBehavior, t.modTimeWindow)
+	default:
+		return fmt.Errorf("unsupported format: %s", format)
 	}
 
-	if err := extractor.Extract(t.ctx, absArchiveFilePath, absExtractTargetPath); err != nil {
+	if err := extr.Extract(t.ctx, absArchiveFilePath, absExtractTargetPath); err != nil {
 		return err
 	}
 	return nil
