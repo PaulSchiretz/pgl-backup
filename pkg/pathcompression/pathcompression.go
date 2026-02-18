@@ -21,6 +21,9 @@ package pathcompression
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -28,6 +31,7 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/limiter"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 var ErrDisabled = hints.New("compression is disabled")
@@ -82,6 +86,9 @@ func (c *PathCompressor) Compress(ctx context.Context, absBasePath, relContentPa
 		return ErrNothingToCompress
 	}
 
+	absToCompressPath := util.DenormalizePath(filepath.Join(absBasePath, toCompress.RelPathKey))
+	absToCompressContentPath := util.DenormalizePath(filepath.Join(absToCompressPath, relContentPathKey))
+
 	var m Metrics
 	if p.Metrics {
 		m = &CompressionMetrics{}
@@ -91,18 +98,43 @@ func (c *PathCompressor) Compress(ctx context.Context, absBasePath, relContentPa
 	}
 
 	t := &compressTask{
-		PathCompressor:    c, // Just pass the compressor pointer
-		absBasePath:       absBasePath,
-		relContentPathKey: relContentPathKey,
-		ctx:               ctx,
-		format:            p.Format,
-		level:             p.Level,
-		toCompress:        toCompress,
-		timestampUTC:      timestampUTC,
-		metrics:           m,
-		dryRun:            p.DryRun,
+		PathCompressor:           c, // Just pass the compressor pointer
+		absToCompressPath:        absToCompressPath,
+		absToCompressContentPath: absToCompressContentPath,
+		ctx:                      ctx,
+		format:                   p.Format,
+		level:                    p.Level,
+		timestampUTC:             timestampUTC,
+		metrics:                  m,
+		dryRun:                   p.DryRun,
 	}
-	return t.execute()
+
+	err := t.execute()
+	if err != nil {
+		return err
+	}
+
+	// In dryRun mode we exit here
+	if t.dryRun {
+		plog.Notice("COMPRESSED", "source", absToCompressPath)
+		return nil
+	}
+
+	// 1. On successful archive creation, we update the metafile.
+	toCompress.Metadata.IsCompressed = true
+	toCompress.Metadata.CompressionFormat = t.format.String()
+	if writeErr := metafile.Write(absToCompressPath, &toCompress.Metadata); writeErr != nil {
+		plog.Error("Failed to write updated metafile after compression success. Original content has been preserved.", "path", absToCompressPath, "error", writeErr)
+		return fmt.Errorf("failed to update metafile: %w", writeErr)
+	}
+
+	// 2. Only after the metafile is successfully updated we remove the original content.
+	if err := os.RemoveAll(absToCompressContentPath); err != nil {
+		plog.Error("Failed to remove original content directory after successful compression. Manual cleanup may be required.", "path", absToCompressPath, "error", err)
+	}
+
+	plog.Notice("COMPRESSED", "source", absToCompressPath)
+	return nil
 }
 
 // Extract extracts an archive to a target directory.
@@ -125,6 +157,13 @@ func (c *PathCompressor) Extract(ctx context.Context, absBasePath string, toExtr
 		return ErrNothingToExtract
 	}
 
+	format, err := c.determineCompressionFormat(absBasePath, toExtract)
+	if err != nil {
+		return fmt.Errorf("failed to determine format for extraction: %w", err)
+	}
+
+	absToExtractPath := util.DenormalizePath(filepath.Join(absBasePath, toExtract.RelPathKey))
+
 	var m Metrics
 	if p.Metrics {
 		m = &CompressionMetrics{}
@@ -135,8 +174,8 @@ func (c *PathCompressor) Extract(ctx context.Context, absBasePath string, toExtr
 	t := &extractTask{
 		PathCompressor:       c,
 		ctx:                  ctx,
-		absBasePath:          absBasePath,
-		toExtract:            toExtract,
+		format:               format,
+		absToExtractPath:     absToExtractPath,
 		absExtractTargetPath: absExtractTargetPath,
 		overwriteBehavior:    p.OverwriteBehavior,
 		modTimeWindow:        p.ModTimeWindow,
@@ -144,5 +183,39 @@ func (c *PathCompressor) Extract(ctx context.Context, absBasePath string, toExtr
 		metrics:              m,
 		dryRun:               p.DryRun,
 	}
-	return t.execute()
+
+	err = t.execute()
+	if err != nil {
+		return err
+	}
+
+	plog.Notice("EXTRACTED", "source", absToExtractPath)
+	return nil
+}
+
+func (c *PathCompressor) determineCompressionFormat(absBasePath string, fileInfo metafile.MetafileInfo) (Format, error) {
+
+	absFilePath := util.DenormalizePath(filepath.Join(absBasePath, fileInfo.RelPathKey))
+
+	// Determine format: prefer metadata, then file existence
+	// Fetch compression format from metadata
+	if fileInfo.Metadata.CompressionFormat != "" {
+		parsed, err := ParseFormat(fileInfo.Metadata.CompressionFormat)
+		if err == nil {
+			return parsed, nil
+		}
+		plog.Warn("Invalid compression format in metadata, attempting auto-detection", "format", fileInfo.Metadata.CompressionFormat, "error", err)
+	}
+
+	// Fetch compression format by iterating through extensions
+	baseName := filepath.Base(absFilePath)
+	for _, f := range []Format{Zip, TarGz, TarZst} {
+		candidatePath := util.DenormalizePath(filepath.Join(absFilePath, baseName+"."+f.String()))
+		if _, err := os.Stat(candidatePath); err == nil {
+			plog.Debug("Auto-detected compression format from file extension", "format", f)
+			return f, nil
+		}
+	}
+
+	return "", fmt.Errorf("unable to determine compression format for %s", absFilePath)
 }

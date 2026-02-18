@@ -27,6 +27,7 @@ type zipCompressor struct {
 
 	format Format
 	level  Level
+	dryRun bool
 	mu     sync.Mutex
 	zw     *zip.Writer
 
@@ -40,11 +41,11 @@ type zipCompressor struct {
 
 	numZipWorkers int
 
-	// zipWg waits for the zipTaskProducer and zipWorkers to finish processing all zip tasks.
+	// zipWg waits for the zipItemProducer and zipWorkers to finish processing all zip tasks.
 	zipWg sync.WaitGroup
 
-	// zipTasksChan is the channel where the Walker sends pre-processed tasks.
-	zipTasksChan chan *zipTask
+	// zipItemsChan is the channel where the Walker sends pre-processed tasks.
+	zipItemsChan chan *zipItem
 
 	// zipErrsChan captures the first critical, unrecoverable error (e.g., walker failure)
 	zipErrsChan chan error
@@ -52,8 +53,8 @@ type zipCompressor struct {
 	// Pool for flate writers to reduce GC pressure
 	zipFlatePool *sync.Pool
 
-	// Pool for zipTask structs to reduce GC pressure
-	zipTaskPool *sync.Pool
+	// Pool for zipItem structs to reduce GC pressure
+	zipItemPool *sync.Pool
 }
 
 // Wrapper to return flate writer to pool on close
@@ -68,14 +69,14 @@ func (w *pooledFlateWriter) Close() error {
 	return err
 }
 
-// ZipTask struct for zip workers
-type zipTask struct {
+// zipItem struct for zip workers
+type zipItem struct {
 	absSrcPath string
 	relPathKey string
 	info       os.FileInfo
 }
 
-func newZipCompressor(format Format, level Level, ioBufferPool *sync.Pool, ioBufferSize int64, readAheadLimiter *limiter.Memory, readAheadLimitSize int64, numWorkers int, metrics Metrics) *zipCompressor {
+func newZipCompressor(dryRun bool, format Format, level Level, ioBufferPool *sync.Pool, ioBufferSize int64, readAheadLimiter *limiter.Memory, readAheadLimitSize int64, numWorkers int, metrics Metrics) *zipCompressor {
 
 	// Map the compression level
 	var lvl int
@@ -91,19 +92,20 @@ func newZipCompressor(format Format, level Level, ioBufferPool *sync.Pool, ioBuf
 	}
 
 	return &zipCompressor{
+		dryRun:             dryRun,
 		format:             format,
 		level:              level,
 		numZipWorkers:      numWorkers,
 		metrics:            metrics,
-		zipTasksChan:       make(chan *zipTask, numWorkers*4),
+		zipItemsChan:       make(chan *zipItem, numWorkers*4),
 		zipErrsChan:        make(chan error, 1),
 		ioBufferPool:       ioBufferPool,
 		ioBufferSize:       ioBufferSize,
 		readAheadLimiter:   readAheadLimiter,
 		readAheadLimitSize: readAheadLimitSize,
-		zipTaskPool: &sync.Pool{
+		zipItemPool: &sync.Pool{
 			New: func() any {
-				return new(zipTask)
+				return new(zipItem)
 			},
 		},
 		zipFlatePool: &sync.Pool{
@@ -116,15 +118,26 @@ func newZipCompressor(format Format, level Level, ioBufferPool *sync.Pool, ioBuf
 }
 
 func (c *zipCompressor) Compress(ctx context.Context, absSourcePath, absArchiveFilePath string) (retErr error) {
-	// 1. Create Temp File
-	// We create it in the same directory as the target to ensure atomic rename.
-	var err error
 
+	if c.dryRun {
+		plog.Notice("[DRY RUN] COMPRESS", "source", absSourcePath)
+		return nil
+	}
+
+	plog.Notice("COMPRESS", "source", absSourcePath)
+
+	var err error
+	// Create a cancellable context to ensure the producer goroutine exits
+	// if we return early due to an error.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	c.ctx = ctx
 
 	// store the source path
 	c.src = absSourcePath
 
+	// 1. Create Temp File
+	// We create it in the same directory as the target to ensure atomic rename.
 	c.trgF, err = os.CreateTemp(filepath.Dir(absArchiveFilePath), "pgl-backup-*.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create temp archive: %w", err)
@@ -188,9 +201,9 @@ func (c *zipCompressor) handleZip() (retErr error) {
 		go c.zipWorker()
 	}
 
-	// 2. Start the zipTaskProducer (Producer)
-	// This goroutine walks the file tree and feeds paths into 'zipTasks'.
-	go c.zipTaskProducer()
+	// 2. Start the zipItemProducer (Producer)
+	// This goroutine walks the file tree and feeds paths into 'zipItems'.
+	go c.zipItemProducer()
 
 	// 3. Wait for all workers to finish processing all tasks.
 	c.zipWg.Wait()
@@ -204,8 +217,8 @@ func (c *zipCompressor) handleZip() (retErr error) {
 	return nil
 }
 
-func (c *zipCompressor) zipTaskProducer() {
-	defer close(c.zipTasksChan)
+func (c *zipCompressor) zipItemProducer() {
+	defer close(c.zipItemsChan)
 	walkErr := filepath.WalkDir(c.src, func(absSrcPath string, d os.DirEntry, walkErr error) error {
 		select {
 		case <-c.ctx.Done():
@@ -235,16 +248,16 @@ func (c *zipCompressor) zipTaskProducer() {
 		plog.Notice("ADD", "source", c.src, "file", relPathKey)
 		c.metrics.AddEntriesProcessed(1)
 
-		task := c.zipTaskPool.Get().(*zipTask)
+		task := c.zipItemPool.Get().(*zipItem)
 		task.absSrcPath = absSrcPath
 		task.relPathKey = relPathKey
 		task.info = info
 
 		select {
-		case c.zipTasksChan <- task:
+		case c.zipItemsChan <- task:
 			return nil
 		case <-c.ctx.Done():
-			c.zipTaskPool.Put(task) // Return to pool on cancellation
+			c.zipItemPool.Put(task) // Return to pool on cancellation
 			return c.ctx.Err()
 		}
 	})
@@ -277,14 +290,14 @@ func (c *zipCompressor) zipWorker() {
 			return
 		case <-c.zipErrsChan:
 			return
-		case t, ok := <-c.zipTasksChan:
+		case t, ok := <-c.zipItemsChan:
 			if !ok {
 				return // Channel closed
 			}
 
 			// Use an IIFE to ensure the task is always returned to the pool.
 			func() {
-				defer c.zipTaskPool.Put(t)
+				defer c.zipItemPool.Put(t)
 
 				var err error
 				if t.info.Mode()&os.ModeSymlink != 0 {

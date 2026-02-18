@@ -52,7 +52,7 @@ func (m *mockSyncer) Sync(ctx context.Context, absBasePath, absSourcePath, relCu
 	return m.resultInfo, nil
 }
 
-func (m *mockSyncer) Restore(ctx context.Context, absBasePath string, relContentPathKey string, toRestore metafile.MetafileInfo, absRestoreTargetPath string, p *pathsync.Plan) error {
+func (m *mockSyncer) Restore(ctx context.Context, absBasePath string, relContentPathKey string, toRestore metafile.MetafileInfo, absRestoreTargetPath string, p *pathsync.Plan, timestampUTC time.Time) error {
 	m.restoreRelPathKey = toRestore.RelPathKey
 	return m.err
 }

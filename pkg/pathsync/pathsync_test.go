@@ -104,7 +104,7 @@ func TestRestore_NoMetafile(t *testing.T) {
 	// Setup a mock backup structure: base/entry_name/content/file.txt
 	entryName := "my_backup"
 	relContentPath := "content"
-
+	timestamp := time.Now().UTC()
 	contentDir := filepath.Join(srcBase, entryName, relContentPath)
 	if err := os.MkdirAll(contentDir, 0755); err != nil {
 		t.Fatal(err)
@@ -126,7 +126,7 @@ func TestRestore_NoMetafile(t *testing.T) {
 	syncer := NewPathSyncer(256, 1, 1)
 
 	// Act
-	err := syncer.Restore(context.Background(), srcBase, relContentPath, toRestore, restoreTarget, plan)
+	err := syncer.Restore(context.Background(), srcBase, relContentPath, toRestore, restoreTarget, plan, timestamp)
 	if err != nil {
 		t.Fatalf("Restore failed: %v", err)
 	}

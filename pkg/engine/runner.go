@@ -535,7 +535,7 @@ func (r *Runner) ExecuteRestore(ctx context.Context, absBasePath, uuid, absTarge
 	} else {
 		// Sync (Flat file restore)
 		// We sync FROM backup content TO absTargetPath.
-		if err := r.syncer.Restore(ctx, absBasePath, relContentPathKey, toRestore, absTargetPath, p.Sync); err != nil {
+		if err := r.syncer.Restore(ctx, absBasePath, relContentPathKey, toRestore, absTargetPath, p.Sync, timestampUTC); err != nil {
 			return fmt.Errorf("restore sync failed: %w", err)
 		}
 	}

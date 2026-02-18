@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v1.4.0] - 2026-XX-XX
 
+### Changed
+- Refactored the `PathSync` and `PathCompression` package for better performance and readability.
+
 ### Removed
 - Removed `robocopy` sync engine support. The `native` engine is now the only supported engine.
 

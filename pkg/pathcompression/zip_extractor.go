@@ -11,10 +11,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 type zipExtractor struct {
+	dryRun        bool
 	format        Format
 	bufferPool    *sync.Pool
 	metrics       Metrics
@@ -22,9 +24,10 @@ type zipExtractor struct {
 	modTimeWindow time.Duration
 }
 
-func newZipExtractor(format Format, bufferPool *sync.Pool, metrics Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) *zipExtractor {
+func newZipExtractor(dryRun bool, format Format, bufferPool *sync.Pool, metrics Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) *zipExtractor {
 	return &zipExtractor{
-		format:        Zip,
+		dryRun:        dryRun,
+		format:        format,
 		bufferPool:    bufferPool,
 		metrics:       metrics,
 		overwrite:     overwrite,
@@ -33,6 +36,14 @@ func newZipExtractor(format Format, bufferPool *sync.Pool, metrics Metrics, over
 }
 
 func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string) error {
+
+	if e.dryRun {
+		plog.Notice("[DRY RUN] EXTRACT", "source", absArchiveFilePath, "target", absExtractTargetPath)
+		return nil
+	}
+
+	plog.Notice("EXTRACT", "source", absArchiveFilePath, "target", absExtractTargetPath)
+
 	f, err := os.Open(absArchiveFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to open zip file: %w", err)

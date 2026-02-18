@@ -21,7 +21,7 @@ type Validator interface {
 // Syncer is an interface for the sync leaf package.
 type Syncer interface {
 	Sync(ctx context.Context, absBasePath, absSourcePath, relCurrentPathKey, relContentPathKey string, p *pathsync.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error)
-	Restore(ctx context.Context, absBasePath string, relContentPathKey string, toRestore metafile.MetafileInfo, absRestoreTargetPath string, p *pathsync.Plan) error
+	Restore(ctx context.Context, absBasePath string, relContentPathKey string, toRestore metafile.MetafileInfo, absRestoreTargetPath string, p *pathsync.Plan, timestampUTC time.Time) error
 }
 
 // Archiver is an interface for the archive leaf package.

@@ -28,6 +28,7 @@ type tarCompressor struct {
 
 	format  Format
 	level   Level
+	dryRun  bool
 	mu      sync.Mutex
 	tw      *tar.Writer
 	metrics Metrics
@@ -40,53 +41,68 @@ type tarCompressor struct {
 
 	numTarWorkers int
 
-	// tarWg waits for the tarTaskProducer and tarWorkers to finish processing all tar tasks.
+	// tarWg waits for the tarItemProducer and tarWorkers to finish processing all tar tasks.
 	tarWg sync.WaitGroup
 
-	// tarTasksChan is the channel where the Walker sends pre-processed tasks.
-	tarTasksChan chan *tarTask
+	// tarItemsChan is the channel where the Walker sends pre-processed tasks.
+	tarItemsChan chan *tarItem
 
 	// tarErrsChan captures the first critical, unrecoverable error (e.g., walker failure)
 	tarErrsChan chan error
 
-	// Pool for tarTask structs to reduce GC pressure
-	tarTaskPool *sync.Pool
+	// Pool for tarItem structs to reduce GC pressure
+	tarItemPool *sync.Pool
 }
 
-// tarTask struct for tar workers
-type tarTask struct {
+// tarItem struct for tar workers
+type tarItem struct {
 	absSrcPath string
 	relPathKey string
 	info       os.FileInfo
 }
 
-func newTarCompressor(format Format, level Level, ioBufferPool *sync.Pool, ioBufferSize int64, readAheadLimiter *limiter.Memory, readAheadLimitSize int64, numWorkers int, metrics Metrics) *tarCompressor {
+func newTarCompressor(dryRun bool, format Format, level Level, ioBufferPool *sync.Pool, ioBufferSize int64, readAheadLimiter *limiter.Memory, readAheadLimitSize int64, numWorkers int, metrics Metrics) *tarCompressor {
 	return &tarCompressor{
+		dryRun:             dryRun,
 		format:             format,
 		level:              level,
 		numTarWorkers:      numWorkers,
 		metrics:            metrics,
-		tarTasksChan:       make(chan *tarTask, numWorkers*4),
+		tarItemsChan:       make(chan *tarItem, numWorkers*4),
 		tarErrsChan:        make(chan error, 1),
 		ioBufferPool:       ioBufferPool,
 		ioBufferSize:       ioBufferSize,
 		readAheadLimiter:   readAheadLimiter,
 		readAheadLimitSize: readAheadLimitSize,
-		tarTaskPool: &sync.Pool{
+		tarItemPool: &sync.Pool{
 			New: func() any {
-				return new(tarTask)
+				return new(tarItem)
 			},
 		},
 	}
 }
 
 func (c *tarCompressor) Compress(ctx context.Context, absSourcePath, absArchiveFilePath string) (retErr error) {
-	// 1. Create Temp File
+
+	plog.Notice("COMPRESS", "source", absSourcePath)
+
+	if c.dryRun {
+		plog.Notice("[DRY RUN] COMPRESS", "source", absSourcePath)
+		return nil
+	}
+
 	var err error
 
+	// Create a cancellable context to ensure the producer goroutine exits
+	// if we return early due to an error.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	c.ctx = ctx
+
+	// store the source path
 	c.src = absSourcePath
 
+	// 1. Create Temp File
 	c.trgF, err = os.CreateTemp(filepath.Dir(absArchiveFilePath), "pgl-backup-*.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create temp archive: %w", err)
@@ -186,9 +202,9 @@ func (c *tarCompressor) handleTar() (retErr error) {
 		go c.tarWorker()
 	}
 
-	// 2. Start the tarTaskProducer (Producer)
-	// This goroutine walks the file tree and feeds paths into 'tarTasks'.
-	go c.tarTaskProducer()
+	// 2. Start the tarItemProducer (Producer)
+	// This goroutine walks the file tree and feeds paths into 'tarItems'.
+	go c.tarItemProducer()
 
 	// 3. Wait for all workers to finish processing all tasks.
 	c.tarWg.Wait()
@@ -202,8 +218,8 @@ func (c *tarCompressor) handleTar() (retErr error) {
 	return nil
 }
 
-func (c *tarCompressor) tarTaskProducer() {
-	defer close(c.tarTasksChan)
+func (c *tarCompressor) tarItemProducer() {
+	defer close(c.tarItemsChan)
 	walkErr := filepath.WalkDir(c.src, func(absSrcPath string, d os.DirEntry, walkErr error) error {
 		select {
 		case <-c.ctx.Done():
@@ -233,16 +249,16 @@ func (c *tarCompressor) tarTaskProducer() {
 		plog.Notice("ADD", "source", c.src, "file", relPathKey)
 		c.metrics.AddEntriesProcessed(1)
 
-		task := c.tarTaskPool.Get().(*tarTask)
+		task := c.tarItemPool.Get().(*tarItem)
 		task.absSrcPath = absSrcPath
 		task.relPathKey = relPathKey
 		task.info = info
 
 		select {
-		case c.tarTasksChan <- task:
+		case c.tarItemsChan <- task:
 			return nil
 		case <-c.ctx.Done():
-			c.tarTaskPool.Put(task) // Return to pool on cancellation
+			c.tarItemPool.Put(task) // Return to pool on cancellation
 			return c.ctx.Err()
 		}
 	})
@@ -273,14 +289,14 @@ func (c *tarCompressor) tarWorker() {
 			return
 		case <-c.tarErrsChan:
 			return
-		case t, ok := <-c.tarTasksChan:
+		case t, ok := <-c.tarItemsChan:
 			if !ok {
 				return // Channel closed
 			}
 
 			// Use an IIFE to ensure the task is always returned to the pool.
 			func() {
-				defer c.tarTaskPool.Put(t)
+				defer c.tarItemPool.Put(t)
 
 				var err error
 				if t.info.Mode()&os.ModeSymlink != 0 {

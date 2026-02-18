@@ -13,10 +13,12 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/klauspost/pgzip"
+	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 type tarExtractor struct {
+	dryRun        bool
 	format        Format
 	bufferPool    *sync.Pool
 	metrics       Metrics
@@ -24,8 +26,9 @@ type tarExtractor struct {
 	modTimeWindow time.Duration
 }
 
-func newTarExtractor(format Format, bufferPool *sync.Pool, metrics Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) *tarExtractor {
+func newTarExtractor(dryRun bool, format Format, bufferPool *sync.Pool, metrics Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) *tarExtractor {
 	return &tarExtractor{
+		dryRun:        dryRun,
 		format:        format,
 		bufferPool:    bufferPool,
 		metrics:       metrics,
@@ -35,6 +38,14 @@ func newTarExtractor(format Format, bufferPool *sync.Pool, metrics Metrics, over
 }
 
 func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtractTargetPath string) error {
+
+	if e.dryRun {
+		plog.Notice("[DRY RUN] EXTRACT", "source", absArchiveFilePath, "target", absExtractTargetPath)
+		return nil
+	}
+
+	plog.Notice("EXTRACT", "source", absArchiveFilePath, "target", absExtractTargetPath)
+
 	f, err := os.Open(absArchiveFilePath)
 	if err != nil {
 		return err

@@ -869,10 +869,10 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			// This is a test-only pattern.
 			var lastRunMetrics Metrics
 			if !tc.disabled {
-				if syncer.lastNativeTask == nil {
-					t.Fatal("syncer.lastNativeTask was nil, cannot inspect test state")
+				if syncer.lastNativeSyncer == nil {
+					t.Fatal("syncer.lastSyncer was nil, cannot inspect test state")
 				}
-				lastRunMetrics = syncer.lastNativeTask.metrics
+				lastRunMetrics = syncer.lastNativeSyncer.metrics
 			}
 
 			// Assert
