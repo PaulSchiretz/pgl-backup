@@ -42,7 +42,6 @@ import (
 
 	"github.com/paulschiretz/pgl-backup/pkg/hints"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
-	"github.com/paulschiretz/pgl-backup/pkg/patharchivemetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
@@ -81,11 +80,11 @@ func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathK
 	// Resolve the actual archiving interval
 	interval := a.resolveInterval(p)
 
-	var m patharchivemetrics.Metrics
+	var m Metrics
 	if p.Metrics {
-		m = &patharchivemetrics.ArchiveMetrics{}
+		m = &ArchiveMetrics{}
 	} else {
-		m = &patharchivemetrics.NoopMetrics{}
+		m = &NoopMetrics{}
 	}
 
 	// Ensure the archives directory exists.

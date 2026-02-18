@@ -27,7 +27,6 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/hints"
 	"github.com/paulschiretz/pgl-backup/pkg/limiter"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
-	"github.com/paulschiretz/pgl-backup/pkg/pathcompressionmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
@@ -83,12 +82,12 @@ func (c *PathCompressor) Compress(ctx context.Context, absBasePath, relContentPa
 		return ErrNothingToCompress
 	}
 
-	var m pathcompressionmetrics.Metrics
+	var m Metrics
 	if p.Metrics {
-		m = &pathcompressionmetrics.CompressionMetrics{}
+		m = &CompressionMetrics{}
 	} else {
 		// Use the No-op implementation if metrics are disabled.
-		m = &pathcompressionmetrics.NoopMetrics{}
+		m = &NoopMetrics{}
 	}
 
 	t := &compressTask{
@@ -126,11 +125,11 @@ func (c *PathCompressor) Extract(ctx context.Context, absBasePath string, toExtr
 		return ErrNothingToExtract
 	}
 
-	var m pathcompressionmetrics.Metrics
+	var m Metrics
 	if p.Metrics {
-		m = &pathcompressionmetrics.CompressionMetrics{}
+		m = &CompressionMetrics{}
 	} else {
-		m = &pathcompressionmetrics.NoopMetrics{}
+		m = &NoopMetrics{}
 	}
 
 	t := &extractTask{

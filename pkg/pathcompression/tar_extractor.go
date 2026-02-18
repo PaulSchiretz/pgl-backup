@@ -13,19 +13,18 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/klauspost/pgzip"
-	"github.com/paulschiretz/pgl-backup/pkg/pathcompressionmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 type tarExtractor struct {
 	format        Format
 	bufferPool    *sync.Pool
-	metrics       pathcompressionmetrics.Metrics
+	metrics       Metrics
 	overwrite     OverwriteBehavior
 	modTimeWindow time.Duration
 }
 
-func newTarExtractor(format Format, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) *tarExtractor {
+func newTarExtractor(format Format, bufferPool *sync.Pool, metrics Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) *tarExtractor {
 	return &tarExtractor{
 		format:        format,
 		bufferPool:    bufferPool,

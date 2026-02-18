@@ -7,7 +7,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/paulschiretz/pgl-backup/pkg/pathcompressionmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
@@ -76,7 +75,7 @@ func handleOverwrite(absTargetPath string, archiveFileModTime time.Time, archive
 // extractMetricReader wraps an io.Reader and updates metrics on every read.
 type extractMetricReader struct {
 	r       io.Reader
-	metrics pathcompressionmetrics.Metrics
+	metrics Metrics
 }
 
 func (mr *extractMetricReader) Read(p []byte) (n int, err error) {
@@ -94,7 +93,7 @@ func (mr *extractMetricReader) Reset(r io.Reader) {
 // extractMetricReaderAt wraps an io.ReaderAt and updates metrics on every read.
 type extractMetricReaderAt struct {
 	r       io.ReaderAt
-	metrics pathcompressionmetrics.Metrics
+	metrics Metrics
 }
 
 func (mr *extractMetricReaderAt) ReadAt(p []byte, off int64) (n int, err error) {

@@ -11,19 +11,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/paulschiretz/pgl-backup/pkg/pathcompressionmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 type zipExtractor struct {
 	format        Format
 	bufferPool    *sync.Pool
-	metrics       pathcompressionmetrics.Metrics
+	metrics       Metrics
 	overwrite     OverwriteBehavior
 	modTimeWindow time.Duration
 }
 
-func newZipExtractor(format Format, bufferPool *sync.Pool, metrics pathcompressionmetrics.Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) *zipExtractor {
+func newZipExtractor(format Format, bufferPool *sync.Pool, metrics Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) *zipExtractor {
 	return &zipExtractor{
 		format:        Zip,
 		bufferPool:    bufferPool,

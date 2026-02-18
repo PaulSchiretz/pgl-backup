@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
-	"github.com/paulschiretz/pgl-backup/pkg/patharchivemetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
@@ -23,7 +22,7 @@ type task struct {
 	toArchive    metafile.MetafileInfo
 	interval     time.Duration
 	location     *time.Location
-	metrics      patharchivemetrics.Metrics
+	metrics      Metrics
 	dryRun       bool
 	timestampUTC time.Time
 }

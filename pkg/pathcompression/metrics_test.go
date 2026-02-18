@@ -1,4 +1,4 @@
-package pathcompressionmetrics
+package pathcompression_test
 
 import (
 	"bytes"
@@ -7,12 +7,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
 func TestCompressionMetrics_Adders(t *testing.T) {
 	t.Run("correctly increments all counters", func(t *testing.T) {
-		m := &CompressionMetrics{}
+		m := &pathcompression.CompressionMetrics{}
 
 		m.AddArchivesCreated(5)
 		m.AddArchivesExtracted(3)
@@ -50,7 +51,7 @@ func TestCompressionMetrics_Log(t *testing.T) {
 		t.Cleanup(func() { plog.SetOutput(os.Stderr) }) // Restore original output after test.
 
 		// --- Act ---
-		m := &CompressionMetrics{}
+		m := &pathcompression.CompressionMetrics{}
 		m.AddArchivesCreated(10)
 		m.AddArchivesExtracted(5)
 		m.AddBytesRead(200)
@@ -91,7 +92,7 @@ func TestCompressionMetrics_Log(t *testing.T) {
 		plog.SetOutput(&logBuf)
 		t.Cleanup(func() { plog.SetOutput(os.Stderr) })
 
-		m := &CompressionMetrics{}
+		m := &pathcompression.CompressionMetrics{}
 		// No bytes added
 		m.LogSummary("Zero Check")
 
@@ -104,7 +105,7 @@ func TestCompressionMetrics_Log(t *testing.T) {
 
 func TestNoopMetrics(t *testing.T) {
 	t.Run("all methods execute without panicking", func(t *testing.T) {
-		m := &NoopMetrics{}
+		m := &pathcompression.NoopMetrics{}
 
 		defer func() {
 			if r := recover(); r != nil {

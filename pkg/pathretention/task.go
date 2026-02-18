@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
-	"github.com/paulschiretz/pgl-backup/pkg/pathretentionmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
@@ -33,7 +32,7 @@ type task struct {
 
 	timestampUTC time.Time
 
-	metrics         pathretentionmetrics.Metrics
+	metrics         Metrics
 	dryRun          bool
 	deleteTasksChan chan metafile.MetafileInfo
 	deleteWg        sync.WaitGroup

@@ -12,7 +12,6 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/buildinfo"
 	"github.com/paulschiretz/pgl-backup/pkg/hints"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
-	"github.com/paulschiretz/pgl-backup/pkg/pathsyncmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/sharded"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
@@ -186,12 +185,12 @@ func (s *PathSyncer) Restore(ctx context.Context, absBasePath string, relContent
 
 // runNativeTask initializes the native sync task structure and kicks off the execution.
 func (s *PathSyncer) runNativeTask(ctx context.Context, absSourcePath, absSyncTargetPath string, p *Plan) error {
-	var m pathsyncmetrics.Metrics
+	var m Metrics
 	if p.Metrics {
-		m = &pathsyncmetrics.SyncMetrics{}
+		m = &SyncMetrics{}
 	} else {
 		// Use the No-op implementation if metrics are disabled.
-		m = &pathsyncmetrics.NoopMetrics{}
+		m = &NoopMetrics{}
 	}
 
 	discoveredPaths, err := sharded.NewShardedSet()

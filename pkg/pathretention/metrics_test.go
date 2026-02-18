@@ -1,4 +1,4 @@
-package pathretentionmetrics
+package pathretention_test
 
 import (
 	"bytes"
@@ -7,12 +7,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/paulschiretz/pgl-backup/pkg/pathretention"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
 func TestRetentionMetrics_Adders(t *testing.T) {
 	t.Run("correctly increments all counters", func(t *testing.T) {
-		m := &RetentionMetrics{}
+		m := &pathretention.RetentionMetrics{}
 
 		m.AddBackupsDeleted(5)
 		m.AddBackupsFailed(2)
@@ -34,7 +35,7 @@ func TestRetentionMetrics_Log(t *testing.T) {
 		t.Cleanup(func() { plog.SetOutput(os.Stderr) }) // Restore original output after test.
 
 		// --- Act ---
-		m := &RetentionMetrics{}
+		m := &pathretention.RetentionMetrics{}
 		m.AddBackupsDeleted(10)
 		m.AddBackupsFailed(3)
 		m.StartProgress("Test", time.Hour) // Initialize startTime
@@ -61,7 +62,7 @@ func TestRetentionMetrics_Log(t *testing.T) {
 
 func TestNoopMetrics(t *testing.T) {
 	t.Run("all methods execute without panicking", func(t *testing.T) {
-		m := &NoopMetrics{}
+		m := &pathretention.NoopMetrics{}
 
 		defer func() {
 			if r := recover(); r != nil {

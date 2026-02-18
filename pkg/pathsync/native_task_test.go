@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/paulschiretz/pgl-backup/pkg/pathsyncmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
@@ -868,7 +867,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 
 			// HACK: To inspect the metrics instance, we need to get the last run from the syncer.
 			// This is a test-only pattern.
-			var lastRunMetrics pathsyncmetrics.Metrics
+			var lastRunMetrics Metrics
 			if !tc.disabled {
 				if syncer.lastNativeTask == nil {
 					t.Fatal("syncer.lastNativeTask was nil, cannot inspect test state")
@@ -941,14 +940,14 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 
 				// If metrics were disabled, assert we got the NoopMetrics type.
 				if !tc.enableMetrics {
-					if _, ok := lastRunMetrics.(*pathsyncmetrics.NoopMetrics); !ok {
+					if _, ok := lastRunMetrics.(*NoopMetrics); !ok {
 						t.Fatalf("expected metrics to be *metrics.NoopMetrics when disabled, but got %T", lastRunMetrics)
 					}
 				}
 
 				// To check the values, we must have a *SyncMetrics instance.
 				// This will be nil if metrics were disabled, and the checks will correctly fail.
-				m, _ := lastRunMetrics.(*pathsyncmetrics.SyncMetrics)
+				m, _ := lastRunMetrics.(*SyncMetrics)
 				if m == nil && tc.enableMetrics {
 					t.Fatalf("metrics were not of expected type *metrics.SyncMetrics, but %T", lastRunMetrics)
 				}

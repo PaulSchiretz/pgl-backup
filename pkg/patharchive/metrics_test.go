@@ -1,4 +1,4 @@
-package patharchivemetrics
+package patharchive_test
 
 import (
 	"bytes"
@@ -7,12 +7,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/paulschiretz/pgl-backup/pkg/patharchive"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
 func TestArchiveMetrics_Adders(t *testing.T) {
 	t.Run("correctly increments counters", func(t *testing.T) {
-		m := &ArchiveMetrics{}
+		m := &patharchive.ArchiveMetrics{}
 		m.AddArchivesCreated(5)
 		if got := m.ArchivesCreated.Load(); got != 5 {
 			t.Errorf("expected ArchivesCreated to be 5, got %d", got)
@@ -26,7 +27,7 @@ func TestArchiveMetrics_Log(t *testing.T) {
 		plog.SetOutput(&logBuf)
 		t.Cleanup(func() { plog.SetOutput(os.Stderr) })
 
-		m := &ArchiveMetrics{}
+		m := &patharchive.ArchiveMetrics{}
 		m.AddArchivesCreated(10)
 		m.StartProgress("Test", time.Hour) // Initialize startTime
 		m.StopProgress()                   // Stop immediately to avoid leaks
@@ -47,7 +48,7 @@ func TestArchiveMetrics_Log(t *testing.T) {
 
 func TestNoopMetrics(t *testing.T) {
 	t.Run("all methods execute without panicking", func(t *testing.T) {
-		m := &NoopMetrics{}
+		m := &patharchive.NoopMetrics{}
 		defer func() {
 			if r := recover(); r != nil {
 				t.Errorf("NoopMetrics method panicked: %v", r)

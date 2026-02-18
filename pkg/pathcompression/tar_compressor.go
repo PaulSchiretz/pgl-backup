@@ -13,7 +13,6 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/klauspost/pgzip"
 	"github.com/paulschiretz/pgl-backup/pkg/limiter"
-	"github.com/paulschiretz/pgl-backup/pkg/pathcompressionmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
@@ -31,7 +30,7 @@ type tarCompressor struct {
 	level   Level
 	mu      sync.Mutex
 	tw      *tar.Writer
-	metrics pathcompressionmetrics.Metrics
+	metrics Metrics
 
 	// ctx is the cancellable context for the entire run.
 	ctx context.Context
@@ -61,7 +60,7 @@ type tarTask struct {
 	info       os.FileInfo
 }
 
-func newTarCompressor(format Format, level Level, ioBufferPool *sync.Pool, ioBufferSize int64, readAheadLimiter *limiter.Memory, readAheadLimitSize int64, numWorkers int, metrics pathcompressionmetrics.Metrics) *tarCompressor {
+func newTarCompressor(format Format, level Level, ioBufferPool *sync.Pool, ioBufferSize int64, readAheadLimiter *limiter.Memory, readAheadLimitSize int64, numWorkers int, metrics Metrics) *tarCompressor {
 	return &tarCompressor{
 		format:             format,
 		level:              level,

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
-	"github.com/paulschiretz/pgl-backup/pkg/pathcompressionmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
@@ -23,7 +22,7 @@ type extractTask struct {
 	overwriteBehavior    OverwriteBehavior
 	modTimeWindow        time.Duration
 	timestampUTC         time.Time
-	metrics              pathcompressionmetrics.Metrics
+	metrics              Metrics
 	dryRun               bool
 }
 

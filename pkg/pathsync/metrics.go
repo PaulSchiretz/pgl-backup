@@ -1,4 +1,4 @@
-package pathsyncmetrics
+package pathsync
 
 import (
 	"sync/atomic"

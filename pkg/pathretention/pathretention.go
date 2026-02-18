@@ -20,7 +20,6 @@ import (
 
 	"github.com/paulschiretz/pgl-backup/pkg/hints"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
-	"github.com/paulschiretz/pgl-backup/pkg/pathretentionmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
@@ -73,11 +72,11 @@ func (r *PathRetainer) Prune(ctx context.Context, absBasePath string, toPrune []
 		return b.Metadata.TimestampUTC.Compare(a.Metadata.TimestampUTC)
 	})
 
-	var m pathretentionmetrics.Metrics
+	var m Metrics
 	if p.Metrics {
-		m = &pathretentionmetrics.RetentionMetrics{}
+		m = &RetentionMetrics{}
 	} else {
-		m = &pathretentionmetrics.NoopMetrics{}
+		m = &NoopMetrics{}
 	}
 
 	t := &task{

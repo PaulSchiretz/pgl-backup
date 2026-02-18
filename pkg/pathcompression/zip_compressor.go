@@ -12,7 +12,6 @@ import (
 	"github.com/klauspost/compress/flate"
 	"github.com/klauspost/compress/zip"
 	"github.com/paulschiretz/pgl-backup/pkg/limiter"
-	"github.com/paulschiretz/pgl-backup/pkg/pathcompressionmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
@@ -31,7 +30,7 @@ type zipCompressor struct {
 	mu     sync.Mutex
 	zw     *zip.Writer
 
-	metrics pathcompressionmetrics.Metrics
+	metrics Metrics
 
 	// ctx is the cancellable context for the entire run.
 	ctx context.Context
@@ -76,7 +75,7 @@ type zipTask struct {
 	info       os.FileInfo
 }
 
-func newZipCompressor(format Format, level Level, ioBufferPool *sync.Pool, ioBufferSize int64, readAheadLimiter *limiter.Memory, readAheadLimitSize int64, numWorkers int, metrics pathcompressionmetrics.Metrics) *zipCompressor {
+func newZipCompressor(format Format, level Level, ioBufferPool *sync.Pool, ioBufferSize int64, readAheadLimiter *limiter.Memory, readAheadLimitSize int64, numWorkers int, metrics Metrics) *zipCompressor {
 
 	// Map the compression level
 	var lvl int

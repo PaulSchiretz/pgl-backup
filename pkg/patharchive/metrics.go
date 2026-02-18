@@ -1,4 +1,4 @@
-package patharchivemetrics
+package patharchive
 
 import (
 	"sync/atomic"

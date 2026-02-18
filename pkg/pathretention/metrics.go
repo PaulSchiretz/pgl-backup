@@ -1,4 +1,4 @@
-package pathretentionmetrics
+package pathretention
 
 import (
 	"sync/atomic"

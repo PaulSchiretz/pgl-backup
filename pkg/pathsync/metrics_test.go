@@ -1,4 +1,4 @@
-package pathsyncmetrics
+package pathsync_test
 
 import (
 	"os"
@@ -8,12 +8,13 @@ import (
 
 	"bytes"
 
+	"github.com/paulschiretz/pgl-backup/pkg/pathsync"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
 func TestSyncMetrics_Adders(t *testing.T) {
 	t.Run("correctly increments all counters", func(t *testing.T) {
-		m := &SyncMetrics{}
+		m := &pathsync.SyncMetrics{}
 
 		m.AddFilesCopied(5)
 		m.AddFilesDeleted(3)
@@ -59,7 +60,7 @@ func TestSyncMetrics_Log(t *testing.T) {
 		t.Cleanup(func() { plog.SetOutput(os.Stderr) }) // Restore original output after test.
 
 		// --- Act ---
-		m := &SyncMetrics{}
+		m := &pathsync.SyncMetrics{}
 		m.AddFilesCopied(10)
 		m.AddFilesUpToDate(20)
 		m.AddBytesWritten(500)
@@ -98,7 +99,7 @@ func TestNoopMetrics(t *testing.T) {
 		// The purpose of this test is to simply call all methods on NoopMetrics
 		// to ensure they are present and do not cause a runtime panic.
 		// There are no values to assert, as the implementation is empty.
-		m := &NoopMetrics{}
+		m := &pathsync.NoopMetrics{}
 
 		// Use a defer function with recover to explicitly check for panics.
 		defer func() {

@@ -1,4 +1,4 @@
-package pathcompressionmetrics
+package pathcompression
 
 import (
 	"fmt"

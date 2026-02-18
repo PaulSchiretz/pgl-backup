@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-
-	"github.com/paulschiretz/pgl-backup/pkg/pathcompressionmetrics"
 )
 
 // compressor defines the interface for compressing a directory into an archive file.
@@ -17,7 +15,7 @@ type compressor interface {
 // compressMetricWriter wraps an io.Writer and updates metrics on every write.
 type compressMetricWriter struct {
 	w       io.Writer
-	metrics pathcompressionmetrics.Metrics
+	metrics Metrics
 }
 
 func (mw *compressMetricWriter) Write(p []byte) (n int, err error) {

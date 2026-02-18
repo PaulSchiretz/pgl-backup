@@ -46,7 +46,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/paulschiretz/pgl-backup/pkg/pathsyncmetrics"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/sharded"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
@@ -176,7 +175,7 @@ type nativeTask struct {
 	mirrorDirsToDelete *sharded.ShardedSet
 
 	// metrics holds the counters for the sync operation.
-	metrics pathsyncmetrics.Metrics
+	metrics Metrics
 }
 
 // --- Helpers ---
