@@ -68,9 +68,8 @@
 *   **Plug and Play**: The binary is static and self-contained. You can run it directly from an external drive without installation, making it perfect for portable backup workflows.
 *   **Pre- and Post-Backup Hooks**: Execute custom shell commands before the sync begins or after it completes, perfect for tasks like dumping a database or sending a notification.
 *   **Adjustable Configuration**: Configure backups using a simple `pgl-backup.config.json` JSON file, and override any setting with command-line flags for one-off tasks.
-*   **Multiple Sync Engines**:
-    *   **`native`**: The default engine. It is a high-performance, concurrent, cross-platform engine written in pure Go that generally offers the best performance with no external dependencies.
-    *   **`robocopy`** (Windows only): An alternative engine that uses the battle-tested `robocopy.exe` utility. While reliable, the `native` engine is often faster due to its modern design.
+*   **High performance Sync Engine**:
+    *   **`native`**: A high-performance, concurrent, cross-platform engine written in pure Go that offers the best performance with no external dependencies.
 *   **Safety First**:
     *   **Pre-flight Checks**: Validates source and target paths, permissions, and configuration *before* starting any file operations to fail fast and provide clear errors.
     *   **Dry Run Mode**: The `-dry-run` flag lets you see exactly what files would be copied, updated, or deleted without making any actual changes.
@@ -812,7 +811,7 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | - / `paths.snapshot.archiveEntryPrefix` | `string` | `"PGL_Backup_"` | Prefix for timestamped archive directories (snapshot). |
 | **Sync Settings** | | | |
 | - / `sync.enabled` | `bool` | `true` | Enable file synchronization. |
-| `sync-engine` / `sync.engine` | `string` | `"native"` | The sync engine to use: `"native"` or `"robocopy"` (Windows only). |
+| `sync-engine` / `sync.engine` | `string` | `"native"` | The sync engine to use: `"native"`. |
 | `sync-disable-safe-copy` / `sync.disableSafeCopy` | `bool` | `false` | Disable 'copy then rename' for secure file syncing (faster but less safe). |
 | `sync-retry-count` / `sync.retryCount` | `int` | `3` | Number of retries for failed file copies. |
 | `sync-retry-wait` / `sync.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries. |

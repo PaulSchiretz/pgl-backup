@@ -118,12 +118,12 @@ func TestGenerateBackupPlan(t *testing.T) {
 			name: "Sync Engine Parsing",
 			configMod: func(c *config.Config) {
 				c.Runtime.Mode = "incremental"
-				c.Sync.Engine = "robocopy"
+				c.Sync.Engine = "native"
 			},
 			expectedMode: planner.Incremental,
 			validate: func(t *testing.T, p *planner.BackupPlan) {
-				if p.Sync.Engine != pathsync.Robocopy {
-					t.Errorf("Expected Sync Engine Robocopy, got %v", p.Sync.Engine)
+				if p.Sync.Engine != pathsync.Native {
+					t.Errorf("Expected Sync Engine Native, got %v", p.Sync.Engine)
 				}
 			},
 		},

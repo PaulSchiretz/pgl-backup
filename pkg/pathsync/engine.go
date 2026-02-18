@@ -13,11 +13,9 @@ type Engine int
 const (
 	// Native uses the cross-platform Go implementation.
 	Native Engine = iota
-	// Robocopy uses the Windows-specific robocopy utility.
-	Robocopy
 )
 
-var engineToString = map[Engine]string{Native: "native", Robocopy: "robocopy"}
+var engineToString = map[Engine]string{Native: "native"}
 var stringToEngine = map[string]Engine{}
 
 func init() {
@@ -37,7 +35,7 @@ func ParseEngine(s string) (Engine, error) {
 	if engine, ok := stringToEngine[s]; ok {
 		return engine, nil
 	}
-	return 0, fmt.Errorf("invalid engine: %q. Must be 'native' or 'robocopy'", s)
+	return 0, fmt.Errorf("invalid engine: %q. Must be 'native'", s)
 }
 
 // MarshalJSON implements the json.Marshaler interface for Engine.

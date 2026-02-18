@@ -99,11 +99,6 @@ func (s *PathSyncer) Sync(ctx context.Context, absBasePath, absSourcePath string
 	}
 
 	switch p.Engine {
-	case Robocopy:
-		err := s.runRobocopyTask(ctx, absSourcePath, absSyncTargetPath, p)
-		if err != nil {
-			return metafile.MetafileInfo{}, err
-		}
 	case Native:
 		err := s.runNativeTask(ctx, absSourcePath, absSyncTargetPath, p)
 		if err != nil {
@@ -174,8 +169,6 @@ func (s *PathSyncer) Restore(ctx context.Context, absBasePath string, relContent
 	}
 
 	switch p.Engine {
-	case Robocopy:
-		return s.runRobocopyTask(ctx, absSourcePath, absSyncTargetPath, p)
 	case Native:
 		return s.runNativeTask(ctx, absSourcePath, absSyncTargetPath, p)
 	default:
@@ -253,25 +246,6 @@ func (s *PathSyncer) runNativeTask(ctx context.Context, absSourcePath, absSyncTa
 	}
 
 	s.lastNativeTask = t // Store the run instance for testing.
-	return t.execute()
-}
-
-// runRobocopyTask initializes the robocopy task structure and kicks off the execution.
-func (s *PathSyncer) runRobocopyTask(ctx context.Context, absSourcePath, absSyncTargetPath string, p *Plan) error {
-	t := &robocopyTask{
-		src:               absSourcePath,
-		trg:               absSyncTargetPath,
-		retryCount:        p.RetryCount,
-		retryWait:         p.RetryWait,
-		mirror:            p.Mirror,
-		dryRun:            p.DryRun,
-		failFast:          p.FailFast,
-		fileExcludes:      p.ExcludeFiles,
-		dirExcludes:       p.ExcludeDirs,
-		ctx:               ctx,
-		metrics:           p.Metrics,
-		overwriteBehavior: p.OverwriteBehavior,
-	}
 	return t.execute()
 }
 

@@ -142,7 +142,6 @@ type Config struct {
 func NewDefault() Config {
 	// Default to the native engine on all platforms. It's highly concurrent and generally offers
 	// the best performance and consistency with no external dependencies.
-	// Power users on Windows can still opt-in to 'robocopy' as a battle-tested alternative.
 	return Config{
 		Version:  buildinfo.Version,
 		LogLevel: "info", // Default log level.

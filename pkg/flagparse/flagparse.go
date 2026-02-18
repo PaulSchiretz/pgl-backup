@@ -106,7 +106,7 @@ func registerBackupFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.BufferSizeKB = fs.Int64("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression.")
 	f.ReadAheadLimitKB = fs.Int64("readahead-limit-kb", 0, "Limit of the I/O readahead in kilobytes for file compression.")
 
-	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
+	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native'.")
 	f.SyncDisableSafeCopy = fs.Bool("sync-disable-safe-copy", false, "Disable 'copy then rename' for secure file syncing (faster but less safe).")
 	f.SyncRetryCount = fs.Int("sync-retry-count", 0, "Number of retries for failed file copies.")
 	f.SyncRetryWait = fs.Int("sync-retry-wait", 0, "Seconds to wait between retries.")
@@ -156,7 +156,7 @@ func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.BufferSizeKB = fs.Int64("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression.")
 	f.ReadAheadLimitKB = fs.Int64("readahead-limit-kb", 0, "Limit of the I/O readahead in kilobytes for file compression.")
 
-	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
+	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native'.")
 	f.SyncDisableSafeCopy = fs.Bool("sync-disable-safe-copy", false, "Disable 'copy then rename' for secure file syncing (faster but less safe).")
 	f.SyncRetryCount = fs.Int("sync-retry-count", 0, "Number of retries for failed file copies.")
 	f.SyncRetryWait = fs.Int("sync-retry-wait", 0, "Seconds to wait between retries.")
@@ -210,7 +210,7 @@ func registerRestoreFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.UUID = fs.String("uuid", "", "UUID of the backup to restore. If omitted, an interactive list is shown.")
 	f.Mode = fs.String("mode", "any", "Filter the interactive list by mode ('incremental' or 'snapshot'), or restrict search when -uuid is provided. Defaults to 'any'.")
 	f.FailFast = fs.Bool("fail-fast", false, "Stop the restore immediately on the first error.")
-	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native' or 'robocopy' (Windows only).")
+	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native'.")
 
 	f.SyncDisableSafeCopy = fs.Bool("sync-disable-safe-copy", false, "Disable 'copy then rename' for secure file syncing (faster but less safe).")
 	f.SyncRetryCount = fs.Int("sync-retry-count", 0, "Number of retries for failed file copies.")

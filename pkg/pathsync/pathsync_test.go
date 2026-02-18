@@ -30,31 +30,6 @@ func TestSync_Dispatch(t *testing.T) {
 		}
 	})
 
-	t.Run("Robocopy on Non-Windows OS", func(t *testing.T) {
-		if runtime.GOOS == "windows" {
-			t.Skip("this test is for non-windows platforms only")
-		}
-
-		srcDir := t.TempDir()
-		baseDir := t.TempDir()
-
-		plan := &Plan{
-			Engine: Robocopy,
-		}
-
-		syncer := NewPathSyncer(256, 1, 1)
-		_, err := syncer.Sync(context.Background(), baseDir, srcDir, "current", "content", plan, time.Now())
-
-		if err == nil {
-			t.Fatal("expected an error when using robocopy on a non-windows OS, but got nil")
-		}
-
-		expectedError := "robocopy is not supported"
-		if !strings.Contains(err.Error(), expectedError) {
-			t.Errorf("expected error to contain %q, but got: %v", expectedError, err)
-		}
-	})
-
 	t.Run("Success Native Stores Result", func(t *testing.T) {
 		srcDir := t.TempDir()
 		baseDir := t.TempDir()
