@@ -46,6 +46,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/sharded"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
@@ -117,6 +119,13 @@ type nativeSyncer struct {
 	// syncedDirCache tracks directories that have ALREADY been created in the destination
 	// by any syncWorker. This prevents duplicate MkdirAll calls across the concurrent pool.
 	syncedDirCache *sharded.ShardedSet
+	// Synchronizes directory creation/conversion
+	// syncedDirSFGroup is used to prevent a "thundering herd" problem when multiple
+	// workers concurrently try to create the same parent directory. It ensures that
+	// for any given directory path, only the first worker performs the I/O (MkdirAll),
+	// while other workers for the same path wait for the result. This deduplicates
+	// work and prevents race conditions.
+	syncedDirSFGroup singleflight.Group
 
 	// syncWg waits for the syncItemProducer and syncWorkers to finish processing all sync items.
 	syncWg sync.WaitGroup
@@ -630,74 +639,82 @@ func (s *nativeSyncer) processDirectorySync(item *syncItem) error {
 		return nil // Already created.
 	}
 
-	// IMPORTANT NOTE ON CONCURRENCY!
-	// More than one writer can enter here concurrently.
-	// We rely on Idempotent I/O here!
-	// If not in the cache, we call os.MkdirAll.
-	// Crucially, os.MkdirAll is designed to be called by multiple processes or threads at once; the OS handles the locking.
-	// If the directory already exists, it simply returns nil.
-
-	if s.dryRun {
-		// Atomically update cache to ensure we only log once per directory.
-		if alreadyExisted := s.syncedDirCache.LoadOrStore(item.RelPathKey); !alreadyExisted {
-			plog.Notice("[DRY RUN] DIR", "path", item.RelPathKey)
+	// 2. Use singleflight to deduplicate concurrent requests for the same path.
+	// In a highly concurrent scenario, many workers might try to create the same
+	// parent directory simultaneously (e.g., for 1000 files in the same new folder).
+	// The singleflight group ensures that only the *first* worker to request creation
+	// for a specific path will execute the MkdirAll logic. All other workers for that
+	// same path will block and wait for the first one to finish, receiving its result.
+	// This prevents redundant I/O and potential race conditions.
+	//
+	// CRITICAL: This is especially critical when a file or symlink with the same name exists
+	// at the target path. We must remove it before creating the directory. Without
+	// singleflight, multiple workers would race to remove the same file, leading to errors.
+	_, err, _ := s.syncedDirSFGroup.Do(item.RelPathKey, func() (any, error) {
+		// Double-check cache now that we are the "chosen" worker for this path
+		if s.syncedDirCache.Has(item.RelPathKey) {
+			return nil, nil
 		}
-		return nil
-	}
 
-	// Convert the path to the OS-native format for file access
-	absTrgPath := s.denormalizedAbsPath(s.trg, item.RelPathKey)
-	expectedPerms := util.WithUserWritePermission(item.PathInfo.Mode.Perm())
-
-	// 2. Perform the concurrent I/O.
-	// Check if the destination exists and handle type conflicts (e.g. File vs Dir).
-	var dirCreated bool = false
-	info, err := os.Lstat(absTrgPath)
-	if err == nil {
-		// Path exists.
-		if !info.IsDir() {
-			// It exists but is not a directory (e.g. it's a file or symlink).
-			// We must remove it to create the directory.
-			plog.Warn("Destination path exists but is not a directory, removing", "path", item.RelPathKey, "type", info.Mode().String())
-			if err := os.RemoveAll(absTrgPath); err != nil {
-				return fmt.Errorf("failed to remove conflicting destination file %s: %w", item.RelPathKey, err)
+		if s.dryRun {
+			// Atomically update cache to ensure we only log once per directory.
+			if alreadyExisted := s.syncedDirCache.LoadOrStore(item.RelPathKey); !alreadyExisted {
+				plog.Notice("[DRY RUN] DIR", "path", item.RelPathKey)
 			}
-			// Create the directory.
+			return nil, nil
+		}
+
+		// Convert the path to the OS-native format for file access
+		absTrgPath := s.denormalizedAbsPath(s.trg, item.RelPathKey)
+		expectedPerms := util.WithUserWritePermission(item.PathInfo.Mode.Perm())
+
+		// 3. Perform the concurrent I/O.
+		// Check if the destination exists and handle type conflicts (e.g. File vs Dir).
+		var dirCreated bool = false
+		info, err := os.Lstat(absTrgPath)
+		if err == nil {
+			// Path exists.
+			if !info.IsDir() {
+				// It exists but is not a directory (e.g. it's a file or symlink).
+				// We must remove it to create the directory.
+				plog.Warn("Destination path exists but is not a directory, removing", "path", item.RelPathKey, "type", info.Mode().String())
+				if err := os.RemoveAll(absTrgPath); err != nil {
+					return nil, fmt.Errorf("failed to remove conflicting destination file %s: %w", item.RelPathKey, err)
+				}
+				// Create the directory.
+				if err := os.MkdirAll(absTrgPath, expectedPerms); err != nil {
+					plog.Warn("Failed to create destination directory, skipping", "path", item.RelPathKey, "error", err)
+					return nil, filepath.SkipDir
+				}
+				dirCreated = true
+			} else {
+				// It is already a directory. Ensure permissions are correct.
+				if err := os.Chmod(absTrgPath, expectedPerms); err != nil {
+					plog.Warn("Failed to set permissions on destination directory", "path", item.RelPathKey, "error", err)
+					return nil, fmt.Errorf("failed to set permissions on destination directory %s: %w", item.RelPathKey, err)
+				}
+			}
+		} else if os.IsNotExist(err) {
+			// Path does not exist. Create it.
 			if err := os.MkdirAll(absTrgPath, expectedPerms); err != nil {
 				plog.Warn("Failed to create destination directory, skipping", "path", item.RelPathKey, "error", err)
-				return filepath.SkipDir
+				return nil, filepath.SkipDir
 			}
 			dirCreated = true
 		} else {
-			// It is already a directory. Ensure permissions are correct.
-			if err := os.Chmod(absTrgPath, expectedPerms); err != nil {
-				plog.Warn("Failed to set permissions on destination directory", "path", item.RelPathKey, "error", err)
-				return fmt.Errorf("failed to set permissions on destination directory %s: %w", item.RelPathKey, err)
-			}
+			// Unexpected error from Lstat.
+			return nil, fmt.Errorf("failed to lstat destination directory %s: %w", item.RelPathKey, err)
 		}
-	} else if os.IsNotExist(err) {
-		// Path does not exist. Create it.
-		if err := os.MkdirAll(absTrgPath, expectedPerms); err != nil {
-			plog.Warn("Failed to create destination directory, skipping", "path", item.RelPathKey, "error", err)
-			return filepath.SkipDir
+
+		// 4. Finalize state
+		if dirCreated {
+			s.metrics.AddDirsCreated(1)
+			s.syncedDirCache.Store(item.RelPathKey)
+			plog.Notice("DIR", "path", item.RelPathKey)
 		}
-		dirCreated = true
-	} else {
-		// Unexpected error from Lstat.
-		return fmt.Errorf("failed to lstat destination directory %s: %w", item.RelPathKey, err)
-	}
-
-	// 3. Atomically update the cache and check if we were the first to do so.
-	// If LoadOrStore returns true, it means the key already existed, and we should not increment the metric.
-	if alreadyExisted := s.syncedDirCache.LoadOrStore(item.RelPathKey); alreadyExisted {
-		return nil
-	}
-
-	if dirCreated {
-		plog.Notice("DIR", "path", item.RelPathKey)
-		s.metrics.AddDirsCreated(1)
-	}
-	return nil
+		return nil, nil
+	})
+	return err
 }
 
 // ensureParentDirectoryExists is called by file-processing workers to guarantee that the
