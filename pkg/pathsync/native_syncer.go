@@ -658,7 +658,7 @@ func (s *nativeSyncer) processDirectorySync(item *syncItem) error {
 
 		if s.dryRun {
 			// Atomically update cache to ensure we only log once per directory.
-			if alreadyExisted := s.syncedDirCache.LoadOrStore(item.RelPathKey); !alreadyExisted {
+			if loaded := s.syncedDirCache.LoadOrStore(item.RelPathKey); !loaded {
 				plog.Notice("[DRY RUN] DIR", "path", item.RelPathKey)
 			}
 			return nil, nil
@@ -707,9 +707,11 @@ func (s *nativeSyncer) processDirectorySync(item *syncItem) error {
 		}
 
 		// 4. Finalize state
+		// CRITICAL: Always store in cache if the directory exists and is valid (whether we created it or it was already there).
+		// This prevents redundant Lstat/Chmod calls for every file in this directory by subsequent workers.
+		s.syncedDirCache.Store(item.RelPathKey)
 		if dirCreated {
 			s.metrics.AddDirsCreated(1)
-			s.syncedDirCache.Store(item.RelPathKey)
 			plog.Notice("DIR", "path", item.RelPathKey)
 		}
 		return nil, nil
