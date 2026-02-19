@@ -75,12 +75,6 @@ type mirrorItem struct {
 	RelPathKey string
 }
 
-// syncDirOnce is used in the syncedDirCache to ensure directory creation happens exactly once.
-type syncDirOnce struct {
-	once sync.Once
-	err  error
-}
-
 type nativeSyncer struct {
 
 	// Read buffer pool
@@ -122,12 +116,12 @@ type nativeSyncer struct {
 
 	// syncedDirCache tracks directories that have ALREADY been created in the destination
 	// by any syncWorker. This prevents duplicate MkdirAll calls across the concurrent pool.
-	syncedDirCache *sharded.ShardedMap
+	syncedDirCache *sharded.ShardedSet
 
-	// syncWg waits for the syncItemProducer and syncWorkers to finish processing all sync tasks.
+	// syncWg waits for the syncItemProducer and syncWorkers to finish processing all sync items.
 	syncWg sync.WaitGroup
 
-	// syncItemsChan is the channel where the Walker sends pre-processed tasks.
+	// syncItemsChan is the channel where the Walker sends pre-processed items.
 	syncItemsChan chan *syncItem
 
 	// criticalSyncErrsChan captures the first critical, unrecoverable error (e.g., walker failure)
@@ -138,10 +132,10 @@ type nativeSyncer struct {
 	// keyed by the relative path of the file that failed.
 	syncErrs *sharded.ShardedMap
 
-	// mirrorWg waits for the mirrorTaskProducer and mirrorWorkers to finish processing all deletion tasks.
+	// mirrorWg waits for the mirrorItemProducer and mirrorWorkers to finish processing all deletion items.
 	mirrorWg sync.WaitGroup
 
-	// mirrorItemsChan is the channel where the mirrorTaskProducer sends paths to be deleted.
+	// mirrorItemsChan is the channel where the mirrorItemProducer sends paths to be deleted.
 	mirrorItemsChan chan *mirrorItem
 
 	// criticalMirrorErrsChan captures the first critical error from the mirror phase.
@@ -151,7 +145,7 @@ type nativeSyncer struct {
 	mirrorErrs *sharded.ShardedMap
 
 	// mirrorDirsToDelete tracks directories in the destination that need to be deleted.
-	// Populated by mirrorTaskProducer, consumed by handleMirror.
+	// Populated by mirrorItemProducer, consumed by handleMirror.
 	mirrorDirsToDelete *sharded.ShardedSet
 
 	// Pool for syncItem structs to reduce GC pressure
@@ -179,7 +173,7 @@ func newNativeSyncer(
 	if err != nil {
 		return nil, err
 	}
-	syncedDirCache, err := sharded.NewShardedMap()
+	syncedDirCache, err := sharded.NewShardedSet()
 	if err != nil {
 		return nil, err
 	}
@@ -630,16 +624,22 @@ func (s *nativeSyncer) processSymlinkSync(item *syncItem) error {
 // processDirectorySync handles the creation and permission setting for a directory in the destination.
 // It returns an error (specifically filepath.SkipDir) if the directory cannot be created.
 func (s *nativeSyncer) processDirectorySync(item *syncItem) error {
-	// Use LoadOrStore to get a unique sync.Once for this directory path.
-	// This acts as a lock/coordination point for all workers trying to create this directory.
-	val, loaded := s.syncedDirCache.LoadOrStore(item.RelPathKey, &syncDirOnce{})
-	sdo := val.(*syncDirOnce)
+
+	// 1. FAST PATH: Check the cache first.
+	if s.syncedDirCache.Has(item.RelPathKey) {
+		return nil // Already created.
+	}
+
+	// IMPORTANT NOTE ON CONCURRENCY!
+	// More than one writer can enter here concurrently.
+	// We rely on Idempotent I/O here!
+	// If not in the cache, we call os.MkdirAll.
+	// Crucially, os.MkdirAll is designed to be called by multiple processes or threads at once; the OS handles the locking.
+	// If the directory already exists, it simply returns nil.
 
 	if s.dryRun {
-		// In dry run, we just log once.
-		// If loaded is true, another worker (or previous call) already handled logging.
-		// If loaded is false, we are the first.
-		if !loaded {
+		// Atomically update cache to ensure we only log once per directory.
+		if alreadyExisted := s.syncedDirCache.LoadOrStore(item.RelPathKey); !alreadyExisted {
 			plog.Notice("[DRY RUN] DIR", "path", item.RelPathKey)
 		}
 		return nil
@@ -649,73 +649,63 @@ func (s *nativeSyncer) processDirectorySync(item *syncItem) error {
 	absTrgPath := s.denormalizedAbsPath(s.trg, item.RelPathKey)
 	expectedPerms := util.WithUserWritePermission(item.PathInfo.Mode.Perm())
 
-	// Execute the I/O exactly once.
-	sdo.once.Do(func() {
-		// Check if the destination exists and handle type conflicts (e.g. File vs Dir).
-		var dirCreated bool = false
-		info, err := os.Lstat(absTrgPath)
-		if err == nil {
-			// Path exists.
-			if !info.IsDir() {
-				// It exists but is not a directory (e.g. it's a file or symlink).
-				// We must remove it to create the directory.
-				plog.Warn("Destination path exists but is not a directory, removing", "path", item.RelPathKey, "type", info.Mode().String())
-				if err := os.RemoveAll(absTrgPath); err != nil {
-					sdo.err = fmt.Errorf("failed to remove conflicting destination file %s: %w", item.RelPathKey, err)
-					return
-				}
-				// Create the directory.
-				if err := os.MkdirAll(absTrgPath, expectedPerms); err != nil {
-					plog.Warn("Failed to create destination directory, skipping", "path", item.RelPathKey, "error", err)
-					sdo.err = filepath.SkipDir
-					return
-				}
-				dirCreated = true
-			} else {
-				// It is already a directory. Ensure permissions are correct.
-				if err := os.Chmod(absTrgPath, expectedPerms); err != nil {
-					plog.Warn("Failed to set permissions on destination directory", "path", item.RelPathKey, "error", err)
-					sdo.err = fmt.Errorf("failed to set permissions on destination directory %s: %w", item.RelPathKey, err)
-					return
-				}
+	// 2. Perform the concurrent I/O.
+	// Check if the destination exists and handle type conflicts (e.g. File vs Dir).
+	var dirCreated bool = false
+	info, err := os.Lstat(absTrgPath)
+	if err == nil {
+		// Path exists.
+		if !info.IsDir() {
+			// It exists but is not a directory (e.g. it's a file or symlink).
+			// We must remove it to create the directory.
+			plog.Warn("Destination path exists but is not a directory, removing", "path", item.RelPathKey, "type", info.Mode().String())
+			if err := os.RemoveAll(absTrgPath); err != nil {
+				return fmt.Errorf("failed to remove conflicting destination file %s: %w", item.RelPathKey, err)
 			}
-		} else if os.IsNotExist(err) {
-			// Path does not exist. Create it.
+			// Create the directory.
 			if err := os.MkdirAll(absTrgPath, expectedPerms); err != nil {
 				plog.Warn("Failed to create destination directory, skipping", "path", item.RelPathKey, "error", err)
-				sdo.err = filepath.SkipDir
-				return
+				return filepath.SkipDir
 			}
 			dirCreated = true
 		} else {
-			// Unexpected error from Lstat.
-			sdo.err = fmt.Errorf("failed to lstat destination directory %s: %w", item.RelPathKey, err)
-			return
+			// It is already a directory. Ensure permissions are correct.
+			if err := os.Chmod(absTrgPath, expectedPerms); err != nil {
+				plog.Warn("Failed to set permissions on destination directory", "path", item.RelPathKey, "error", err)
+				return fmt.Errorf("failed to set permissions on destination directory %s: %w", item.RelPathKey, err)
+			}
 		}
-
-		if dirCreated {
-			plog.Notice("DIR", "path", item.RelPathKey)
-			s.metrics.AddDirsCreated(1)
+	} else if os.IsNotExist(err) {
+		// Path does not exist. Create it.
+		if err := os.MkdirAll(absTrgPath, expectedPerms); err != nil {
+			plog.Warn("Failed to create destination directory, skipping", "path", item.RelPathKey, "error", err)
+			return filepath.SkipDir
 		}
-	})
+		dirCreated = true
+	} else {
+		// Unexpected error from Lstat.
+		return fmt.Errorf("failed to lstat destination directory %s: %w", item.RelPathKey, err)
+	}
 
-	return sdo.err
+	// 3. Atomically update the cache and check if we were the first to do so.
+	// If LoadOrStore returns true, it means the key already existed, and we should not increment the metric.
+	if alreadyExisted := s.syncedDirCache.LoadOrStore(item.RelPathKey); alreadyExisted {
+		return nil
+	}
+
+	if dirCreated {
+		plog.Notice("DIR", "path", item.RelPathKey)
+		s.metrics.AddDirsCreated(1)
+	}
+	return nil
 }
 
 // ensureParentDirectoryExists is called by file-processing workers to guarantee that the
 // parent directory for a file exists before the file copy is attempted.
 func (s *nativeSyncer) ensureParentDirectoryExists(relPathKey string) error {
-	// 1. Check if we already have a synchronizer for this directory.
-	// If so, we wait for it to complete. This avoids allocating a new syncItem.
-	if val, ok := s.syncedDirCache.Load(relPathKey); ok {
-		sdo := val.(*syncDirOnce)
-		// We found an existing entry. This means another worker is currently creating
-		// this directory (or has already finished).
-		// We call Do() with a no-op function to block until the *first* call to Do()
-		// (inside processDirectorySync) completes. This acts as a barrier, ensuring
-		// we don't proceed until the directory is ready (or failed).
-		sdo.once.Do(func() {})
-		return sdo.err
+	// 1. FAST PATH: Check the cache first.
+	if s.syncedDirCache.Has(relPathKey) {
+		return nil // Already created.
 	}
 
 	// 2. If not in cache, we need to create it now.
@@ -980,7 +970,7 @@ func (s *nativeSyncer) handleSync() error {
 	// This goroutine walks the file tree and feeds paths into 'syncItems'.
 	go s.syncItemProducer()
 
-	// 3. Wait for all workers to finish processing all tasks.
+	// 3. Wait for all workers to finish processing all items.
 	s.syncWg.Wait()
 
 	// 4. Check for any critical errors captured by workers during the sync phase.
@@ -1009,10 +999,10 @@ func (s *nativeSyncer) handleSync() error {
 	return nil
 }
 
-// mirrorTaskProducer is the producer for the deletion phase. It walks the destination
+// mirrorItemProducer is the producer for the deletion phase. It walks the destination
 // directory and sends paths that need to be deleted to the mirrorItemsChan.
 // It returns a slice of directory paths to be deleted after all files are gone.
-func (s *nativeSyncer) mirrorTaskProducer() {
+func (s *nativeSyncer) mirrorItemProducer() {
 	defer close(s.mirrorItemsChan)
 	err := filepath.WalkDir(s.trg, func(absTrgPath string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -1150,8 +1140,8 @@ func (s *nativeSyncer) handleMirror() error {
 		go s.mirrorWorker()
 	}
 
-	// Start the mirrorTaskProducer (Producer) in a goroutine.
-	go s.mirrorTaskProducer()
+	// Start the mirrorItemProducer (Producer) in a goroutine.
+	go s.mirrorItemProducer()
 
 	// Wait for all file deletions to complete.
 	s.mirrorWg.Wait()

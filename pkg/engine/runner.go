@@ -14,8 +14,6 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/lockfile"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/patharchive"
-	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
-	"github.com/paulschiretz/pgl-backup/pkg/pathretention"
 	"github.com/paulschiretz/pgl-backup/pkg/pathsync"
 	"github.com/paulschiretz/pgl-backup/pkg/planner"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
@@ -103,13 +101,10 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 
 	plog.Info("Starting backup", "base", absBasePath, "source", absSourcePath, "mode", p.Mode)
 
-	syncErr := pathsync.ErrDisabled
-	archiveErr := patharchive.ErrDisabled
-	pruneErr := pathretention.ErrDisabled
-	compressErr := pathcompression.ErrDisabled
 	var syncResult, archiveResult metafile.MetafileInfo
 
 	// Perform Archiving before Sync in Incremental mode
+	archiveErr := patharchive.ErrDisabled
 	if p.Archive.Enabled && p.Mode == planner.Incremental {
 		var toArchive metafile.MetafileInfo
 		toArchive, archiveErr = r.fetchBackup(absBasePath, p.Paths.RelCurrentPathKey)
@@ -147,6 +142,7 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 	}
 
 	// Perform the backup
+	syncErr := pathsync.ErrDisabled
 	if p.Sync.Enabled {
 		syncResult, syncErr = r.syncer.Sync(ctx, absBasePath, absSourcePath, p.Paths.RelCurrentPathKey, p.Paths.RelContentPathKey, p.Sync, timestampUTC)
 		if syncErr != nil {
@@ -199,6 +195,7 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 	}
 
 	// Clean up outdated backups
+	var pruneErr error
 	if p.Retention.Enabled {
 		// Add our just created sync/archive relPathKey to the exclusion list for retention so they are never pruned
 		// NOTE: This is needed in case our retention is enabled but 0,0,0,0,0 and we just created a snapshot.(otherwise we would imetialy remove it again)
@@ -238,6 +235,7 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 	}
 
 	// Compress backups that are eligible
+	var compressErr error
 	if archiveErr == nil && p.Compression.Enabled {
 		var toCompress metafile.MetafileInfo
 		if archiveResult.RelPathKey != "" {

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Refactored the `PathSync` and `PathCompression` package for better performance and readability.
+- Fixed a race condition in the native sync engine, that was added in 1.3.4
 
 ### Removed
 - Removed `robocopy` sync engine support. The `native` engine is now the only supported engine.
