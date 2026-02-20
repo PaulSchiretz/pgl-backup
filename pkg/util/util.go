@@ -81,19 +81,47 @@ func DenormalizePath(pathKey string) string {
 	return filepath.FromSlash(pathKey)
 }
 
-// ExpandPath expands the tilde (~) prefix in a path to the user's home directory.
-func ExpandPath(path string) (string, error) {
-	if !strings.HasPrefix(path, "~") {
-		return path, nil // No tilde, return as-is.
+// ExpandedDenormalizedAbsPath expands the tilde (~) prefix in a path to the user's home directory.
+func ExpandedDenormalizedAbsPath(path string) (string, error) {
+
+	if path == "" {
+		return "", fmt.Errorf("could not denormalize empty path.")
 	}
 
-	home, err := os.UserHomeDir()
+	// 1. Expand
+	if strings.HasPrefix(path, "~") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("could not get user home directory: %w", err)
+		}
+		// Replace the tilde with the home directory.
+		path = filepath.Join(home, path[1:])
+	}
+
+	// 2. Make Absolute
+	absPath, err := filepath.Abs(path)
 	if err != nil {
-		return "", fmt.Errorf("could not get user home directory: %w", err)
+		return "", fmt.Errorf("could not determine absolute path: %w", err)
 	}
 
-	// Replace the tilde with the home directory.
-	return filepath.Join(home, path[1:]), nil
+	// 3. Denormalize
+	return DenormalizePath(absPath), nil
+}
+
+// NormalizedRelPath calculates the relative path and normalizes it to a standardized key format
+// (forward slashes, maybe otherwise modified key). This key is for internal logic, not direct filesystem access.
+func NormalizedRelPath(absBase, absPath string) (string, error) {
+	relPath, err := filepath.Rel(absBase, absPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to get rel path for %s: %w", absPath, err)
+	}
+	return NormalizePath(relPath), nil
+}
+
+// DenormalizedAbsPath converts the standardized (forward-slash, maybe otherwise modified key) relative path key
+// back into the final, absolute, native OS path for filesystem access.
+func DenormalizedAbsPath(absBase, relPathKey string) string {
+	return filepath.Join(absBase, DenormalizePath(relPathKey))
 }
 
 // InvertMap takes a map[K]V and returns a map[V]K.

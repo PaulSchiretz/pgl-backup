@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/buildinfo"
@@ -30,18 +29,13 @@ func RunPrune(ctx context.Context, flagMap map[string]any) error {
 	}
 
 	var err error
-	// Validate Base
-	base, err = util.ExpandPath(base)
+	// Validate base path
+	absBasePath, err := util.ExpandedDenormalizedAbsPath(base)
 	if err != nil {
-		return fmt.Errorf("could not expand base path: %w", err)
+		return fmt.Errorf("base path invalid: %w", err)
 	}
-	absBasePath, err := filepath.Abs(base)
-	if err != nil {
-		return fmt.Errorf("could not determine absolute base path for %s: %w", base, err)
-	}
-	absBasePath = util.DenormalizePath(absBasePath)
 
-	// NOTE: Base needs to exist, for a Prune run
+	// NOTE: Base path needs to exist, for a Prune run
 	if _, err := os.Stat(absBasePath); os.IsNotExist(err) {
 		return fmt.Errorf("base path '%s' does not exist", absBasePath)
 	}

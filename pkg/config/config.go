@@ -60,7 +60,7 @@ type EnginePerformanceConfig struct {
 	MirrorWorkers    int   `json:"mirrorWorkers"`
 	DeleteWorkers    int   `json:"deleteWorkers"`
 	CompressWorkers  int   `json:"compressWorkers"`
-	BufferSizeKB     int64 `json:"bufferSizeKB" comment:"Size of the I/O buffer in kilobytes for file copies and compression. Default is 128 (128KB)."`
+	BufferSizeKB     int64 `json:"bufferSizeKB" comment:"Size of the I/O buffer in kilobytes for file copies and compression. Default is 1024 (1MB)."`
 	ReadAheadLimitKB int64 `json:"readAheadLimitKB" comment:"Limit of the I/O readahead in kilobytes for file compression. Default is 262144 (256MB)."`
 }
 
@@ -173,7 +173,7 @@ func NewDefault() Config {
 				MirrorWorkers:    4,      // Default to 4.
 				DeleteWorkers:    4,      // A sensible default for deleting entire backup sets.
 				CompressWorkers:  4,      // Default to 4.
-				BufferSizeKB:     128,    // Default to 128KB buffer. Keep it between 64KB-4MB
+				BufferSizeKB:     1024,   // Default to 1024KB (1MB) buffer. Keep it between 64KB-4MB
 				ReadAheadLimitKB: 262144, // Default to 256MB buffer.
 			}},
 		Sync: SyncConfig{

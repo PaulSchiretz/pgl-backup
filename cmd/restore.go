@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -40,32 +39,22 @@ func RunRestore(ctx context.Context, flagMap map[string]any) error {
 	uuid, _ := flagMap["uuid"].(string)
 
 	var err error
-	// Validate Base
-	base, err = util.ExpandPath(base)
+	// Validate base path
+	absBasePath, err := util.ExpandedDenormalizedAbsPath(base)
 	if err != nil {
-		return fmt.Errorf("could not expand base path: %w", err)
+		return fmt.Errorf("base path invalid: %w", err)
 	}
-	absBasePath, err := filepath.Abs(base)
-	if err != nil {
-		return fmt.Errorf("could not determine absolute base path for %s: %w", base, err)
-	}
-	absBasePath = util.DenormalizePath(absBasePath)
 
-	// NOTE: Base needs to exist, for a Restore run
+	// NOTE: Base path needs to exist, for a Restore run
 	if _, err := os.Stat(absBasePath); os.IsNotExist(err) {
 		return fmt.Errorf("base path '%s' does not exist", absBasePath)
 	}
 
-	// Validate Target
-	target, err = util.ExpandPath(target)
+	// Validate target path
+	absTargetPath, err := util.ExpandedDenormalizedAbsPath(target)
 	if err != nil {
-		return fmt.Errorf("could not expand target path: %w", err)
+		return fmt.Errorf("target path invalid: %w", err)
 	}
-	absTargetPath, err := filepath.Abs(target)
-	if err != nil {
-		return fmt.Errorf("could not determine absolute target path: %w", err)
-	}
-	absTargetPath = util.DenormalizePath(absTargetPath)
 	// NOTE: Target will be created if it doesn't exist, for a Restore run
 
 	// Load config from the base directory.

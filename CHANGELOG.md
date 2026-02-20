@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.4.1] - 2026-XX-XX
+
+### Changed
+- **Performance**: Increased default `BufferSizeKB` from 128KB to 1024KB (1MB) to improve throughput on modern storage systems.
+- **Performance**: Significantly reduced memory allocations and GC pressure in the native sync engine by optimizing the internal file metadata cache. This improves performance, especially for directories with many files.
+- **Performance**: Optimized the native sync engine to properly cache the contents of the root directory, avoiding a large number of redundant filesystem checks.
+- Refactored internal caching logic for better code organization and clarity.
+
+### Fixed
+- Fixed a bug in the modification time window logic (`--sync-mod-time-window`) that could cause files to be incorrectly skipped or re-copied when using `OverwriteIfNewer` or `OverwriteUpdate` behaviors.
+- Fixed an issue where the root directory of a backup was not being processed, which prevented its permissions from being synchronized and its contents from being cached.
+- Improved robustness of the native sync engine by explicitly removing conflicting destination items (e.g., a file where a directory should be). This now correctly handles read-only files on Windows and is safe for symlinks.
+
+### Added
+- Added comprehensive unit tests for utility functions.
+
 ## [v1.4.0] - 2026-02-19
 
 ### Changed

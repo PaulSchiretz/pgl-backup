@@ -133,13 +133,13 @@ Every release includes a `checksums.txt` file containing the SHA256 hashes of th
 shasum -a 256 -c checksums.txt
 
 # Or manually check a specific file:
-shasum -a 256 pgl-backup_v1.4.0_darwin_arm64.tar.gz
+shasum -a 256 pgl-backup_v1.4.1_darwin_arm64.tar.gz
 # Compare output with the content of checksums.txt
 ```
 
 **Windows (PowerShell):**
 ```powershell
-Get-FileHash .\pgl-backup_v1.4.0_windows_amd64.zip -Algorithm SHA256
+Get-FileHash .\pgl-backup_v1.4.1_windows_amd64.zip -Algorithm SHA256
 # Compare the hash with the content of checksums.txt
 ```
 
@@ -184,7 +184,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
 
 ```json
 {
-  "version": "1.4.0",
+  "version": "1.4.1",
   "logLevel": "info",
   "paths": {
     "incremental": {
@@ -208,7 +208,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
       "mirrorWorkers": 4,
       "deleteWorkers": 4,
       "compressWorkers": 4,
-      "bufferSizeKB": 128,
+      "bufferSizeKB": 1024,
       "readAheadLimitKB": 262144
     }
   },
@@ -851,7 +851,7 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `mirror-workers` / `engine.performance.mirrorWorkers` | `int` | `4` | Number of concurrent workers for file deletions in mirror mode. |
 | `delete-workers` / `engine.performance.deleteWorkers` | `int` | `4` | Number of concurrent workers for deleting outdated backups. |
 | `compress-workers` / `engine.performance.compressWorkers` | `int` | `4` | Number of concurrent workers for compressing backups. |
-| `buffer-size-kb` / `engine.performance.bufferSizeKB` | `int64` | `128` | Size of the I/O buffer in kilobytes for file copies and compression. |
+| `buffer-size-kb` / `engine.performance.bufferSizeKB` | `int64` | `1024` | Size of the I/O buffer in kilobytes for file copies and compression. |
 | `readahead-limit-kb` / `engine.performance.readAheadLimitKB` | `int64` | `262144` | Limit of the I/O readahead in kilobytes for file compression. 0 disables the readahead on systems with very low memory |
 
 ## Troubleshooting

@@ -30,30 +30,19 @@ func RunInit(ctx context.Context, flagMap map[string]any) error {
 	}
 
 	var err error
-	// Validate Base
-	base, err = util.ExpandPath(base)
+	// Validate base path
+	absBasePath, err := util.ExpandedDenormalizedAbsPath(base)
 	if err != nil {
-		return fmt.Errorf("could not expand base path: %w", err)
+		return fmt.Errorf("base path invalid: %w", err)
 	}
-	absBasePath, err := filepath.Abs(base)
-	if err != nil {
-		return fmt.Errorf("could not determine absolute base path for %s: %w", base, err)
-	}
-	absBasePath = util.DenormalizePath(absBasePath)
 	// NOTE: Base will be created if it doesn't exist, for an Init run
 
-	// Validate Source
-	source, err = util.ExpandPath(source)
+	// Validate source path
+	absSourcePath, err := util.ExpandedDenormalizedAbsPath(source)
 	if err != nil {
-		return fmt.Errorf("could not expand source path: %w", err)
+		return fmt.Errorf("source path invalid: %w", err)
 	}
-	absSourcePath, err := filepath.Abs(source)
-	if err != nil {
-		return fmt.Errorf("could not determine absolute source path: %w", err)
-	}
-	absSourcePath = util.DenormalizePath(absSourcePath)
-
-	// NOTE: Source needs to exist, for an Init run
+	// NOTE: Source path needs to exist, for an Init run
 	if _, err := os.Stat(absSourcePath); os.IsNotExist(err) {
 		return fmt.Errorf("source path '%s' does not exist", absSourcePath)
 	}

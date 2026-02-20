@@ -6,7 +6,9 @@ import (
 	"reflect"
 	"runtime"
 	"sort"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestWithUserReadPermission(t *testing.T) {
@@ -149,16 +151,21 @@ func TestNormalizeAndDenormalizePath(t *testing.T) {
 	}
 }
 
-func TestExpandPath(t *testing.T) {
+func TestExpandedDenormalizedAbsPath(t *testing.T) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatalf("could not get user home directory: %v", err)
 	}
 
+	// Create a platform-agnostic absolute path for testing
+	cwd, _ := os.Getwd()
+	absPath := filepath.Join(cwd, "testdir")
+
 	testCases := []struct {
-		name     string
-		input    string
-		expected string
+		name      string
+		input     string
+		expected  string
+		expectErr bool
 	}{
 		{
 			name:     "Path with tilde",
@@ -176,22 +183,29 @@ func TestExpandPath(t *testing.T) {
 			expected: homeDir,
 		},
 		{
-			name:     "Path without tilde",
-			input:    "/var/log",
-			expected: "/var/log",
+			name:     "Absolute path",
+			input:    absPath,
+			expected: absPath,
 		},
 		{
-			name:     "Empty path",
-			input:    "",
-			expected: "",
+			name:      "Empty path",
+			input:     "",
+			expected:  "",
+			expectErr: true,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := ExpandPath(tc.input)
+			result, err := ExpandedDenormalizedAbsPath(tc.input)
+			if tc.expectErr {
+				if err == nil {
+					t.Errorf("expected error, but got nil")
+				}
+				return
+			}
 			if err != nil {
-				t.Errorf("ExpandPath() returned an unexpected error: %v", err)
+				t.Errorf("ExpandedDenormalizedAbsPath() returned an unexpected error: %v", err)
 			}
 			if result != tc.expected {
 				t.Errorf("expected path %q, but got %q", tc.expected, result)
@@ -370,5 +384,70 @@ func TestGenerateUUID_Uniqueness(t *testing.T) {
 			t.Fatalf("Duplicate UUID generated: %s", uuid)
 		}
 		seen[uuid] = struct{}{}
+	}
+}
+
+func TestFormatTimestampWithOffset(t *testing.T) {
+	// Use a fixed UTC time
+	ts := time.Date(2023, 10, 27, 14, 0, 0, 123456789, time.UTC)
+	result := FormatTimestampWithOffset(ts)
+
+	// The result contains the UTC time formatted, followed by the local offset.
+	// Since we can't easily predict the local offset of the test runner,
+	// we verify the prefix which is the UTC part.
+	expectedPrefix := "2023-10-27-14-00-00-123456789"
+	if !strings.HasPrefix(result, expectedPrefix) {
+		t.Errorf("FormatTimestampWithOffset(%v) = %q; want prefix %q", ts, result, expectedPrefix)
+	}
+}
+
+func TestNormalizedRelPath(t *testing.T) {
+	base := filepath.Join("a", "b")
+	target := filepath.Join("a", "b", "c", "d")
+
+	got, err := NormalizedRelPath(base, target)
+	if err != nil {
+		t.Fatalf("NormalizedRelPath failed: %v", err)
+	}
+
+	// Should always be forward slashes
+	expected := "c/d"
+	if got != expected {
+		t.Errorf("NormalizedRelPath(%q, %q) = %q; want %q", base, target, got, expected)
+	}
+}
+
+func TestDenormalizedAbsPath(t *testing.T) {
+	base := filepath.Join("a", "b")
+	relKey := "c/d"
+
+	got := DenormalizedAbsPath(base, relKey)
+
+	// Should be native separators
+	expected := filepath.Join("a", "b", "c", "d")
+	if got != expected {
+		t.Errorf("DenormalizedAbsPath(%q, %q) = %q; want %q", base, relKey, got, expected)
+	}
+}
+
+func TestByteCountIEC(t *testing.T) {
+	testCases := []struct {
+		input    int64
+		expected string
+	}{
+		{0, "0 B"},
+		{100, "100 B"},
+		{1023, "1023 B"},
+		{1024, "1.0 KiB"},
+		{1536, "1.5 KiB"},
+		{1048576, "1.0 MiB"},
+		{1073741824, "1.0 GiB"},
+	}
+
+	for _, tc := range testCases {
+		got := ByteCountIEC(tc.input)
+		if got != tc.expected {
+			t.Errorf("ByteCountIEC(%d) = %q; want %q", tc.input, got, tc.expected)
+		}
 	}
 }

@@ -741,7 +741,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				dirsCreated:      1,  // dir1
 				dirsDeleted:      1,  // obsolete_dir
 				dirsExcluded:     1,  // ignored_dir
-				entriesProcessed: 13, // 7 from sync + 6 from mirror
+				entriesProcessed: 15, // 8 from sync + 7 from mirror (including roots)
 			},
 		},
 		{

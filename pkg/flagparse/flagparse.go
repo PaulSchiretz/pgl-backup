@@ -103,8 +103,8 @@ func registerBackupFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.MirrorWorkers = fs.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
 	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
 	f.CompressWorkers = fs.Int("compress-workers", 0, "Number of worker goroutines for compressing backups.")
-	f.BufferSizeKB = fs.Int64("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression.")
-	f.ReadAheadLimitKB = fs.Int64("readahead-limit-kb", 0, "Limit of the I/O readahead in kilobytes for file compression.")
+	f.BufferSizeKB = fs.Int64("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression. Default is 1024 (1MB).")
+	f.ReadAheadLimitKB = fs.Int64("readahead-limit-kb", 0, "Limit of the I/O readahead in kilobytes for file compression. Default is 262144 (256MB).")
 
 	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native'.")
 	f.SyncDisableSafeCopy = fs.Bool("sync-disable-safe-copy", false, "Disable 'copy then rename' for secure file syncing (faster but less safe).")
@@ -153,8 +153,8 @@ func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.MirrorWorkers = fs.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
 	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
 	f.CompressWorkers = fs.Int("compress-workers", 0, "Number of worker goroutines for compressing backups.")
-	f.BufferSizeKB = fs.Int64("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression.")
-	f.ReadAheadLimitKB = fs.Int64("readahead-limit-kb", 0, "Limit of the I/O readahead in kilobytes for file compression.")
+	f.BufferSizeKB = fs.Int64("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression. Default is 1024 (1MB).")
+	f.ReadAheadLimitKB = fs.Int64("readahead-limit-kb", 0, "Limit of the I/O readahead in kilobytes for file compression. Default is 262144 (256MB).")
 
 	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native'.")
 	f.SyncDisableSafeCopy = fs.Bool("sync-disable-safe-copy", false, "Disable 'copy then rename' for secure file syncing (faster but less safe).")
@@ -217,8 +217,8 @@ func registerRestoreFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.SyncRetryWait = fs.Int("sync-retry-wait", 0, "Seconds to wait between retries.")
 	f.SyncModTimeWindow = fs.Int("sync-mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
 	f.SyncWorkers = fs.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
-	f.BufferSizeKB = fs.Int64("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes.")
-	f.ReadAheadLimitKB = fs.Int64("readahead-limit-kb", 0, "Limit of the I/O readahead in kilobytes for file compression.")
+	f.BufferSizeKB = fs.Int64("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes. Default is 1024 (1MB).")
+	f.ReadAheadLimitKB = fs.Int64("readahead-limit-kb", 0, "Limit of the I/O readahead in kilobytes for file compression. Default is 262144 (256MB).")
 
 	f.IgnoreCaseMismatch = fs.Bool("ignore-case-mismatch", false, "Bypass the case-sensitivity safety check (use with caution).")
 	f.UserExcludeFiles = fs.String("user-exclude-files", "", "Comma-separated list of case-insensitive file names to exclude (supports glob patterns).")

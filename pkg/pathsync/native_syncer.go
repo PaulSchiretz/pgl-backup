@@ -11,20 +11,19 @@ package pathsync
 //
 // 1. The Producer (`syncItemProducer`):
 //    - A single goroutine that walks the source directory tree (`filepath.WalkDir`).
-//    - It handles directories directly: creating them in the destination and recording their
-//      presence in the `discoveredSrcPaths` set.
-//    - For files, it creates a `syncItem` and sends it to the `syncItems` channel for workers.
+//    - It records the presence of every file and directory in the `existingRelSourcePaths` set.
+//    - It creates a `syncItem` for every file and directory and sends it to the `syncItems` channel for workers.
 //
 // 2. The Consumers (`syncWorker` pool):
 //    - A pool of worker goroutines that read `syncItem` items from the `syncItems` channel.
-//    - Each worker performs the I/O for a single file (checking, copying).
-//    - The `syncItemProducer` has already recorded the file's presence in the `discoveredSrcPaths` set.
+//    - Each worker performs the I/O for a single item (creating directory, checking/copying file).
+//    - The `syncItemProducer` has already recorded the item's presence in the `existingRelSourcePaths` set.
 //
 // --- Phase 2: Mirroring (Deletions) ---
 //
 // 3. The Mirror Phase (`handleMirror`):
 //    - If mirroring is enabled, this final pass walks the *destination* directory.
-//    - For each item, it checks for its presence in the `discoveredSrcPaths` set.
+//    - For each item, it checks for its presence in the `existingRelSourcePaths` set.
 //    - Any destination item not found in the set (and not otherwise excluded) is deleted.
 //
 // A key design principle is ensuring the backup process does not lock itself out.
@@ -53,22 +52,11 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
-// compactPathInfo holds the essential, primitive data from an os.FileInfo.
-// Storing this directly instead of the os.FileInfo interface avoids a pointer
-// lookup and reduces GC pressure, as the data is inlined in the parent struct.
-type compactPathInfo struct {
-	ModTime   int64       // Unix Nano. Stored as int64 to avoid GC overhead of time.Time's internal pointer.
-	Size      int64       // Size in bytes.
-	Mode      os.FileMode // File mode bits.
-	IsDir     bool        // True if the path is a directory.
-	IsSymlink bool        // True if the path is a symlink.
-}
-
 // syncItem holds all the necessary metadata for a worker to process a file
 // without re-calculating paths or re-fetching filesystem stats.
 type syncItem struct {
-	RelPathKey string          // Normalized, forward-slash and maybe otherwise modified key. NOT for direct FS access.
-	PathInfo   compactPathInfo // Cached info from the Walker
+	RelPathKey string // Normalized, forward-slash and maybe otherwise modified key. NOT for direct FS access.
+	PathInfo   lstatInfo
 }
 
 // mirrorItem holds the necessary metadata for a worker to process a deletion.
@@ -105,20 +93,16 @@ type nativeSyncer struct {
 	// metrics holds the counters for the sync operation.
 	metrics Metrics
 
-	// discoveredPaths is a concurrent set populated by the syncItemProducer. It holds every
-	// non-excluded path found in the source directory. During the mirror phase, it is
+	// existingRelSourcePaths is a concurrent set populated by the syncItemProducer. It holds every
+	// non-excluded relative path found in the source directory. During the mirror phase, it is
 	// read to determine which paths in the destination are no longer present in the source
 	// and should be deleted.
-	discoveredPaths *sharded.ShardedSet
-
-	// discoveredDirInfo is a concurrent map populated by the syncItemProducer. It stores the
-	// PathInfo for every directory found in the source. This serves as a cache to avoid
-	// redundant Lstat calls by workers needing to create parent directories.
-	discoveredDirInfo *sharded.ShardedMap
+	existingRelSourcePaths *sharded.ShardedSet
 
 	// syncedDirCache tracks directories that have ALREADY been created in the destination
 	// by any syncWorker. This prevents duplicate MkdirAll calls across the concurrent pool.
 	syncedDirCache *sharded.ShardedSet
+
 	// Synchronizes directory creation/conversion
 	// syncedDirSFGroup is used to prevent a "thundering herd" problem when multiple
 	// workers concurrently try to create the same parent directory. It ensures that
@@ -126,6 +110,17 @@ type nativeSyncer struct {
 	// while other workers for the same path wait for the result. This deduplicates
 	// work and prevents race conditions.
 	syncedDirSFGroup singleflight.Group
+
+	// Optimization: syncSourceDirInfoCache is a concurrent map populated by the syncItemProducer. It stores the
+	// PathInfo for every directory found in the source. This serves as a cache to avoid
+	// redundant Lstat calls by workers needing to create parent directories.
+	syncSourceDirInfoCache *sharded.ShardedMap
+
+	// Optimization: syncTargetLStatCache is a lazy-loaded cache of destination directory lstat entries.
+	// It is populated on-demand by the first worker to enter a directory via os.ReadDir.
+	// This allows subsequent workers to verify file existence, size, and modtime entirely in RAM,
+	// eliminating thousands of redundant Lstat system calls on the target filesystem.
+	syncTargetLStatCache *LStatSnapshotStore
 
 	// syncWg waits for the syncItemProducer and syncWorkers to finish processing all sync items.
 	syncWg sync.WaitGroup
@@ -174,11 +169,11 @@ func newNativeSyncer(
 	numSyncWorkers, numMirrorWorkers int,
 	metrics Metrics,
 ) (*nativeSyncer, error) {
-	discoveredPaths, err := sharded.NewShardedSet()
+	existingRelSourcePaths, err := sharded.NewShardedSet()
 	if err != nil {
 		return nil, err
 	}
-	discoveredDirInfo, err := sharded.NewShardedMap()
+	syncSourceDirInfoCache, err := sharded.NewShardedMap()
 	if err != nil {
 		return nil, err
 	}
@@ -213,9 +208,10 @@ func newNativeSyncer(
 		modTimeWindow:          modTimeWindow,
 		overwriteBehavior:      overwriteBehavior,
 		mirror:                 mirror,
-		discoveredPaths:        discoveredPaths,
-		discoveredDirInfo:      discoveredDirInfo,
+		existingRelSourcePaths: existingRelSourcePaths,
 		syncedDirCache:         syncedDirCache,
+		syncSourceDirInfoCache: syncSourceDirInfoCache,
+		syncTargetLStatCache:   newLStatSnapshotStore(),
 		syncItemsChan:          make(chan *syncItem, numSyncWorkers*1024),
 		criticalSyncErrsChan:   make(chan error, 1),
 		syncErrs:               syncErrs,
@@ -292,7 +288,6 @@ func (s *nativeSyncer) copyFileSafe(absSrcPath, absTrgPath string, item *syncIte
 			}
 
 			// 3. Copy content
-
 			var bytesWritten int64
 			// Get a buffer from the pool for the copy operation.
 			bufPtr := s.ioBufferPool.Get().(*[]byte)
@@ -467,40 +462,6 @@ func (s *nativeSyncer) copySymlinkHelper(target, absTrgPath string, retryCount i
 	return fmt.Errorf("failed to create symlink at '%s' after %d attempts: %w", absTrgPath, retryCount, lastErr)
 }
 
-// truncateModTime adjusts a time based on the configured modification time window.
-func (s *nativeSyncer) truncateModTime(ti time.Time) time.Time {
-	if s.modTimeWindow > 0 {
-		return ti.Truncate(s.modTimeWindow)
-	}
-	return ti
-}
-
-// normalizedRelPathParentKey calculates the relative path of the parent and normalizes it to a standardized key format
-// (forward slashes, maybe otherwise modified key). This key is for internal logic, not direct filesystem access.
-func (s *nativeSyncer) normalizedParentRelPathKey(relPathKey string) string {
-	parentRelPathKey := filepath.Dir(relPathKey)
-	// CRITICAL: Re-normalize the parent key. `filepath.Dir` can return a path with
-	// OS-specific separators (e.g., '\' on Windows), but our cache keys are
-	// standardized to use forward slashes.
-	return util.NormalizePath(parentRelPathKey)
-}
-
-// normalizedRelPathKey calculates the relative path and normalizes it to a standardized key format
-// (forward slashes, maybe otherwise modified key). This key is for internal logic, not direct filesystem access.
-func (s *nativeSyncer) normalizedRelPathKey(base, absPath string) (string, error) {
-	relPathKey, err := filepath.Rel(base, absPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to get relative path for %s: %w", absPath, err)
-	}
-	return util.NormalizePath(relPathKey), nil
-}
-
-// denormalizedAbsPath converts the standardized (forward-slash, maybe otherwise modified key) relative path key
-// back into the final, absolute, native OS path for filesystem access.
-func (s *nativeSyncer) denormalizedAbsPath(base, relPathKey string) string {
-	return filepath.Join(base, util.DenormalizePath(relPathKey))
-}
-
 // processFileSync checks if a file needs to be copied (based on size/time)
 // and triggers the copy operation if needed.
 func (s *nativeSyncer) processFileSync(item *syncItem) error {
@@ -512,15 +473,40 @@ func (s *nativeSyncer) processFileSync(item *syncItem) error {
 	useSafeCopy := !s.disableSafeCopy
 
 	// Convert the paths to the OS-native format for file access
-	absSrcPath := s.denormalizedAbsPath(s.src, item.RelPathKey)
-	absTrgPath := s.denormalizedAbsPath(s.trg, item.RelPathKey)
+	absSrcPath := util.DenormalizedAbsPath(s.src, item.RelPathKey)
+	absTrgPath := util.DenormalizedAbsPath(s.trg, item.RelPathKey)
+
+	// Read entry from cache
+	var trgLstatInfo lstatInfo
+	var err error
+	info, found, parentCached := s.syncTargetLStatCache.LoadLstatInfo(item.RelPathKey)
+	if parentCached {
+		if found {
+			trgLstatInfo = info
+		} else {
+			// ok the items parent was cached but the item doesn't exist.
+			// WE are sure it doesn't exist in the filesystem, no need for an additional Lstat call!
+			err = os.ErrNotExist
+		}
+	} else {
+		// Fallback for paths without a parent or unexpected cache misses
+		var fsInfo os.FileInfo
+		if fsInfo, err = os.Lstat(absTrgPath); err == nil {
+			trgLstatInfo = lstatInfo{
+				Size:      fsInfo.Size(),
+				ModTime:   fsInfo.ModTime().UnixNano(),
+				Mode:      fsInfo.Mode(),
+				IsDir:     fsInfo.IsDir(),
+				IsRegular: fsInfo.Mode().IsRegular(),
+				IsSymlink: fsInfo.Mode()&os.ModeSymlink != 0,
+			}
+		}
+	}
 
 	// Check if the destination file exists and if it matches source (size and mod time).
-	// We use os.Lstat to get information about the file itself, not its target if it's a symlink.
-	trgInfo, err := os.Lstat(absTrgPath)
 	if err == nil {
 		// Destination path exists.
-		if trgInfo.Mode().IsRegular() {
+		if trgLstatInfo.IsRegular {
 			// It's a regular file. Use the info from os.Lstat directly for comparison.
 			// We skip the copy only if the modification times (within the configured window) and sizes are identical.
 			// We truncate the times to handle filesystems with different timestamp resolutions.
@@ -532,34 +518,52 @@ func (s *nativeSyncer) processFileSync(item *syncItem) error {
 				s.metrics.AddFilesUpToDate(1)
 				return nil
 			case OverwriteIfNewer:
-				srcTime := s.truncateModTime(time.Unix(0, item.PathInfo.ModTime))
-				if !srcTime.After(s.truncateModTime(trgInfo.ModTime())) {
+				srcTime := time.Unix(0, item.PathInfo.ModTime)
+				trgTime := time.Unix(0, trgLstatInfo.ModTime)
+
+				// adjust times based on the configured modification time window.
+				if s.modTimeWindow > 0 {
+					srcTime = srcTime.Truncate(s.modTimeWindow)
+					trgTime = trgTime.Truncate(s.modTimeWindow)
+				}
+
+				if !srcTime.After(trgTime) {
 					s.metrics.AddFilesUpToDate(1)
-					return nil
+					return nil // File is Newer
 				}
 			case OverwriteAlways:
 				// Fall through to copy
 			default: // OverwriteUpdate
-				if s.truncateModTime(time.Unix(0, item.PathInfo.ModTime)).Equal(s.truncateModTime(trgInfo.ModTime())) && item.PathInfo.Size == trgInfo.Size() {
+				srcTime := time.Unix(0, item.PathInfo.ModTime)
+				trgTime := time.Unix(0, trgLstatInfo.ModTime)
+
+				// adjust times based on the configured modification time window.
+				if s.modTimeWindow > 0 {
+					srcTime = srcTime.Truncate(s.modTimeWindow)
+					trgTime = trgTime.Truncate(s.modTimeWindow)
+				}
+
+				if srcTime.Equal(trgTime) && item.PathInfo.Size == trgLstatInfo.Size {
 					s.metrics.AddFilesUpToDate(1)
 					return nil // Not changed
 				}
 			}
-		} else if trgInfo.IsDir() {
+		} else if trgLstatInfo.IsDir {
 			// Destination is a directory. Rename cannot overwrite it, so we must remove it explicitly.
 			plog.Warn("Destination is a directory, removing before copy", "path", item.RelPathKey)
 			if err := os.RemoveAll(absTrgPath); err != nil {
 				return fmt.Errorf("failed to remove directory at destination %s: %w", absTrgPath, err)
 			}
-			useSafeCopy = true // Use safe copy for this file
+			useSafeCopy = true
 		} else {
-			// Destination is a symlink or special file. os.Rename will overwrite it atomically, BUT only in safe mode.
-			plog.Warn("Destination is not a regular file, overwriting", "path", item.RelPathKey, "type", trgInfo.Mode().String())
-			useSafeCopy = true // Use safe copy for this file
+			plog.Warn("Destination is not a regular file, removing before copy", "path", item.RelPathKey, "type", trgLstatInfo.Mode.String())
+			if err := os.RemoveAll(absTrgPath); err != nil {
+				return fmt.Errorf("failed to remove existing destination file %s: %w", absTrgPath, err)
+			}
+			useSafeCopy = true
 		}
 	} else if !os.IsNotExist(err) {
-		// An unexpected error occurred while Lstat-ing the destination.
-		return fmt.Errorf("failed to lstat destination file %s: %w", absTrgPath, err)
+		return fmt.Errorf("failed to retrieve destination info for %s: %w", absTrgPath, err)
 	}
 
 	if useSafeCopy {
@@ -586,46 +590,74 @@ func (s *nativeSyncer) processSymlinkSync(item *syncItem) error {
 		return nil
 	}
 
-	absSrcPath := s.denormalizedAbsPath(s.src, item.RelPathKey)
-	absTrgPath := s.denormalizedAbsPath(s.trg, item.RelPathKey)
+	absSrcPath := util.DenormalizedAbsPath(s.src, item.RelPathKey)
+	absTrgPath := util.DenormalizedAbsPath(s.trg, item.RelPathKey)
+	var err error
 
 	// Read the link target from the source.
-	target, err := os.Readlink(absSrcPath)
+	linkTarget, err := os.Readlink(absSrcPath)
 	if err != nil {
 		return fmt.Errorf("failed to read source symlink %s: %w", absSrcPath, err)
 	}
 
-	// Check if the destination exists and matches.
-	dstInfo, err := os.Lstat(absTrgPath)
+	// Read entry from cache
+	var trgLstatInfo lstatInfo
+	info, found, parentCached := s.syncTargetLStatCache.LoadLstatInfo(item.RelPathKey)
+	if parentCached {
+		if found {
+			trgLstatInfo = info
+		} else {
+			// ok the items parent was cached but the item doesn't exist.
+			// WE are sure it doesn't exist in the filesystem, no need for an additional Lstat call!
+			err = os.ErrNotExist
+		}
+	} else {
+		// Fallback for paths without a parent or unexpected cache misses
+		var fsInfo os.FileInfo
+		if fsInfo, err = os.Lstat(absTrgPath); err == nil {
+			trgLstatInfo = lstatInfo{
+				Size:      fsInfo.Size(),
+				ModTime:   fsInfo.ModTime().UnixNano(),
+				Mode:      fsInfo.Mode(),
+				IsDir:     fsInfo.IsDir(),
+				IsRegular: fsInfo.Mode().IsRegular(),
+				IsSymlink: fsInfo.Mode()&os.ModeSymlink != 0,
+			}
+		}
+	}
+
 	if err == nil {
 		// Destination exists.
-		if dstInfo.Mode()&os.ModeSymlink != 0 {
+		if trgLstatInfo.IsSymlink {
 			// It's a symlink. Check if targets match.
-			dstTarget, err := os.Readlink(absTrgPath)
-			if err == nil && dstTarget == target {
+			dstLinkTarget, err := os.Readlink(absTrgPath)
+			if err == nil && dstLinkTarget == linkTarget {
 				s.metrics.AddFilesUpToDate(1)
 				return nil // Up to date
 			}
-		} else if dstInfo.IsDir() {
+		} else if trgLstatInfo.IsDir {
 			// Destination is a directory. Rename cannot overwrite it, so we must remove it explicitly.
 			plog.Warn("Destination is a directory, removing before symlink creation", "path", item.RelPathKey)
 			if err := os.RemoveAll(absTrgPath); err != nil {
 				return fmt.Errorf("failed to remove existing destination directory %s: %w", absTrgPath, err)
 			}
 		} else {
-			// Destination is a regular file. os.Rename will overwrite it atomically.
-			plog.Warn("Destination is not a symlink, overwriting", "path", item.RelPathKey, "type", dstInfo.Mode().String())
+			// Destination is a regular file or other type. Remove it to ensure clean state.
+			plog.Warn("Destination is not a symlink, removing before symlink creation", "path", item.RelPathKey, "type", trgLstatInfo.Mode.String())
+			if err := os.RemoveAll(absTrgPath); err != nil {
+				return fmt.Errorf("failed to remove existing destination file %s: %w", absTrgPath, err)
+			}
 		}
 	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("failed to lstat destination %s: %w", absTrgPath, err)
+		return fmt.Errorf("failed to retrieve destination metadata for %s: %w", absTrgPath, err)
 	}
 
 	// Create the symlink atomically using a temporary name and rename.
-	if err := s.copySymlinkHelper(target, absTrgPath, s.retryCount, s.retryWait); err != nil {
+	if err := s.copySymlinkHelper(linkTarget, absTrgPath, s.retryCount, s.retryWait); err != nil {
 		return err
 	}
 
-	plog.Notice("SYMLINK", "path", item.RelPathKey, "target", target)
+	plog.Notice("SYMLINK", "path", item.RelPathKey, "linkTarget", linkTarget)
 	s.metrics.AddFilesCopied(1)
 	return nil
 }
@@ -665,7 +697,7 @@ func (s *nativeSyncer) processDirectorySync(item *syncItem) error {
 		}
 
 		// Convert the path to the OS-native format for file access
-		absTrgPath := s.denormalizedAbsPath(s.trg, item.RelPathKey)
+		absTrgPath := util.DenormalizedAbsPath(s.trg, item.RelPathKey)
 		expectedPerms := util.WithUserWritePermission(item.PathInfo.Mode.Perm())
 
 		// 3. Perform the concurrent I/O.
@@ -706,7 +738,27 @@ func (s *nativeSyncer) processDirectorySync(item *syncItem) error {
 			return nil, fmt.Errorf("failed to lstat destination directory %s: %w", item.RelPathKey, err)
 		}
 
-		// 4. Finalize state
+		// 4. Optimization: Cache the lstat entries of the target dir to avoid redundant lookups
+		trgPathEntries, err := os.ReadDir(absTrgPath)
+		if err == nil {
+			// We build a standard Go map for the specific directory, and store it as an immutable snapshot
+			snapshot := make(map[string]lstatInfo, len(trgPathEntries))
+			for _, d := range trgPathEntries {
+				if info, err := d.Info(); err == nil {
+					snapshot[d.Name()] = lstatInfo{
+						Size:      info.Size(),
+						ModTime:   info.ModTime().UnixNano(),
+						Mode:      info.Mode(),
+						IsDir:     info.IsDir(),
+						IsRegular: info.Mode().IsRegular(),
+						IsSymlink: info.Mode()&os.ModeSymlink != 0,
+					}
+				}
+			}
+			s.syncTargetLStatCache.StoreSnapshot(item.RelPathKey, snapshot)
+		}
+
+		// 5. Finalize state
 		// CRITICAL: Always store in cache if the directory exists and is valid (whether we created it or it was already there).
 		// This prevents redundant Lstat/Chmod calls for every file in this directory by subsequent workers.
 		s.syncedDirCache.Store(item.RelPathKey)
@@ -730,13 +782,13 @@ func (s *nativeSyncer) ensureParentDirectoryExists(relPathKey string) error {
 	// 2. If not in cache, we need to create it now.
 	// Instead of re-statting the source directory, we look up its info from the cache
 	// populated by the syncItemProducer.
-	val, ok := s.discoveredDirInfo.Load(relPathKey)
+	val, ok := s.syncSourceDirInfoCache.Load(relPathKey)
 	if !ok {
 		// This should be logically impossible if the walker has processed the parent
 		// directory before its child file. We return an error to be safe.
 		return fmt.Errorf("internal logic error: PathInfo for parent directory %s not found in cache", relPathKey)
 	}
-	dirInfo := val.(compactPathInfo)
+	dirInfo := val.(lstatInfo)
 
 	// 3. Create a synthetic directory item for the parent.
 	// Use the pool to avoid allocation in this hot path.
@@ -754,32 +806,30 @@ func (s *nativeSyncer) ensureParentDirectoryExists(relPathKey string) error {
 // sending each syncItem to the syncItems channel for processing by workers.
 func (s *nativeSyncer) syncItemProducer() {
 	defer close(s.syncItemsChan) // Close syncItemsChan to signal syncWorkers to stop when walk is complete
-
 	err := filepath.WalkDir(s.src, func(absSrcPath string, d os.DirEntry, err error) error {
 		// Calculate relative path key immediately.
 		// This is needed for both error handling (to prevent deletion) and normal processing.
-		relPathKey, normErr := s.normalizedRelPathKey(s.src, absSrcPath)
+		relPathKey, normErr := util.NormalizedRelPath(s.src, absSrcPath)
 		if normErr != nil {
 			return fmt.Errorf("could not get relative path for %s: %w", absSrcPath, normErr)
 		}
 
 		if err != nil {
-			// Check if the error is due to context cancellation.
+			// CRITICAL: Record any discovered path unconditionally here
+			// If it's a subdir/file we can't read, record it so we don't delete it from destination.
+			if s.mirror {
+				s.existingRelSourcePaths.Store(relPathKey)
+			}
+
+			// CRITICAL: If source root is unreadable, abort sync immediately.
+			if relPathKey == "." {
+				return fmt.Errorf("source root is unreadable: %w", err)
+			}
+
+			// Check if the error is due to context cancellation and if so propagat it.
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				plog.Debug("Sync walker canceled", "path", absSrcPath)
 				return err // Propagate cancellation.
-			}
-
-			// CRITICAL: If we can't access a path (e.g. Permission Denied), we must ensure we don't
-			// accidentally wipe the destination.
-			if relPathKey == "." {
-				return fmt.Errorf("source root is unreadable: %w", err) // Critical: If source root is unreadable, abort sync immediately.
-			}
-
-			// CRITICAL: Record the path unconditionally here
-			// If it's a subdir/file we can't read, record it so we don't delete it from destination.
-			if s.mirror {
-				s.discoveredPaths.Store(relPathKey)
 			}
 
 			// If we can't access a path, log the error but keep walking
@@ -787,11 +837,6 @@ func (s *nativeSyncer) syncItemProducer() {
 			if d != nil && d.IsDir() {
 				return filepath.SkipDir
 			}
-			return nil
-		}
-
-		// We skip processing the root dir itself of the walk.
-		if relPathKey == "." {
 			return nil
 		}
 
@@ -814,7 +859,7 @@ func (s *nativeSyncer) syncItemProducer() {
 		// If we mirror and the item exists in the source, it MUST be recorded in the set
 		// to prevent it from being deleted during the mirror phase.
 		if s.mirror {
-			s.discoveredPaths.Store(relPathKey)
+			s.existingRelSourcePaths.Store(relPathKey)
 		}
 
 		// Get Info for worker
@@ -831,7 +876,8 @@ func (s *nativeSyncer) syncItemProducer() {
 
 		isDir := info.Mode().IsDir()
 		isSymlink := info.Mode()&os.ModeSymlink != 0
-		if !isDir && !info.Mode().IsRegular() && !isSymlink {
+		isRegular := info.Mode().IsRegular()
+		if !isDir && !isRegular && !isSymlink {
 			// Named Pipes, Sockets, etc. are discovered for mirror mode but not synced.
 			plog.Notice("SKIP", "type", info.Mode().String(), "path", relPathKey)
 			return nil
@@ -844,11 +890,12 @@ func (s *nativeSyncer) syncItemProducer() {
 		item.PathInfo.Size = info.Size()
 		item.PathInfo.Mode = info.Mode()
 		item.PathInfo.IsDir = isDir
+		item.PathInfo.IsRegular = isRegular
 		item.PathInfo.IsSymlink = isSymlink
 
 		// If it's a directory, cache its PathInfo for workers to use later.
 		if item.PathInfo.IsDir {
-			s.discoveredDirInfo.Store(item.RelPathKey, item.PathInfo)
+			s.syncSourceDirInfoCache.Store(item.RelPathKey, item.PathInfo)
 		}
 
 		// Send all regular files and directories to the workers.
@@ -910,29 +957,31 @@ func (s *nativeSyncer) syncWorker() {
 					return // dir created
 				}
 				// This is a file or symlink item.
+
 				// 1. Ensure Parent Directory Exists (still required for files whose parent directory's
 				// item hasn't been processed yet, ensuring order)
-				parentRelPathKey := s.normalizedParentRelPathKey(item.RelPathKey)
 
-				if parentRelPathKey != "." {
-					if err := s.ensureParentDirectoryExists(parentRelPathKey); err != nil {
-						fileErr := fmt.Errorf("failed to ensure parent directory %s exists and is writable: %w", parentRelPathKey, err)
-						if s.failFast {
-							// Fail-fast mode: treat this as a critical error.
-							// Use a non-blocking send in case another worker has already sent a critical error.
-							select {
-							case s.criticalSyncErrsChan <- fileErr:
-							default:
-							}
-						} else {
-							// Default mode: record as a non-fatal error and continue.
-							s.syncErrs.Store(item.RelPathKey, fileErr)
-							plog.Warn("Sync failed for path; it will be preserved in the destination to prevent deletion",
-								"path", item.RelPathKey,
-								"error", fileErr)
+				// CRITICAL: Re-normalize the parent key. after `filepath.Dir` as it can return a path with
+				// OS-specific separators (e.g., '\' on Windows)
+				parentRelPathKey := util.NormalizePath(filepath.Dir(item.RelPathKey))
+
+				if err := s.ensureParentDirectoryExists(parentRelPathKey); err != nil {
+					fileErr := fmt.Errorf("failed to ensure parent directory %s exists and is writable: %w", parentRelPathKey, err)
+					if s.failFast {
+						// Fail-fast mode: treat this as a critical error.
+						// Use a non-blocking send in case another worker has already sent a critical error.
+						select {
+						case s.criticalSyncErrsChan <- fileErr:
+						default:
 						}
-						return // no dir no filecopy
+					} else {
+						// Default mode: record as a non-fatal error and continue.
+						s.syncErrs.Store(item.RelPathKey, fileErr)
+						plog.Warn("Sync failed for path; it will be preserved in the destination to prevent deletion",
+							"path", item.RelPathKey,
+							"error", fileErr)
 					}
+					return // no dir no filecopy
 				}
 				// 2. Process the sync (file or symlink)
 				var err error
@@ -959,7 +1008,7 @@ func (s *nativeSyncer) syncWorker() {
 					// success, providing a comprehensive report of all failed files at the end.
 					//
 					// Data Integrity: The `syncItemProducer` has already added this `RelPathKey` to
-					// `discoveredPaths`. This ensures that even if the file copy fails, the
+					// `existingRelSourcePaths`. This ensures that even if the file copy fails, the
 					// existing (potentially outdated) version in the destination will NOT be
 					// deleted during the mirror phase, preventing data loss.
 					s.syncErrs.Store(item.RelPathKey, err)
@@ -978,6 +1027,13 @@ func (s *nativeSyncer) syncWorker() {
 // It uses a Producer-Consumer pattern.
 func (s *nativeSyncer) handleSync() error {
 	plog.Notice("SYN", "from", s.src, "to", s.trg)
+
+	// Clear our Sync Optimization Caches when we are finished
+	defer func() {
+		s.syncSourceDirInfoCache = &sharded.ShardedMap{} // Clear memory immediately
+		s.syncTargetLStatCache = newLStatSnapshotStore() // Clear memory immediately
+	}()
+
 	// 1. Start syncWorkers (Consumers).
 	// They read from 'syncItems' and store results in a concurrent map.
 	for range s.numSyncWorkers {
@@ -1037,18 +1093,14 @@ func (s *nativeSyncer) mirrorItemProducer() {
 		default:
 		}
 
-		relPathKey, err := s.normalizedRelPathKey(s.trg, absTrgPath)
+		relPathKey, err := util.NormalizedRelPath(s.trg, absTrgPath)
 		if err != nil {
 			return err
 		}
 
-		if relPathKey == "." {
-			return nil
-		}
-
 		s.metrics.AddEntriesProcessed(1)
 
-		if s.discoveredPaths.Has(relPathKey) {
+		if s.existingRelSourcePaths.Has(relPathKey) {
 			return nil // Path exists in source, keep it.
 		}
 
@@ -1119,7 +1171,7 @@ func (s *nativeSyncer) mirrorWorker() {
 				// Return the item to the pool when this iteration is done.
 				defer s.mirrorItemPool.Put(item)
 
-				absPathToDelete := s.denormalizedAbsPath(s.trg, item.RelPathKey)
+				absPathToDelete := util.DenormalizedAbsPath(s.trg, item.RelPathKey)
 
 				if s.dryRun {
 					plog.Notice("[DRY RUN] DELETE", "path", item.RelPathKey)
@@ -1185,7 +1237,7 @@ func (s *nativeSyncer) handleMirror() error {
 	})
 
 	for _, relPathKey := range relPathKeyDirsToDelete {
-		absPathToDelete := s.denormalizedAbsPath(s.trg, relPathKey)
+		absPathToDelete := util.DenormalizedAbsPath(s.trg, relPathKey)
 		if s.dryRun {
 			plog.Notice("[DRY RUN] DELETE", "path", relPathKey)
 			continue
