@@ -74,7 +74,7 @@ type SyncConfig struct {
 	Enabled               bool     `json:"enabled"`
 	PreserveSourceDirName bool     `json:"preserveSourceDirName"`
 	Engine                string   `json:"engine"`
-	DisableSafeCopy       bool     `json:"disableSafeCopy"`
+	SafeCopy              bool     `json:"safeCopy"`
 	RetryCount            int      `json:"retryCount"`
 	RetryWaitSeconds      int      `json:"retryWaitSeconds"`
 	ModTimeWindowSeconds  int      `json:"modTimeWindowSeconds" comment:"Time window in seconds to consider file modification times equal. Handles filesystem timestamp precision differences. Default is 1s. 0 means exact match."`
@@ -179,7 +179,7 @@ func NewDefault() Config {
 		Sync: SyncConfig{
 			Enabled:               true, // Enabled by default.
 			Engine:                "native",
-			DisableSafeCopy:       false,      // Default use safe copy (rename/copy)
+			SafeCopy:              true,       // Default use safe copy (rename/copy)
 			RetryCount:            3,          // Default retries on failure.
 			RetryWaitSeconds:      5,          // Default wait time between retries.
 			ModTimeWindowSeconds:  1,          // Set the default to 1 second
@@ -602,7 +602,7 @@ func (c *Config) LogSummary(command flagparse.Command, absBasePath, absSourcePat
 	}
 	plog.Info("Configuration loaded", logArgs...)
 
-	if c.Sync.Enabled && c.Sync.DisableSafeCopy && (command == flagparse.Backup || command == flagparse.Restore) {
+	if c.Sync.Enabled && !c.Sync.SafeCopy && (command == flagparse.Backup || command == flagparse.Restore) {
 		plog.Warn("Safe Copy is DISABLED. Atomicity is not guaranteed. Power loss during backup/restore may result in corrupt files.")
 	}
 }
@@ -674,8 +674,8 @@ func MergeConfigWithFlags(command flagparse.Command, base Config, setFlags map[s
 			merged.Engine.Performance.ReadAheadLimitKB = value.(int64)
 		case "sync-engine":
 			merged.Sync.Engine = value.(string)
-		case "sync-disable-safe-copy":
-			merged.Sync.DisableSafeCopy = value.(bool)
+		case "sync-safe-copy":
+			merged.Sync.SafeCopy = value.(bool)
 		case "sync-retry-count":
 			merged.Sync.RetryCount = value.(int)
 		case "sync-retry-wait":

@@ -216,7 +216,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 		expectedMetrics         *expectedMetrics                    // Optional metrics verification.
 		expectedErrorContains   string                              // If non-empty, asserts that the sync error contains this string.
 		overwriteBehavior       OverwriteBehavior                   // Optional override for overwrite behavior.
-		disableSafeCopy         bool                                // Optional override for safe copy.
+		safeCopy                bool                                // Optional override for safe copy.
 	}{
 		{
 			name:                  "Simple Copy",
@@ -235,7 +235,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			name:                  "Simple Copy (Safe Mode)",
 			mirror:                false,
 			preserveSourceDirName: false,
-			disableSafeCopy:       false,
+			safeCopy:              true,
 			srcFiles: []testFile{
 				{path: "safe.txt", content: "safe content", modTime: baseTime},
 			},
@@ -247,7 +247,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			name:                  "Simple Copy (Direct Mode)",
 			mirror:                false,
 			preserveSourceDirName: false,
-			disableSafeCopy:       true,
+			safeCopy:              false,
 			srcFiles: []testFile{
 				{path: "direct.txt", content: "direct content", modTime: baseTime},
 			},
@@ -835,7 +835,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				Engine:                Native,
 				PreserveSourceDirName: tc.preserveSourceDirName,
 				Mirror:                tc.mirror,
-				DisableSafeCopy:       tc.disableSafeCopy,
+				SafeCopy:              tc.safeCopy,
 				RetryCount:            3,
 				RetryWait:             5 * time.Second,
 				ExcludeFiles:          tc.excludeFiles,

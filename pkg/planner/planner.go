@@ -219,7 +219,7 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 			PreserveSourceDirName: cfg.Sync.PreserveSourceDirName,
 			Mirror:                true,
 
-			DisableSafeCopy:   cfg.Sync.DisableSafeCopy,
+			SafeCopy:          cfg.Sync.SafeCopy,
 			RetryCount:        cfg.Sync.RetryCount,
 			RetryWait:         time.Duration(cfg.Sync.RetryWaitSeconds) * time.Second,
 			ModTimeWindow:     time.Duration(cfg.Sync.ModTimeWindowSeconds) * time.Second,
@@ -391,7 +391,7 @@ func GenerateRestorePlan(cfg config.Config) (*RestorePlan, error) {
 			PreserveSourceDirName: false, // Force false for restore to avoid creating PGL_Backup_Content subdir
 			Mirror:                false, // Force false for restore, we don't want to delete anything in the users retore target
 
-			DisableSafeCopy:   cfg.Sync.DisableSafeCopy,
+			SafeCopy:          cfg.Sync.SafeCopy,
 			RetryCount:        cfg.Sync.RetryCount,
 			RetryWait:         time.Duration(cfg.Sync.RetryWaitSeconds) * time.Second,
 			ModTimeWindow:     time.Duration(cfg.Sync.ModTimeWindowSeconds) * time.Second,

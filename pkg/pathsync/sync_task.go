@@ -22,12 +22,12 @@ type syncTask struct {
 
 	ctx context.Context
 
-	mirror          bool
-	dryRun          bool
-	failFast        bool
-	disableSafeCopy bool
-	fileExclusions  exclusionSet
-	dirExclusions   exclusionSet
+	mirror         bool
+	dryRun         bool
+	failFast       bool
+	safeCopy       bool
+	fileExclusions exclusionSet
+	dirExclusions  exclusionSet
 
 	retryCount        int
 	retryWait         time.Duration
@@ -77,7 +77,7 @@ func (t *syncTask) syncDirectories() error {
 			t.mirror,
 			t.dryRun,
 			t.failFast,
-			t.disableSafeCopy,
+			t.safeCopy,
 			t.fileExclusions,
 			t.dirExclusions,
 			t.retryCount,

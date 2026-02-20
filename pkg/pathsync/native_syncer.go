@@ -78,12 +78,12 @@ type nativeSyncer struct {
 	numSyncWorkers   int
 	numMirrorWorkers int
 
-	mirror          bool
-	dryRun          bool
-	failFast        bool
-	disableSafeCopy bool
-	fileExclusions  exclusionSet
-	dirExclusions   exclusionSet
+	mirror         bool
+	dryRun         bool
+	failFast       bool
+	safeCopy       bool
+	fileExclusions exclusionSet
+	dirExclusions  exclusionSet
 
 	retryCount        int
 	retryWait         time.Duration
@@ -160,7 +160,7 @@ type nativeSyncer struct {
 }
 
 func newNativeSyncer(
-	mirror, dryRun, failFast, disableSafeCopy bool,
+	mirror, dryRun, failFast, safeCopy bool,
 	fileExclusions, dirExclusions exclusionSet,
 	retryCount int,
 	retryWait, modTimeWindow time.Duration,
@@ -200,7 +200,7 @@ func newNativeSyncer(
 		metrics:                metrics,
 		dryRun:                 dryRun,
 		failFast:               failFast,
-		disableSafeCopy:        disableSafeCopy,
+		safeCopy:               safeCopy,
 		fileExclusions:         fileExclusions,
 		dirExclusions:          dirExclusions,
 		retryCount:             retryCount,
@@ -470,7 +470,7 @@ func (s *nativeSyncer) processFileSync(item *syncItem) error {
 		return nil
 	}
 
-	useSafeCopy := !s.disableSafeCopy
+	useSafeCopy := s.safeCopy
 
 	// Convert the paths to the OS-native format for file access
 	absSrcPath := util.DenormalizedAbsPath(s.src, item.RelPathKey)
