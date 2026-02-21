@@ -472,7 +472,7 @@ func (c *Config) LogSummary(command flagparse.Command, absBasePath, absSourcePat
 		logArgs = append(logArgs, "sync_workers", c.Engine.Performance.SyncWorkers)
 		logArgs = append(logArgs, "mirror_workers", c.Engine.Performance.MirrorWorkers)
 		logArgs = append(logArgs, "delete_workers", c.Engine.Performance.DeleteWorkers)
-		logArgs = append(logArgs, "delete_workers", c.Engine.Performance.CompressWorkers)
+		logArgs = append(logArgs, "compress_workers", c.Engine.Performance.CompressWorkers)
 		logArgs = append(logArgs, "buffer_size_kb", c.Engine.Performance.BufferSizeKB)
 		logArgs = append(logArgs, "readahead_limit_kb", c.Engine.Performance.ReadAheadLimitKB)
 		logArgs = append(logArgs, "overwrite", c.Runtime.BackupOverwriteBehavior)
