@@ -82,6 +82,7 @@ func RunRestore(ctx context.Context, flagMap map[string]any) error {
 		preflight.NewValidator(),
 		pathsync.NewPathSyncer(
 			runConfig.Engine.Performance.BufferSizeKB,
+			runConfig.Engine.Performance.ReadAheadLimitKB,
 			runConfig.Engine.Performance.SyncWorkers,
 			runConfig.Engine.Performance.MirrorWorkers,
 		),

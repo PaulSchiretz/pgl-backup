@@ -10,6 +10,7 @@ import (
 
 	"github.com/paulschiretz/pgl-backup/pkg/buildinfo"
 	"github.com/paulschiretz/pgl-backup/pkg/hints"
+	"github.com/paulschiretz/pgl-backup/pkg/limiter"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
@@ -22,6 +23,9 @@ type PathSyncer struct {
 	ioBufferPool *sync.Pool // pointer to avoid copying the noCopy field if the struct is ever passed by value
 	ioBufferSize int64
 
+	readAheadLimiter   *limiter.Memory
+	readAheadLimitSize int64
+
 	numSyncWorkers   int
 	numMirrorWorkers int
 
@@ -30,8 +34,9 @@ type PathSyncer struct {
 }
 
 // NewPathSyncer creates a new PathSyncer with the given configuration.
-func NewPathSyncer(bufferSizeKB int64, numSyncWorkers int, numMirrorWorkers int) *PathSyncer {
+func NewPathSyncer(bufferSizeKB, readAheadLimitKB int64, numSyncWorkers int, numMirrorWorkers int) *PathSyncer {
 	ioBufferSize := bufferSizeKB * 1024 // Buffer size is configured in KB, so multiply by 1024.
+	readAheadLimitSize := readAheadLimitKB * 1024
 	return &PathSyncer{
 		ioBufferPool: &sync.Pool{
 			New: func() any {
@@ -40,9 +45,11 @@ func NewPathSyncer(bufferSizeKB int64, numSyncWorkers int, numMirrorWorkers int)
 				return &b // We store a pointer to the slice header
 			},
 		},
-		ioBufferSize:     ioBufferSize,
-		numSyncWorkers:   numSyncWorkers,
-		numMirrorWorkers: numMirrorWorkers,
+		ioBufferSize:       ioBufferSize,
+		readAheadLimiter:   limiter.NewMemory(readAheadLimitSize, ioBufferSize),
+		readAheadLimitSize: readAheadLimitSize,
+		numSyncWorkers:     numSyncWorkers,
+		numMirrorWorkers:   numMirrorWorkers,
 	}
 }
 
@@ -81,6 +88,7 @@ func (s *PathSyncer) Sync(ctx context.Context, absBasePath, absSourcePath string
 		dryRun:            p.DryRun,
 		failFast:          p.FailFast,
 		safeCopy:          p.SafeCopy,
+		sequentialWrite:   p.SequentialWrite,
 		fileExclusions:    newExclusionSet(p.ExcludeFiles),
 		dirExclusions:     newExclusionSet(p.ExcludeDirs),
 		retryCount:        p.RetryCount,
@@ -152,6 +160,7 @@ func (s *PathSyncer) Restore(ctx context.Context, absBasePath string, relContent
 		dryRun:            p.DryRun,
 		failFast:          p.FailFast,
 		safeCopy:          p.SafeCopy,
+		sequentialWrite:   p.SequentialWrite,
 		fileExclusions:    newExclusionSet(p.ExcludeFiles),
 		dirExclusions:     newExclusionSet(p.ExcludeDirs),
 		retryCount:        p.RetryCount,

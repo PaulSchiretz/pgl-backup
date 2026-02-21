@@ -26,6 +26,7 @@
     *   [Step 2: Review Configuration (Optional)](#step-2-review-configuration-optional)
     *   [Step 3: Run Your First Backup](#step-3-run-your-first-backup)
 *   [Usage and Examples](#usage-and-examples)
+    *   [Quick One-Off Backup](#quick-one-off-backup)
     *   [Basic Backup](#basic-backup)
     *   [Portable Usage (Plug-and-Play)](#portable-usage-plug-and-play)
     *   [Dry Run](#dry-run)
@@ -163,6 +164,12 @@ pgl-backup init -base="/media/backup-drive/MyDocumentsBackup" -source="$HOME/Doc
 pgl-backup init -base="E:\Backups\MyDocumentsBackup" -source="C:\Users\YourUser\Documents"
 ```
 
+> **HDD Optimization Tip**: If your backup target is a mechanical hard drive (HDD) or a Tape-Drive, we highly recommend initializing with the `-sync-sequential-write` flag. This optimizes write patterns to prevent disk thrashing and significantly improves performance.
+```sh
+# Example for use with HDD drives
+pgl-backup init -base="..." -source="..." -sync-sequential-write
+```
+
 You can also combine the init command with other flags to customize the configuration immediately:
 
 ```sh
@@ -217,6 +224,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
     "preserveSourceDirName": true,
     "engine": "native",
     "safeCopy": true,
+    "sequentialWrite": false,
     "retryCount": 3,
     "retryWaitSeconds": 5,
     "modTimeWindowSeconds": 1,
@@ -307,6 +315,19 @@ Your backup target will be organized like this:
 ## Usage and Examples
 
 `pgl-backup` uses a subcommand structure: `pgl-backup <command> [flags]`. Running `pgl-backup` without any arguments will display the help message.
+
+### Quick One-Off Backup
+
+Although recommended, you don't need to generate a configuration file with `init` to run a backup. You can simply provide the necessary flags directly. `pgl-backup` will use sensible defaults for everything else.
+
+```sh
+pgl-backup backup -base="/path/to/your/backup-target" -source="/path/to/your/source-data"
+```
+
+> **HDD Optimization Tip**: If your backup target is a mechanical hard drive (HDD) or a Tape-Drive, add the `-sync-sequential-write` flag. This optimizes write patterns to prevent disk thrashing and significantly improves performance.
+> ```sh
+> pgl-backup backup -base="..." -source="..." -sync-sequential-write
+> ```
 
 ### Basic Backup
 
@@ -813,6 +834,7 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | - / `sync.enabled` | `bool` | `true` | Enable file synchronization. |
 | `sync-engine` / `sync.engine` | `string` | `"native"` | The sync engine to use: `"native"`. |
 | `sync-safe-copy` / `sync.safeCopy` | `bool` | `true` | Enable 'copy then rename' for secure file syncing (slower but safer). |
+| `sync-sequential-write` / `sync.sequentialWrite` | `bool` | `false` | Serialize file writes to reduce disk thrashing (recommended for HDDs or a Tape-Drives). |
 | `sync-retry-count` / `sync.retryCount` | `int` | `3` | Number of retries for failed file copies. |
 | `sync-retry-wait` / `sync.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries. |
 | `sync-mod-time-window` / `sync.modTimeWindowSeconds` | `int` | `1` | Time window in seconds to consider file modification times equal. |
@@ -890,6 +912,7 @@ This occurs because the binaries are currently unsigned. Please refer to the [Se
     *   Adjust the `sync-workers` and `buffer-size-kb` settings in your `pgl-backup.config.json` file.
     *   For systems with slow I/O (like a single spinning disk or a high-latency network share), *decreasing* the number of `sync-workers` (e.g., to `1` or `2`) is recommended to minimize seek latency, as higher concurrency can cause significant thrashing.
     *   For systems with very fast I/O (like a local NVMe SSD), increasing `sync-workers` might yield better results.
+    *   **HDD Optimization**: If writing to a mechanical hard drive, enable `"sequentialWrite": true` (or `-sync-sequential-write`). This buffers files in memory (up to `readAheadLimitKB`) and writes them sequentially, preventing the disk head from thrashing between multiple concurrent writes.
 *   **Cause**: The default "Safe Copy" mechanism ensures atomicity but increases metadata operations (create temp file + rename). This can be slow on high-latency network shares or with many small files.
 *   **Solution**:
     *   Try disabling Safe Copy by setting `"safeCopy": false` in your config or using `-sync-safe-copy=false`. This switches to direct writes, improving performance at the cost of atomicity (a power loss during copy might leave a partial file, which will be fixed on the next run).

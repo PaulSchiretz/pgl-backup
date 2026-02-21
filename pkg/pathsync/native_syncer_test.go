@@ -217,6 +217,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 		expectedErrorContains   string                              // If non-empty, asserts that the sync error contains this string.
 		overwriteBehavior       OverwriteBehavior                   // Optional override for overwrite behavior.
 		safeCopy                bool                                // Optional override for safe copy.
+		sequentialWrite         bool                                // Optional override for sequential write.
 	}{
 		{
 			name:                  "Simple Copy",
@@ -253,6 +254,18 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			},
 			expectedDstFiles: map[string]testFile{
 				"direct.txt": {path: "direct.txt", content: "direct content", modTime: baseTime},
+			},
+		},
+		{
+			name:                  "Simple Copy (Sequential Write)",
+			mirror:                false,
+			preserveSourceDirName: false,
+			sequentialWrite:       true,
+			srcFiles: []testFile{
+				{path: "seq.txt", content: "sequential content", modTime: baseTime},
+			},
+			expectedDstFiles: map[string]testFile{
+				"seq.txt": {path: "seq.txt", content: "sequential content", modTime: baseTime},
 			},
 		},
 		{
@@ -836,6 +849,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				PreserveSourceDirName: tc.preserveSourceDirName,
 				Mirror:                tc.mirror,
 				SafeCopy:              tc.safeCopy,
+				SequentialWrite:       tc.sequentialWrite,
 				RetryCount:            3,
 				RetryWait:             5 * time.Second,
 				ExcludeFiles:          tc.excludeFiles,
@@ -850,7 +864,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			} else {
 				plan.ModTimeWindow = 1 * time.Second
 			}
-			syncer := NewPathSyncer(256, 4, 4)
+			syncer := NewPathSyncer(256, 524288, 4, 4)
 			_, err := syncer.Sync(context.Background(), runner.baseDir, runner.srcDir, "", "", plan, time.Now())
 
 			// Assert on error
@@ -1021,7 +1035,7 @@ func TestNativeSync_WorkerCancellation(t *testing.T) {
 		Engine:  Native,
 		Mirror:  true,
 	}
-	syncer := NewPathSyncer(256, 1, 1)
+	syncer := NewPathSyncer(256, 524288, 1, 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -1067,7 +1081,7 @@ func TestNativeSync_MirrorCancellation(t *testing.T) {
 		Engine:  Native,
 		Mirror:  true,
 	}
-	syncer := NewPathSyncer(256, 1, 1)
+	syncer := NewPathSyncer(256, 524288, 1, 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
 

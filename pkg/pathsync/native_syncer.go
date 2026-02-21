@@ -47,6 +47,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/paulschiretz/pgl-backup/pkg/limiter"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/sharded"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
@@ -71,6 +72,10 @@ type nativeSyncer struct {
 	ioBufferPool *sync.Pool
 	ioBufferSize int64
 
+	// Limiter for sequential writes
+	readAheadLimiter   *limiter.Memory
+	readAheadLimitSize int64
+
 	// ctx is the cancellable context for the entire run.
 	ctx context.Context
 
@@ -78,10 +83,13 @@ type nativeSyncer struct {
 	numSyncWorkers   int
 	numMirrorWorkers int
 
-	mirror         bool
-	dryRun         bool
-	failFast       bool
-	safeCopy       bool
+	mirror            bool
+	dryRun            bool
+	failFast          bool
+	safeCopy          bool
+	sequentialWrite   bool
+	sequentialWriteMu sync.Mutex
+
 	fileExclusions exclusionSet
 	dirExclusions  exclusionSet
 
@@ -160,12 +168,13 @@ type nativeSyncer struct {
 }
 
 func newNativeSyncer(
-	mirror, dryRun, failFast, safeCopy bool,
+	mirror, dryRun, failFast, safeCopy, sequentialWrite bool,
 	fileExclusions, dirExclusions exclusionSet,
 	retryCount int,
 	retryWait, modTimeWindow time.Duration,
 	overwriteBehavior OverwriteBehavior,
 	ioBufferPool *sync.Pool, ioBufferSize int64,
+	readAheadLimiter *limiter.Memory, readAheadLimitSize int64,
 	numSyncWorkers, numMirrorWorkers int,
 	metrics Metrics,
 ) (*nativeSyncer, error) {
@@ -201,6 +210,7 @@ func newNativeSyncer(
 		dryRun:                 dryRun,
 		failFast:               failFast,
 		safeCopy:               safeCopy,
+		sequentialWrite:        sequentialWrite,
 		fileExclusions:         fileExclusions,
 		dirExclusions:          dirExclusions,
 		retryCount:             retryCount,
@@ -221,6 +231,8 @@ func newNativeSyncer(
 		mirrorDirsToDelete:     mirrorDirsToDelete,
 		ioBufferPool:           ioBufferPool,
 		ioBufferSize:           ioBufferSize,
+		readAheadLimiter:       readAheadLimiter,
+		readAheadLimitSize:     readAheadLimitSize,
 		syncItemPool: &sync.Pool{
 			New: func() any {
 				return new(syncItem)
@@ -244,6 +256,54 @@ func (s *nativeSyncer) isExcluded(relPathKey, relPathBasename string, isDir bool
 		return s.dirExclusions.matches(relPathKey, relPathBasename)
 	}
 	return s.fileExclusions.matches(relPathKey, relPathBasename)
+}
+
+// copyFileContent handles the actual data transfer from source to destination file.
+// It supports both standard concurrent copying and serialized/readahead copying
+// to reduce disk thrashing on HDDs.
+//
+// NOTE: We intentionally only serialize the heavy data payloads (file contents).
+// Metadata operations (mkdir, symlink, rename, remove) remain concurrent.
+// While strictly speaking they also cause seeks, they are tiny, fast, and often
+// buffered by the OS/filesystem driver. The complexity/deadlock-risk of locking
+// every metadata op outweighs the marginal gain in seek reduction.
+func (s *nativeSyncer) copyFileContent(in *os.File, out *os.File, info lstatInfo, buf []byte) (int64, error) {
+	// Standard concurrent copy
+	if !s.sequentialWrite {
+		return io.CopyBuffer(out, in, buf)
+	}
+
+	// Sequential Write Mode
+	fSize := info.Size
+
+	// Attempt to acquire readahead budget for this file
+	if s.readAheadLimiter.TryAcquire(fSize) {
+		// Happy Path: We have budget. Read fully to RAM (concurrently), then write serially.
+		defer s.readAheadLimiter.Release(fSize)
+
+		var data []byte
+		// Optimization: Reuse the worker's buffer if the file fits.
+		if fSize <= int64(len(buf)) {
+			data = buf[:fSize]
+		} else {
+			data = make([]byte, fSize)
+		}
+
+		if _, err := io.ReadFull(in, data); err != nil {
+			return 0, fmt.Errorf("failed to read file into memory: %w", err)
+		}
+
+		s.sequentialWriteMu.Lock()
+		defer s.sequentialWriteMu.Unlock()
+		n, err := out.Write(data)
+		return int64(n), err
+	}
+
+	// Fallback: Budget full or file too big. Stream serially (holding the lock).
+	// This prevents this worker from thrashing the disk while others are writing.
+	s.sequentialWriteMu.Lock()
+	defer s.sequentialWriteMu.Unlock()
+	return io.CopyBuffer(out, in, buf)
 }
 
 // copyFileSafe handles the low-level details of copying a single file.
@@ -299,7 +359,7 @@ func (s *nativeSyncer) copyFileSafe(absSrcPath, absTrgPath string, item *syncIte
 			// strictly for io.Read/Copy purposes.
 			buf = buf[:cap(buf)]
 
-			if bytesWritten, err = io.CopyBuffer(out, in, buf); err != nil {
+			if bytesWritten, err = s.copyFileContent(in, out, item.PathInfo, buf); err != nil {
 				return fmt.Errorf("failed to copy content from %s to %s: %w", absSrcPath, absTempPath, err)
 			}
 
@@ -385,7 +445,7 @@ func (s *nativeSyncer) copyFileDirect(absSrcPath, absTrgPath string, item *syncI
 			buf := *bufPtr
 			buf = buf[:cap(buf)]
 
-			if bytesWritten, err = io.CopyBuffer(out, in, buf); err != nil {
+			if bytesWritten, err = s.copyFileContent(in, out, item.PathInfo, buf); err != nil {
 				return fmt.Errorf("failed to copy content from %s to %s: %w", absSrcPath, absTrgPath, err)
 			}
 

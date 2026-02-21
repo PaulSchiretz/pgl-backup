@@ -75,6 +75,7 @@ type SyncConfig struct {
 	PreserveSourceDirName bool     `json:"preserveSourceDirName"`
 	Engine                string   `json:"engine"`
 	SafeCopy              bool     `json:"safeCopy"`
+	SequentialWrite       bool     `json:"sequentialWrite"`
 	RetryCount            int      `json:"retryCount"`
 	RetryWaitSeconds      int      `json:"retryWaitSeconds"`
 	ModTimeWindowSeconds  int      `json:"modTimeWindowSeconds" comment:"Time window in seconds to consider file modification times equal. Handles filesystem timestamp precision differences. Default is 1s. 0 means exact match."`
@@ -180,6 +181,7 @@ func NewDefault() Config {
 			Enabled:               true, // Enabled by default.
 			Engine:                "native",
 			SafeCopy:              true,       // Default use safe copy (rename/copy)
+			SequentialWrite:       false,      // Default to parallel writes (better for SSDs).
 			RetryCount:            3,          // Default retries on failure.
 			RetryWaitSeconds:      5,          // Default wait time between retries.
 			ModTimeWindowSeconds:  1,          // Set the default to 1 second
@@ -478,6 +480,8 @@ func (c *Config) LogSummary(command flagparse.Command, absBasePath, absSourcePat
 		if c.Sync.Enabled {
 			syncSummary := fmt.Sprintf("enabled (e:%s)", c.Sync.Engine)
 			logArgs = append(logArgs, "sync", syncSummary)
+			logArgs = append(logArgs, "safe_copy", c.Sync.SafeCopy)
+			logArgs = append(logArgs, "sequential_write", c.Sync.SequentialWrite)
 		}
 
 		if c.Compression.Enabled {
@@ -555,6 +559,8 @@ func (c *Config) LogSummary(command flagparse.Command, absBasePath, absSourcePat
 		if c.Sync.Enabled {
 			syncSummary := fmt.Sprintf("enabled (e:%s)", c.Sync.Engine)
 			logArgs = append(logArgs, "sync", syncSummary)
+			logArgs = append(logArgs, "safe_copy", c.Sync.SafeCopy)
+			logArgs = append(logArgs, "sequential_write", c.Sync.SequentialWrite)
 		}
 
 		if c.Compression.Enabled {
@@ -676,6 +682,8 @@ func MergeConfigWithFlags(command flagparse.Command, base Config, setFlags map[s
 			merged.Sync.Engine = value.(string)
 		case "sync-safe-copy":
 			merged.Sync.SafeCopy = value.(bool)
+		case "sync-sequential-write":
+			merged.Sync.SequentialWrite = value.(bool)
 		case "sync-retry-count":
 			merged.Sync.RetryCount = value.(int)
 		case "sync-retry-wait":

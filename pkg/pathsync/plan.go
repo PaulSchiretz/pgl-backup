@@ -11,6 +11,7 @@ type Plan struct {
 	PreserveSourceDirName bool
 	Mirror                bool
 	SafeCopy              bool
+	SequentialWrite       bool
 
 	RetryCount        int
 	RetryWait         time.Duration

@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING CHANGE**: Renamed `DisableSafeCopy` to `SafeCopy` in configuration and flags. The default is now `true` (Safe Copy enabled).
 - Renamed flag `-sync-disable-safe-copy` to `-sync-safe-copy`.
 
+### Added
+- Added `-sync-sequential-write` flag to serialize file writes using a readahead buffer. This significantly reduces disk thrashing on HDDs while maintaining read concurrency.
+
 ## [v1.4.1] - 2026-02-20
 
 ### Changed

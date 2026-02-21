@@ -220,6 +220,7 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 			Mirror:                true,
 
 			SafeCopy:          cfg.Sync.SafeCopy,
+			SequentialWrite:   cfg.Sync.SequentialWrite,
 			RetryCount:        cfg.Sync.RetryCount,
 			RetryWait:         time.Duration(cfg.Sync.RetryWaitSeconds) * time.Second,
 			ModTimeWindow:     time.Duration(cfg.Sync.ModTimeWindowSeconds) * time.Second,
@@ -392,6 +393,7 @@ func GenerateRestorePlan(cfg config.Config) (*RestorePlan, error) {
 			Mirror:                false, // Force false for restore, we don't want to delete anything in the users retore target
 
 			SafeCopy:          cfg.Sync.SafeCopy,
+			SequentialWrite:   cfg.Sync.SequentialWrite,
 			RetryCount:        cfg.Sync.RetryCount,
 			RetryWait:         time.Duration(cfg.Sync.RetryWaitSeconds) * time.Second,
 			ModTimeWindow:     time.Duration(cfg.Sync.ModTimeWindowSeconds) * time.Second,
