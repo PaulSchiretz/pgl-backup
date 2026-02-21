@@ -135,13 +135,13 @@ Every release includes a `checksums.txt` file containing the SHA256 hashes of th
 shasum -a 256 -c checksums.txt
 
 # Or manually check a specific file:
-shasum -a 256 pgl-backup_v1.4.1_darwin_arm64.tar.gz
+shasum -a 256 pgl-backup_v1.4.2_darwin_arm64.tar.gz
 # Compare output with the content of checksums.txt
 ```
 
 **Windows (PowerShell):**
 ```powershell
-Get-FileHash .\pgl-backup_v1.4.1_windows_amd64.zip -Algorithm SHA256
+Get-FileHash .\pgl-backup_v1.4.2_windows_amd64.zip -Algorithm SHA256
 # Compare the hash with the content of checksums.txt
 ```
 
@@ -195,7 +195,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
 
 ```json
 {
-  "version": "1.4.1",
+  "version": "1.4.2",
   "logLevel": "info",
   "paths": {
     "incremental": {
