@@ -56,6 +56,12 @@ type zipCompressor struct {
 
 	// Pool for zipItem structs to reduce GC pressure
 	zipItemPool *sync.Pool
+
+	// Pool for compressMetricWriter to reduce GC pressure
+	compressMetricWriterPool *sync.Pool
+
+	// Pool for compressMetricReader to reduce GC pressure
+	compressMetricReaderPool *sync.Pool
 }
 
 // Wrapper to return flate writer to pool on close
@@ -113,6 +119,16 @@ func newZipCompressor(dryRun bool, format Format, level Level, ioBufferPool *syn
 			New: func() interface{} {
 				fw, _ := flate.NewWriter(io.Discard, lvl)
 				return fw
+			},
+		},
+		compressMetricWriterPool: &sync.Pool{
+			New: func() any {
+				return &compressMetricWriter{metrics: metrics}
+			},
+		},
+		compressMetricReaderPool: &sync.Pool{
+			New: func() any {
+				return &compressMetricReader{metrics: metrics}
 			},
 		},
 	}
@@ -174,7 +190,10 @@ func (c *zipCompressor) Compress(ctx context.Context, absSourcePath, absArchiveF
 func (c *zipCompressor) handleZip() (retErr error) {
 
 	// Get a Buffer from the pool
-	mw := &compressMetricWriter{w: c.trgF, metrics: c.metrics}
+	mw := c.compressMetricWriterPool.Get().(*compressMetricWriter)
+	mw.Reset(c.trgF)
+	defer c.compressMetricWriterPool.Put(mw)
+
 	bufWriter := bufio.NewWriterSize(mw, int(c.ioBufferSize))
 
 	c.zw = zip.NewWriter(bufWriter)
@@ -285,6 +304,9 @@ func (c *zipCompressor) zipWorker() {
 	// strictly for io.Read/Copy purposes.
 	buf = buf[:cap(buf)]
 
+	mr := c.compressMetricReaderPool.Get().(*compressMetricReader)
+	defer c.compressMetricReaderPool.Put(mr)
+
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -304,7 +326,7 @@ func (c *zipCompressor) zipWorker() {
 				if t.info.Mode()&os.ModeSymlink != 0 {
 					err = c.writeSymlink(t.absSrcPath, t.relPathKey, t.info)
 				} else {
-					err = c.writeFile(t.absSrcPath, t.relPathKey, t.info, buf)
+					err = c.writeFile(t.absSrcPath, t.relPathKey, t.info, buf, mr)
 				}
 
 				if err != nil {
@@ -347,7 +369,7 @@ func (c *zipCompressor) writeSymlink(absSrcPath, relPathKey string, info os.File
 	return err
 }
 
-func (c *zipCompressor) writeFile(absSrcPath, relPathKey string, info os.FileInfo, buf []byte) error {
+func (c *zipCompressor) writeFile(absSrcPath, relPathKey string, info os.FileInfo, buf []byte, mr *compressMetricReader) error {
 
 	// 1. Open File (Securely)
 	// Security: TOCTOU check
@@ -359,6 +381,8 @@ func (c *zipCompressor) writeFile(absSrcPath, relPathKey string, info os.FileInf
 	// If we close manually later, we can rely on the deferred call
 	// to be a "safety net" (no-op if already closed).
 	defer fileToZip.Close()
+
+	mr.Reset(fileToZip)
 
 	// 2. Prepare Header
 	header, err := zip.FileInfoHeader(info)
@@ -375,7 +399,7 @@ func (c *zipCompressor) writeFile(absSrcPath, relPathKey string, info os.FileInf
 		defer c.readAheadLimiter.Release(fSize)
 
 		data := make([]byte, fSize)
-		if _, err := io.ReadFull(fileToZip, data); err != nil {
+		if _, err := io.ReadFull(mr, data); err != nil {
 			return fmt.Errorf("failed to read file %s: %w", absSrcPath, err)
 		}
 		// Close early to free FD
@@ -389,9 +413,6 @@ func (c *zipCompressor) writeFile(absSrcPath, relPathKey string, info os.FileInf
 			return fmt.Errorf("failed to write zip header for %s: %w", relPathKey, err)
 		}
 		_, err = io.CopyBuffer(w, bytes.NewReader(data), buf)
-		if err == nil {
-			c.metrics.AddBytesRead(int64(len(data)))
-		}
 		return err
 	}
 
@@ -404,8 +425,7 @@ func (c *zipCompressor) writeFile(absSrcPath, relPathKey string, info os.FileInf
 		return fmt.Errorf("failed to write zip header for %s: %w", relPathKey, err)
 	}
 
-	n, err := io.CopyBuffer(w, fileToZip, buf)
-	c.metrics.AddBytesRead(int64(n))
+	_, err = io.CopyBuffer(w, mr, buf)
 	return err
 }
 

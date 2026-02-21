@@ -16,12 +16,14 @@ import (
 )
 
 type zipExtractor struct {
-	dryRun        bool
-	format        Format
-	bufferPool    *sync.Pool
-	metrics       Metrics
-	overwrite     OverwriteBehavior
-	modTimeWindow time.Duration
+	dryRun                    bool
+	format                    Format
+	bufferPool                *sync.Pool
+	metrics                   Metrics
+	overwrite                 OverwriteBehavior
+	modTimeWindow             time.Duration
+	extractMetricReaderAtPool *sync.Pool
+	extractMetricWriterPool   *sync.Pool
 }
 
 func newZipExtractor(dryRun bool, format Format, bufferPool *sync.Pool, metrics Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) *zipExtractor {
@@ -32,6 +34,16 @@ func newZipExtractor(dryRun bool, format Format, bufferPool *sync.Pool, metrics 
 		metrics:       metrics,
 		overwrite:     overwrite,
 		modTimeWindow: modTimeWindow,
+		extractMetricReaderAtPool: &sync.Pool{
+			New: func() any {
+				return &extractMetricReaderAt{metrics: metrics}
+			},
+		},
+		extractMetricWriterPool: &sync.Pool{
+			New: func() any {
+				return &extractMetricWriter{metrics: metrics}
+			},
+		},
 	}
 }
 
@@ -55,11 +67,17 @@ func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 		return fmt.Errorf("failed to stat zip file: %w", err)
 	}
 
-	mr := &extractMetricReaderAt{r: f, metrics: e.metrics}
+	mr := e.extractMetricReaderAtPool.Get().(*extractMetricReaderAt)
+	mr.Reset(f)
+	defer e.extractMetricReaderAtPool.Put(mr)
+
 	r, err := zip.NewReader(mr, info.Size())
 	if err != nil {
 		return fmt.Errorf("failed to create zip reader: %w", err)
 	}
+
+	mw := e.extractMetricWriterPool.Get().(*extractMetricWriter)
+	defer e.extractMetricWriterPool.Put(mw)
 
 	for _, f := range r.File {
 		select {
@@ -146,10 +164,10 @@ func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 			return err
 		}
 
+		mw.Reset(outFile)
 		bufPtr := e.bufferPool.Get().(*[]byte)
-		n, err := io.CopyBuffer(outFile, rc, *bufPtr)
+		_, err = io.CopyBuffer(mw, rc, *bufPtr)
 		e.bufferPool.Put(bufPtr)
-		e.metrics.AddBytesWritten(n)
 		outFile.Close()
 		rc.Close()
 		if err != nil {

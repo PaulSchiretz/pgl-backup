@@ -9,23 +9,23 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/flagparse"
 )
 
-func TestNewDefault(t *testing.T) {
-	cfg := NewDefault()
+func TestDefault(t *testing.T) {
+	cfg := Default()
 	if cfg.Version == "" {
-		t.Error("NewDefault() Version should not be empty")
+		t.Error("Default() Version should not be empty")
 	}
 	if cfg.LogLevel != "info" {
-		t.Errorf("NewDefault() LogLevel = %v, want %v", cfg.LogLevel, "info")
+		t.Errorf("Default() LogLevel = %v, want %v", cfg.LogLevel, "info")
 	}
 	if cfg.Engine.Performance.SyncWorkers != 4 {
-		t.Errorf("NewDefault() SyncWorkers = %v, want %v", cfg.Engine.Performance.SyncWorkers, 4)
+		t.Errorf("Default() SyncWorkers = %v, want %v", cfg.Engine.Performance.SyncWorkers, 4)
 	}
 }
 
 func TestConfig_Validate(t *testing.T) {
 	// Helper to create a valid base configuration
 	validConfig := func() Config {
-		c := NewDefault()
+		c := Default()
 		return c
 	}
 
@@ -221,7 +221,7 @@ func TestConfig_Validate(t *testing.T) {
 }
 
 func TestMergeConfigWithFlags(t *testing.T) {
-	base := NewDefault()
+	base := Default()
 	base.LogLevel = "info"
 	base.Engine.Performance.SyncWorkers = 4
 	base.Sync.UserExcludeFiles = []string{"base.txt"}
@@ -324,7 +324,7 @@ func TestMergeConfigWithFlags(t *testing.T) {
 
 func TestGenerateAndLoad(t *testing.T) {
 	tmpDir := t.TempDir()
-	cfg := NewDefault()
+	cfg := Default()
 	cfg.LogLevel = "warn"
 
 	// Test Generate
@@ -357,7 +357,7 @@ func TestGenerateAndLoad(t *testing.T) {
 }
 
 func TestExcludeHelpers(t *testing.T) {
-	cfg := NewDefault()
+	cfg := Default()
 	cfg.Sync.DefaultExcludeFiles = []string{"default.txt"}
 	cfg.Sync.UserExcludeFiles = []string{"user.txt"}
 	cfg.Sync.DefaultExcludeDirs = []string{"default_dir"}
@@ -394,7 +394,7 @@ func TestExcludeHelpers(t *testing.T) {
 }
 
 func TestConfig_Validate_Normalization(t *testing.T) {
-	c := NewDefault()
+	c := Default()
 
 	// Set mixed-case values to verify normalization
 	c.Runtime.Mode = "Incremental"

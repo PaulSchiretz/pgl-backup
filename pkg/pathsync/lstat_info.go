@@ -20,6 +20,17 @@ type lstatInfo struct {
 	IsSymlink bool        // True if the path is a symlink.
 }
 
+func makeLstatInfo(fi os.FileInfo) lstatInfo {
+	return lstatInfo{
+		ModTime:   fi.ModTime().UnixNano(),
+		Size:      fi.Size(),
+		Mode:      fi.Mode(),
+		IsDir:     fi.IsDir(),
+		IsRegular: fi.Mode().IsRegular(),
+		IsSymlink: fi.Mode()&os.ModeSymlink != 0,
+	}
+}
+
 // LStatSnapshotStore manages a thread-safe, lazy-loading cache of filesystem metadata.
 // It is designed to optimize the "sync" phase by caching the results of ReadDir calls
 // on destination directories. This allows workers to check for file existence and

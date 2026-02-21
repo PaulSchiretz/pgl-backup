@@ -9,8 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **UX**: Significantly improved progress reporting smoothness. Metrics are now updated incrementally during file transfers and compression rather than once per file, eliminating "laggy" progress bars on large files.
-- **Performance**: Optimized the sync engine by pooling metric writers to reduce memory allocations.
+- **Metrics**: Added `BytesRead` tracking to the sync engine for complete I/O visibility.
+- **Performance**: Optimized sync, compression, and extraction engines by pooling metric readers and writers to reduce memory allocations.
 - **Refactor**: Unified buffered and streamed write logic in the compression engine for better maintainability and consistent behavior.
+- **Refactor**: Renamed internal constructors (e.g., `makeLstatInfo`, `config.Default`) to better reflect value semantics and adhere to Go idioms.
 
 ## [v1.4.2] - 2026-02-20
 

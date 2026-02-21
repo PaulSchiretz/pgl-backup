@@ -138,9 +138,9 @@ type Config struct {
 	Hooks       HooksConfig       `json:"hooks"`
 }
 
-// NewDefault creates and returns a Config struct with sensible default
+// Default creates and returns a Config struct with sensible default
 // values. It dynamically sets the sync engine based on the operating system.
-func NewDefault() Config {
+func Default() Config {
 	// Default to the native engine on all platforms. It's highly concurrent and generally offers
 	// the best performance and consistency with no external dependencies.
 	return Config{
@@ -256,7 +256,7 @@ func Load(absBasePath string) (Config, error) {
 	file, err := os.Open(absConfigFilePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return NewDefault(), nil // Config file doesn't exist, which is a normal case.
+			return Default(), nil // Config file doesn't exist, which is a normal case.
 		}
 		return Config{}, fmt.Errorf("error opening config file %s: %w", absConfigFilePath, err)
 	}
@@ -266,7 +266,7 @@ func Load(absBasePath string) (Config, error) {
 	// Start with default values, then overwrite with the file's content.
 	// This makes the config loading resilient to missing fields in the JSON file.
 	// NOTE: if config.Version differs from appVersion we can add a migration step here.
-	config := NewDefault()
+	config := Default()
 	decoder := json.NewDecoder(file)
 	if err := decoder.Decode(&config); err != nil {
 		return Config{}, fmt.Errorf("error parsing config file %s: %w", absConfigFilePath, err)

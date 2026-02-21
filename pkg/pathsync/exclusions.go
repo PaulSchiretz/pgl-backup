@@ -34,8 +34,8 @@ type exclusion struct {
 	matchBasename bool               // If true, the match is against the path's basename; otherwise, the full relative path.
 }
 
-// newExclusionSet analyzes and categorizes patterns to enable optimized matching later.
-func newExclusionSet(patterns []string) exclusionSet {
+// makeExclusionSet analyzes and categorizes patterns to enable optimized matching later.
+func makeExclusionSet(patterns []string) exclusionSet {
 	set := exclusionSet{
 		literals:         make(map[string]struct{}),
 		basenameLiterals: make(map[string]struct{}),

@@ -169,6 +169,9 @@ type nativeSyncer struct {
 
 	// Pool for syncMetricWriter to reduce GC pressure
 	syncMetricWriterPool *sync.Pool
+
+	// Pool for syncMetricReader to reduce GC pressure
+	syncMetricReaderPool *sync.Pool
 }
 
 func newNativeSyncer(
@@ -252,6 +255,11 @@ func newNativeSyncer(
 				return &syncMetricWriter{metrics: metrics}
 			},
 		},
+		syncMetricReaderPool: &sync.Pool{
+			New: func() any {
+				return &syncMetricReader{metrics: metrics}
+			},
+		},
 	}, nil
 }
 
@@ -281,9 +289,13 @@ func (s *nativeSyncer) copyFileContent(in *os.File, out *os.File, info lstatInfo
 	mw.Reset(out)
 	defer s.syncMetricWriterPool.Put(mw)
 
+	mr := s.syncMetricReaderPool.Get().(*syncMetricReader)
+	mr.Reset(in)
+	defer s.syncMetricReaderPool.Put(mr)
+
 	// Standard concurrent copy
 	if !s.sequentialWrite {
-		return io.CopyBuffer(mw, in, buf)
+		return io.CopyBuffer(mw, mr, buf)
 	}
 
 	// Sequential Write Mode
@@ -295,7 +307,7 @@ func (s *nativeSyncer) copyFileContent(in *os.File, out *os.File, info lstatInfo
 		defer s.readAheadLimiter.Release(fSize)
 
 		data := make([]byte, fSize)
-		if _, err := io.ReadFull(in, data); err != nil {
+		if _, err := io.ReadFull(mr, data); err != nil {
 			return 0, fmt.Errorf("failed to read file into memory: %w", err)
 		}
 
@@ -310,7 +322,7 @@ func (s *nativeSyncer) copyFileContent(in *os.File, out *os.File, info lstatInfo
 	// This prevents this worker from thrashing the disk while others are writing.
 	s.sequentialWriteMu.Lock()
 	defer s.sequentialWriteMu.Unlock()
-	return io.CopyBuffer(out, in, buf)
+	return io.CopyBuffer(mw, mr, buf)
 }
 
 // copyFileSafe handles the low-level details of copying a single file.
@@ -552,14 +564,7 @@ func (s *nativeSyncer) processFileSync(item *syncItem) error {
 		// Fallback for paths without a parent or unexpected cache misses
 		var fsInfo os.FileInfo
 		if fsInfo, err = os.Lstat(absTrgPath); err == nil {
-			trgLstatInfo = lstatInfo{
-				Size:      fsInfo.Size(),
-				ModTime:   fsInfo.ModTime().UnixNano(),
-				Mode:      fsInfo.Mode(),
-				IsDir:     fsInfo.IsDir(),
-				IsRegular: fsInfo.Mode().IsRegular(),
-				IsSymlink: fsInfo.Mode()&os.ModeSymlink != 0,
-			}
+			trgLstatInfo = makeLstatInfo(fsInfo)
 		}
 	}
 
@@ -675,14 +680,7 @@ func (s *nativeSyncer) processSymlinkSync(item *syncItem) error {
 		// Fallback for paths without a parent or unexpected cache misses
 		var fsInfo os.FileInfo
 		if fsInfo, err = os.Lstat(absTrgPath); err == nil {
-			trgLstatInfo = lstatInfo{
-				Size:      fsInfo.Size(),
-				ModTime:   fsInfo.ModTime().UnixNano(),
-				Mode:      fsInfo.Mode(),
-				IsDir:     fsInfo.IsDir(),
-				IsRegular: fsInfo.Mode().IsRegular(),
-				IsSymlink: fsInfo.Mode()&os.ModeSymlink != 0,
-			}
+			trgLstatInfo = makeLstatInfo(fsInfo)
 		}
 	}
 
@@ -805,14 +803,7 @@ func (s *nativeSyncer) processDirectorySync(item *syncItem) error {
 			snapshot := make(map[string]lstatInfo, len(trgPathEntries))
 			for _, d := range trgPathEntries {
 				if info, err := d.Info(); err == nil {
-					snapshot[d.Name()] = lstatInfo{
-						Size:      info.Size(),
-						ModTime:   info.ModTime().UnixNano(),
-						Mode:      info.Mode(),
-						IsDir:     info.IsDir(),
-						IsRegular: info.Mode().IsRegular(),
-						IsSymlink: info.Mode()&os.ModeSymlink != 0,
-					}
+					snapshot[d.Name()] = makeLstatInfo(info)
 				}
 			}
 			s.syncTargetLStatCache.StoreSnapshot(item.RelPathKey, snapshot)
@@ -946,12 +937,7 @@ func (s *nativeSyncer) syncItemProducer() {
 		// Get an item from the pool to reduce allocations.
 		item := s.syncItemPool.Get().(*syncItem)
 		item.RelPathKey = relPathKey
-		item.PathInfo.ModTime = info.ModTime().UnixNano()
-		item.PathInfo.Size = info.Size()
-		item.PathInfo.Mode = info.Mode()
-		item.PathInfo.IsDir = isDir
-		item.PathInfo.IsRegular = isRegular
-		item.PathInfo.IsSymlink = isSymlink
+		item.PathInfo = makeLstatInfo(info)
 
 		// If it's a directory, cache its PathInfo for workers to use later.
 		if item.PathInfo.IsDir {

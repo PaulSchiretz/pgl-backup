@@ -21,7 +21,7 @@ func TestRunRestore_Interactive(t *testing.T) {
 	targetDir := t.TempDir()
 
 	// 1. Create Config
-	cfg := config.NewDefault()
+	cfg := config.Default()
 	if err := config.Generate(baseDir, cfg); err != nil {
 		t.Fatalf("Failed to generate config: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestRunRestore_Interactive_DefaultCancel(t *testing.T) {
 	targetDir := t.TempDir()
 
 	// 1. Create Config
-	cfg := config.NewDefault()
+	cfg := config.Default()
 	if err := config.Generate(baseDir, cfg); err != nil {
 		t.Fatalf("Failed to generate config: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestRunRestore_Interactive_ExplicitEmptyUUID(t *testing.T) {
 	targetDir := t.TempDir()
 
 	// 1. Create Config
-	cfg := config.NewDefault()
+	cfg := config.Default()
 	if err := config.Generate(baseDir, cfg); err != nil {
 		t.Fatalf("Failed to generate config: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestRunRestore_LatestAlias(t *testing.T) {
 	targetDir := t.TempDir()
 
 	// 1. Create Config
-	cfg := config.NewDefault()
+	cfg := config.Default()
 	if err := config.Generate(baseDir, cfg); err != nil {
 		t.Fatalf("Failed to generate config: %v", err)
 	}
@@ -311,7 +311,7 @@ func TestRunRestore_LatestAlias_NoBackups(t *testing.T) {
 	targetDir := t.TempDir()
 
 	// 1. Create Config
-	cfg := config.NewDefault()
+	cfg := config.Default()
 	if err := config.Generate(baseDir, cfg); err != nil {
 		t.Fatalf("Failed to generate config: %v", err)
 	}

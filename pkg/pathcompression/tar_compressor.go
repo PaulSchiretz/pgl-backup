@@ -53,6 +53,12 @@ type tarCompressor struct {
 
 	// Pool for tarItem structs to reduce GC pressure
 	tarItemPool *sync.Pool
+
+	// Pool for compressMetricWriter to reduce GC pressure
+	compressMetricWriterPool *sync.Pool
+
+	// Pool for compressMetricReader to reduce GC pressure
+	compressMetricReaderPool *sync.Pool
 }
 
 // tarItem struct for tar workers
@@ -78,6 +84,16 @@ func newTarCompressor(dryRun bool, format Format, level Level, ioBufferPool *syn
 		tarItemPool: &sync.Pool{
 			New: func() any {
 				return new(tarItem)
+			},
+		},
+		compressMetricWriterPool: &sync.Pool{
+			New: func() any {
+				return &compressMetricWriter{metrics: metrics}
+			},
+		},
+		compressMetricReaderPool: &sync.Pool{
+			New: func() any {
+				return &compressMetricReader{metrics: metrics}
 			},
 		},
 	}
@@ -138,7 +154,10 @@ func (c *tarCompressor) Compress(ctx context.Context, absSourcePath, absArchiveF
 
 func (c *tarCompressor) handleTar() (retErr error) {
 
-	mw := &compressMetricWriter{w: c.trgF, metrics: c.metrics}
+	mw := c.compressMetricWriterPool.Get().(*compressMetricWriter)
+	mw.Reset(c.trgF)
+	defer c.compressMetricWriterPool.Put(mw)
+
 	bufWriter := bufio.NewWriterSize(mw, int(c.ioBufferSize))
 
 	var compressedWriter io.WriteCloser
@@ -284,6 +303,9 @@ func (c *tarCompressor) tarWorker() {
 	// strictly for io.Read/Copy purposes.
 	buf = buf[:cap(buf)]
 
+	mr := c.compressMetricReaderPool.Get().(*compressMetricReader)
+	defer c.compressMetricReaderPool.Put(mr)
+
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -303,7 +325,7 @@ func (c *tarCompressor) tarWorker() {
 				if t.info.Mode()&os.ModeSymlink != 0 {
 					err = c.writeSymlink(t.absSrcPath, t.relPathKey, t.info)
 				} else {
-					err = c.writeFile(t.absSrcPath, t.relPathKey, t.info, buf)
+					err = c.writeFile(t.absSrcPath, t.relPathKey, t.info, buf, mr)
 				}
 				if err != nil {
 					c.sendErr(err)
@@ -338,7 +360,7 @@ func (c *tarCompressor) writeSymlink(absSrcPath, relPathKey string, info os.File
 	return c.tw.WriteHeader(header)
 }
 
-func (c *tarCompressor) writeFile(absSrcPath, relPathKey string, info os.FileInfo, buf []byte) error {
+func (c *tarCompressor) writeFile(absSrcPath, relPathKey string, info os.FileInfo, buf []byte, mr *compressMetricReader) error {
 
 	// 1. Open File (Securely)
 	// Security: TOCTOU check
@@ -350,6 +372,8 @@ func (c *tarCompressor) writeFile(absSrcPath, relPathKey string, info os.FileInf
 	// If we close manually later, we can rely on the deferred call
 	// to be a "safety net" (no-op if already closed).
 	defer fileToTar.Close()
+
+	mr.Reset(fileToTar)
 
 	// 2. Prepare Header
 	header, err := tar.FileInfoHeader(info, "")
@@ -365,7 +389,7 @@ func (c *tarCompressor) writeFile(absSrcPath, relPathKey string, info os.FileInf
 		defer c.readAheadLimiter.Release(fSize)
 
 		data := make([]byte, fSize)
-		if _, err := io.ReadFull(fileToTar, data); err != nil {
+		if _, err := io.ReadFull(mr, data); err != nil {
 			return fmt.Errorf("failed to read file %s: %w", absSrcPath, err)
 		}
 		// Close early to free FD
@@ -378,9 +402,6 @@ func (c *tarCompressor) writeFile(absSrcPath, relPathKey string, info os.FileInf
 			return fmt.Errorf("failed to write tar header for %s: %w", relPathKey, err)
 		}
 		_, err = io.CopyBuffer(c.tw, bytes.NewReader(data), buf)
-		if err == nil {
-			c.metrics.AddBytesRead(int64(len(data)))
-		}
 		return err
 	}
 
@@ -392,8 +413,7 @@ func (c *tarCompressor) writeFile(absSrcPath, relPathKey string, info os.FileInf
 		return fmt.Errorf("failed to write tar header for %s: %w", relPathKey, err)
 	}
 
-	n, err := io.CopyBuffer(c.tw, fileToTar, buf)
-	c.metrics.AddBytesRead(int64(n))
+	_, err = io.CopyBuffer(c.tw, mr, buf)
 	return err
 }
 

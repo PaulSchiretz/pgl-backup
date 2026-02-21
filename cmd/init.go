@@ -73,7 +73,7 @@ func RunInit(ctx context.Context, flagMap map[string]any) error {
 				}
 			}
 		}
-		baseConfig = config.NewDefault()
+		baseConfig = config.Default()
 	} else {
 		// Try to load existing config to preserve settings.
 		// If it fails (e.g. corrupt JSON or path mismatch), we fall back to defaults.
@@ -82,7 +82,7 @@ func RunInit(ctx context.Context, flagMap map[string]any) error {
 		baseConfig, err = config.Load(absBasePath)
 		if err != nil {
 			plog.Warn("Could not load existing configuration, starting with defaults.", "reason", err)
-			baseConfig = config.NewDefault()
+			baseConfig = config.Default()
 		}
 	}
 

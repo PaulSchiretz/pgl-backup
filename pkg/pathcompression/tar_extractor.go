@@ -18,12 +18,14 @@ import (
 )
 
 type tarExtractor struct {
-	dryRun        bool
-	format        Format
-	bufferPool    *sync.Pool
-	metrics       Metrics
-	overwrite     OverwriteBehavior
-	modTimeWindow time.Duration
+	dryRun                  bool
+	format                  Format
+	bufferPool              *sync.Pool
+	metrics                 Metrics
+	overwrite               OverwriteBehavior
+	modTimeWindow           time.Duration
+	extractMetricReaderPool *sync.Pool
+	extractMetricWriterPool *sync.Pool
 }
 
 func newTarExtractor(dryRun bool, format Format, bufferPool *sync.Pool, metrics Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) *tarExtractor {
@@ -34,6 +36,16 @@ func newTarExtractor(dryRun bool, format Format, bufferPool *sync.Pool, metrics 
 		metrics:       metrics,
 		overwrite:     overwrite,
 		modTimeWindow: modTimeWindow,
+		extractMetricReaderPool: &sync.Pool{
+			New: func() any {
+				return &extractMetricReader{metrics: metrics}
+			},
+		},
+		extractMetricWriterPool: &sync.Pool{
+			New: func() any {
+				return &extractMetricWriter{metrics: metrics}
+			},
+		},
 	}
 }
 
@@ -52,7 +64,10 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 	}
 	defer f.Close()
 
-	mr := &extractMetricReader{r: f, metrics: e.metrics}
+	mr := e.extractMetricReaderPool.Get().(*extractMetricReader)
+	mr.Reset(f)
+	defer e.extractMetricReaderPool.Put(mr)
+
 	var r io.Reader = mr
 	switch e.format {
 	case TarGz:
@@ -72,6 +87,9 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 	}
 
 	tr := tar.NewReader(r)
+
+	mw := e.extractMetricWriterPool.Get().(*extractMetricWriter)
+	defer e.extractMetricWriterPool.Put(mw)
 
 	for {
 		select {
@@ -128,10 +146,10 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 			if err != nil {
 				return err
 			}
+			mw.Reset(outFile)
 			bufPtr := e.bufferPool.Get().(*[]byte)
-			n, err := io.CopyBuffer(outFile, tr, *bufPtr)
+			_, err = io.CopyBuffer(mw, tr, *bufPtr)
 			e.bufferPool.Put(bufPtr)
-			e.metrics.AddBytesWritten(n)
 			outFile.Close()
 			if err != nil {
 				return err

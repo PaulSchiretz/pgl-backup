@@ -20,6 +20,7 @@ func TestSyncMetrics_Adders(t *testing.T) {
 		m.AddFilesDeleted(3)
 		m.AddFilesExcluded(2)
 		m.AddFilesUpToDate(10)
+		m.AddBytesRead(2048)
 		m.AddBytesWritten(1024)
 		m.AddDirsCreated(4)
 		m.AddDirsDeleted(1)
@@ -36,6 +37,9 @@ func TestSyncMetrics_Adders(t *testing.T) {
 		}
 		if got := m.FilesUpToDate.Load(); got != 10 {
 			t.Errorf("expected FilesUpToDate to be 10, got %d", got)
+		}
+		if got := m.BytesRead.Load(); got != 2048 {
+			t.Errorf("expected BytesRead to be 2048, got %d", got)
 		}
 		if got := m.BytesWritten.Load(); got != 1024 {
 			t.Errorf("expected BytesWritten to be 1024, got %d", got)
@@ -63,6 +67,7 @@ func TestSyncMetrics_Log(t *testing.T) {
 		m := &pathsync.SyncMetrics{}
 		m.AddFilesCopied(10)
 		m.AddFilesUpToDate(20)
+		m.AddBytesRead(1000)
 		m.AddBytesWritten(500)
 		m.StartProgress("Test", time.Hour) // Initialize startTime
 		m.StopProgress()                   // Stop immediately to avoid leaks
@@ -77,6 +82,9 @@ func TestSyncMetrics_Log(t *testing.T) {
 		}
 		if !strings.Contains(output, "files_copied=10") {
 			t.Errorf("expected log output to contain 'files_copied=10', but it didn't. Got: %s", output)
+		}
+		if !strings.Contains(output, "bytes_read=\"1000 B\"") {
+			t.Errorf("expected log output to contain 'bytes_read=\"1000 B\"', but it didn't. Got: %s", output)
 		}
 		if !strings.Contains(output, "bytes_written=\"500 B\"") {
 			t.Errorf("expected log output to contain 'bytes_written=\"500 B\"', but it didn't. Got: %s", output)
@@ -112,6 +120,7 @@ func TestNoopMetrics(t *testing.T) {
 		m.AddFilesDeleted(1)
 		m.AddFilesExcluded(1)
 		m.AddFilesUpToDate(1)
+		m.AddBytesRead(1)
 		m.AddBytesWritten(1)
 		m.AddDirsCreated(1)
 		m.AddDirsDeleted(1)

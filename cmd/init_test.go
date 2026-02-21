@@ -171,7 +171,7 @@ func TestRunInit(t *testing.T) {
 				if err := os.MkdirAll(baseDir, 0755); err != nil {
 					t.Fatalf("failed to create target dir: %v", err)
 				}
-				cfg := config.NewDefault()
+				cfg := config.Default()
 				cfg.LogLevel = "debug"
 				if err := config.Generate(baseDir, cfg); err != nil {
 					t.Fatalf("failed to create existing config: %v", err)
@@ -199,7 +199,7 @@ func TestRunInit(t *testing.T) {
 				if err := os.MkdirAll(baseDir, 0755); err != nil {
 					t.Fatalf("failed to create target dir: %v", err)
 				}
-				cfg := config.NewDefault()
+				cfg := config.Default()
 				cfg.LogLevel = "debug"
 				if err := config.Generate(baseDir, cfg); err != nil {
 					t.Fatalf("failed to create existing config: %v", err)
@@ -227,7 +227,7 @@ func TestRunInit(t *testing.T) {
 				if err := os.MkdirAll(baseDir, 0755); err != nil {
 					t.Fatalf("failed to create target dir: %v", err)
 				}
-				cfg := config.NewDefault()
+				cfg := config.Default()
 				cfg.LogLevel = "debug"
 				if err := config.Generate(baseDir, cfg); err != nil {
 					t.Fatalf("failed to create existing config: %v", err)

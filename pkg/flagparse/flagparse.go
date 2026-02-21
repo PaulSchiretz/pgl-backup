@@ -274,7 +274,7 @@ func Parse(args []string) (Command, map[string]any, error) {
 			return Init, nil, err
 		}
 
-		flagMap, err := flagsToMap(command, fs, f)
+		flagMap, err := flagsToMap(fs, f)
 		return Init, flagMap, err
 
 	case Prune:
@@ -289,7 +289,7 @@ func Parse(args []string) (Command, map[string]any, error) {
 		if err := fs.Parse(args[1:]); err != nil {
 			return Prune, nil, err
 		}
-		flagMap, err := flagsToMap(command, fs, f)
+		flagMap, err := flagsToMap(fs, f)
 		return Prune, flagMap, err
 
 	case Backup:
@@ -304,7 +304,7 @@ func Parse(args []string) (Command, map[string]any, error) {
 		if err := fs.Parse(args[1:]); err != nil {
 			return command, nil, err
 		}
-		flagMap, err := flagsToMap(command, fs, f)
+		flagMap, err := flagsToMap(fs, f)
 		return command, flagMap, err
 
 	case List:
@@ -319,7 +319,7 @@ func Parse(args []string) (Command, map[string]any, error) {
 		if err := fs.Parse(args[1:]); err != nil {
 			return List, nil, err
 		}
-		flagMap, err := flagsToMap(command, fs, f)
+		flagMap, err := flagsToMap(fs, f)
 		return List, flagMap, err
 
 	case Restore:
@@ -334,7 +334,7 @@ func Parse(args []string) (Command, map[string]any, error) {
 		if err := fs.Parse(args[1:]); err != nil {
 			return command, nil, err
 		}
-		flagMap, err := flagsToMap(command, fs, f)
+		flagMap, err := flagsToMap(fs, f)
 		return command, flagMap, err
 
 	case Version:
@@ -345,7 +345,7 @@ func Parse(args []string) (Command, map[string]any, error) {
 	}
 }
 
-func flagsToMap(c Command, fs *flag.FlagSet, f *cliFlags) (map[string]any, error) {
+func flagsToMap(fs *flag.FlagSet, f *cliFlags) (map[string]any, error) {
 	// Create a map of the flags that were explicitly set by the user, along with their values.
 	// This map is used to selectively override the base configuration.
 	usedFlags := make(map[string]bool)
@@ -506,17 +506,18 @@ func parseListInternal(s string, keepQuotes, handleEscapes bool) []string {
 			// For commands, we also keep the backslash for the shell to interpret.
 			current.WriteRune(r)
 		case r == '\'' || r == '"':
-			if quoteChar == 0 { // Start of a new quoted section.
+			switch {
+			case quoteChar == 0: // Start of a new quoted section.
 				quoteChar = r
 				if keepQuotes {
 					current.WriteRune(r)
 				}
-			} else if quoteChar == r { // End of the current quoted section.
+			case quoteChar == r: // End of the current quoted section.
 				quoteChar = 0
 				if keepQuotes {
 					current.WriteRune(r)
 				}
-			} else { // A different quote character inside an existing quoted section.
+			default: // A different quote character inside an existing quoted section.
 				current.WriteRune(r) // Treat it as a literal character.
 			}
 		case r == ',' && quoteChar == 0: // Comma outside of any quotes.

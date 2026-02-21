@@ -90,6 +90,24 @@ func (mr *extractMetricReader) Reset(r io.Reader) {
 	mr.r = r
 }
 
+// extractMetricWriter wraps an io.Writer and updates metrics on every write.
+type extractMetricWriter struct {
+	w       io.Writer
+	metrics Metrics
+}
+
+func (mw *extractMetricWriter) Write(p []byte) (n int, err error) {
+	n, err = mw.w.Write(p)
+	if n > 0 {
+		mw.metrics.AddBytesWritten(int64(n))
+	}
+	return
+}
+
+func (mw *extractMetricWriter) Reset(w io.Writer) {
+	mw.w = w
+}
+
 // extractMetricReaderAt wraps an io.ReaderAt and updates metrics on every read.
 type extractMetricReaderAt struct {
 	r       io.ReaderAt
@@ -102,4 +120,8 @@ func (mr *extractMetricReaderAt) ReadAt(p []byte, off int64) (n int, err error) 
 		mr.metrics.AddBytesRead(int64(n))
 	}
 	return
+}
+
+func (mr *extractMetricReaderAt) Reset(r io.ReaderAt) {
+	mr.r = r
 }

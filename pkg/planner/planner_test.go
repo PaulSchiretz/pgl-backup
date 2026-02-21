@@ -224,7 +224,7 @@ func TestGenerateBackupPlan(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := config.NewDefault()
+			cfg := config.Default()
 			if tc.configMod != nil {
 				tc.configMod(&cfg)
 			}
@@ -303,7 +303,7 @@ func TestGenerateRestorePlan(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := config.NewDefault()
+			cfg := config.Default()
 			if tc.configMod != nil {
 				tc.configMod(&cfg)
 			}
@@ -393,7 +393,7 @@ func TestGenerateListPlan(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := config.NewDefault()
+			cfg := config.Default()
 			if tc.configMod != nil {
 				tc.configMod(&cfg)
 			}
@@ -552,7 +552,7 @@ func TestGeneratePrunePlan(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := config.NewDefault()
+			cfg := config.Default()
 			if tc.configMod != nil {
 				tc.configMod(&cfg)
 			}

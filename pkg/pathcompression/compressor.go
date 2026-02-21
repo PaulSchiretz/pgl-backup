@@ -30,6 +30,24 @@ func (mw *compressMetricWriter) Reset(w io.Writer) {
 	mw.w = w
 }
 
+// compressMetricReader wraps an io.Reader and updates metrics on every read.
+type compressMetricReader struct {
+	r       io.Reader
+	metrics Metrics
+}
+
+func (mr *compressMetricReader) Read(p []byte) (n int, err error) {
+	n, err = mr.r.Read(p)
+	if n > 0 {
+		mr.metrics.AddBytesRead(int64(n))
+	}
+	return
+}
+
+func (mr *compressMetricReader) Reset(r io.Reader) {
+	mr.r = r
+}
+
 // secureFileOpen verifies that the file at path is the same one we expected(TOCTOU check).
 // Ensure the file we opened is the same one we discovered in the walk.
 // This prevents attacks where a file is swapped for a symlink after discovery.

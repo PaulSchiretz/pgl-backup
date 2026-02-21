@@ -20,7 +20,7 @@ func TestRunList_Sort(t *testing.T) {
 	baseDir := t.TempDir()
 
 	// 1. Create Config
-	cfg := config.NewDefault()
+	cfg := config.Default()
 	if err := config.Generate(baseDir, cfg); err != nil {
 		t.Fatalf("Failed to generate config: %v", err)
 	}
