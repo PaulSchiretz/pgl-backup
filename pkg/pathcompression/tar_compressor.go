@@ -3,6 +3,7 @@ package pathcompression
 import (
 	"archive/tar"
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -23,8 +24,8 @@ type tarCompressor struct {
 	ioBufferSize int64
 
 	// Memory limiter for file readahead
-	readAheadLimiter   *limiter.Memory
-	readAheadLimitSize int64
+	readAheadLimiter *limiter.Memory
+	readAheadLimit   int64
 
 	format  Format
 	level   Level
@@ -61,19 +62,19 @@ type tarItem struct {
 	info       os.FileInfo
 }
 
-func newTarCompressor(dryRun bool, format Format, level Level, ioBufferPool *sync.Pool, ioBufferSize int64, readAheadLimiter *limiter.Memory, readAheadLimitSize int64, numWorkers int, metrics Metrics) *tarCompressor {
+func newTarCompressor(dryRun bool, format Format, level Level, ioBufferPool *sync.Pool, ioBufferSize int64, readAheadLimiter *limiter.Memory, readAheadLimit int64, numWorkers int, metrics Metrics) *tarCompressor {
 	return &tarCompressor{
-		dryRun:             dryRun,
-		format:             format,
-		level:              level,
-		numTarWorkers:      numWorkers,
-		metrics:            metrics,
-		tarItemsChan:       make(chan *tarItem, numWorkers*4),
-		tarErrsChan:        make(chan error, 1),
-		ioBufferPool:       ioBufferPool,
-		ioBufferSize:       ioBufferSize,
-		readAheadLimiter:   readAheadLimiter,
-		readAheadLimitSize: readAheadLimitSize,
+		dryRun:           dryRun,
+		format:           format,
+		level:            level,
+		numTarWorkers:    numWorkers,
+		metrics:          metrics,
+		tarItemsChan:     make(chan *tarItem, numWorkers*4),
+		tarErrsChan:      make(chan error, 1),
+		ioBufferPool:     ioBufferPool,
+		ioBufferSize:     ioBufferSize,
+		readAheadLimiter: readAheadLimiter,
+		readAheadLimit:   readAheadLimit,
 		tarItemPool: &sync.Pool{
 			New: func() any {
 				return new(tarItem)
@@ -302,20 +303,7 @@ func (c *tarCompressor) tarWorker() {
 				if t.info.Mode()&os.ModeSymlink != 0 {
 					err = c.writeSymlink(t.absSrcPath, t.relPathKey, t.info)
 				} else {
-					fSize := t.info.Size()
-					// Attempt to acquire readahead budget for this file
-					if c.readAheadLimiter.TryAcquire(fSize) {
-						// Happy Path: We have budget. Read fully to RAM.
-						// We wrap this in a func to ensure Release happens immediately after processing
-						err = func() error {
-							defer c.readAheadLimiter.Release(fSize)
-							return c.writeFileBuffered(t.absSrcPath, t.relPathKey, t.info, buf)
-						}()
-					} else {
-						// Fallback: Budget full or file too big. Stream serially.
-						// This holds the lock longer but uses minimal RAM.
-						err = c.writeFileStreamed(t.absSrcPath, t.relPathKey, t.info, buf)
-					}
+					err = c.writeFile(t.absSrcPath, t.relPathKey, t.info, buf)
 				}
 				if err != nil {
 					c.sendErr(err)
@@ -350,9 +338,9 @@ func (c *tarCompressor) writeSymlink(absSrcPath, relPathKey string, info os.File
 	return c.tw.WriteHeader(header)
 }
 
-func (c *tarCompressor) writeFileBuffered(absSrcPath, relPathKey string, info os.FileInfo, buf []byte) error {
+func (c *tarCompressor) writeFile(absSrcPath, relPathKey string, info os.FileInfo, buf []byte) error {
 
-	// 1. Parallel: Read file into memory (the expensive part)
+	// 1. Open File (Securely)
 	// Security: TOCTOU check
 	fileToTar, err := secureFileOpen(absSrcPath, info)
 	if err != nil {
@@ -363,65 +351,40 @@ func (c *tarCompressor) writeFileBuffered(absSrcPath, relPathKey string, info os
 	// to be a "safety net" (no-op if already closed).
 	defer fileToTar.Close()
 
-	// Read All data
+	// 2. Prepare Header
+	header, err := tar.FileInfoHeader(info, "")
+	if err != nil {
+		return fmt.Errorf("failed to create tar header for %s: %w", relPathKey, err)
+	}
+	header.Name = relPathKey
+
 	fSize := info.Size()
-	var data []byte
-	// Optimization: Reuse the worker's buffer if the file fits.
-	// This significantly reduces GC pressure for small files in the "fast path".
-	if fSize <= int64(len(buf)) {
-		data = buf[:fSize]
-	} else {
-		data = make([]byte, fSize)
-	}
-	_, err = io.ReadFull(fileToTar, data)
-	if err != nil {
-		return fmt.Errorf("failed to read file %s: %w", absSrcPath, err)
+
+	// 3. Buffered Path
+	if c.readAheadLimiter.TryAcquire(fSize) {
+		defer c.readAheadLimiter.Release(fSize)
+
+		data := make([]byte, fSize)
+		if _, err := io.ReadFull(fileToTar, data); err != nil {
+			return fmt.Errorf("failed to read file %s: %w", absSrcPath, err)
+		}
+		// Close early to free FD
+		fileToTar.Close()
+
+		c.mu.Lock()
+		defer c.mu.Unlock()
+
+		if err := c.tw.WriteHeader(header); err != nil {
+			return fmt.Errorf("failed to write tar header for %s: %w", relPathKey, err)
+		}
+		_, err = io.CopyBuffer(c.tw, bytes.NewReader(data), buf)
+		if err == nil {
+			c.metrics.AddBytesRead(int64(len(data)))
+		}
+		return err
 	}
 
-	// Check the error on the explicit close
-	if err := fileToTar.Close(); err != nil {
-		return fmt.Errorf("failed to close file: %w", err)
-	}
-
-	// Prepare the header data
-	header, err := tar.FileInfoHeader(info, "")
-	if err != nil {
-		return fmt.Errorf("failed to create tar header for %s: %w", relPathKey, err)
-	}
-	header.Name = relPathKey
-
-	// 2. Serial: Lock and Write
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if err := c.tw.WriteHeader(header); err != nil {
-		return fmt.Errorf("failed to write tar header for %s: %w", relPathKey, err)
-	}
-	_, err = c.tw.Write(data)
-	if err == nil {
-		c.metrics.AddBytesRead(int64(len(data)))
-	}
-	return err
-}
-
-func (c *tarCompressor) writeFileStreamed(absSrcPath, relPathKey string, info os.FileInfo, buf []byte) error {
-
-	// 1. Parallel Prep: Open the file (pre-lock)
-	// Security: TOCTOU check
-	fileToTar, err := secureFileOpen(absSrcPath, info)
-	if err != nil {
-		return fmt.Errorf("failed to open file %s: %w", absSrcPath, err)
-	}
-	defer fileToTar.Close()
-
-	// Prepare the header data
-	header, err := tar.FileInfoHeader(info, "")
-	if err != nil {
-		return fmt.Errorf("failed to create tar header for %s: %w", relPathKey, err)
-	}
-	header.Name = relPathKey
-
-	// 2. Serial: Lock and Write
+	// 4. Streamed Path
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

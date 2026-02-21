@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.4.3] - 2026-XX-XX
+
+### Changed
+- **UX**: Significantly improved progress reporting smoothness. Metrics are now updated incrementally during file transfers and compression rather than once per file, eliminating "laggy" progress bars on large files.
+- **Performance**: Optimized the sync engine by pooling metric writers to reduce memory allocations.
+- **Refactor**: Unified buffered and streamed write logic in the compression engine for better maintainability and consistent behavior.
+
 ## [v1.4.2] - 2026-02-20
 
 ### Changed

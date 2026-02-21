@@ -89,7 +89,7 @@ func (t *syncTask) syncDirectories() error {
 			t.ioBufferPool,
 			t.ioBufferSize,
 			t.readAheadLimiter,
-			t.readAheadLimitSize,
+			t.readAheadLimit,
 			t.numSyncWorkers,
 			t.numMirrorWorkers,
 			t.metrics,

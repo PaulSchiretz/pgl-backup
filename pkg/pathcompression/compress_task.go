@@ -68,9 +68,9 @@ func (t *compressTask) compressBackup(absToCompressPath, absToCompressContentPat
 	var comp compressor
 	switch t.format {
 	case Zip:
-		comp = newZipCompressor(t.dryRun, t.format, t.level, t.ioBufferPool, t.ioBufferSize, t.readAheadLimiter, t.readAheadLimitSize, t.numCompressWorkers, t.metrics)
+		comp = newZipCompressor(t.dryRun, t.format, t.level, t.ioBufferPool, t.ioBufferSize, t.readAheadLimiter, t.readAheadLimit, t.numCompressWorkers, t.metrics)
 	case TarGz, TarZst:
-		comp = newTarCompressor(t.dryRun, t.format, t.level, t.ioBufferPool, t.ioBufferSize, t.readAheadLimiter, t.readAheadLimitSize, t.numCompressWorkers, t.metrics)
+		comp = newTarCompressor(t.dryRun, t.format, t.level, t.ioBufferPool, t.ioBufferSize, t.readAheadLimiter, t.readAheadLimit, t.numCompressWorkers, t.metrics)
 	default:
 		return fmt.Errorf("unsupported format: %s", t.format)
 	}

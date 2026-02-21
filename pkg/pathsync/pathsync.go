@@ -23,8 +23,8 @@ type PathSyncer struct {
 	ioBufferPool *sync.Pool // pointer to avoid copying the noCopy field if the struct is ever passed by value
 	ioBufferSize int64
 
-	readAheadLimiter   *limiter.Memory
-	readAheadLimitSize int64
+	readAheadLimiter *limiter.Memory
+	readAheadLimit   int64
 
 	numSyncWorkers   int
 	numMirrorWorkers int
@@ -36,7 +36,7 @@ type PathSyncer struct {
 // NewPathSyncer creates a new PathSyncer with the given configuration.
 func NewPathSyncer(bufferSizeKB, readAheadLimitKB int64, numSyncWorkers int, numMirrorWorkers int) *PathSyncer {
 	ioBufferSize := bufferSizeKB * 1024 // Buffer size is configured in KB, so multiply by 1024.
-	readAheadLimitSize := readAheadLimitKB * 1024
+	readAheadLimit := readAheadLimitKB * 1024
 	return &PathSyncer{
 		ioBufferPool: &sync.Pool{
 			New: func() any {
@@ -45,11 +45,11 @@ func NewPathSyncer(bufferSizeKB, readAheadLimitKB int64, numSyncWorkers int, num
 				return &b // We store a pointer to the slice header
 			},
 		},
-		ioBufferSize:       ioBufferSize,
-		readAheadLimiter:   limiter.NewMemory(readAheadLimitSize, ioBufferSize),
-		readAheadLimitSize: readAheadLimitSize,
-		numSyncWorkers:     numSyncWorkers,
-		numMirrorWorkers:   numMirrorWorkers,
+		ioBufferSize:     ioBufferSize,
+		readAheadLimiter: limiter.NewMemory(readAheadLimit, ioBufferSize),
+		readAheadLimit:   readAheadLimit,
+		numSyncWorkers:   numSyncWorkers,
+		numMirrorWorkers: numMirrorWorkers,
 	}
 }
 

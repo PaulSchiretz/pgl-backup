@@ -33,6 +33,7 @@ package pathsync
 // when backing up source directories with read-only permissions.
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -73,8 +74,8 @@ type nativeSyncer struct {
 	ioBufferSize int64
 
 	// Limiter for sequential writes
-	readAheadLimiter   *limiter.Memory
-	readAheadLimitSize int64
+	readAheadLimiter *limiter.Memory
+	readAheadLimit   int64
 
 	// ctx is the cancellable context for the entire run.
 	ctx context.Context
@@ -165,6 +166,9 @@ type nativeSyncer struct {
 
 	// Pool for mirrorItem structs to reduce GC pressure
 	mirrorItemPool *sync.Pool
+
+	// Pool for syncMetricWriter to reduce GC pressure
+	syncMetricWriterPool *sync.Pool
 }
 
 func newNativeSyncer(
@@ -174,7 +178,7 @@ func newNativeSyncer(
 	retryWait, modTimeWindow time.Duration,
 	overwriteBehavior OverwriteBehavior,
 	ioBufferPool *sync.Pool, ioBufferSize int64,
-	readAheadLimiter *limiter.Memory, readAheadLimitSize int64,
+	readAheadLimiter *limiter.Memory, readAheadLimit int64,
 	numSyncWorkers, numMirrorWorkers int,
 	metrics Metrics,
 ) (*nativeSyncer, error) {
@@ -232,7 +236,7 @@ func newNativeSyncer(
 		ioBufferPool:           ioBufferPool,
 		ioBufferSize:           ioBufferSize,
 		readAheadLimiter:       readAheadLimiter,
-		readAheadLimitSize:     readAheadLimitSize,
+		readAheadLimit:         readAheadLimit,
 		syncItemPool: &sync.Pool{
 			New: func() any {
 				return new(syncItem)
@@ -241,6 +245,11 @@ func newNativeSyncer(
 		mirrorItemPool: &sync.Pool{
 			New: func() any {
 				return new(mirrorItem)
+			},
+		},
+		syncMetricWriterPool: &sync.Pool{
+			New: func() any {
+				return &syncMetricWriter{metrics: metrics}
 			},
 		},
 	}, nil
@@ -268,9 +277,13 @@ func (s *nativeSyncer) isExcluded(relPathKey, relPathBasename string, isDir bool
 // buffered by the OS/filesystem driver. The complexity/deadlock-risk of locking
 // every metadata op outweighs the marginal gain in seek reduction.
 func (s *nativeSyncer) copyFileContent(in *os.File, out *os.File, info lstatInfo, buf []byte) (int64, error) {
+	mw := s.syncMetricWriterPool.Get().(*syncMetricWriter)
+	mw.Reset(out)
+	defer s.syncMetricWriterPool.Put(mw)
+
 	// Standard concurrent copy
 	if !s.sequentialWrite {
-		return io.CopyBuffer(out, in, buf)
+		return io.CopyBuffer(mw, in, buf)
 	}
 
 	// Sequential Write Mode
@@ -281,22 +294,16 @@ func (s *nativeSyncer) copyFileContent(in *os.File, out *os.File, info lstatInfo
 		// Happy Path: We have budget. Read fully to RAM (concurrently), then write serially.
 		defer s.readAheadLimiter.Release(fSize)
 
-		var data []byte
-		// Optimization: Reuse the worker's buffer if the file fits.
-		if fSize <= int64(len(buf)) {
-			data = buf[:fSize]
-		} else {
-			data = make([]byte, fSize)
-		}
-
+		data := make([]byte, fSize)
 		if _, err := io.ReadFull(in, data); err != nil {
 			return 0, fmt.Errorf("failed to read file into memory: %w", err)
 		}
 
 		s.sequentialWriteMu.Lock()
 		defer s.sequentialWriteMu.Unlock()
-		n, err := out.Write(data)
-		return int64(n), err
+		// Use io.CopyBuffer to write from memory in chunks, ensuring metrics update frequently
+		n, err := io.CopyBuffer(mw, bytes.NewReader(data), buf)
+		return n, err
 	}
 
 	// Fallback: Budget full or file too big. Stream serially (holding the lock).
@@ -348,7 +355,6 @@ func (s *nativeSyncer) copyFileSafe(absSrcPath, absTrgPath string, item *syncIte
 			}
 
 			// 3. Copy content
-			var bytesWritten int64
 			// Get a buffer from the pool for the copy operation.
 			bufPtr := s.ioBufferPool.Get().(*[]byte)
 			defer s.ioBufferPool.Put(bufPtr)
@@ -359,12 +365,9 @@ func (s *nativeSyncer) copyFileSafe(absSrcPath, absTrgPath string, item *syncIte
 			// strictly for io.Read/Copy purposes.
 			buf = buf[:cap(buf)]
 
-			if bytesWritten, err = s.copyFileContent(in, out, item.PathInfo, buf); err != nil {
+			if _, err = s.copyFileContent(in, out, item.PathInfo, buf); err != nil {
 				return fmt.Errorf("failed to copy content from %s to %s: %w", absSrcPath, absTempPath, err)
 			}
-
-			// update metrics
-			s.metrics.AddBytesWritten(int64(bytesWritten))
 
 			// 4. Copy file permissions from the source.
 			// CRITICAL: We must ensure the user always has write permission on the destination file
@@ -439,17 +442,14 @@ func (s *nativeSyncer) copyFileDirect(absSrcPath, absTrgPath string, item *syncI
 				_ = out.Truncate(item.PathInfo.Size)
 			}
 
-			var bytesWritten int64
 			bufPtr := s.ioBufferPool.Get().(*[]byte)
 			defer s.ioBufferPool.Put(bufPtr)
 			buf := *bufPtr
 			buf = buf[:cap(buf)]
 
-			if bytesWritten, err = s.copyFileContent(in, out, item.PathInfo, buf); err != nil {
+			if _, err = s.copyFileContent(in, out, item.PathInfo, buf); err != nil {
 				return fmt.Errorf("failed to copy content from %s to %s: %w", absSrcPath, absTrgPath, err)
 			}
-
-			s.metrics.AddBytesWritten(int64(bytesWritten))
 
 			// Close the file to flush data to disk before setting timestamps.
 			if err := out.Close(); err != nil {

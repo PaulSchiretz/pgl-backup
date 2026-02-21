@@ -42,8 +42,8 @@ type PathCompressor struct {
 	ioBufferPool *sync.Pool
 	ioBufferSize int64
 
-	readAheadLimiter   *limiter.Memory
-	readAheadLimitSize int64
+	readAheadLimiter *limiter.Memory
+	readAheadLimit   int64
 
 	numCompressWorkers int
 }
@@ -51,7 +51,7 @@ type PathCompressor struct {
 // NewPathCompressor creates a new PathCompressor with the given configuration.
 func NewPathCompressor(bufferSizeKB, readAheadLimitKB int64, numCompressWorkers int) *PathCompressor {
 	ioBufferSize := bufferSizeKB * 1024
-	readAheadLimitSize := readAheadLimitKB * 1024
+	readAheadLimit := readAheadLimitKB * 1024
 	return &PathCompressor{
 		ioBufferPool: &sync.Pool{
 			New: func() any {
@@ -61,8 +61,8 @@ func NewPathCompressor(bufferSizeKB, readAheadLimitKB int64, numCompressWorkers 
 			},
 		},
 		ioBufferSize:       ioBufferSize,
-		readAheadLimiter:   limiter.NewMemory(readAheadLimitSize, ioBufferSize),
-		readAheadLimitSize: readAheadLimitSize,
+		readAheadLimiter:   limiter.NewMemory(readAheadLimit, ioBufferSize),
+		readAheadLimit:     readAheadLimit,
 		numCompressWorkers: numCompressWorkers,
 	}
 }
