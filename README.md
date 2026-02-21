@@ -64,6 +64,7 @@
 *   **Flexible Retention Policy**: Automatically cleans up outdated backups by keeping a configurable number of hourly, daily, weekly, monthly, and yearly archives. This gives you a fine-grained history without filling up your disk.
 *   **Intelligent Archiving (Incremental Mode)**: The archive interval can be set to `auto` (the default) to automatically align with your retention policy. If you keep hourly backups, it will archive hourly. This prevents configuration mismatches and ensures your retention slots are filled efficiently.
 *   **Automatic and Resilient Compression**: To save disk space, you can enable automatic compression of backups into `.tar.zst`, `.zip` or `.tar.gz` archives. If compression fails (e.g., due to a corrupt file), the original backup is left untouched.
+*   **HDD & Tape Drive Optimization**: A dedicated `-sync-sequential-write` mode buffers files in memory before writing them to disk sequentially. This eliminates disk head thrashing on mechanical drives, significantly increasing write speeds during concurrent backups.
 *   **Concurrency Safe**: A robust file-locking mechanism prevents multiple backup instances from running against the same target directory simultaneously, protecting data integrity.
 *   **Symbolic Link Support**: Preserves symbolic links in the destination. On Windows, creating symlinks requires the user to have the appropriate privileges (Run as Administrator) or Developer Mode enabled.
 *   **Plug and Play**: The binary is static and self-contained. You can run it directly from an external drive without installation, making it perfect for portable backup workflows.
@@ -164,10 +165,11 @@ pgl-backup init -base="/media/backup-drive/MyDocumentsBackup" -source="$HOME/Doc
 pgl-backup init -base="E:\Backups\MyDocumentsBackup" -source="C:\Users\YourUser\Documents"
 ```
 
-> **HDD Optimization Tip**: If your backup target is a mechanical hard drive (HDD) or a Tape-Drive, we highly recommend initializing with the `-sync-sequential-write` flag. This optimizes write patterns to prevent disk thrashing and significantly improves performance.
+> **HDD Optimization Tip**: If your backup target is a mechanical hard drive (HDD) or a Tape-Drive, we highly recommend initializing with the `-sync-sequential-write` flag. This optimizes write patterns to prevent disk thrashing and significantly improves performance by buffering files in RAM and writing them one by one.
+
 ```sh
 # Example for use with HDD drives
-pgl-backup init -base="..." -source="..." -sync-sequential-write
+pgl-backup init -base="/path/to/your/backup-target" -source="/path/to/your/source-data" -sync-sequential-write
 ```
 
 You can also combine the init command with other flags to customize the configuration immediately:
@@ -179,6 +181,8 @@ pgl-backup init -base="/media/backup-drive/MyDocumentsBackup" -source="$HOME/Doc
 # Example for Windows
 pgl-backup init -base="E:\Backups\MyDocumentsBackup" -source="C:\Users\YourUser\Documents" -log-level=debug -user-exclude-files="*.mp4"
 ```
+
+> **Note on Boolean Flags**: Boolean flags(enable/disable) (like `-metrics`, `-sync-sequential-write` or `-sync-safe-copy`) can be enabled by simply providing the flag (e.g., `-metrics`). To explicitly disable them, use the `=` syntax (e.g., `-metrics=false`).
 
 This command will:
 1.  Perform pre-flight checks to ensure the paths are valid.
@@ -324,7 +328,8 @@ Although recommended, you don't need to generate a configuration file with `init
 pgl-backup backup -base="/path/to/your/backup-target" -source="/path/to/your/source-data"
 ```
 
-> **HDD Optimization Tip**: If your backup target is a mechanical hard drive (HDD) or a Tape-Drive, add the `-sync-sequential-write` flag. This optimizes write patterns to prevent disk thrashing and significantly improves performance.
+> **HDD Optimization Tip**: If your backup target is a mechanical hard drive (HDD) or a Tape-Drive, add the `-sync-sequential-write` flag. This optimizes write patterns to prevent disk thrashing and significantly improves performance by buffering files in RAM and writing them one by one.
+
 > ```sh
 > pgl-backup backup -base="..." -source="..." -sync-sequential-write
 > ```
@@ -803,6 +808,8 @@ The best policy depends on how much data you are backing up and how much disk sp
 
 All command-line flags can also be set in the `pgl-backup.config.json` file. Note that structural options (like directory paths) are only available in the configuration file to ensure consistency.
 
+> **Note on Boolean Flags**: Flags with type bool(true/false) can be enabled by simply passing the flag name (e.g., `-dry-run` is equivalent to `-dry-run=true`). To disable a boolean flag that defaults to true, you must explicitly set it to false using the equals sign (e.g., `-sync-safe-copy=false`).
+
 | Flag / JSON Key | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `version`| `version` | `""` | The `pgl-backup` version. |
@@ -912,7 +919,7 @@ This occurs because the binaries are currently unsigned. Please refer to the [Se
     *   Adjust the `sync-workers` and `buffer-size-kb` settings in your `pgl-backup.config.json` file.
     *   For systems with slow I/O (like a single spinning disk or a high-latency network share), *decreasing* the number of `sync-workers` (e.g., to `1` or `2`) is recommended to minimize seek latency, as higher concurrency can cause significant thrashing.
     *   For systems with very fast I/O (like a local NVMe SSD), increasing `sync-workers` might yield better results.
-    *   **HDD Optimization**: If writing to a mechanical hard drive, enable `"sequentialWrite": true` (or `-sync-sequential-write`). This buffers files in memory (up to `readAheadLimitKB`) and writes them sequentially, preventing the disk head from thrashing between multiple concurrent writes.
+    *   **HDD Optimization**: If writing to a mechanical hard drive, enable `"sequentialWrite": true` (or `-sync-sequential-write`). This buffers files in memory (up to `readAheadLimitKB`) and writes them sequentially, preventing the disk head from thrashing between multiple concurrent writes. This allows you to keep the `sync-workers` count high (e.g., 4) to maximize read throughput from the source while keeping writes linear.
 *   **Cause**: The default "Safe Copy" mechanism ensures atomicity but increases metadata operations (create temp file + rename). This can be slow on high-latency network shares or with many small files.
 *   **Solution**:
     *   Try disabling Safe Copy by setting `"safeCopy": false` in your config or using `-sync-safe-copy=false`. This switches to direct writes, improving performance at the cost of atomicity (a power loss during copy might leave a partial file, which will be fixed on the next run).
