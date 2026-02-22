@@ -60,7 +60,7 @@ func (t *compressTask) compressBackup(absToCompressPath, absToCompressContentPat
 	// This makes the archive file easily identifiable and self-describing even if it's
 	// moved out of its original context.
 	archiveFileName := filepath.Base(absToCompressPath) + "." + t.format.String()
-	absArchiveFilePath := util.DenormalizePath(filepath.Join(absToCompressPath, archiveFileName))
+	absArchiveFilePath := util.DenormalizedAbsPath(absToCompressPath, archiveFileName)
 
 	// Cleanup stale tmp files from crashed runs.
 	defer t.cleanupStaleTempFiles(absToCompressPath)

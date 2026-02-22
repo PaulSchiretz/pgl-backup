@@ -36,7 +36,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
+	"path"
 	"strings"
 	"time"
 
@@ -89,7 +89,7 @@ func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathK
 
 	// Ensure the archives directory exists.
 	if !p.DryRun {
-		absArchivePath := util.DenormalizePath(filepath.Join(absBasePath, relArchivePathKey))
+		absArchivePath := util.DenormalizedAbsPath(absBasePath, relArchivePathKey)
 		if err := os.MkdirAll(absArchivePath, util.UserWritableDirPerms); err != nil {
 			return metafile.MetafileInfo{}, fmt.Errorf("failed to create archive directory %s: %w", relArchivePathKey, err)
 		}
@@ -99,7 +99,7 @@ func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathK
 	// but we add the user's local offset to make the timezone clear to the user.
 	timestamp := util.FormatTimestampWithOffset(toArchive.Metadata.TimestampUTC)
 	archiveEntry := archiveEntryPrefix + timestamp
-	relTargetPathKey := util.NormalizePath(filepath.Join(relArchivePathKey, archiveEntry))
+	relTargetPathKey := path.Join(relArchivePathKey, archiveEntry)
 
 	t := &task{
 		ctx:              ctx,

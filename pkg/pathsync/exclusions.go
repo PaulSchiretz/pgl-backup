@@ -1,6 +1,7 @@
 package pathsync
 
 import (
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -109,11 +110,11 @@ func makeExclusionSet(patterns []string) exclusionSet {
 // matches checks if a given relative path key matches any of the exclusion patterns.
 func (es *exclusionSet) matches(relPathKey, relPathBasename string) bool {
 	// Normalize paths to the same case-insensitive format as the patterns.
-	normalizedPath := normalizeExclusionPattern(relPathKey)
+	normalizedRelPathKey := normalizeExclusionPattern(relPathKey)
 	normalizedBasename := normalizeExclusionPattern(relPathBasename)
 
 	// 1. Check for O(1) full-path literal matches.
-	if _, ok := es.literals[normalizedPath]; ok {
+	if _, ok := es.literals[normalizedRelPathKey]; ok {
 		return true
 	}
 
@@ -124,30 +125,30 @@ func (es *exclusionSet) matches(relPathKey, relPathBasename string) bool {
 
 	// 3. If no literal match, check other pattern types (wildcards).
 	for _, p := range es.nonLiterals {
-		pathToCheck := normalizedPath
+		relPathKeyToCheck := normalizedRelPathKey
 		if p.matchBasename {
-			pathToCheck = normalizedBasename
+			relPathKeyToCheck = normalizedBasename
 		}
 
 		switch p.matchType {
 		case prefixMatch:
-			if strings.HasPrefix(pathToCheck, p.cleanPattern) {
+			if strings.HasPrefix(relPathKeyToCheck, p.cleanPattern) {
 				// For full-path directory prefixes ("build/"), we must avoid false positives on "build-tools".
 				// This check is only relevant for full-path matches.
 				if !p.matchBasename && strings.HasSuffix(p.pattern, "/") {
-					if pathToCheck != p.cleanPattern && !strings.HasPrefix(pathToCheck, p.cleanPattern+"/") {
+					if relPathKeyToCheck != p.cleanPattern && !strings.HasPrefix(relPathKeyToCheck, p.cleanPattern+"/") {
 						continue // Not a true directory prefix match.
 					}
 				}
 				return true
 			}
 		case suffixMatch:
-			if strings.HasSuffix(pathToCheck, p.cleanPattern) {
+			if strings.HasSuffix(relPathKeyToCheck, p.cleanPattern) {
 				return true
 			}
 
 		case globMatch:
-			match, err := filepath.Match(p.cleanPattern, pathToCheck)
+			match, err := path.Match(p.cleanPattern, relPathKeyToCheck)
 			if err != nil {
 				// Log the error for the invalid pattern but continue checking others.
 				plog.Warn("Invalid exclusion pattern", "pattern", p.cleanPattern, "error", err)

@@ -2,10 +2,8 @@ package pathsync
 
 import (
 	"os"
-	"path/filepath"
+	"path"
 	"sync"
-
-	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 // lstatInfo is an internal, memory-efficient representation of file metadata.
@@ -66,10 +64,10 @@ func newLStatSnapshotStore() *LStatSnapshotStore {
 // This distinction allows the caller to differentiate between "cache miss" (parent not cached,
 // need to hit disk) and "definitively does not exist" (parent cached, file not in it).
 func (s *LStatSnapshotStore) LoadLstatInfo(relPathKey string) (info lstatInfo, found bool, parentFound bool) {
-	// CRITICAL: Re-normalize the parent key. after `filepath.Dir` as it can return a path with
-	// OS-specific separators (e.g., '\' on Windows)
-	parentKey := util.NormalizePath(filepath.Dir(relPathKey))
-	entryKey := filepath.Base(relPathKey)
+	// Since relPathKey is already normalized (forward slashes), we can use path.Dir
+	// to split it without OS-specific separator issues or re-normalization.
+	parentKey := path.Dir(relPathKey)
+	entryKey := path.Base(relPathKey)
 
 	if val, ok := s.data.Load(parentKey); ok {
 		snapshotData := val.(map[string]lstatInfo)

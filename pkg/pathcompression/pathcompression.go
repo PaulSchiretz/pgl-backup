@@ -86,8 +86,8 @@ func (c *PathCompressor) Compress(ctx context.Context, absBasePath, relContentPa
 		return ErrNothingToCompress
 	}
 
-	absToCompressPath := util.DenormalizePath(filepath.Join(absBasePath, toCompress.RelPathKey))
-	absToCompressContentPath := util.DenormalizePath(filepath.Join(absToCompressPath, relContentPathKey))
+	absToCompressPath := util.DenormalizedAbsPath(absBasePath, toCompress.RelPathKey)
+	absToCompressContentPath := util.DenormalizedAbsPath(absToCompressPath, relContentPathKey)
 
 	var m Metrics
 	if p.Metrics {
@@ -162,7 +162,7 @@ func (c *PathCompressor) Extract(ctx context.Context, absBasePath string, toExtr
 		return fmt.Errorf("failed to determine format for extraction: %w", err)
 	}
 
-	absToExtractPath := util.DenormalizePath(filepath.Join(absBasePath, toExtract.RelPathKey))
+	absToExtractPath := util.DenormalizedAbsPath(absBasePath, toExtract.RelPathKey)
 
 	var m Metrics
 	if p.Metrics {
@@ -195,7 +195,7 @@ func (c *PathCompressor) Extract(ctx context.Context, absBasePath string, toExtr
 
 func (c *PathCompressor) determineCompressionFormat(absBasePath string, fileInfo metafile.MetafileInfo) (Format, error) {
 
-	absFilePath := util.DenormalizePath(filepath.Join(absBasePath, fileInfo.RelPathKey))
+	absFilePath := util.DenormalizedAbsPath(absBasePath, fileInfo.RelPathKey)
 
 	// Determine format: prefer metadata, then file existence
 	// Fetch compression format from metadata
@@ -210,7 +210,7 @@ func (c *PathCompressor) determineCompressionFormat(absBasePath string, fileInfo
 	// Fetch compression format by iterating through extensions
 	baseName := filepath.Base(absFilePath)
 	for _, f := range []Format{Zip, TarGz, TarZst} {
-		candidatePath := util.DenormalizePath(filepath.Join(absFilePath, baseName+"."+f.String()))
+		candidatePath := util.DenormalizedAbsPath(absFilePath, baseName+"."+f.String())
 		if _, err := os.Stat(candidatePath); err == nil {
 			plog.Debug("Auto-detected compression format from file extension", "format", f)
 			return f, nil

@@ -3,6 +3,7 @@ package pathsync
 import (
 	"context"
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -68,7 +69,7 @@ func (s *PathSyncer) Sync(ctx context.Context, absBasePath, absSourcePath string
 	default:
 	}
 
-	absTargetCurrentContentPath := util.DenormalizePath(filepath.Join(absBasePath, relCurrentPathKey, relContentPathKey))
+	absTargetCurrentContentPath := util.DenormalizedAbsPath(absBasePath, path.Join(relCurrentPathKey, relContentPathKey))
 	absSyncTargetPath := s.resolveTargetDirectory(absSourcePath, absTargetCurrentContentPath, p.PreserveSourceDirName)
 
 	var m Metrics
@@ -141,7 +142,7 @@ func (s *PathSyncer) Restore(ctx context.Context, absBasePath string, relContent
 	}
 
 	// Construct the absolute path to the content directory within the backup
-	absSourcePath := util.DenormalizePath(filepath.Join(absBasePath, toRestore.RelPathKey, relContentPathKey))
+	absSourcePath := util.DenormalizedAbsPath(absBasePath, path.Join(toRestore.RelPathKey, relContentPathKey))
 
 	var m Metrics
 	if p.Metrics {
@@ -198,7 +199,7 @@ func (s *PathSyncer) resolveTargetDirectory(absSourcePath, absTargetPath string,
 	}
 	// Append if valid
 	if nameToAppend != "" && nameToAppend != "." && nameToAppend != string(filepath.Separator) {
-		return filepath.Join(absTargetPath, nameToAppend)
+		return util.DenormalizedAbsPath(absTargetPath, nameToAppend)
 	}
 	return absTargetPath
 }

@@ -39,6 +39,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -1007,9 +1008,9 @@ func (s *nativeSyncer) syncWorker() {
 				// 1. Ensure Parent Directory Exists (still required for files whose parent directory's
 				// item hasn't been processed yet, ensuring order)
 
-				// CRITICAL: Re-normalize the parent key. after `filepath.Dir` as it can return a path with
-				// OS-specific separators (e.g., '\' on Windows)
-				parentRelPathKey := util.NormalizePath(filepath.Dir(item.RelPathKey))
+				// Since item.RelPathKey is already normalized (forward slashes), we can use path.Dir
+				// to get the parent key directly without OS-specific separator issues.
+				parentRelPathKey := path.Dir(item.RelPathKey)
 
 				if err := s.ensureParentDirectoryExists(parentRelPathKey); err != nil {
 					fileErr := fmt.Errorf("failed to ensure parent directory %s exists and is writable: %w", parentRelPathKey, err)

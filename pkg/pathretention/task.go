@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -104,7 +103,7 @@ func (t *task) deleteWorker() {
 			continue
 		}
 		plog.Notice("DELETE", "path", b.RelPathKey)
-		absPathToDelete := util.DenormalizePath(filepath.Join(t.absBasePath, b.RelPathKey))
+		absPathToDelete := util.DenormalizedAbsPath(t.absBasePath, b.RelPathKey)
 		if err := os.RemoveAll(absPathToDelete); err != nil {
 			t.metrics.AddBackupsFailed(1)
 			plog.Warn("Failed to delete outdated backup directory", "path", b.RelPathKey, "error", err)

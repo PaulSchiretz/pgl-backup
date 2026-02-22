@@ -75,7 +75,7 @@ var (
 // It returns (nil, error) for any other failure.
 func Acquire(ctx context.Context, dirPath string, appID string) (*Lock, error) {
 
-	absLockFilePath := filepath.Join(dirPath, LockFileName)
+	absLockFilePath := util.DenormalizedAbsPath(dirPath, LockFileName)
 	// We will attempt to acquire multiple times in case of race conditions during cleanup
 	maxAttempts := 3
 
@@ -352,12 +352,12 @@ func updateLockFileAtomic(absLockFilePath string, content LockContent) error {
 // from previous crashed runs. It only deletes files older than the staleTimeout
 // to avoid deleting temp files currently being written by active processes.
 func cleanupTempLockFiles(absLockFilePath string) {
-	dir := filepath.Dir(absLockFilePath)
-	pattern := filepath.Join(dir, filepath.Base(absLockFilePath)+".*.tmp")
+	absLockFileDir := filepath.Dir(absLockFilePath)
+	absPattern := util.DenormalizedAbsPath(absLockFileDir, filepath.Base(absLockFilePath)+".*.tmp")
 
-	matches, err := filepath.Glob(pattern)
+	matches, err := filepath.Glob(absPattern)
 	if err != nil {
-		plog.Warn("Failed to glob for temporary lock files", "pattern", pattern, "error", err)
+		plog.Warn("Failed to glob for temporary lock files", "pattern", absPattern, "error", err)
 		return
 	}
 

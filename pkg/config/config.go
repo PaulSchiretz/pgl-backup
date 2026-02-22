@@ -251,7 +251,7 @@ func Default() Config {
 // If the file exists but fails to parse, it returns an error and a zero-value config.
 func Load(absBasePath string) (Config, error) {
 
-	absConfigFilePath := util.DenormalizePath(filepath.Join(absBasePath, ConfigFileName))
+	absConfigFilePath := util.DenormalizedAbsPath(absBasePath, ConfigFileName)
 
 	file, err := os.Open(absConfigFilePath)
 	if err != nil {
@@ -282,7 +282,7 @@ func Load(absBasePath string) (Config, error) {
 // Generate creates or overwrites a default pgl-backup.config.json file in the specified
 // target directory.
 func Generate(absBasePath string, configToGenerate Config) error {
-	absConfigFilePath := util.DenormalizePath(filepath.Join(absBasePath, ConfigFileName))
+	absConfigFilePath := util.DenormalizedAbsPath(absBasePath, ConfigFileName)
 	// Marshal the default config into nicely formatted JSON.
 	jsonData, err := json.MarshalIndent(configToGenerate, "", "  ")
 	if err != nil {

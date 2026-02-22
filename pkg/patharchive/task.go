@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
@@ -58,8 +57,8 @@ func (t *task) execute() (metafile.MetafileInfo, error) {
 		return metafile.MetafileInfo{RelPathKey: t.relTargetPathKey, Metadata: t.toArchive.Metadata}, nil
 	}
 
-	absSourcePath := util.DenormalizePath(filepath.Join(t.absBasePath, t.toArchive.RelPathKey))
-	absTargetPath := util.DenormalizePath(filepath.Join(t.absBasePath, t.relTargetPathKey))
+	absSourcePath := util.DenormalizedAbsPath(t.absBasePath, t.toArchive.RelPathKey)
+	absTargetPath := util.DenormalizedAbsPath(t.absBasePath, t.relTargetPathKey)
 
 	// Log the intent before starting the operation
 	plog.Info("Starting archive operation", "from", t.toArchive.RelPathKey, "to", t.relTargetPathKey)

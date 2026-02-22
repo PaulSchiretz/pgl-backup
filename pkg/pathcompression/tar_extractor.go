@@ -112,7 +112,7 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 		// Ensure that the target path is within the extraction directory.
 		// This prevents malicious archives from writing to arbitrary paths via relative paths like "../../etc/passwd".
 		relPath := util.NormalizePath(header.Name)
-		absTarget := filepath.Join(absExtractTargetPath, relPath)
+		absTarget := util.DenormalizedAbsPath(absExtractTargetPath, relPath)
 		if !strings.HasPrefix(absTarget, filepath.Clean(absExtractTargetPath)+string(os.PathSeparator)) {
 			return fmt.Errorf("illegal file path in archive: %s", header.Name)
 		}

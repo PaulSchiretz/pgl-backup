@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -63,7 +62,7 @@ func RunInit(ctx context.Context, flagMap map[string]any) error {
 		}
 
 		if !force {
-			absConfigFilePath := util.DenormalizePath(filepath.Join(absBasePath, config.ConfigFileName))
+			absConfigFilePath := util.DenormalizedAbsPath(absBasePath, config.ConfigFileName)
 			if _, err := os.Stat(absConfigFilePath); err == nil {
 				fmt.Printf("WARNING: Configuration file already exists at %s.\n", absConfigFilePath)
 				fmt.Printf("Using -init-default will overwrite it with default values. All custom settings will be lost.\n")

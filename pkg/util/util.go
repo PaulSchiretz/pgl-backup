@@ -70,13 +70,13 @@ func IsHostCaseInsensitiveFS() bool {
 	return runtime.GOOS == "windows" || runtime.GOOS == "darwin"
 }
 
-// NormalizePath converts a path into a standardized key format (forward slashes, maybe otherwise modified key).
+// NormalizePath converts a path into a standardized key format (forward slashes).
 // This key is intended for internal logic (like map keys) and not for direct filesystem access.
 func NormalizePath(path string) string {
 	return filepath.ToSlash(path)
 }
 
-// DenormalizePath converts a standardized (forward-slash, maybe otherwise modified key) path key back into a native OS path.
+// DenormalizePath converts a standardized (forward-slash) path key back into a native OS path.
 func DenormalizePath(pathKey string) string {
 	return filepath.FromSlash(pathKey)
 }
@@ -104,24 +104,26 @@ func ExpandedDenormalizedAbsPath(path string) (string, error) {
 		return "", fmt.Errorf("could not determine absolute path: %w", err)
 	}
 
-	// 3. Denormalize
-	return DenormalizePath(absPath), nil
+	// Path is already denormalized by filepath.Abs
+	return absPath, nil
 }
 
 // NormalizedRelPath calculates the relative path and normalizes it to a standardized key format
-// (forward slashes, maybe otherwise modified key). This key is for internal logic, not direct filesystem access.
+// (forward slashes). This key is for internal logic, not direct filesystem access.
 func NormalizedRelPath(absBase, absPath string) (string, error) {
 	relPath, err := filepath.Rel(absBase, absPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to get rel path for %s: %w", absPath, err)
 	}
+	// Normalize the Path, as we used filepath.Rel
 	return NormalizePath(relPath), nil
 }
 
-// DenormalizedAbsPath converts the standardized (forward-slash, maybe otherwise modified key) relative path key
+// DenormalizedAbsPath converts the standardized (forward-slash) relative path key
 // back into the final, absolute, native OS path for filesystem access.
 func DenormalizedAbsPath(absBase, relPathKey string) string {
-	return filepath.Join(absBase, DenormalizePath(relPathKey))
+	// Path is already denormalized by filepath.Join
+	return filepath.Join(absBase, relPathKey)
 }
 
 // InvertMap takes a map[K]V and returns a map[V]K.

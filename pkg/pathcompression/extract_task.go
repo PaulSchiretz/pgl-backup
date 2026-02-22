@@ -55,7 +55,7 @@ func (t *extractTask) extractBackup(absToExtractPath, absExtractTargetPath strin
 
 	// The archive is named after its parent backup directory (e.g., "PGL_Backup_2023-10-27...zip").
 	archiveFileName := filepath.Base(absToExtractPath) + "." + t.format.String()
-	absArchiveFilePath := util.DenormalizePath(filepath.Join(absToExtractPath, archiveFileName))
+	absArchiveFilePath := util.DenormalizedAbsPath(absToExtractPath, archiveFileName)
 
 	var extr extractor
 	switch t.format {

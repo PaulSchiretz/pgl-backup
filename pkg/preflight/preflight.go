@@ -220,7 +220,7 @@ func checkTargetWritable(targetPath string) error {
 	}
 
 	// Perform a thorough write check by creating and deleting a temporary file.
-	tempFile := filepath.Join(targetPath, ".pgl-backup-writetest.tmp")
+	tempFile := util.DenormalizedAbsPath(targetPath, ".pgl-backup-writetest.tmp")
 	if f, err := os.Create(tempFile); err != nil {
 		return fmt.Errorf("target directory %s is not writable: %w", targetPath, err)
 	} else {

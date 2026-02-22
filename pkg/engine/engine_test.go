@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,7 +21,6 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/planner"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/preflight"
-	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 // --- Mocks ---
@@ -725,7 +725,7 @@ func TestExecuteRestore(t *testing.T) {
 				os.MkdirAll(path, 0755)
 				metafile.Write(path, &metafile.MetafileContent{IsCompressed: true, UUID: "uuid-123"})
 			},
-			expectedPath:  filepath.Join(relArchive, "backup_123"),
+			expectedPath:  path.Join(relArchive, "backup_123"),
 			expectExtract: true,
 		},
 		{
@@ -737,7 +737,7 @@ func TestExecuteRestore(t *testing.T) {
 				os.MkdirAll(path, 0755)
 				metafile.Write(path, &metafile.MetafileContent{IsCompressed: false, UUID: "uuid-456"})
 			},
-			expectedPath:  filepath.Join(relArchive, "backup_456"),
+			expectedPath:  path.Join(relArchive, "backup_456"),
 			expectExtract: false,
 		},
 		{
@@ -760,7 +760,7 @@ func TestExecuteRestore(t *testing.T) {
 				os.MkdirAll(path, 0755)
 				metafile.Write(path, &metafile.MetafileContent{IsCompressed: false, UUID: "uuid-snapshot"})
 			},
-			expectedPath:  filepath.Join(relSnapArchive, "snapshot_backup"),
+			expectedPath:  path.Join(relSnapArchive, "snapshot_backup"),
 			expectExtract: false,
 		},
 		{
@@ -828,12 +828,12 @@ func TestExecuteRestore(t *testing.T) {
 			}
 
 			if tc.expectExtract {
-				if c.extractRelPathKey != util.NormalizePath(tc.expectedPath) {
-					t.Errorf("Expected extract path %q, got %q", util.NormalizePath(tc.expectedPath), c.extractRelPathKey)
+				if c.extractRelPathKey != tc.expectedPath {
+					t.Errorf("Expected extract path %q, got %q", tc.expectedPath, c.extractRelPathKey)
 				}
 			} else {
-				if s.restoreRelPathKey != util.NormalizePath(tc.expectedPath) {
-					t.Errorf("Expected restore path %q, got %q", util.NormalizePath(tc.expectedPath), s.restoreRelPathKey)
+				if s.restoreRelPathKey != tc.expectedPath {
+					t.Errorf("Expected restore path %q, got %q", tc.expectedPath, s.restoreRelPathKey)
 				}
 			}
 		})
@@ -863,7 +863,7 @@ func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
 	metafile.Write(oldArchiveEntryPath, &metafile.MetafileContent{TimestampUTC: time.Now().Add(-24 * time.Hour), UUID: "uuid-old"})
 
 	// 2. Create the NEW backup on disk (simulating what Archiver just did)
-	newArchiveEntryRelPath := filepath.Join(relArchive, prefix+"new")
+	newArchiveEntryRelPath := path.Join(relArchive, prefix+"new")
 	newArchiveEntryPath := filepath.Join(baseDir, newArchiveEntryRelPath)
 	os.MkdirAll(newArchiveEntryPath, 0755)
 	metafile.Write(newArchiveEntryPath, &metafile.MetafileContent{TimestampUTC: time.Now(), UUID: "uuid-new"})
@@ -910,7 +910,7 @@ func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
 	if len(r.toPrune) != 1 {
 		t.Errorf("Expected 1 backup to prune, got %d", len(r.toPrune))
 	} else {
-		expectedKey := util.NormalizePath(filepath.Join(relArchive, oldArchiveEntryName))
+		expectedKey := path.Join(relArchive, oldArchiveEntryName)
 		if r.toPrune[0].RelPathKey != expectedKey {
 			t.Errorf("Expected to prune %s, got %s", expectedKey, r.toPrune[0].RelPathKey)
 		}

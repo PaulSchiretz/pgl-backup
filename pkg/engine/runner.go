@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -161,7 +161,7 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 				syncErr = fmt.Errorf("sync succeeded but ResultInfo is empty")
 				plog.Error("Metafile write failed", "error", syncErr)
 			} else {
-				absTargetCurrentPath := util.DenormalizePath(filepath.Join(absBasePath, syncResult.RelPathKey))
+				absTargetCurrentPath := util.DenormalizedAbsPath(absBasePath, syncResult.RelPathKey)
 
 				if p.DryRun {
 					plog.Info("[DRY RUN] Would write metafile", "directory", absTargetCurrentPath)
@@ -522,7 +522,7 @@ func (r *Runner) ExecuteRestore(ctx context.Context, absBasePath, uuid, absTarge
 		return fmt.Errorf("backup with UUID %q not found", uuid)
 	}
 
-	absBackupPath := util.DenormalizePath(filepath.Join(absBasePath, toRestore.RelPathKey))
+	absBackupPath := util.DenormalizedAbsPath(absBasePath, toRestore.RelPathKey)
 	plog.Info("Starting restore", "backup", absBackupPath, "destination", absTargetPath)
 
 	if toRestore.Metadata.IsCompressed {
@@ -567,7 +567,7 @@ func (r *Runner) acquireTargetLock(ctx context.Context, absBasePath string) (fun
 // The relPathExclusionKeys are Relative to the absBasePath, and filtered internally.
 func (r *Runner) fetchBackups(ctx context.Context, absBasePath, relArchivePathKey, archiveEntryPrefix string, relPathExclusionKeys []string) ([]metafile.MetafileInfo, error) {
 
-	absArchivePath := util.DenormalizePath(filepath.Join(absBasePath, relArchivePathKey))
+	absArchivePath := util.DenormalizedAbsPath(absBasePath, relArchivePathKey)
 	entries, err := os.ReadDir(absArchivePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -583,14 +583,11 @@ func (r *Runner) fetchBackups(ctx context.Context, absBasePath, relArchivePathKe
 		// Example: relArchivePathKey: "backups/daily"
 		//          relPathExclusionKey: "backups/daily/old_data"
 		//          relPathInArchive will be "old_data"
-		pathInArchive, err := filepath.Rel(relArchivePathKey, relPathExclusionKey)
-		if err != nil {
-			continue // Paths weren't compatible
-		}
-		relPathInArchive := util.NormalizePath(pathInArchive)
-
-		// filepath.Rel returns ".." if the path is outside the base
-		if !strings.HasPrefix(relPathInArchive, "..") && relPathInArchive != "." {
+		// Since we are dealing with normalized paths, we can use string operations
+		// instead of filepath.Rel to avoid OS-specific separator issues and overhead.
+		prefix := relArchivePathKey + "/"
+		if strings.HasPrefix(relPathExclusionKey, prefix) {
+			relPathInArchive := strings.TrimPrefix(relPathExclusionKey, prefix)
 			excludedDirsInArchive[relPathInArchive] = struct{}{}
 		}
 	}
@@ -605,7 +602,16 @@ func (r *Runner) fetchBackups(ctx context.Context, absBasePath, relArchivePathKe
 		}
 
 		dirName := entry.Name()
-		if !entry.IsDir() || !strings.HasPrefix(dirName, archiveEntryPrefix) {
+		// Ensure we are matching against the directory name specifically.
+		// We use path.Base to handle cases where the prefix might inadvertently contain
+		// path separators or trailing slashes (e.g. "backup/"), ensuring we match the name.
+		// We check for empty string explicitly because path.Base("") returns ".".
+		matchPrefix := archiveEntryPrefix
+		if matchPrefix != "" {
+			matchPrefix = path.Base(matchPrefix)
+		}
+
+		if !entry.IsDir() || !strings.HasPrefix(dirName, matchPrefix) {
 			continue
 		}
 
@@ -614,7 +620,9 @@ func (r *Runner) fetchBackups(ctx context.Context, absBasePath, relArchivePathKe
 			continue
 		}
 
-		relBackupPathkey := util.NormalizePath(filepath.Join(relArchivePathKey, dirName))
+		// Since relArchivePathKey is already normalized (forward slashes), we can use path.Join
+		// to join it with the directory name without OS-specific separator issues.
+		relBackupPathkey := path.Join(relArchivePathKey, dirName)
 		foundBackup, err := r.fetchBackup(absBasePath, relBackupPathkey)
 		if err != nil {
 			plog.Warn("Skipping backup directory; cannot read metadata", "directory", dirName, "reason", err)
@@ -626,7 +634,7 @@ func (r *Runner) fetchBackups(ctx context.Context, absBasePath, relArchivePathKe
 }
 
 func (r *Runner) fetchBackup(absBasePath, relPathKey string) (metafile.MetafileInfo, error) {
-	absBackupPath := util.DenormalizePath(filepath.Join(absBasePath, relPathKey))
+	absBackupPath := util.DenormalizedAbsPath(absBasePath, relPathKey)
 	metadata, err := metafile.Read(absBackupPath)
 	if err != nil {
 		return metafile.MetafileInfo{}, err
