@@ -287,14 +287,17 @@ func (s *nativeSyncer) copyFile(absSrcPath, absTrgPath string, item *syncItem) e
 		}
 
 		lastErr = func() (err error) {
-			// 1. Open source file
+
+			// 1. Buffering/Read phase (outside the lock)
+
+			// Open source file
 			in, err := os.Open(absSrcPath)
 			if err != nil {
 				return fmt.Errorf("failed to open source file %s: %w", absSrcPath, err)
 			}
 			defer in.Close()
 
-			// 2. Prepare for Copy
+			// Prepare Buffer for Copy
 			bufPtr := s.ioBufferPool.Get().(*[]byte)
 			defer s.ioBufferPool.Put(bufPtr)
 			buf := *bufPtr
@@ -306,7 +309,7 @@ func (s *nativeSyncer) copyFile(absSrcPath, absTrgPath string, item *syncItem) e
 
 			var reader io.Reader = mr
 
-			// 3. Handle Sequential Write Logic (Pre-Lock Read Phase)
+			// Handle Preread Logic, for sequential write mode
 			if s.sequentialWrite {
 				// Try to buffer in memory
 				if s.readAheadLimiter.TryAcquire(item.PathInfo.Size) {
@@ -317,79 +320,88 @@ func (s *nativeSyncer) copyFile(absSrcPath, absTrgPath string, item *syncItem) e
 					}
 					reader = bytes.NewReader(data)
 				}
-
-				// Acquire Lock for the sequential write phase, defer is run if we exit the func!
-				s.sequentialWriteMu.Lock()
-				defer s.sequentialWriteMu.Unlock()
 			}
 
-			// 4. Open Destination (Safe or Direct)
-			var out *os.File
+			// 2. Heavy I/O Phase (Inside the Lock for sequential write mode)
 			var absWritePath string // The path we are writing to (temp or final)
-			if s.safeCopy {
-				absTrgDir := filepath.Dir(absTrgPath)
-				out, err = os.CreateTemp(absTrgDir, "pgl-backup-*.tmp")
-				if err != nil {
-					return fmt.Errorf("failed to create temporary file in %s: %w", absTrgDir, err)
-				}
-				absWritePath = out.Name()
-			} else {
-				out, err = os.OpenFile(absTrgPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, util.WithUserWritePermission(item.PathInfo.Mode))
-				if err != nil {
-					return fmt.Errorf("failed to open destination file %s: %w", absTrgPath, err)
-				}
-				absWritePath = absTrgPath
-			}
+			err = func() error {
 
-			// Cleanup our Resources on func exit
-			defer func() {
-
-				// Close the filehandle if needed
-				if out != nil {
-					out.Close()
+				var out *os.File
+				if s.sequentialWrite {
+					s.sequentialWriteMu.Lock()
+					defer s.sequentialWriteMu.Unlock()
 				}
-				// On rename error, remove temp file in safecopy mode.
+
+				// Open file handle
+				if s.safeCopy {
+					absTrgDir := filepath.Dir(absTrgPath)
+					out, err = os.CreateTemp(absTrgDir, "pgl-backup-*.tmp")
+					if err != nil {
+						return fmt.Errorf("failed to create temporary file in %s: %w", absTrgDir, err)
+					}
+					absWritePath = out.Name()
+				} else {
+					out, err = os.OpenFile(absTrgPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, util.WithUserWritePermission(item.PathInfo.Mode))
+					if err != nil {
+						return fmt.Errorf("failed to open destination file %s: %w", absTrgPath, err)
+					}
+					absWritePath = absTrgPath
+				}
+
+				// Ensure file is closed
+				defer func() {
+					if out != nil {
+						out.Close()
+					}
+				}()
+
+				// Setup Target File Metadata
+				if err := out.Chmod(util.WithUserWritePermission(item.PathInfo.Mode)); err != nil {
+					return fmt.Errorf("failed to set permissions on %s: %w", absWritePath, err)
+				}
+
+				if item.PathInfo.Size > 0 {
+					_ = out.Truncate(item.PathInfo.Size)
+				}
+
+				mw := s.syncMetricWriterPool.Get().(*syncMetricWriter)
+				mw.Reset(out)
+				defer s.syncMetricWriterPool.Put(mw)
+
+				// Copy Content
+				if _, err := io.CopyBuffer(mw, reader, buf); err != nil {
+					return fmt.Errorf("failed to copy content to %s: %w", absWritePath, err)
+				}
+
+				// Close Target (Flush)
+				if err := out.Close(); err != nil {
+					return fmt.Errorf("failed to close file %s: %w", absWritePath, err)
+				}
+				return nil
+			}()
+
+			// Check Errors and cleanup
+			if err != nil {
 				if s.safeCopy && absWritePath != "" {
 					os.Remove(absWritePath)
 				}
-			}()
-
-			// 5. Setup Target File
-			if err := out.Chmod(util.WithUserWritePermission(item.PathInfo.Mode)); err != nil {
-				return fmt.Errorf("failed to set permissions on %s: %w", absWritePath, err)
+				return err
 			}
 
-			if item.PathInfo.Size > 0 {
-				_ = out.Truncate(item.PathInfo.Size)
-			}
+			// 3. Metadata Phase (Outside the Lock)
 
-			mw := s.syncMetricWriterPool.Get().(*syncMetricWriter)
-			mw.Reset(out)
-			defer s.syncMetricWriterPool.Put(mw)
-
-			// 6. Copy Content
-			if _, err := io.CopyBuffer(mw, reader, buf); err != nil {
-				return fmt.Errorf("failed to copy content to %s: %w", absWritePath, err)
-			}
-
-			// 7. Close Target (Flush)
-			if err := out.Close(); err != nil {
-				return fmt.Errorf("failed to close file %s: %w", absWritePath, err)
-			}
-
-			// 8. Set Target Timestamps
+			// Set Target Timestamps
 			if err := os.Chtimes(absWritePath, time.Unix(0, item.PathInfo.ModTime), time.Unix(0, item.PathInfo.ModTime)); err != nil {
 				return fmt.Errorf("failed to set timestamps on %s: %w", absWritePath, err)
 			}
 
-			// 9. Finalize (Rename if Safe Copy)
+			// Finalize (Rename if Safe Copy)
 			if s.safeCopy {
 				if err := os.Rename(absWritePath, absTrgPath); err != nil {
+					os.Remove(absWritePath) // Cleanup temp file on rename failure
 					return err
 				}
-				absWritePath = "" // Prevent defer remove, as the file is already renamed
 			}
-
 			return nil
 		}()
 
@@ -676,9 +688,13 @@ func (s *nativeSyncer) processDirectorySync(item *syncItem) error {
 				dirCreated = true
 			} else {
 				// It is already a directory. Ensure permissions are correct.
-				if err := os.Chmod(absTrgPath, expectedPerms); err != nil {
-					plog.Warn("Failed to set permissions on destination directory", "path", item.RelPathKey, "error", err)
-					return nil, fmt.Errorf("failed to set permissions on destination directory %s: %w", item.RelPathKey, err)
+				// Only update permissions if they actually differ from the source (plus our write bit).
+				// We compare only the permission bits (e.g., 0755), ignoring type bits (like 'd').
+				if info.Mode().Perm() != expectedPerms {
+					if err := os.Chmod(absTrgPath, expectedPerms); err != nil {
+						plog.Warn("Failed to set permissions on destination directory", "path", item.RelPathKey, "error", err)
+						return nil, fmt.Errorf("failed to set permissions on destination directory %s: %w", item.RelPathKey, err)
+					}
 				}
 			}
 		} else if os.IsNotExist(err) {
