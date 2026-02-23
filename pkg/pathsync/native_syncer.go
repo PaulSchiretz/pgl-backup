@@ -276,140 +276,120 @@ func (s *nativeSyncer) isExcluded(relPathKey, relPathBasename string, isDir bool
 	return s.fileExclusions.matches(relPathKey, relPathBasename)
 }
 
-// copyFileContent handles the actual data transfer from source to destination file.
-// It supports both standard concurrent copying and serialized/readahead copying
-// to reduce disk thrashing on HDDs.
-//
-// NOTE: We intentionally only serialize the heavy data payloads (file contents).
-// Metadata operations (mkdir, symlink, rename, remove) remain concurrent.
-// While strictly speaking they also cause seeks, they are tiny, fast, and often
-// buffered by the OS/filesystem driver. The complexity/deadlock-risk of locking
-// every metadata op outweighs the marginal gain in seek reduction.
-func (s *nativeSyncer) copyFileContent(in *os.File, out *os.File, info lstatInfo, buf []byte) (int64, error) {
-	mw := s.syncMetricWriterPool.Get().(*syncMetricWriter)
-	mw.Reset(out)
-	defer s.syncMetricWriterPool.Put(mw)
-
-	mr := s.syncMetricReaderPool.Get().(*syncMetricReader)
-	mr.Reset(in)
-	defer s.syncMetricReaderPool.Put(mr)
-
-	// Standard concurrent copy
-	if !s.sequentialWrite {
-		return io.CopyBuffer(mw, mr, buf)
-	}
-
-	// Sequential Write Mode
-	fSize := info.Size
-
-	// Attempt to acquire readahead budget for this file
-	if s.readAheadLimiter.TryAcquire(fSize) {
-		// Happy Path: We have budget. Read fully to RAM (concurrently), then write serially.
-		defer s.readAheadLimiter.Release(fSize)
-
-		data := make([]byte, fSize)
-		if _, err := io.ReadFull(mr, data); err != nil {
-			return 0, fmt.Errorf("failed to read file into memory: %w", err)
-		}
-
-		s.sequentialWriteMu.Lock()
-		defer s.sequentialWriteMu.Unlock()
-		// Use io.CopyBuffer to write from memory in chunks, ensuring metrics update frequently
-		n, err := io.CopyBuffer(mw, bytes.NewReader(data), buf)
-		return n, err
-	}
-
-	// Fallback: Budget full or file too big. Stream serially (holding the lock).
-	// This prevents this worker from thrashing the disk while others are writing.
-	s.sequentialWriteMu.Lock()
-	defer s.sequentialWriteMu.Unlock()
-	return io.CopyBuffer(mw, mr, buf)
-}
-
-// copyFileSafe handles the low-level details of copying a single file.
-// It ensures atomicity by writing to a temporary file first and then renaming it.
-func (s *nativeSyncer) copyFileSafe(absSrcPath, absTrgPath string, item *syncItem, retryCount int, retryWait time.Duration) error {
+// copyFile handles the details of copying a single file.
+// It combines safe/direct copy modes and sequential write optimization.
+func (s *nativeSyncer) copyFile(absSrcPath, absTrgPath string, item *syncItem) error {
 	var lastErr error
-	for i := range retryCount + 1 {
+	for i := range s.retryCount + 1 {
 		if i > 0 {
-			plog.Warn("Retrying file copy", "file", absSrcPath, "attempt", fmt.Sprintf("%d/%d", i, retryCount), "after", retryWait)
-			time.Sleep(retryWait)
+			plog.Warn("Retrying file copy", "file", absSrcPath, "attempt", fmt.Sprintf("%d/%d", i, s.retryCount), "after", s.retryWait)
+			time.Sleep(s.retryWait)
 		}
 
 		lastErr = func() (err error) {
-			// 1. Open source file.
+			// 1. Open source file
 			in, err := os.Open(absSrcPath)
 			if err != nil {
 				return fmt.Errorf("failed to open source file %s: %w", absSrcPath, err)
 			}
 			defer in.Close()
 
-			absTrgDir := filepath.Dir(absTrgPath)
+			// 2. Prepare for Copy
+			bufPtr := s.ioBufferPool.Get().(*[]byte)
+			defer s.ioBufferPool.Put(bufPtr)
+			buf := *bufPtr
+			buf = buf[:cap(buf)]
 
-			// 2. Create a temporary file in the destination directory.
-			out, err := os.CreateTemp(absTrgDir, "pgl-backup-*.tmp")
-			if err != nil {
-				return fmt.Errorf("failed to create temporary file in %s: %w", absTrgDir, err)
+			mr := s.syncMetricReaderPool.Get().(*syncMetricReader)
+			mr.Reset(in)
+			defer s.syncMetricReaderPool.Put(mr)
+
+			var reader io.Reader = mr
+
+			// 3. Handle Sequential Write Logic (Pre-Lock Read Phase)
+			if s.sequentialWrite {
+				// Try to buffer in memory
+				if s.readAheadLimiter.TryAcquire(item.PathInfo.Size) {
+					defer s.readAheadLimiter.Release(item.PathInfo.Size)
+					data := make([]byte, int(item.PathInfo.Size))
+					if _, err := io.ReadFull(mr, data); err != nil {
+						return fmt.Errorf("failed to read file into memory: %w", err)
+					}
+					reader = bytes.NewReader(data)
+				}
+
+				// Acquire Lock for the sequential write phase, defer is run if we exit the func!
+				s.sequentialWriteMu.Lock()
+				defer s.sequentialWriteMu.Unlock()
 			}
-			defer out.Close() // Ensure closed on error.
 
-			absTempPath := out.Name()
-			// Defer the removal of the temp file. If the rename succeeds, tempPath will be set to "",
-			// making this a no-op. This prevents an error trying to remove a non-existent file.
+			// 4. Open Destination (Safe or Direct)
+			var out *os.File
+			var absWritePath string // The path we are writing to (temp or final)
+			if s.safeCopy {
+				absTrgDir := filepath.Dir(absTrgPath)
+				out, err = os.CreateTemp(absTrgDir, "pgl-backup-*.tmp")
+				if err != nil {
+					return fmt.Errorf("failed to create temporary file in %s: %w", absTrgDir, err)
+				}
+				absWritePath = out.Name()
+			} else {
+				out, err = os.OpenFile(absTrgPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, util.WithUserWritePermission(item.PathInfo.Mode))
+				if err != nil {
+					return fmt.Errorf("failed to open destination file %s: %w", absTrgPath, err)
+				}
+				absWritePath = absTrgPath
+			}
+
+			// Cleanup our Resources on func exit
 			defer func() {
-				if absTempPath != "" {
-					os.Remove(absTempPath)
+
+				// Close the filehandle if needed
+				if out != nil {
+					out.Close()
+				}
+				// On rename error, remove temp file in safecopy mode.
+				if s.safeCopy && absWritePath != "" {
+					os.Remove(absWritePath)
 				}
 			}()
 
-			// Pre-allocate file size to reduce fragmentation.
+			// 5. Setup Target File
+			if err := out.Chmod(util.WithUserWritePermission(item.PathInfo.Mode)); err != nil {
+				return fmt.Errorf("failed to set permissions on %s: %w", absWritePath, err)
+			}
+
 			if item.PathInfo.Size > 0 {
 				_ = out.Truncate(item.PathInfo.Size)
 			}
 
-			// 3. Copy content
-			// Get a buffer from the pool for the copy operation.
-			bufPtr := s.ioBufferPool.Get().(*[]byte)
-			defer s.ioBufferPool.Put(bufPtr)
-			// Dereference the bufPtr to get the actual slice
-			buf := *bufPtr
-			// IMPORTANT: Ensure length is maxed out before use
-			// In case someone messed with it, always reset len to cap
-			// strictly for io.Read/Copy purposes.
-			buf = buf[:cap(buf)]
+			mw := s.syncMetricWriterPool.Get().(*syncMetricWriter)
+			mw.Reset(out)
+			defer s.syncMetricWriterPool.Put(mw)
 
-			if _, err = s.copyFileContent(in, out, item.PathInfo, buf); err != nil {
-				return fmt.Errorf("failed to copy content from %s to %s: %w", absSrcPath, absTempPath, err)
+			// 6. Copy Content
+			if _, err := io.CopyBuffer(mw, reader, buf); err != nil {
+				return fmt.Errorf("failed to copy content to %s: %w", absWritePath, err)
 			}
 
-			// 4. Copy file permissions from the source.
-			// CRITICAL: We must ensure the user always has write permission on the destination file
-			// to prevent being locked out on subsequent runs (e.g., if the source was read-only).
-			if err := out.Chmod(util.WithUserWritePermission(item.PathInfo.Mode)); err != nil {
-				return fmt.Errorf("failed to set permissions on temporary file %s: %w", absTempPath, err)
-			}
-
-			// 5. Close the file.
-			// This flushes data to disk. It MUST be done before Chtimes,
-			// because closing/flushing might update the modification time.
+			// 7. Close Target (Flush)
 			if err := out.Close(); err != nil {
-				return fmt.Errorf("failed to close temporary file %s: %w", absTempPath, err)
+				return fmt.Errorf("failed to close file %s: %w", absWritePath, err)
 			}
 
-			// 6. Copy file timestamps
-			// We do this via os.Chtimes (using the path) after the file is closed.
-			if err := os.Chtimes(absTempPath, time.Unix(0, item.PathInfo.ModTime), time.Unix(0, item.PathInfo.ModTime)); err != nil {
-				return fmt.Errorf("failed to set timestamps on %s: %w", absTempPath, err)
+			// 8. Set Target Timestamps
+			if err := os.Chtimes(absWritePath, time.Unix(0, item.PathInfo.ModTime), time.Unix(0, item.PathInfo.ModTime)); err != nil {
+				return fmt.Errorf("failed to set timestamps on %s: %w", absWritePath, err)
 			}
 
-			// 7. Atomically move the temporary file to the final destination.
-			// os.Rename is atomic on POSIX and uses MoveFileEx with MOVEFILE_REPLACE_EXISTING on Windows (since Go 1.5).
-			if err := os.Rename(absTempPath, absTrgPath); err != nil {
-				return err
+			// 9. Finalize (Rename if Safe Copy)
+			if s.safeCopy {
+				if err := os.Rename(absWritePath, absTrgPath); err != nil {
+					return err
+				}
+				absWritePath = "" // Prevent defer remove, as the file is already renamed
 			}
 
-			// 8. Clear tempPath to prevent the deferred os.Remove from running.
-			absTempPath = ""
 			return nil
 		}()
 
@@ -417,114 +397,35 @@ func (s *nativeSyncer) copyFileSafe(absSrcPath, absTrgPath string, item *syncIte
 			return nil // Success
 		}
 	}
-	return fmt.Errorf("failed to copy file from '%s' to '%s' after %d attempts: %w", absSrcPath, absTrgPath, retryCount, lastErr)
+	return fmt.Errorf("failed to copy file from '%s' to '%s' after %d attempts: %w", absSrcPath, absTrgPath, s.retryCount, lastErr)
 }
 
-// copyFileDirect copies a file directly to the destination, avoiding temporary files and renames.
-// This is faster (fewer metadata ops) but less safe against interruptions.
-func (s *nativeSyncer) copyFileDirect(absSrcPath, absTrgPath string, item *syncItem, retryCount int, retryWait time.Duration) error {
-	var lastErr error
-	for i := range retryCount + 1 {
-		if i > 0 {
-			plog.Warn("Retrying file copy", "file", absSrcPath, "attempt", fmt.Sprintf("%d/%d", i, retryCount), "after", retryWait)
-			time.Sleep(retryWait)
-		}
-
-		lastErr = func() error {
-			in, err := os.Open(absSrcPath)
-			if err != nil {
-				return fmt.Errorf("failed to open source file %s: %w", absSrcPath, err)
-			}
-			defer in.Close()
-
-			// Open destination file directly. os.O_TRUNC will clear the file if it exists.
-			// The permissions from the source file are used, with the user-write bit always set.
-			out, err := os.OpenFile(absTrgPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, util.WithUserWritePermission(item.PathInfo.Mode))
-			if err != nil {
-				return fmt.Errorf("failed to open destination file %s: %w", absTrgPath, err)
-			}
-			defer out.Close() // Ensure closed on error.
-
-			// Explicitly set permissions to ensure they match source even if file existed.
-			if err := out.Chmod(util.WithUserWritePermission(item.PathInfo.Mode)); err != nil {
-				return fmt.Errorf("failed to set permissions on destination file %s: %w", absTrgPath, err)
-			}
-
-			// Pre-allocate file size to reduce fragmentation.
-			if item.PathInfo.Size > 0 {
-				_ = out.Truncate(item.PathInfo.Size)
-			}
-
-			bufPtr := s.ioBufferPool.Get().(*[]byte)
-			defer s.ioBufferPool.Put(bufPtr)
-			buf := *bufPtr
-			buf = buf[:cap(buf)]
-
-			if _, err = s.copyFileContent(in, out, item.PathInfo, buf); err != nil {
-				return fmt.Errorf("failed to copy content from %s to %s: %w", absSrcPath, absTrgPath, err)
-			}
-
-			// Close the file to flush data to disk before setting timestamps.
-			if err := out.Close(); err != nil {
-				return fmt.Errorf("failed to close destination file %s: %w", absTrgPath, err)
-			}
-
-			if err := os.Chtimes(absTrgPath, time.Unix(0, item.PathInfo.ModTime), time.Unix(0, item.PathInfo.ModTime)); err != nil {
-				return fmt.Errorf("failed to set timestamps on %s: %w", absTrgPath, err)
-			}
-			return nil
-		}()
-
-		if lastErr == nil {
-			return nil // Success
-		}
-	}
-	return fmt.Errorf("failed to copy file from '%s' to '%s' after %d attempts: %w", absSrcPath, absTrgPath, retryCount, lastErr)
-}
-
-// copySymlinkHelper handles the low-level details of creating a symlink.
+// copySymlink handles the low-level details of creating a symlink.
 // It ensures atomicity by creating a temporary link first and then renaming it.
-func (s *nativeSyncer) copySymlinkHelper(target, absTrgPath string, retryCount int, retryWait time.Duration) error {
+// The caller is responsible for ensuring the destination path is clear.
+func (s *nativeSyncer) copySymlink(linkTarget, absTrgPath string) error {
 	var lastErr error
-	for i := range retryCount + 1 {
+	for i := range s.retryCount + 1 {
 		if i > 0 {
-			plog.Warn("Retrying symlink creation", "file", absTrgPath, "attempt", fmt.Sprintf("%d/%d", i, retryCount), "after", retryWait)
-			time.Sleep(retryWait)
+			plog.Warn("Retrying symlink creation", "file", absTrgPath, "attempt", fmt.Sprintf("%d/%d", i, s.retryCount), "after", s.retryWait)
+			time.Sleep(s.retryWait)
 		}
 
 		lastErr = func() error {
-			absTrgDir := filepath.Dir(absTrgPath)
-
-			// Generate a temp name.
-			f, err := os.CreateTemp(absTrgDir, "pgl-backup-symlink-*.tmp")
-			if err != nil {
-				return fmt.Errorf("failed to generate temp name for symlink: %w", err)
+			// Lock for sequential writes
+			if s.sequentialWrite {
+				s.sequentialWriteMu.Lock()
+				defer s.sequentialWriteMu.Unlock()
 			}
-			tempName := f.Name()
-			f.Close()
-			// os.CreateTemp creates a regular file. We only need the unique name.
-			// We must remove the file so os.Symlink can create the link in its place.
-			os.Remove(tempName)
 
-			// Defer the removal of the temp file.
-			defer func() {
-				if tempName != "" {
-					os.Remove(tempName)
-				}
-			}()
-
-			if err := os.Symlink(target, tempName); err != nil {
+			// The caller (processSymlinkSync) is responsible for cleaning the destination path.
+			// We can just create the symlink directly.
+			if err := os.Symlink(linkTarget, absTrgPath); err != nil {
 				if runtime.GOOS == "windows" && strings.Contains(err.Error(), "privilege") {
 					return fmt.Errorf("failed to create symlink (requires Admin or Developer Mode): %w", err)
 				}
-				return fmt.Errorf("failed to create symlink %s -> %s: %w", tempName, target, err)
+				return fmt.Errorf("failed to create symlink %s -> %s: %w", absTrgPath, linkTarget, err)
 			}
-
-			if err := os.Rename(tempName, absTrgPath); err != nil {
-				return fmt.Errorf("failed to rename temp symlink to %s: %w", absTrgPath, err)
-			}
-
-			tempName = "" // Prevent deferred removal
 			return nil
 		}()
 
@@ -532,7 +433,7 @@ func (s *nativeSyncer) copySymlinkHelper(target, absTrgPath string, retryCount i
 			return nil
 		}
 	}
-	return fmt.Errorf("failed to create symlink at '%s' after %d attempts: %w", absTrgPath, retryCount, lastErr)
+	return fmt.Errorf("failed to create symlink at '%s' after %d attempts: %w", absTrgPath, s.retryCount, lastErr)
 }
 
 // processFileSync checks if a file needs to be copied (based on size/time)
@@ -542,8 +443,6 @@ func (s *nativeSyncer) processFileSync(item *syncItem) error {
 		plog.Notice("[DRY RUN] COPY", "path", item.RelPathKey)
 		return nil
 	}
-
-	useSafeCopy := s.safeCopy
 
 	// Convert the paths to the OS-native format for file access
 	absSrcPath := util.DenormalizedAbsPath(s.src, item.RelPathKey)
@@ -620,28 +519,18 @@ func (s *nativeSyncer) processFileSync(item *syncItem) error {
 			if err := os.RemoveAll(absTrgPath); err != nil {
 				return fmt.Errorf("failed to remove directory at destination %s: %w", absTrgPath, err)
 			}
-			useSafeCopy = true
 		} else {
 			plog.Warn("Destination is not a regular file, removing before copy", "path", item.RelPathKey, "type", trgLstatInfo.Mode.String())
 			if err := os.RemoveAll(absTrgPath); err != nil {
 				return fmt.Errorf("failed to remove existing destination file %s: %w", absTrgPath, err)
 			}
-			useSafeCopy = true
 		}
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("failed to retrieve destination info for %s: %w", absTrgPath, err)
 	}
 
-	if useSafeCopy {
-		// Use Safe Copy for security.
-		if err := s.copyFileSafe(absSrcPath, absTrgPath, item, s.retryCount, s.retryWait); err != nil {
-			return fmt.Errorf("failed to copy file to %s: %w", absTrgPath, err)
-		}
-	} else {
-		// Use Direct Copy for performance.
-		if err := s.copyFileDirect(absSrcPath, absTrgPath, item, s.retryCount, s.retryWait); err != nil {
-			return fmt.Errorf("failed to copy file to %s: %w", absTrgPath, err)
-		}
+	if err := s.copyFile(absSrcPath, absTrgPath, item); err != nil {
+		return fmt.Errorf("failed to copy file to %s: %w", absTrgPath, err)
 	}
 
 	plog.Notice("COPY", "path", item.RelPathKey)
@@ -694,6 +583,13 @@ func (s *nativeSyncer) processSymlinkSync(item *syncItem) error {
 				s.metrics.AddFilesUpToDate(1)
 				return nil // Up to date
 			}
+			// If we are here, the symlink exists but points to the wrong target, or is broken.
+			// We must remove it before creating the new one.
+			// Use RemoveAll for robustness against race conditions where the symlink could be
+			// replaced by a directory between the Lstat and the remove operation.
+			if err := os.RemoveAll(absTrgPath); err != nil {
+				return fmt.Errorf("failed to remove outdated item at symlink destination %s: %w", absTrgPath, err)
+			}
 		} else if trgLstatInfo.IsDir {
 			// Destination is a directory. Rename cannot overwrite it, so we must remove it explicitly.
 			plog.Warn("Destination is a directory, removing before symlink creation", "path", item.RelPathKey)
@@ -711,8 +607,8 @@ func (s *nativeSyncer) processSymlinkSync(item *syncItem) error {
 		return fmt.Errorf("failed to retrieve destination metadata for %s: %w", absTrgPath, err)
 	}
 
-	// Create the symlink atomically using a temporary name and rename.
-	if err := s.copySymlinkHelper(linkTarget, absTrgPath, s.retryCount, s.retryWait); err != nil {
+	// Create the symlink. The destination path is now guaranteed to be clear.
+	if err := s.copySymlink(linkTarget, absTrgPath); err != nil {
 		return err
 	}
 
