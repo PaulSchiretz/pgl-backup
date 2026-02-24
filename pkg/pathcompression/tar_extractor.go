@@ -14,13 +14,17 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/klauspost/pgzip"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/pool"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 type tarExtractor struct {
+	// Read buffer pool
+	ioBufferPool *pool.FixedBufferPool
+	ioBufferSize int64
+
 	dryRun                  bool
 	format                  Format
-	bufferPool              *sync.Pool
 	metrics                 Metrics
 	overwrite               OverwriteBehavior
 	modTimeWindow           time.Duration
@@ -28,11 +32,13 @@ type tarExtractor struct {
 	extractMetricWriterPool *sync.Pool
 }
 
-func newTarExtractor(dryRun bool, format Format, bufferPool *sync.Pool, metrics Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) *tarExtractor {
+func newTarExtractor(dryRun bool, format Format, ioBufferPool *pool.FixedBufferPool, ioBufferSize int64, metrics Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) *tarExtractor {
 	return &tarExtractor{
+		ioBufferPool: ioBufferPool,
+		ioBufferSize: ioBufferSize,
+
 		dryRun:        dryRun,
 		format:        format,
-		bufferPool:    bufferPool,
 		metrics:       metrics,
 		overwrite:     overwrite,
 		modTimeWindow: modTimeWindow,
@@ -147,9 +153,9 @@ func (e *tarExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 				return err
 			}
 			mw.Reset(outFile)
-			bufPtr := e.bufferPool.Get().(*[]byte)
+			bufPtr := e.ioBufferPool.Get()
 			_, err = io.CopyBuffer(mw, tr, *bufPtr)
-			e.bufferPool.Put(bufPtr)
+			e.ioBufferPool.Put(bufPtr)
 			outFile.Close()
 			if err != nil {
 				return err

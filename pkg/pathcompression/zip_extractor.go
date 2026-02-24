@@ -12,13 +12,17 @@ import (
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/pool"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 type zipExtractor struct {
+	// Read buffer pool
+	ioBufferPool *pool.FixedBufferPool
+	ioBufferSize int64
+
 	dryRun                    bool
 	format                    Format
-	bufferPool                *sync.Pool
 	metrics                   Metrics
 	overwrite                 OverwriteBehavior
 	modTimeWindow             time.Duration
@@ -26,11 +30,13 @@ type zipExtractor struct {
 	extractMetricWriterPool   *sync.Pool
 }
 
-func newZipExtractor(dryRun bool, format Format, bufferPool *sync.Pool, metrics Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) *zipExtractor {
+func newZipExtractor(dryRun bool, format Format, ioBufferPool *pool.FixedBufferPool, ioBufferSize int64, metrics Metrics, overwrite OverwriteBehavior, modTimeWindow time.Duration) *zipExtractor {
 	return &zipExtractor{
+		ioBufferPool: ioBufferPool,
+		ioBufferSize: ioBufferSize,
+
 		dryRun:        dryRun,
 		format:        format,
-		bufferPool:    bufferPool,
 		metrics:       metrics,
 		overwrite:     overwrite,
 		modTimeWindow: modTimeWindow,
@@ -165,9 +171,9 @@ func (e *zipExtractor) Extract(ctx context.Context, absArchiveFilePath, absExtra
 		}
 
 		mw.Reset(outFile)
-		bufPtr := e.bufferPool.Get().(*[]byte)
+		bufPtr := e.ioBufferPool.Get()
 		_, err = io.CopyBuffer(mw, rc, *bufPtr)
-		e.bufferPool.Put(bufPtr)
+		e.ioBufferPool.Put(bufPtr)
 		outFile.Close()
 		rc.Close()
 		if err != nil {

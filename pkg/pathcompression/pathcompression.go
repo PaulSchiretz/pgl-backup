@@ -24,13 +24,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/hints"
 	"github.com/paulschiretz/pgl-backup/pkg/limiter"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/pool"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
@@ -39,11 +39,14 @@ var ErrNothingToCompress = hints.New("nothing to compress")
 var ErrNothingToExtract = hints.New("nothing to extract")
 
 type PathCompressor struct {
-	ioBufferPool *sync.Pool
+	ioBufferPool *pool.FixedBufferPool
 	ioBufferSize int64
 
 	readAheadLimiter *limiter.Memory
 	readAheadLimit   int64
+
+	// 1KB min, 64MB max
+	readAheadPool *pool.BucketedBufferPool
 
 	numCompressWorkers int
 }
@@ -53,16 +56,11 @@ func NewPathCompressor(bufferSizeKB, readAheadLimitKB int64, numCompressWorkers 
 	ioBufferSize := bufferSizeKB * 1024
 	readAheadLimit := readAheadLimitKB * 1024
 	return &PathCompressor{
-		ioBufferPool: &sync.Pool{
-			New: func() any {
-				// Allocate a slice with a specific capacity
-				b := make([]byte, ioBufferSize)
-				return &b // We store a pointer to the slice header
-			},
-		},
+		ioBufferPool:       pool.NewFixedBuffer(ioBufferSize),
 		ioBufferSize:       ioBufferSize,
 		readAheadLimiter:   limiter.NewMemory(readAheadLimit, ioBufferSize),
 		readAheadLimit:     readAheadLimit,
+		readAheadPool:      pool.NewBucketedBufferPool(1024, 64*1024*1024), // 1KB min, 64MB max as we do not want to Pool tiny or very large Buffers
 		numCompressWorkers: numCompressWorkers,
 	}
 }

@@ -8,10 +8,7 @@ import (
 
 // TestShardedSet_Basic tests the fundamental Store, Has, and Delete operations.
 func TestShardedSet_Basic(t *testing.T) {
-	s, err := NewShardedSet()
-	if err != nil {
-		t.Fatalf("NewShardedSet failed: %v", err)
-	}
+	s := NewSet(16)
 	key := "test_key"
 
 	// 1. Test Has on a non-existent key
@@ -47,10 +44,7 @@ func TestShardedSet_Basic(t *testing.T) {
 // TestShardedSet_MultipleKeys tests functionality with multiple keys,
 // ensuring they don't interfere with each other.
 func TestShardedSet_MultipleKeys(t *testing.T) {
-	s, err := NewShardedSet()
-	if err != nil {
-		t.Fatalf("NewShardedSet failed: %v", err)
-	}
+	s := NewSet(16)
 	keys := []string{"key1", "key2", "another_key", "long/path/style/key"}
 
 	// Store all keys
@@ -83,10 +77,7 @@ func TestShardedSet_MultipleKeys(t *testing.T) {
 // TestShardedSet_Concurrency tests concurrent access to the ShardedSet.
 // It runs Store, Has, and Delete operations from multiple goroutines.
 func TestShardedSet_Concurrency(t *testing.T) {
-	s, err := NewShardedSet()
-	if err != nil {
-		t.Fatalf("NewShardedSet failed: %v", err)
-	}
+	s := NewSet(16)
 	numGoroutines := 100
 	numKeysPerGoroutine := 100
 	var wg sync.WaitGroup
@@ -123,10 +114,7 @@ func TestShardedSet_Concurrency(t *testing.T) {
 
 // TestShardedSet_Count tests the Count method.
 func TestShardedSet_Count(t *testing.T) {
-	s, err := NewShardedSet()
-	if err != nil {
-		t.Fatalf("NewShardedSet failed: %v", err)
-	}
+	s := NewSet(16)
 
 	// 1. Test count on an empty set
 	if count := s.Count(); count != 0 {
@@ -155,10 +143,7 @@ func TestShardedSet_Count(t *testing.T) {
 
 // TestShardedSet_Keys tests the Keys method.
 func TestShardedSet_Keys(t *testing.T) {
-	s, err := NewShardedSet()
-	if err != nil {
-		t.Fatalf("NewShardedSet failed: %v", err)
-	}
+	s := NewSet(16)
 
 	// 1. Test on an empty set
 	if len(s.Keys()) != 0 {
@@ -191,10 +176,7 @@ func TestShardedSet_Keys(t *testing.T) {
 
 // TestShardedSet_Range tests the Range method.
 func TestShardedSet_Range(t *testing.T) {
-	s, err := NewShardedSet()
-	if err != nil {
-		t.Fatalf("NewShardedSet failed: %v", err)
-	}
+	s := NewSet(16)
 
 	// Populate the set
 	expectedKeys := map[string]bool{
@@ -242,10 +224,7 @@ func TestShardedSet_Range(t *testing.T) {
 
 // TestShardedSet_Clear tests the Clear method.
 func TestShardedSet_Clear(t *testing.T) {
-	s, err := NewShardedSet()
-	if err != nil {
-		t.Fatalf("NewShardedSet failed: %v", err)
-	}
+	s := NewSet(16)
 
 	// Populate the set
 	s.Store("key1")
@@ -269,17 +248,15 @@ func TestShardedSet_Clear(t *testing.T) {
 
 // TestShardedSet_ShardCount tests the ShardCount method.
 func TestShardedSet_ShardCount(t *testing.T) {
-	s, err := NewShardedSet()
-	if err != nil {
-		t.Fatalf("NewShardedSet failed: %v", err)
-	}
+	numShards := 16
+	s := NewSet(numShards)
 
 	// 1. Test invalid indices
 	if count := s.ShardCount(-1); count != -1 {
 		t.Errorf("ShardCount(-1) = %d; want -1", count)
 	}
-	if count := s.ShardCount(numSetShards); count != -1 {
-		t.Errorf("ShardCount(%d) = %d; want -1", numSetShards, count)
+	if count := s.ShardCount(numShards); count != -1 {
+		t.Errorf("ShardCount(%d) = %d; want -1", numShards, count)
 	}
 
 	// 2. Test on an empty set
@@ -294,7 +271,7 @@ func TestShardedSet_ShardCount(t *testing.T) {
 	}
 
 	sumOfShardCounts := 0
-	for i := 0; i < numSetShards; i++ {
+	for i := 0; i < numShards; i++ {
 		sumOfShardCounts += s.ShardCount(i)
 	}
 
@@ -305,15 +282,13 @@ func TestShardedSet_ShardCount(t *testing.T) {
 
 // TestShardedSet_GetShardIndex tests the GetShardIndex method.
 func TestShardedSet_GetShardIndex(t *testing.T) {
-	s, err := NewShardedSet()
-	if err != nil {
-		t.Fatalf("NewShardedSet failed: %v", err)
-	}
+	numShards := 16
+	s := NewSet(numShards)
 	key := "my-test-key"
 
 	// 1. Get the shard index for a key
 	index := s.GetShardIndex(key)
-	if index < 0 || index >= numSetShards {
+	if index < 0 || index >= numShards {
 		t.Fatalf("GetShardIndex(%q) returned an out-of-bounds index: %d", key, index)
 	}
 
@@ -330,10 +305,7 @@ func TestShardedSet_GetShardIndex(t *testing.T) {
 
 // TestShardedSet_LoadOrStore tests the LoadOrStore method.
 func TestShardedSet_LoadOrStore(t *testing.T) {
-	s, err := NewShardedSet()
-	if err != nil {
-		t.Fatalf("NewShardedSet failed: %v", err)
-	}
+	s := NewSet(16)
 	key := "test_key"
 
 	// 1. First time storing the key

@@ -51,6 +51,7 @@ import (
 
 	"github.com/paulschiretz/pgl-backup/pkg/limiter"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/pool"
 	"github.com/paulschiretz/pgl-backup/pkg/sharded"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
@@ -71,12 +72,13 @@ type mirrorItem struct {
 type nativeSyncer struct {
 
 	// Read buffer pool
-	ioBufferPool *sync.Pool
+	ioBufferPool *pool.FixedBufferPool
 	ioBufferSize int64
 
 	// Limiter for sequential writes
 	readAheadLimiter *limiter.Memory
 	readAheadLimit   int64
+	readAheadPool    *pool.BucketedBufferPool
 
 	// ctx is the cancellable context for the entire run.
 	ctx context.Context
@@ -107,11 +109,11 @@ type nativeSyncer struct {
 	// non-excluded relative path found in the source directory. During the mirror phase, it is
 	// read to determine which paths in the destination are no longer present in the source
 	// and should be deleted.
-	existingRelSourcePaths *sharded.ShardedSet
+	existingRelSourcePaths *sharded.Set
 
 	// syncedDirCache tracks directories that have ALREADY been created in the destination
 	// by any syncWorker. This prevents duplicate MkdirAll calls across the concurrent pool.
-	syncedDirCache *sharded.ShardedSet
+	syncedDirCache *sharded.Set
 
 	// Synchronizes directory creation/conversion
 	// syncedDirSFGroup is used to prevent a "thundering herd" problem when multiple
@@ -124,7 +126,7 @@ type nativeSyncer struct {
 	// Optimization: syncSourceDirInfoCache is a concurrent map populated by the syncItemProducer. It stores the
 	// PathInfo for every directory found in the source. This serves as a cache to avoid
 	// redundant Lstat calls by workers needing to create parent directories.
-	syncSourceDirInfoCache *sharded.ShardedMap
+	syncSourceDirInfoCache *sharded.Map
 
 	// Optimization: syncTargetLStatCache is a lazy-loaded cache of destination directory lstat entries.
 	// It is populated on-demand by the first worker to enter a directory via os.ReadDir.
@@ -144,7 +146,7 @@ type nativeSyncer struct {
 
 	// syncErrs is a concurrent map that captures non-fatal I/O errors from any worker,
 	// keyed by the relative path of the file that failed.
-	syncErrs *sharded.ShardedMap
+	syncErrs *sharded.Map
 
 	// mirrorWg waits for the mirrorItemProducer and mirrorWorkers to finish processing all deletion items.
 	mirrorWg sync.WaitGroup
@@ -156,11 +158,11 @@ type nativeSyncer struct {
 	criticalMirrorErrsChan chan error
 
 	// mirrorErrs captures non-fatal I/O errors from mirror workers.
-	mirrorErrs *sharded.ShardedMap
+	mirrorErrs *sharded.Map
 
 	// mirrorDirsToDelete tracks directories in the destination that need to be deleted.
 	// Populated by mirrorItemProducer, consumed by handleMirror.
-	mirrorDirsToDelete *sharded.ShardedSet
+	mirrorDirsToDelete *sharded.Set
 
 	// Pool for syncItem structs to reduce GC pressure
 	syncItemPool *sync.Pool
@@ -181,36 +183,11 @@ func newNativeSyncer(
 	retryCount int,
 	retryWait, modTimeWindow time.Duration,
 	overwriteBehavior OverwriteBehavior,
-	ioBufferPool *sync.Pool, ioBufferSize int64,
-	readAheadLimiter *limiter.Memory, readAheadLimit int64,
+	ioBufferPool *pool.FixedBufferPool, ioBufferSize int64,
+	readAheadLimiter *limiter.Memory, readAheadLimit int64, readAheadPool *pool.BucketedBufferPool,
 	numSyncWorkers, numMirrorWorkers int,
 	metrics Metrics,
 ) (*nativeSyncer, error) {
-	existingRelSourcePaths, err := sharded.NewShardedSet()
-	if err != nil {
-		return nil, err
-	}
-	syncSourceDirInfoCache, err := sharded.NewShardedMap()
-	if err != nil {
-		return nil, err
-	}
-	syncedDirCache, err := sharded.NewShardedSet()
-	if err != nil {
-		return nil, err
-	}
-	syncErrs, err := sharded.NewShardedMap()
-	if err != nil {
-		return nil, err
-	}
-	mirrorErrs, err := sharded.NewShardedMap()
-	if err != nil {
-		return nil, err
-	}
-	mirrorDirsToDelete, err := sharded.NewShardedSet()
-	if err != nil {
-		return nil, err
-	}
-
 	return &nativeSyncer{
 		numSyncWorkers:         numSyncWorkers,
 		numMirrorWorkers:       numMirrorWorkers,
@@ -226,21 +203,22 @@ func newNativeSyncer(
 		modTimeWindow:          modTimeWindow,
 		overwriteBehavior:      overwriteBehavior,
 		mirror:                 mirror,
-		existingRelSourcePaths: existingRelSourcePaths,
-		syncedDirCache:         syncedDirCache,
-		syncSourceDirInfoCache: syncSourceDirInfoCache,
+		existingRelSourcePaths: sharded.NewSet(32),
+		syncedDirCache:         sharded.NewSet(32),
+		syncSourceDirInfoCache: sharded.NewMap(32),
 		syncTargetLStatCache:   newLStatSnapshotStore(),
 		syncItemsChan:          make(chan *syncItem, numSyncWorkers*1024),
 		criticalSyncErrsChan:   make(chan error, 1),
-		syncErrs:               syncErrs,
+		syncErrs:               sharded.NewMap(16),
 		mirrorItemsChan:        make(chan *mirrorItem, numMirrorWorkers*1024),
 		criticalMirrorErrsChan: make(chan error, 1),
-		mirrorErrs:             mirrorErrs,
-		mirrorDirsToDelete:     mirrorDirsToDelete,
+		mirrorErrs:             sharded.NewMap(16),
+		mirrorDirsToDelete:     sharded.NewSet(16),
 		ioBufferPool:           ioBufferPool,
 		ioBufferSize:           ioBufferSize,
 		readAheadLimiter:       readAheadLimiter,
 		readAheadLimit:         readAheadLimit,
+		readAheadPool:          readAheadPool,
 		syncItemPool: &sync.Pool{
 			New: func() any {
 				return new(syncItem)
@@ -298,10 +276,8 @@ func (s *nativeSyncer) copyFile(absSrcPath, absTrgPath string, item *syncItem) e
 			defer in.Close()
 
 			// Prepare Buffer for Copy
-			bufPtr := s.ioBufferPool.Get().(*[]byte)
+			bufPtr := s.ioBufferPool.Get()
 			defer s.ioBufferPool.Put(bufPtr)
-			buf := *bufPtr
-			buf = buf[:cap(buf)]
 
 			mr := s.syncMetricReaderPool.Get().(*syncMetricReader)
 			mr.Reset(in)
@@ -314,11 +290,16 @@ func (s *nativeSyncer) copyFile(absSrcPath, absTrgPath string, item *syncItem) e
 				// Try to buffer in memory
 				if s.readAheadLimiter.TryAcquire(item.PathInfo.Size) {
 					defer s.readAheadLimiter.Release(item.PathInfo.Size)
-					data := make([]byte, int(item.PathInfo.Size))
-					if _, err := io.ReadFull(mr, data); err != nil {
+
+					// Use the pool for the read-ahead buffer
+					readAheadDataPtr := s.readAheadPool.Get(item.PathInfo.Size)
+					// Put the buffer back regardless of whether the read succeeds
+					defer s.readAheadPool.Put(readAheadDataPtr)
+
+					if _, err := io.ReadFull(mr, *readAheadDataPtr); err != nil {
 						return fmt.Errorf("failed to read file into memory: %w", err)
 					}
-					reader = bytes.NewReader(data)
+					reader = bytes.NewReader(*readAheadDataPtr)
 				}
 			}
 
@@ -369,7 +350,7 @@ func (s *nativeSyncer) copyFile(absSrcPath, absTrgPath string, item *syncItem) e
 				defer s.syncMetricWriterPool.Put(mw)
 
 				// Copy Content
-				if _, err := io.CopyBuffer(mw, reader, buf); err != nil {
+				if _, err := io.CopyBuffer(mw, reader, *bufPtr); err != nil {
 					return fmt.Errorf("failed to copy content to %s: %w", absWritePath, err)
 				}
 
@@ -989,7 +970,7 @@ func (s *nativeSyncer) handleSync() error {
 
 	// Clear our Sync Optimization Caches when we are finished
 	defer func() {
-		s.syncSourceDirInfoCache = &sharded.ShardedMap{} // Clear memory immediately
+		s.syncSourceDirInfoCache = &sharded.Map{}        // Clear memory immediately
 		s.syncTargetLStatCache = newLStatSnapshotStore() // Clear memory immediately
 	}()
 

@@ -60,9 +60,9 @@ func (t *extractTask) extractBackup(absToExtractPath, absExtractTargetPath strin
 	var extr extractor
 	switch t.format {
 	case Zip:
-		extr = newZipExtractor(t.dryRun, t.format, t.ioBufferPool, t.metrics, t.overwriteBehavior, t.modTimeWindow)
+		extr = newZipExtractor(t.dryRun, t.format, t.ioBufferPool, t.ioBufferSize, t.metrics, t.overwriteBehavior, t.modTimeWindow)
 	case TarGz, TarZst:
-		extr = newTarExtractor(t.dryRun, t.format, t.ioBufferPool, t.metrics, t.overwriteBehavior, t.modTimeWindow)
+		extr = newTarExtractor(t.dryRun, t.format, t.ioBufferPool, t.ioBufferSize, t.metrics, t.overwriteBehavior, t.modTimeWindow)
 	default:
 		return fmt.Errorf("unsupported format: %s", t.format)
 	}

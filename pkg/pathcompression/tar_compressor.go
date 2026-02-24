@@ -15,17 +15,19 @@ import (
 	"github.com/klauspost/pgzip"
 	"github.com/paulschiretz/pgl-backup/pkg/limiter"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/pool"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
 type tarCompressor struct {
 	// Read buffer pool
-	ioBufferPool *sync.Pool
+	ioBufferPool *pool.FixedBufferPool
 	ioBufferSize int64
 
-	// Memory limiter for file readahead
+	// Limiter for sequential writes
 	readAheadLimiter *limiter.Memory
 	readAheadLimit   int64
+	readAheadPool    *pool.BucketedBufferPool
 
 	format  Format
 	level   Level
@@ -68,7 +70,7 @@ type tarItem struct {
 	info       os.FileInfo
 }
 
-func newTarCompressor(dryRun bool, format Format, level Level, ioBufferPool *sync.Pool, ioBufferSize int64, readAheadLimiter *limiter.Memory, readAheadLimit int64, numWorkers int, metrics Metrics) *tarCompressor {
+func newTarCompressor(dryRun bool, format Format, level Level, ioBufferPool *pool.FixedBufferPool, ioBufferSize int64, readAheadLimiter *limiter.Memory, readAheadLimit int64, readAheadPool *pool.BucketedBufferPool, numWorkers int, metrics Metrics) *tarCompressor {
 	return &tarCompressor{
 		dryRun:           dryRun,
 		format:           format,
@@ -81,6 +83,7 @@ func newTarCompressor(dryRun bool, format Format, level Level, ioBufferPool *syn
 		ioBufferSize:     ioBufferSize,
 		readAheadLimiter: readAheadLimiter,
 		readAheadLimit:   readAheadLimit,
+		readAheadPool:    readAheadPool,
 		tarItemPool: &sync.Pool{
 			New: func() any {
 				return new(tarItem)
@@ -293,15 +296,8 @@ func (c *tarCompressor) tarItemProducer() {
 
 func (c *tarCompressor) tarWorker() {
 	defer c.tarWg.Done()
-	bufPtr := c.ioBufferPool.Get().(*[]byte)
+	bufPtr := c.ioBufferPool.Get()
 	defer c.ioBufferPool.Put(bufPtr)
-
-	// Dereference the bufPtr to get the actual slice
-	buf := *bufPtr
-	// IMPORTANT: Ensure length is maxed out before use
-	// In case someone messed with it, always reset len to cap
-	// strictly for io.Read/Copy purposes.
-	buf = buf[:cap(buf)]
 
 	mr := c.compressMetricReaderPool.Get().(*compressMetricReader)
 	defer c.compressMetricReaderPool.Put(mr)
@@ -325,7 +321,7 @@ func (c *tarCompressor) tarWorker() {
 				if t.info.Mode()&os.ModeSymlink != 0 {
 					err = c.writeSymlink(t.absSrcPath, t.relPathKey, t.info)
 				} else {
-					err = c.writeFile(t.absSrcPath, t.relPathKey, t.info, buf, mr)
+					err = c.writeFile(t.absSrcPath, t.relPathKey, t.info, bufPtr, mr)
 				}
 				if err != nil {
 					c.sendErr(err)
@@ -360,7 +356,7 @@ func (c *tarCompressor) writeSymlink(absSrcPath, relPathKey string, info os.File
 	return c.tw.WriteHeader(header)
 }
 
-func (c *tarCompressor) writeFile(absSrcPath, relPathKey string, info os.FileInfo, buf []byte, mr *compressMetricReader) error {
+func (c *tarCompressor) writeFile(absSrcPath, relPathKey string, info os.FileInfo, bufPtr *[]byte, mr *compressMetricReader) error {
 
 	// 1. Open File (Securely)
 	// Security: TOCTOU check
@@ -388,8 +384,12 @@ func (c *tarCompressor) writeFile(absSrcPath, relPathKey string, info os.FileInf
 	if c.readAheadLimiter.TryAcquire(fSize) {
 		defer c.readAheadLimiter.Release(fSize)
 
-		data := make([]byte, fSize)
-		if _, err := io.ReadFull(mr, data); err != nil {
+		// Use the pool for the read-ahead buffer
+		readAheadDataPtr := c.readAheadPool.Get(fSize)
+		// Put the buffer back regardless of whether the read succeeds
+		defer c.readAheadPool.Put(readAheadDataPtr)
+
+		if _, err := io.ReadFull(mr, *readAheadDataPtr); err != nil {
 			return fmt.Errorf("failed to read file %s: %w", absSrcPath, err)
 		}
 		// Close early to free FD
@@ -401,7 +401,7 @@ func (c *tarCompressor) writeFile(absSrcPath, relPathKey string, info os.FileInf
 		if err := c.tw.WriteHeader(header); err != nil {
 			return fmt.Errorf("failed to write tar header for %s: %w", relPathKey, err)
 		}
-		_, err = io.CopyBuffer(c.tw, bytes.NewReader(data), buf)
+		_, err = io.CopyBuffer(c.tw, bytes.NewReader(*readAheadDataPtr), *bufPtr)
 		return err
 	}
 
@@ -413,7 +413,7 @@ func (c *tarCompressor) writeFile(absSrcPath, relPathKey string, info os.FileInf
 		return fmt.Errorf("failed to write tar header for %s: %w", relPathKey, err)
 	}
 
-	_, err = io.CopyBuffer(c.tw, mr, buf)
+	_, err = io.CopyBuffer(c.tw, mr, *bufPtr)
 	return err
 }
 

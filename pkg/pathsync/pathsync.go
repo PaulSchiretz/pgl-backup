@@ -6,7 +6,6 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/buildinfo"
@@ -14,6 +13,7 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/limiter"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/pool"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
@@ -21,11 +21,14 @@ var ErrDisabled = hints.New("sync is disabled")
 
 // PathSyncer orchestrates the file synchronization process.
 type PathSyncer struct {
-	ioBufferPool *sync.Pool // pointer to avoid copying the noCopy field if the struct is ever passed by value
+	ioBufferPool *pool.FixedBufferPool
 	ioBufferSize int64
 
 	readAheadLimiter *limiter.Memory
 	readAheadLimit   int64
+
+	// 1KB min, 64MB max
+	readAheadPool *pool.BucketedBufferPool
 
 	numSyncWorkers   int
 	numMirrorWorkers int
@@ -39,16 +42,11 @@ func NewPathSyncer(bufferSizeKB, readAheadLimitKB int64, numSyncWorkers int, num
 	ioBufferSize := bufferSizeKB * 1024 // Buffer size is configured in KB, so multiply by 1024.
 	readAheadLimit := readAheadLimitKB * 1024
 	return &PathSyncer{
-		ioBufferPool: &sync.Pool{
-			New: func() any {
-				// Allocate a slice with a specific capacity
-				b := make([]byte, ioBufferSize)
-				return &b // We store a pointer to the slice header
-			},
-		},
+		ioBufferPool:     pool.NewFixedBuffer(ioBufferSize),
 		ioBufferSize:     ioBufferSize,
 		readAheadLimiter: limiter.NewMemory(readAheadLimit, ioBufferSize),
 		readAheadLimit:   readAheadLimit,
+		readAheadPool:    pool.NewBucketedBufferPool(1024, 64*1024*1024), // 1KB min, 64MB max as we do not want to Pool tiny or very large Buffers
 		numSyncWorkers:   numSyncWorkers,
 		numMirrorWorkers: numMirrorWorkers,
 	}

@@ -1,38 +1,35 @@
 package sharded
 
 import (
-	"fmt"
 	"sync"
 )
 
 // Define a sharded structure
-const numSetShards = 64 // Power of 2 for fast bitwise mod
-
 type setShard struct {
 	mu    sync.RWMutex
 	items map[string]struct{}
 }
 
-type ShardedSet []*setShard
+type Set []*setShard
 
-func NewShardedSet() (*ShardedSet, error) {
-	if !isPowerOfTwo(numSetShards) {
-		return nil, fmt.Errorf("numSetShards must be a power of 2")
+func NewSet(numShards int) *Set {
+	if !isPowerOfTwo(numShards) {
+		panic("num shards must be a power of 2")
 	}
-	s := make(ShardedSet, numSetShards)
-	for i := range numSetShards {
+	s := make(Set, numShards)
+	for i := range numShards {
 		s[i] = &setShard{items: make(map[string]struct{})}
 	}
-	return &s, nil
+	return &s
 }
 
-func (s *ShardedSet) getShard(key string) *setShard {
-	shardIndex := getShardIndex(key, numSetShards)
+func (s *Set) getShard(key string) *setShard {
+	shardIndex := getShardIndex(key, len(*s))
 	return (*s)[shardIndex]
 }
 
 // Store adds a key-value pair to the map.
-func (s *ShardedSet) Store(key string) {
+func (s *Set) Store(key string) {
 	shard := s.getShard(key)
 	shard.mu.Lock()
 	shard.items[key] = struct{}{}
@@ -40,7 +37,7 @@ func (s *ShardedSet) Store(key string) {
 }
 
 // Has checks only for the presence of a key.
-func (s *ShardedSet) Has(key string) bool {
+func (s *Set) Has(key string) bool {
 	shard := s.getShard(key)
 	shard.mu.RLock()
 	_, exists := shard.items[key]
@@ -50,7 +47,7 @@ func (s *ShardedSet) Has(key string) bool {
 
 // LoadOrStore ensures a key is present in the set, returning true if it was already present.
 // It returns false if the key was newly stored. This is an atomic operation.
-func (s *ShardedSet) LoadOrStore(key string) (loaded bool) {
+func (s *Set) LoadOrStore(key string) (loaded bool) {
 	shard := s.getShard(key)
 	shard.mu.Lock()
 	_, loaded = shard.items[key]
@@ -61,7 +58,7 @@ func (s *ShardedSet) LoadOrStore(key string) (loaded bool) {
 	return loaded
 }
 
-func (s *ShardedSet) Delete(key string) {
+func (s *Set) Delete(key string) {
 	shard := s.getShard(key)
 	shard.mu.Lock()
 	delete(shard.items, key)
@@ -69,9 +66,9 @@ func (s *ShardedSet) Delete(key string) {
 }
 
 // Count returns the total number of elements in the set.
-func (s *ShardedSet) Count() int {
+func (s *Set) Count() int {
 	count := 0
-	for i := range numSetShards {
+	for i := range len(*s) {
 		shard := (*s)[i]
 		shard.mu.RLock()
 		count += len(shard.items)
@@ -82,10 +79,10 @@ func (s *ShardedSet) Count() int {
 
 // Keys returns a slice of all keys in the set.
 // The order of keys is not guaranteed.
-func (s *ShardedSet) Keys() []string {
+func (s *Set) Keys() []string {
 	// Pre-allocate the slice with the total number of elements to avoid re-allocations.
 	keys := make([]string, 0, s.Count())
-	for i := range numSetShards {
+	for i := range len(*s) {
 		shard := (*s)[i]
 		shard.mu.RLock()
 		for k := range shard.items {
@@ -102,8 +99,8 @@ func (s *ShardedSet) Keys() []string {
 // The iteration is performed by locking one shard at a time, so it does not
 // block the entire set. However, the set should not be modified by the
 // callback function f.
-func (s *ShardedSet) Range(f func(key string) bool) {
-	for i := range numSetShards {
+func (s *Set) Range(f func(key string) bool) {
+	for i := range len(*s) {
 		shard := (*s)[i]
 		shard.mu.RLock()
 		for k := range shard.items {
@@ -117,8 +114,8 @@ func (s *ShardedSet) Range(f func(key string) bool) {
 }
 
 // Clear removes all keys from the set.
-func (s *ShardedSet) Clear() {
-	for i := range numSetShards {
+func (s *Set) Clear() {
+	for i := range len(*s) {
 		shard := (*s)[i]
 		shard.mu.Lock()
 		shard.items = make(map[string]struct{})
@@ -128,8 +125,8 @@ func (s *ShardedSet) Clear() {
 
 // ShardCount returns the number of elements in a specific shard.
 // It returns -1 if the shardIndex is out of bounds.
-func (s *ShardedSet) ShardCount(shardIndex int) int {
-	if shardIndex < 0 || shardIndex >= numSetShards {
+func (s *Set) ShardCount(shardIndex int) int {
+	if shardIndex < 0 || shardIndex >= len(*s) {
 		return -1
 	}
 	shard := (*s)[shardIndex]
@@ -141,6 +138,6 @@ func (s *ShardedSet) ShardCount(shardIndex int) int {
 
 // GetShardIndex returns the shard index for a given key.
 // This is useful for diagnostics or understanding key distribution.
-func (s *ShardedSet) GetShardIndex(key string) int {
-	return getShardIndex(key, numSetShards)
+func (s *Set) GetShardIndex(key string) int {
+	return getShardIndex(key, len(*s))
 }
