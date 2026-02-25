@@ -61,8 +61,6 @@ type PrunePlan struct {
 	Preflight            *preflight.Plan
 	RetentionIncremental *pathretention.Plan
 	RetentionSnapshot    *pathretention.Plan
-
-	HookRunner *hook.Plan
 }
 
 type PathKeys struct {
@@ -471,14 +469,6 @@ func GeneratePrunePlan(cfg config.Config) (*PrunePlan, error) {
 			DryRun:   dryRun,
 			FailFast: failFast,
 			Metrics:  metrics,
-		},
-		HookRunner: &hook.Plan{
-			Enabled:          false,
-			PreHookCommands:  []string{},
-			PostHookCommands: []string{},
-			DryRun:           dryRun,
-			FailFast:         failFast,
-			Metrics:          metrics,
 		},
 	}, nil
 }
