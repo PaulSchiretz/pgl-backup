@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/config"
+	"github.com/paulschiretz/pgl-backup/pkg/hook"
 	"github.com/paulschiretz/pgl-backup/pkg/patharchive"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
 	"github.com/paulschiretz/pgl-backup/pkg/pathretention"
@@ -13,11 +14,7 @@ import (
 )
 
 type BackupPlan struct {
-	Mode     Mode
-	DryRun   bool
-	FailFast bool
-	Metrics  bool
-
+	Mode  Mode
 	Paths PathKeys
 
 	Preflight   *preflight.Plan
@@ -26,8 +23,7 @@ type BackupPlan struct {
 	Retention   *pathretention.Plan
 	Compression *pathcompression.CompressPlan
 
-	PreBackupHooks  []string
-	PostBackupHooks []string
+	HookRunner *hook.Plan
 }
 
 type ListPlan struct {
@@ -44,10 +40,7 @@ type ListPlan struct {
 }
 
 type RestorePlan struct {
-	Mode     Mode
-	DryRun   bool
-	FailFast bool
-	Metrics  bool
+	Mode Mode
 
 	PathsIncremental PathKeys
 	PathsSnapshot    PathKeys
@@ -56,15 +49,11 @@ type RestorePlan struct {
 	Sync       *pathsync.Plan
 	Extraction *pathcompression.ExtractPlan
 
-	PreRestoreHooks  []string
-	PostRestoreHooks []string
+	HookRunner *hook.Plan
 }
 
 type PrunePlan struct {
-	Mode     Mode
-	DryRun   bool
-	FailFast bool
-	Metrics  bool
+	Mode Mode
 
 	PathsIncremental PathKeys
 	PathsSnapshot    PathKeys
@@ -72,6 +61,8 @@ type PrunePlan struct {
 	Preflight            *preflight.Plan
 	RetentionIncremental *pathretention.Plan
 	RetentionSnapshot    *pathretention.Plan
+
+	HookRunner *hook.Plan
 }
 
 type PathKeys struct {
@@ -162,10 +153,9 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 			IntervalSeconds: cfg.Archive.IntervalSeconds,
 			IntervalMode:    archiveIntervalMode,
 			Constraints:     archiveIntervalConstraints,
-			// Global Flags
-			DryRun:   dryRun,
-			FailFast: failFast,
-			Metrics:  metrics,
+			DryRun:          dryRun,
+			FailFast:        failFast,
+			Metrics:         metrics,
 		}
 	} else {
 		// Snapshot: Always enabled, manual mode, 0 interval (immediate)
@@ -174,23 +164,16 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 			IntervalSeconds: 0,
 			IntervalMode:    patharchive.Manual,
 			Constraints:     patharchive.IntervalModeConstraints{},
-			// Global Flags
-			DryRun:   dryRun,
-			FailFast: failFast,
-			Metrics:  metrics,
+			DryRun:          dryRun,
+			FailFast:        failFast,
+			Metrics:         metrics,
 		}
 	}
 
 	// finish the plan
 	return &BackupPlan{
 
-		Mode:     mode,
-		DryRun:   dryRun,
-		Metrics:  metrics,
-		FailFast: failFast,
-
-		PreBackupHooks:  cfg.Hooks.PreBackup,
-		PostBackupHooks: cfg.Hooks.PostBackup,
+		Mode: mode,
 
 		Paths: PathKeys{
 			RelCurrentPathKey:  pathCfg.Current,
@@ -205,7 +188,7 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 			CaseMismatch:       !cfg.Runtime.IgnoreCaseMismatch,
 			PathNesting:        true,
 			EnsureTargetExists: true,
-			// Global Flags
+
 			DryRun:   dryRun,
 			FailFast: failFast,
 			Metrics:  metrics,
@@ -226,7 +209,6 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 			ModTimeWindow:     time.Duration(cfg.Sync.ModTimeWindowSeconds) * time.Second,
 			OverwriteBehavior: syncOverwriteBehavior,
 
-			// Global Flags
 			DryRun:   dryRun,
 			FailFast: failFast,
 			Metrics:  metrics,
@@ -239,7 +221,7 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 			Weeks:   retentionPolicy.Weeks,
 			Months:  retentionPolicy.Months,
 			Years:   retentionPolicy.Years,
-			// Global Flags
+
 			DryRun:   dryRun,
 			FailFast: failFast,
 			Metrics:  metrics,
@@ -248,10 +230,18 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 			Enabled: cfg.Compression.Enabled,
 			Format:  compressionFormat,
 			Level:   compressionLevel,
-			// Global Flags
+
 			DryRun:   dryRun,
 			FailFast: failFast,
 			Metrics:  metrics,
+		},
+		HookRunner: &hook.Plan{
+			Enabled:          len(cfg.Hooks.PreBackup) > 0 || len(cfg.Hooks.PostBackup) > 0,
+			PreHookCommands:  cfg.Hooks.PreBackup,
+			PostHookCommands: cfg.Hooks.PostBackup,
+			DryRun:           dryRun,
+			FailFast:         failFast,
+			Metrics:          metrics,
 		},
 	}, nil
 }
@@ -293,7 +283,6 @@ func GenerateListPlan(cfg config.Config) (*ListPlan, error) {
 			PathNesting:        false,
 			EnsureTargetExists: false,
 
-			// Global Flags
 			DryRun:   dryRun,
 			FailFast: failFast,
 			Metrics:  metrics,
@@ -348,11 +337,7 @@ func GenerateRestorePlan(cfg config.Config) (*RestorePlan, error) {
 
 	// finish the plan
 	return &RestorePlan{
-
-		Mode:     mode,
-		DryRun:   dryRun,
-		Metrics:  metrics,
-		FailFast: failFast,
+		Mode: mode,
 
 		PathsIncremental: PathKeys{
 			RelCurrentPathKey:  cfg.Paths.Incremental.Current,
@@ -368,9 +353,6 @@ func GenerateRestorePlan(cfg config.Config) (*RestorePlan, error) {
 			ArchiveEntryPrefix: cfg.Paths.Snapshot.ArchiveEntryPrefix,
 		},
 
-		PreRestoreHooks:  cfg.Hooks.PreRestore,
-		PostRestoreHooks: cfg.Hooks.PostRestore,
-
 		Preflight: &preflight.Plan{
 			SourceAccessible:   true,
 			TargetAccessible:   true,
@@ -378,7 +360,7 @@ func GenerateRestorePlan(cfg config.Config) (*RestorePlan, error) {
 			CaseMismatch:       !cfg.Runtime.IgnoreCaseMismatch,
 			PathNesting:        true,
 			EnsureTargetExists: true,
-			// Global Flags
+
 			DryRun:   dryRun,
 			FailFast: failFast,
 			Metrics:  metrics,
@@ -399,7 +381,6 @@ func GenerateRestorePlan(cfg config.Config) (*RestorePlan, error) {
 			ModTimeWindow:     time.Duration(cfg.Sync.ModTimeWindowSeconds) * time.Second,
 			OverwriteBehavior: syncOverwriteBehavior,
 
-			// Global Flags
 			DryRun:   dryRun,
 			FailFast: failFast,
 			Metrics:  metrics,
@@ -408,10 +389,18 @@ func GenerateRestorePlan(cfg config.Config) (*RestorePlan, error) {
 			Enabled:           cfg.Compression.Enabled,
 			OverwriteBehavior: extractOverwriteBehavior,
 			ModTimeWindow:     time.Duration(cfg.Sync.ModTimeWindowSeconds) * time.Second,
-			// Global Flags
+
 			DryRun:   dryRun,
 			FailFast: failFast,
 			Metrics:  metrics,
+		},
+		HookRunner: &hook.Plan{
+			Enabled:          len(cfg.Hooks.PreRestore) > 0 || len(cfg.Hooks.PostRestore) > 0,
+			PreHookCommands:  cfg.Hooks.PreRestore,
+			PostHookCommands: cfg.Hooks.PostRestore,
+			DryRun:           dryRun,
+			FailFast:         failFast,
+			Metrics:          metrics,
 		},
 	}, nil
 }
@@ -430,11 +419,7 @@ func GeneratePrunePlan(cfg config.Config) (*PrunePlan, error) {
 
 	// finish the plan
 	return &PrunePlan{
-		Mode:     mode,
-		DryRun:   dryRun,
-		Metrics:  metrics,
-		FailFast: failFast,
-
+		Mode: mode,
 		Preflight: &preflight.Plan{
 			SourceAccessible:   false,
 			TargetAccessible:   true,
@@ -443,7 +428,6 @@ func GeneratePrunePlan(cfg config.Config) (*PrunePlan, error) {
 			PathNesting:        false,
 			EnsureTargetExists: false,
 
-			// Global Flags
 			DryRun:   dryRun,
 			FailFast: failFast,
 			Metrics:  metrics,
@@ -464,7 +448,6 @@ func GeneratePrunePlan(cfg config.Config) (*PrunePlan, error) {
 			Months:  cfg.Retention.Incremental.Months,
 			Years:   cfg.Retention.Incremental.Years,
 
-			// Global Flags
 			DryRun:   dryRun,
 			FailFast: failFast,
 			Metrics:  metrics,
@@ -485,10 +468,17 @@ func GeneratePrunePlan(cfg config.Config) (*PrunePlan, error) {
 			Months:  cfg.Retention.Snapshot.Months,
 			Years:   cfg.Retention.Snapshot.Years,
 
-			// Global Flags
 			DryRun:   dryRun,
 			FailFast: failFast,
 			Metrics:  metrics,
+		},
+		HookRunner: &hook.Plan{
+			Enabled:          false,
+			PreHookCommands:  []string{},
+			PostHookCommands: []string{},
+			DryRun:           dryRun,
+			FailFast:         failFast,
+			Metrics:          metrics,
 		},
 	}, nil
 }

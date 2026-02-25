@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/buildinfo"
 	"github.com/paulschiretz/pgl-backup/pkg/config"
 	"github.com/paulschiretz/pgl-backup/pkg/engine"
 	"github.com/paulschiretz/pgl-backup/pkg/flagparse"
+	"github.com/paulschiretz/pgl-backup/pkg/hook"
 	"github.com/paulschiretz/pgl-backup/pkg/patharchive"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
 	"github.com/paulschiretz/pgl-backup/pkg/pathretention"
@@ -84,6 +86,7 @@ func RunBackup(ctx context.Context, flagMap map[string]any) error {
 	// Create the runner and feed it with our leaf workers
 	runner := engine.NewRunner(
 		preflight.NewValidator(),
+		hook.NewHookExecutor(exec.CommandContext),
 		pathsync.NewPathSyncer(
 			runConfig.Engine.Performance.BufferSizeKB,
 			runConfig.Engine.Performance.ReadAheadLimitKB,

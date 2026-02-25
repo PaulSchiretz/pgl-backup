@@ -2,9 +2,9 @@ package engine
 
 import (
 	"context"
-	"os/exec"
 	"time"
 
+	"github.com/paulschiretz/pgl-backup/pkg/hook"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/patharchive"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
@@ -40,6 +40,11 @@ type Compressor interface {
 	Extract(ctx context.Context, absBasePath string, toExtract metafile.MetafileInfo, absExtractTargetPath string, p *pathcompression.ExtractPlan, timestampUTC time.Time) error
 }
 
+type HookRunner interface {
+	RunPreHook(ctx context.Context, hookName string, p *hook.Plan, timestampUTC time.Time) error
+	RunPostHook(ctx context.Context, hookName string, p *hook.Plan, timestampUTC time.Time) error
+}
+
 // Runner is the central orchestrator.
 type Runner struct {
 	validator  Validator
@@ -47,25 +52,17 @@ type Runner struct {
 	archiver   Archiver
 	retainer   Retainer
 	compressor Compressor
-
-	// hookCommandExecutor allows mocking os/exec for testing hooks.
-	hookCommandExecutor func(ctx context.Context, name string, arg ...string) *exec.Cmd
+	hookRunner HookRunner
 }
 
 // NewRunner creates a new engine instance.
-func NewRunner(v Validator, s Syncer, a Archiver, r Retainer, c Compressor) *Runner {
+func NewRunner(v Validator, hr HookRunner, s Syncer, a Archiver, r Retainer, c Compressor) *Runner {
 	return &Runner{
-		validator:           v,
-		syncer:              s,
-		archiver:            a,
-		retainer:            r,
-		compressor:          c,
-		hookCommandExecutor: exec.CommandContext,
+		validator:  v,
+		syncer:     s,
+		archiver:   a,
+		retainer:   r,
+		compressor: c,
+		hookRunner: hr,
 	}
-}
-
-// SetHookCommandExecutor sets the command executor for hooks.
-// This is intended for testing purposes only to mock os/exec.
-func (r *Runner) SetHookCommandExecutor(executor func(ctx context.Context, name string, arg ...string) *exec.Cmd) {
-	r.hookCommandExecutor = executor
 }

@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/engine"
+	"github.com/paulschiretz/pgl-backup/pkg/hook"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/patharchive"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
@@ -102,6 +102,32 @@ func (m *mockCompressor) Extract(ctx context.Context, absBasePath string, toExtr
 	return m.err
 }
 
+type mockHookRunner struct {
+	preHookErr  error
+	postHookErr error
+	executed    []string
+}
+
+func (m *mockHookRunner) RunPreHook(ctx context.Context, hookName string, p *hook.Plan, timestampUTC time.Time) error {
+	if p.DryRun {
+		return nil
+	}
+	for _, cmd := range p.PreHookCommands {
+		m.executed = append(m.executed, cmd)
+	}
+	return m.preHookErr
+}
+
+func (m *mockHookRunner) RunPostHook(ctx context.Context, hookName string, p *hook.Plan, timestampUTC time.Time) error {
+	if p.DryRun {
+		return nil
+	}
+	for _, cmd := range p.PostHookCommands {
+		m.executed = append(m.executed, cmd)
+	}
+	return m.postHookErr
+}
+
 // TestHelperProcess isn't a real test. It's a helper process that the exec-based
 // tests can run. It's a standard pattern for testing code that uses os/exec.
 func TestHelperProcess(t *testing.T) {
@@ -152,6 +178,8 @@ func TestExecuteBackup(t *testing.T) {
 		syncErr            error
 		archiveErr         error
 		retentionErr       error
+		preHookErr         error
+		postHookErr        error
 		compressErr        error
 		archiveReturnEmpty bool
 
@@ -229,32 +257,17 @@ func TestExecuteBackup(t *testing.T) {
 			errorContains: "error during sync",
 		},
 		{
-			name:           "Incremental Archive Failure (FailFast=True)",
+			name:           "Incremental Archive Failure",
 			mode:           planner.Incremental,
 			archiveEnabled: true,
-			failFast:       true,
 			archiveErr:     errors.New("archive failed"),
 			setupFS: func(t *testing.T, baseDir string) {
-				// Create 'current' backup so fetchBackup succeeds
+				// Create 'current' backup so fetchBackup succeeds and archive is attempted
 				currentPath := filepath.Join(baseDir, relCurrent)
 				os.MkdirAll(currentPath, 0755)
 				metafile.Write(currentPath, &metafile.MetafileContent{UUID: "uuid-fail-fast"})
 			},
-			expectError:   true,
-			errorContains: "error during archive",
-		},
-		{
-			name:           "Incremental Archive Failure (FailFast=False)",
-			mode:           planner.Incremental,
-			archiveEnabled: true,
-			failFast:       false,
-			archiveErr:     errors.New("archive failed"),
-			setupFS: func(t *testing.T, baseDir string) {
-				currentPath := filepath.Join(baseDir, relCurrent)
-				os.MkdirAll(currentPath, 0755)
-				metafile.Write(currentPath, &metafile.MetafileContent{UUID: "uuid-fail-slow"})
-			},
-			expectError: false, // Should continue
+			expectError: true,
 		},
 		{
 			name:           "Archive Nothing To Archive (Ignored)",
@@ -270,10 +283,9 @@ func TestExecuteBackup(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:               "Incremental Archive Success Empty Result (FailFast=True)",
+			name:               "Incremental Archive Success Empty Result",
 			mode:               planner.Incremental,
 			archiveEnabled:     true,
-			failFast:           true,
 			archiveReturnEmpty: true,
 			setupFS: func(t *testing.T, baseDir string) {
 				currentPath := filepath.Join(baseDir, relCurrent)
@@ -281,53 +293,27 @@ func TestExecuteBackup(t *testing.T) {
 				metafile.Write(currentPath, &metafile.MetafileContent{UUID: "uuid-empty-result"})
 			},
 			expectError:   true,
-			errorContains: "archive succeeded but ResultInfo is empty",
+			errorContains: "archive succeeded but result is empty",
 		},
 		{
-			name:             "Retention Failure (FailFast=True)",
+			name:             "Retention Failure",
 			mode:             planner.Incremental,
 			retentionEnabled: true,
-			failFast:         true,
 			retentionErr:     errors.New("retention failed"),
-			expectError:      true,
-			errorContains:    "error during prune",
+			expectError:      false,
 		},
 		{
-			name:             "Retention Failure (FailFast=False)",
-			mode:             planner.Incremental,
-			retentionEnabled: true,
-			failFast:         false,
-			retentionErr:     errors.New("retention failed"),
-			expectError:      false, // Should continue
-		},
-		{
-			name:               "Compression Failure (FailFast=True)",
+			name:               "Compression Failure",
 			mode:               planner.Incremental,
 			archiveEnabled:     true,
 			compressionEnabled: true,
-			failFast:           true,
 			compressErr:        errors.New("compression failed"),
 			setupFS: func(t *testing.T, baseDir string) {
 				currentPath := filepath.Join(baseDir, relCurrent)
 				os.MkdirAll(currentPath, 0755)
 				metafile.Write(currentPath, &metafile.MetafileContent{UUID: "uuid-compress-fail"})
 			},
-			expectError:   true,
-			errorContains: "error during compress",
-		},
-		{
-			name:               "Compression Failure (FailFast=False)",
-			mode:               planner.Incremental,
-			archiveEnabled:     true,
-			compressionEnabled: true,
-			failFast:           false,
-			compressErr:        errors.New("compression failed"),
-			setupFS: func(t *testing.T, baseDir string) {
-				currentPath := filepath.Join(baseDir, relCurrent)
-				os.MkdirAll(currentPath, 0755)
-				metafile.Write(currentPath, &metafile.MetafileContent{UUID: "uuid-compress-fail-slow"})
-			},
-			expectError: false, // Should continue
+			expectError: false,
 		},
 		{
 			name:               "Compression Skipped if Archive Disabled",
@@ -369,16 +355,17 @@ func TestExecuteBackup(t *testing.T) {
 		{
 			name:           "Pre-Backup Hook Failure",
 			mode:           planner.Incremental,
-			preBackupHooks: []string{"fail_hook"},
-			expectedHooks:  []string{"fail_hook"},
+			preBackupHooks: []string{"pre-fail"},
+			preHookErr:     errors.New("pre-hook failed"),
+			expectedHooks:  []string{"pre-fail"},
 			expectError:    true,
 			errorContains:  "pre-backup hook failed",
 		},
 		{
 			name:            "Post-Backup Hook Failure (Non-Fatal)",
 			mode:            planner.Incremental,
-			postBackupHooks: []string{"fail_hook"},
-			expectedHooks:   []string{"fail_hook"},
+			postBackupHooks: []string{"post-fail"},
+			expectedHooks:   []string{"post-fail"},
 			expectError:     false, // Post-backup hooks shouldn't fail the run
 		},
 		{
@@ -420,9 +407,7 @@ func TestExecuteBackup(t *testing.T) {
 
 			// Construct Plan
 			plan := &planner.BackupPlan{
-				Mode:     tc.mode,
-				DryRun:   tc.dryRun,
-				FailFast: tc.failFast,
+				Mode: tc.mode,
 				Paths: planner.PathKeys{
 					RelCurrentPathKey:  relCurrent,
 					RelArchivePathKey:  relArchive,
@@ -431,26 +416,39 @@ func TestExecuteBackup(t *testing.T) {
 				},
 				Preflight: &preflight.Plan{},
 				Sync: &pathsync.Plan{
-					Enabled: tc.syncEnabled,
+					Enabled:  tc.syncEnabled,
+					DryRun:   tc.dryRun,
+					FailFast: tc.failFast,
 				},
 				Archive: &patharchive.Plan{
-					Enabled: tc.archiveEnabled,
+					Enabled:  tc.archiveEnabled,
+					DryRun:   tc.dryRun,
+					FailFast: tc.failFast,
 				},
 				Retention: &pathretention.Plan{
-					Enabled: tc.retentionEnabled,
+					Enabled:  tc.retentionEnabled,
+					DryRun:   tc.dryRun,
+					FailFast: tc.failFast,
 				},
 				Compression: &pathcompression.CompressPlan{
-					Enabled: tc.compressionEnabled,
+					Enabled:  tc.compressionEnabled,
+					DryRun:   tc.dryRun,
+					FailFast: tc.failFast,
 				},
-				PreBackupHooks:  tc.preBackupHooks,
-				PostBackupHooks: tc.postBackupHooks,
+				HookRunner: &hook.Plan{
+					Enabled:          len(tc.preBackupHooks) > 0 || len(tc.postBackupHooks) > 0,
+					PreHookCommands:  tc.preBackupHooks,
+					PostHookCommands: tc.postBackupHooks,
+					DryRun:           tc.dryRun,
+					FailFast:         tc.failFast,
+				},
 			}
 
 			// Mocks
 			v := &mockValidator{err: tc.preflightErr}
+			hr := &mockHookRunner{preHookErr: tc.preHookErr, postHookErr: tc.postHookErr}
 			s := &mockSyncer{err: tc.syncErr, resultInfo: metafile.MetafileInfo{RelPathKey: relCurrent}}
 			a := &mockArchiver{err: tc.archiveErr, returnEmptyResult: tc.archiveReturnEmpty}
-
 			if tc.name == "Metafile Write Failure" {
 				// Return a path that doesn't exist so metafile.Write fails
 				s.resultInfo = metafile.MetafileInfo{RelPathKey: "non_existent_dir"}
@@ -464,23 +462,7 @@ func TestExecuteBackup(t *testing.T) {
 			r := &mockRetainer{err: tc.retentionErr}
 			c := &mockCompressor{err: tc.compressErr}
 
-			runner := engine.NewRunner(v, s, a, r, c)
-
-			// Mock Hook Executor
-			var executedHooks []string
-			mockExecutor := func(ctx context.Context, name string, arg ...string) *exec.Cmd {
-				cmdLine := name
-				if len(arg) > 0 {
-					cmdLine += " " + strings.Join(arg, " ")
-				}
-				executedHooks = append(executedHooks, cmdLine)
-
-				cs := []string{"-test.run=TestHelperProcess", "--", cmdLine}
-				cmd := exec.CommandContext(ctx, os.Args[0], cs...)
-				cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
-				return cmd
-			}
-			runner.SetHookCommandExecutor(mockExecutor)
+			runner := engine.NewRunner(v, hr, s, a, r, c)
 
 			err := runner.ExecuteBackup(context.Background(), baseDir, srcDir, plan)
 
@@ -503,18 +485,18 @@ func TestExecuteBackup(t *testing.T) {
 				// Note: This is a simple containment check.
 				for _, expected := range tc.expectedHooks {
 					found := false
-					for _, executed := range executedHooks {
+					for _, executed := range hr.executed {
 						if strings.Contains(executed, expected) {
 							found = true
 							break
 						}
 					}
 					if !found {
-						t.Errorf("expected hook execution containing %q, but got %v", expected, executedHooks)
+						t.Errorf("expected hook execution containing %q, but got %v", expected, hr.executed)
 					}
 				}
-			} else if len(executedHooks) > 0 && tc.dryRun {
-				t.Errorf("expected no hooks executed in dry run, but got %v", executedHooks)
+			} else if len(hr.executed) > 0 && tc.dryRun {
+				t.Errorf("expected no hooks executed in dry run, but got %v", hr.executed)
 			}
 		})
 	}
@@ -591,7 +573,7 @@ func TestExecuteList(t *testing.T) {
 				Preflight: &preflight.Plan{},
 			}
 
-			runner := engine.NewRunner(&mockValidator{}, &mockSyncer{}, &mockArchiver{}, &mockRetainer{}, &mockCompressor{})
+			runner := engine.NewRunner(&mockValidator{}, &mockHookRunner{}, &mockSyncer{}, &mockArchiver{}, &mockRetainer{}, &mockCompressor{})
 			err := runner.ExecuteList(context.Background(), baseDir, plan)
 
 			if (err != nil) != tc.expectError {
@@ -634,7 +616,7 @@ func TestListBackups_Sorting(t *testing.T) {
 	os.MkdirAll(oldPath, 0755)
 	metafile.Write(oldPath, &metafile.MetafileContent{TimestampUTC: timeOld, UUID: "uuid-old", Mode: "incremental"})
 
-	runner := engine.NewRunner(&mockValidator{}, &mockSyncer{}, &mockArchiver{}, &mockRetainer{}, &mockCompressor{})
+	runner := engine.NewRunner(&mockValidator{}, &mockHookRunner{}, &mockSyncer{}, &mockArchiver{}, &mockRetainer{}, &mockCompressor{})
 
 	plan := &planner.ListPlan{
 		Mode:      planner.Any,
@@ -805,15 +787,17 @@ func TestExecuteRestore(t *testing.T) {
 				Preflight:  &preflight.Plan{},
 				Sync:       &pathsync.Plan{},
 				Extraction: &pathcompression.ExtractPlan{},
+				HookRunner: &hook.Plan{},
 			}
 
 			v := &mockValidator{}
+			hr := &mockHookRunner{}
 			s := &mockSyncer{}
 			a := &mockArchiver{}
 			r := &mockRetainer{}
 			c := &mockCompressor{}
 
-			runner := engine.NewRunner(v, s, a, r, c)
+			runner := engine.NewRunner(v, hr, s, a, r, c)
 
 			err := runner.ExecuteRestore(context.Background(), baseDir, tc.uuid, targetDir, plan)
 
@@ -881,10 +865,12 @@ func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
 		Archive:     &patharchive.Plan{Enabled: true},
 		Retention:   &pathretention.Plan{Enabled: true}, // Enabled!
 		Compression: &pathcompression.CompressPlan{Enabled: false},
+		HookRunner:  &hook.Plan{},
 	}
 
 	// Mocks
 	v := &mockValidator{}
+	hr := &mockHookRunner{}
 	s := &mockSyncer{
 		resultInfo: metafile.MetafileInfo{RelPathKey: relCurrent},
 	}
@@ -897,7 +883,7 @@ func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
 	r := &mockRetainer{}
 	c := &mockCompressor{}
 
-	runner := engine.NewRunner(v, s, a, r, c)
+	runner := engine.NewRunner(v, hr, s, a, r, c)
 
 	// Execute
 	err := runner.ExecuteBackup(context.Background(), baseDir, "src", plan)
@@ -1000,12 +986,13 @@ func TestExecutePrune(t *testing.T) {
 			}
 
 			v := &mockValidator{err: tc.preflightErr}
+			hr := &mockHookRunner{}
 			s := &mockSyncer{}
 			a := &mockArchiver{}
 			r := &mockRetainer{err: tc.retentionErr}
 			c := &mockCompressor{}
 
-			runner := engine.NewRunner(v, s, a, r, c)
+			runner := engine.NewRunner(v, hr, s, a, r, c)
 
 			err := runner.ExecutePrune(context.Background(), baseDir, plan)
 

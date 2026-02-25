@@ -55,16 +55,16 @@ func (r *PathRetainer) Prune(ctx context.Context, absBasePath string, toPrune []
 		return ErrDisabled
 	}
 
+	if len(toPrune) == 0 {
+		return ErrNothingToPrune
+	}
+
 	// NOTE: Even if retention is 0,0,0,0,0 and enabled, the backups that we just created are filetered before a call to this func. So it is safe to simply do what we are told.
 	// Check for cancellation
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
-	}
-
-	if len(toPrune) == 0 {
-		return ErrNothingToPrune
 	}
 
 	// Sort all backups from newest to oldest for consistent processing.

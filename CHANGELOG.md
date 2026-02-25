@@ -8,11 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v1.4.4] - 2026-XX-XX
 
 ### Changed
+- **Refactor**: Simplified and improved the robustness of the core backup and prune execution logic. The engine now attempts to run all planned steps (e.g., Archive, Sync, Prune, Compress) even if a non-critical one fails, logging the error before continuing.
 - **Refactor**: Updated `pool` package to use `int64` for buffer sizes, allowing for larger buffer configurations and consistent type usage across the codebase.
 - **Performance**: Optimized `pathsync` and `pathcompression` engines to avoid dereferencing buffer pointers until the I/O call, reducing stack copying overhead.
 - **Refactor**: Updated `BucketedBufferPool` and `FixedBufferPool` to strictly enforce power-of-two constraints and capacity checks on `Put`.
 
 ### Added
+
+### Fixed
+- **Error Handling**: The final exit status of a backup now correctly reflects a failure if either the critical `Sync` or `Archive` step fails, preventing silent failures.
+- **Error Handling**: A bug where the very first incremental backup would fail incorrectly with a "file does not exist" error.
+- **Error Handling**: An internal consistency issue where a successful archive operation that returned no path information would be silently ignored instead of correctly failing the backup.
 
 ## [v1.4.3] - 2026-02-22
 

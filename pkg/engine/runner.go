@@ -11,9 +11,12 @@ import (
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/hints"
+	"github.com/paulschiretz/pgl-backup/pkg/hook"
 	"github.com/paulschiretz/pgl-backup/pkg/lockfile"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/patharchive"
+	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
+	"github.com/paulschiretz/pgl-backup/pkg/pathretention"
 	"github.com/paulschiretz/pgl-backup/pkg/pathsync"
 	"github.com/paulschiretz/pgl-backup/pkg/planner"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
@@ -74,199 +77,213 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 	}
 	defer releaseLock()
 
-	// --- Pre-Backup Hooks ---
-	plog.Info("Running pre-backup hooks")
-	if err := r.runHooks(ctx, p.PreBackupHooks, "pre-backup", p.DryRun); err != nil {
-		// All pre-backup hook errors are fatal. We wrap the error with a message
-		// that distinguishes between a cancellation and a failure.
+	// Hooks
+	if err := r.runPreHook(ctx, "backup", p.HookRunner, timestampUTC); err != nil {
+		// Pre-hook errors are fatal.
 		errMsg := "pre-backup hook failed"
 		if errors.Is(err, context.Canceled) {
 			errMsg = "pre-backup hook canceled"
 		}
 		return fmt.Errorf("%s: %w", errMsg, err)
 	}
-
-	// --- Post-Backup Hooks (deferred) ---
-	// These will run at the end of the function, even if the backup fails.
 	defer func() {
-		plog.Info("Running post-backup hooks")
-		if err := r.runHooks(ctx, p.PostBackupHooks, "post-backup", p.DryRun); err != nil {
+		if err := r.runPostHook(ctx, "backup", p.HookRunner, timestampUTC); err != nil {
+			// Post-hook errors are non-fatal to the overall backup status, but should be logged.
+			errMsg := "post-backup hook failed"
 			if errors.Is(err, context.Canceled) {
 				plog.Info("post-backup hooks skipped due to cancellation.")
-			} else {
-				plog.Warn("post-backup hook failed", "error", err)
+				return
 			}
+			plog.Warn(errMsg, "error", err)
 		}
 	}()
 
 	plog.Info("Starting backup", "base", absBasePath, "source", absSourcePath, "mode", p.Mode)
 
-	var syncResult, archiveResult metafile.MetafileInfo
-
-	// Perform Archiving before Sync in Incremental mode
-	archiveErr := patharchive.ErrDisabled
-	if p.Archive.Enabled && p.Mode == planner.Incremental {
-		var toArchive metafile.MetafileInfo
-		toArchive, archiveErr = r.fetchBackup(absBasePath, p.Paths.RelCurrentPathKey)
-		if archiveErr != nil {
-			if !os.IsNotExist(archiveErr) { // This is a normal condition on the first incremental run; no previous current backup to archive.
-				archiveErr = fmt.Errorf("error reading backup for archive: %w", archiveErr)
-				if p.FailFast {
-					return archiveErr
-				}
-				plog.Warn("Error reading backup for archive, skipping", "error", archiveErr)
-			}
-		} else {
-			archiveResult, archiveErr = r.archiver.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, toArchive, p.Archive, timestampUTC)
-			if archiveErr != nil {
-				if errors.Is(archiveErr, context.Canceled) {
-					return archiveErr
-				}
-				if hints.IsHint(archiveErr) {
-					plog.Debug("Archiving skipped", "reason", archiveErr)
-				} else {
-					archiveErr = fmt.Errorf("error during archive: %w", archiveErr)
-					if p.FailFast {
-						return archiveErr
-					}
-					plog.Warn("Error during archive, skipping archive", "error", archiveErr)
-				}
-			} else if archiveResult.RelPathKey == "" {
-				archiveErr = fmt.Errorf("archive succeeded but ResultInfo is empty")
-				if p.FailFast {
-					return archiveErr
-				}
-				plog.Error("Error after archive, consistency check failed", "error", archiveErr)
-			}
-		}
-	}
-
-	// Perform the backup
-	syncErr := pathsync.ErrDisabled
-	if p.Sync.Enabled {
-		syncResult, syncErr = r.syncer.Sync(ctx, absBasePath, absSourcePath, p.Paths.RelCurrentPathKey, p.Paths.RelContentPathKey, p.Sync, timestampUTC)
-		if syncErr != nil {
-			if errors.Is(syncErr, context.Canceled) {
-				return syncErr
-			}
-			if hints.IsHint(syncErr) {
-				plog.Debug("Sync skipped", "reason", syncErr)
-			} else {
-				syncErr = fmt.Errorf("error during sync: %w", syncErr)
-				plog.Error("Sync failed", "error", syncErr)
-			}
-		} else {
-			// Sync successful. Write the metafile using the info populated by Sync.
-			if syncResult.RelPathKey == "" {
-				syncErr = fmt.Errorf("sync succeeded but ResultInfo is empty")
-				plog.Error("Metafile write failed", "error", syncErr)
-			} else {
-				absTargetCurrentPath := util.DenormalizedAbsPath(absBasePath, syncResult.RelPathKey)
-
-				if p.DryRun {
-					plog.Info("[DRY RUN] Would write metafile", "directory", absTargetCurrentPath)
-				} else {
-					if syncErr = metafile.Write(absTargetCurrentPath, &syncResult.Metadata); syncErr != nil {
-						syncErr = fmt.Errorf("failed to write metafile: %w", syncErr)
-						plog.Error("Metafile write failed", "error", syncErr)
-					}
-				}
-			}
-		}
-	}
-
-	// Perform Archiving for Snapshot mode. We are strict here with errors as Snapshot without Archiving makes no sense
-	if syncErr == nil && p.Archive.Enabled && p.Mode == planner.Snapshot {
-		var toArchive metafile.MetafileInfo
-		toArchive = syncResult
-		archiveResult, archiveErr = r.archiver.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, toArchive, p.Archive, timestampUTC)
-		if archiveErr != nil {
-			if errors.Is(archiveErr, context.Canceled) {
-				return archiveErr
-			}
-			if hints.Is(archiveErr, patharchive.ErrDisabled) {
-				plog.Debug("Archiving skipped", "reason", archiveErr)
-			} else {
-				return fmt.Errorf("error during archive: %w", archiveErr)
-			}
-		} else if archiveResult.RelPathKey == "" {
-			return fmt.Errorf("archive succeeded but ResultInfo is empty")
-		}
-	}
-
-	// Clean up outdated backups
-	var pruneErr error
-	if p.Retention.Enabled {
-		// Add our just created sync/archive relPathKey to the exclusion list for retention so they are never pruned
-		// NOTE: This is needed in case our retention is enabled but 0,0,0,0,0 and we just created a snapshot.(otherwise we would imetialy remove it again)
-		var relPathExclusionKeys []string
-		if archiveResult.RelPathKey != "" {
-			relPathExclusionKeys = append(relPathExclusionKeys, archiveResult.RelPathKey)
-		}
-		if syncResult.RelPathKey != "" {
-			relPathExclusionKeys = append(relPathExclusionKeys, syncResult.RelPathKey)
-		}
-
-		// Fetch backups that might need pruning
-		var toRetent []metafile.MetafileInfo
-		toRetent, pruneErr = r.fetchBackups(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, relPathExclusionKeys)
-		if pruneErr != nil {
-			if errors.Is(pruneErr, context.Canceled) {
-				return pruneErr
-			}
-			if p.FailFast {
-				return fmt.Errorf("error reading backups for prune: %w", pruneErr)
-			}
-			plog.Warn("Error reading backups for prune, skipping", "error", pruneErr)
-		}
-		if pruneErr = r.retainer.Prune(ctx, absBasePath, toRetent, p.Retention, timestampUTC); pruneErr != nil {
-			if errors.Is(pruneErr, context.Canceled) {
-				return pruneErr
-			}
-			if hints.IsHint(pruneErr) {
-				plog.Debug("Retention skipped", "reason", pruneErr)
-			} else {
-				if p.FailFast {
-					return fmt.Errorf("error during prune: %w", pruneErr)
-				}
-				plog.Warn("Error during prune, skipping prune", "error", pruneErr)
-			}
-		}
-	}
-
-	// Compress backups that are eligible
-	var compressErr error
-	if archiveErr == nil && p.Compression.Enabled {
-		var toCompress metafile.MetafileInfo
-		if archiveResult.RelPathKey != "" {
-			toCompress = archiveResult
-		}
-
-		if compressErr = r.compressor.Compress(ctx, absBasePath, p.Paths.RelContentPathKey, toCompress, p.Compression, timestampUTC); compressErr != nil {
-			if errors.Is(compressErr, context.Canceled) {
-				return compressErr
-			}
-			if hints.IsHint(compressErr) {
-				plog.Debug("Compression skipped", "reason", compressErr)
-			} else {
-				compressErr = fmt.Errorf("error during compress: %w", compressErr)
-				if p.FailFast {
-					return compressErr
-				}
-				plog.Warn("Error during compress, skipping compress", "error", compressErr)
-			}
-		}
-	}
-
-	if syncErr != nil && !hints.IsHint(syncErr) {
-		return syncErr
+	// Dispatch Backup Run
+	switch p.Mode {
+	case planner.Incremental:
+		return r.executeIncrementalBackup(ctx, absBasePath, absSourcePath, p, timestampUTC)
+	case planner.Snapshot:
+		return r.executeSnapshotBackup(ctx, absBasePath, absSourcePath, p, timestampUTC)
 	}
 
 	plog.Info("Backup completed")
 	return nil
 }
 
+func (r *Runner) executeIncrementalBackup(ctx context.Context, absBasePath, absSourcePath string, p *planner.BackupPlan, timestampUTC time.Time) error {
+
+	// We always want to complete the whole flow (Archive -> Sync -> Retention -> Compression).
+	// Each step handles invalid inputs internally (e.g. empty paths) and returns early if needed,
+	// or logs errors if they are non-fatal.
+	var syncResult, archiveResult metafile.MetafileInfo
+
+	// 1. Archive
+	var archiveErr error
+	if p.Archive.Enabled {
+		var toArchive metafile.MetafileInfo
+		toArchive, archiveErr = r.fetchBackup(absBasePath, p.Paths.RelCurrentPathKey)
+		if archiveErr != nil {
+			if os.IsNotExist(archiveErr) {
+				// IMPORTANT: If we never did a backup before our archive does not exist! This is not an error!
+				archiveErr = nil
+			} else {
+				archiveErr = fmt.Errorf("error reading backup to archive: %w", archiveErr)
+			}
+		} else {
+			archiveResult, archiveErr = r.runArchive(ctx, absBasePath, p.Paths, p.Archive, toArchive, timestampUTC)
+			if archiveErr != nil {
+				if errors.Is(archiveErr, context.Canceled) {
+					return archiveErr
+				}
+				// We still might need to run another step, so just log and continue
+				plog.Error("Archive failed", "error", archiveErr)
+			}
+		}
+	}
+
+	// 2. Sync
+	var syncErr error
+	if p.Sync.Enabled {
+		syncResult, syncErr = r.runSync(ctx, absBasePath, absSourcePath, p.Paths, p.Sync, timestampUTC)
+		if syncErr != nil {
+			if errors.Is(syncErr, context.Canceled) {
+				return syncErr
+			}
+			// We still might need to run another step, so just log and continue
+			plog.Error("Sync failed", "error", syncErr)
+		}
+	}
+
+	// 3. Retention
+	var pruneErr error
+	if p.Retention.Enabled {
+		var toExclude []metafile.MetafileInfo
+		// Add our just created sync/archive results to the exclusion list for prune so they are never pruned
+		// NOTE: This is needed in case our retention is enabled but 0,0,0,0,0 and we just created a snapshot. (we avoid deleting it rightaway)
+		if archiveResult.RelPathKey != "" {
+			toExclude = append(toExclude, archiveResult)
+		}
+		if syncResult.RelPathKey != "" {
+			toExclude = append(toExclude, syncResult)
+		}
+
+		pruneErr = r.runPrune(ctx, absBasePath, p.Paths, p.Retention, toExclude, timestampUTC)
+		if pruneErr != nil {
+			if errors.Is(pruneErr, context.Canceled) {
+				return pruneErr
+			}
+			// We still might need to run another step, so just log and continue
+			plog.Error("Prune failed", "error", pruneErr)
+		}
+	}
+
+	// 4. Compression
+	var compressErr error
+	if p.Compression.Enabled {
+		compressErr = r.runCompress(ctx, absBasePath, p.Paths, p.Compression, archiveResult, timestampUTC)
+		if compressErr != nil {
+			if errors.Is(compressErr, context.Canceled) {
+				return compressErr
+			}
+			// We still might need to run another step, so just log and continue
+			plog.Error("Compress failed", "error", compressErr)
+		}
+	}
+
+	// If Sync or Archive failed, the run is considered a failure.
+	if syncErr != nil && !hints.IsHint(syncErr) {
+		return syncErr
+	}
+	if archiveErr != nil && !hints.IsHint(archiveErr) {
+		return archiveErr
+	}
+	return nil
+}
+
+func (r *Runner) executeSnapshotBackup(ctx context.Context, absBasePath, absSourcePath string, p *planner.BackupPlan, timestampUTC time.Time) error {
+	// We always want to complete the whole flow (Sync -> Archive -> Retention -> Compression).
+	// Each step handles invalid inputs internally (e.g. empty paths) and returns early if needed,
+	// or logs errors if they are non-fatal.
+	var syncResult, archiveResult metafile.MetafileInfo
+
+	// 1. Sync
+	var syncErr error
+	if p.Sync.Enabled {
+		syncResult, syncErr = r.runSync(ctx, absBasePath, absSourcePath, p.Paths, p.Sync, timestampUTC)
+		if syncErr != nil {
+			if errors.Is(syncErr, context.Canceled) {
+				return syncErr
+			}
+			// We still might need to run another step, so just log and continue
+			plog.Error("Sync failed", "error", syncErr)
+		}
+	}
+
+	// 2. Archive
+	var archiveErr error
+	if p.Archive.Enabled {
+		archiveResult, archiveErr = r.runArchive(ctx, absBasePath, p.Paths, p.Archive, syncResult, timestampUTC)
+		if archiveErr != nil {
+			if errors.Is(archiveErr, context.Canceled) {
+				return archiveErr
+			}
+			// We still might need to run another step, so just log and continue
+			plog.Error("Archive failed", "error", archiveErr)
+		}
+	}
+
+	// 3. Retention
+	var pruneErr error
+	if p.Retention.Enabled {
+		var toExclude []metafile.MetafileInfo
+		// Add our just created sync/archive results to the exclusion list for prune so they are never pruned
+		// NOTE: This is needed in case our retention is enabled but 0,0,0,0,0 and we just created a snapshot. (we avoid deleting it rightaway)
+		if archiveResult.RelPathKey != "" {
+			toExclude = append(toExclude, archiveResult)
+		}
+		if syncResult.RelPathKey != "" {
+			toExclude = append(toExclude, syncResult)
+		}
+
+		pruneErr = r.runPrune(ctx, absBasePath, p.Paths, p.Retention, toExclude, timestampUTC)
+		if pruneErr != nil {
+			if errors.Is(pruneErr, context.Canceled) {
+				return pruneErr
+			}
+			// We still might need to run another step, so just log and continue
+			plog.Error("Prune failed", "error", pruneErr)
+		}
+	}
+
+	// 4. Compression
+	var compressErr error
+	if p.Compression.Enabled {
+		compressErr = r.runCompress(ctx, absBasePath, p.Paths, p.Compression, archiveResult, timestampUTC)
+		if compressErr != nil {
+			if errors.Is(compressErr, context.Canceled) {
+				return compressErr
+			}
+			// We still might need to run another step, so just log and continue
+			plog.Error("Compress failed", "error", compressErr)
+		}
+	}
+
+	if syncErr != nil && !hints.IsHint(syncErr) {
+		return syncErr
+	}
+	if archiveErr != nil && !hints.IsHint(archiveErr) {
+		return archiveErr
+	}
+	return nil
+}
+
 func (r *Runner) ExecutePrune(ctx context.Context, absBasePath string, p *planner.PrunePlan) error {
+	// We always want to complete the whole flow (Incremental -> Snapshot).
+	// Each step handles invalid inputs internally (e.g. empty paths) and returns early if needed,
+	// or logs errors if they are non-fatal.
+
 	// Check for cancellation at the very beginning.
 	select {
 	case <-ctx.Done():
@@ -299,35 +316,33 @@ func (r *Runner) ExecutePrune(ctx context.Context, absBasePath string, p *planne
 	pruneIncremental := p.Mode == planner.Any || p.Mode == planner.Incremental
 	pruneSnapshot := p.Mode == planner.Any || p.Mode == planner.Snapshot
 
-	var pruneErr error
+	var pruneIncErr, pruneSnapErr error
+
 	if pruneIncremental && p.RetentionIncremental.Enabled {
-		var toRetent []metafile.MetafileInfo
-		toRetent, pruneErr = r.fetchBackups(ctx, absBasePath, p.PathsIncremental.RelArchivePathKey, p.PathsIncremental.ArchiveEntryPrefix, []string{})
-		if pruneErr != nil {
-			return fmt.Errorf("fatal error during prune incremental: %w", pruneErr)
-		}
-		if pruneErr = r.retainer.Prune(ctx, absBasePath, toRetent, p.RetentionIncremental, timestampUTC); pruneErr != nil {
-			if hints.IsHint(pruneErr) {
-				plog.Debug("Incremental retention skipped", "reason", pruneErr)
-			} else {
-				return fmt.Errorf("fatal error during prune incremental: %w", pruneErr)
+		pruneIncErr = r.runPrune(ctx, absBasePath, p.PathsIncremental, p.RetentionIncremental, []metafile.MetafileInfo{}, timestampUTC)
+		if pruneIncErr != nil {
+			if errors.Is(pruneIncErr, context.Canceled) {
+				return pruneIncErr
 			}
+			plog.Error("Prune incremental failed", "error", pruneIncErr)
 		}
 	}
 
 	if pruneSnapshot && p.RetentionSnapshot.Enabled {
-		var toRetent []metafile.MetafileInfo
-		toRetent, pruneErr = r.fetchBackups(ctx, absBasePath, p.PathsSnapshot.RelArchivePathKey, p.PathsSnapshot.ArchiveEntryPrefix, []string{})
-		if pruneErr != nil {
-			return fmt.Errorf("fatal error during prune snapshot: %w", pruneErr)
-		}
-		if pruneErr = r.retainer.Prune(ctx, absBasePath, toRetent, p.RetentionSnapshot, timestampUTC); pruneErr != nil {
-			if hints.IsHint(pruneErr) {
-				plog.Debug("Snapshot retention skipped", "reason", pruneErr)
-			} else {
-				return fmt.Errorf("fatal error during prune snapshot: %w", pruneErr)
+		pruneSnapErr = r.runPrune(ctx, absBasePath, p.PathsSnapshot, p.RetentionSnapshot, []metafile.MetafileInfo{}, timestampUTC)
+		if pruneSnapErr != nil {
+			if errors.Is(pruneSnapErr, context.Canceled) {
+				return pruneSnapErr
 			}
+			plog.Error("Prune snapshot failed", "error", pruneSnapErr)
 		}
+	}
+
+	if pruneIncErr != nil {
+		return fmt.Errorf("fatal error during prune incremental: %w", pruneIncErr)
+	}
+	if pruneSnapErr != nil {
+		return fmt.Errorf("fatal error during prune snapshot: %w", pruneSnapErr)
 	}
 	plog.Info("Prune completed")
 	return nil
@@ -455,25 +470,23 @@ func (r *Runner) ExecuteRestore(ctx context.Context, absBasePath, uuid, absTarge
 	}
 	defer releaseLock()
 
-	// --- Pre-Restore Hooks ---
-	plog.Info("Running pre-restore hooks")
-	if err := r.runHooks(ctx, p.PreRestoreHooks, "pre-restore", p.DryRun); err != nil {
+	// Hooks
+	if err := r.runPreHook(ctx, "restore", p.HookRunner, timestampUTC); err != nil {
 		errMsg := "pre-restore hook failed"
 		if errors.Is(err, context.Canceled) {
 			errMsg = "pre-restore hook canceled"
 		}
+		// Pre-hook errors are fatal.
 		return fmt.Errorf("%s: %w", errMsg, err)
 	}
-
-	// --- Post-Restore Hooks (deferred) ---
 	defer func() {
-		plog.Info("Running post-restore hooks")
-		if err := r.runHooks(ctx, p.PostRestoreHooks, "post-restore", p.DryRun); err != nil {
+		if err := r.runPostHook(ctx, "restore", p.HookRunner, timestampUTC); err != nil {
+			// Post-hook errors are fatal.
+			errMsg := "post-restore hook failed"
 			if errors.Is(err, context.Canceled) {
-				plog.Info("post-restore hooks skipped due to cancellation.")
-			} else {
-				plog.Warn("post-restore hook failed", "error", err)
+				errMsg = "post-restore hook canceled"
 			}
+			plog.Error(errMsg, "error", err)
 		}
 	}()
 
@@ -526,14 +539,13 @@ func (r *Runner) ExecuteRestore(ctx context.Context, absBasePath, uuid, absTarge
 	plog.Info("Starting restore", "backup", absBackupPath, "destination", absTargetPath)
 
 	if toRestore.Metadata.IsCompressed {
-		// Extract
-		if err := r.compressor.Extract(ctx, absBasePath, toRestore, absTargetPath, p.Extraction, timestampUTC); err != nil {
+		if err := r.runExtract(ctx, absBasePath, absTargetPath, p.Extraction, toRestore, timestampUTC); err != nil {
 			return fmt.Errorf("restore extraction failed: %w", err)
 		}
 	} else {
 		// Sync (Flat file restore)
 		// We sync FROM backup content TO absTargetPath.
-		if err := r.syncer.Restore(ctx, absBasePath, relContentPathKey, toRestore, absTargetPath, p.Sync, timestampUTC); err != nil {
+		if err := r.runRestore(ctx, absBasePath, relContentPathKey, absTargetPath, p.Sync, toRestore, timestampUTC); err != nil {
 			return fmt.Errorf("restore sync failed: %w", err)
 		}
 	}
@@ -642,39 +654,166 @@ func (r *Runner) fetchBackup(absBasePath, relPathKey string) (metafile.MetafileI
 	return metafile.MetafileInfo{RelPathKey: relPathKey, Metadata: metadata}, nil
 }
 
-// runHooks executes a list of shell commands for a given hook type.
-func (r *Runner) runHooks(ctx context.Context, commands []string, hookType string, dryRun bool) error {
-	if len(commands) == 0 {
-		return nil
+func (r *Runner) runArchive(ctx context.Context, absBasePath string, paths planner.PathKeys, plan *patharchive.Plan, toArchive metafile.MetafileInfo, timestampUTC time.Time) (metafile.MetafileInfo, error) {
+	if !plan.Enabled {
+		return metafile.MetafileInfo{}, nil
 	}
 
-	for _, command := range commands {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
+	result, err := r.archiver.Archive(ctx, absBasePath, paths.RelArchivePathKey, paths.ArchiveEntryPrefix, toArchive, plan, timestampUTC)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return metafile.MetafileInfo{}, err
+		}
+		if hints.IsHint(err) {
+			plog.Debug("Archiving skipped", "reason", err)
+			return metafile.MetafileInfo{}, nil
+		}
+		return metafile.MetafileInfo{}, fmt.Errorf("error during archive: %w", err)
+	}
+
+	// Consistency check
+	if result.RelPathKey == "" {
+		return metafile.MetafileInfo{}, fmt.Errorf("archive succeeded but result is empty")
+	}
+	return result, nil
+}
+
+func (r *Runner) runSync(ctx context.Context, absBasePath, absSourcePath string, paths planner.PathKeys, plan *pathsync.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
+	result, err := r.syncer.Sync(ctx, absBasePath, absSourcePath, paths.RelCurrentPathKey, paths.RelContentPathKey, plan, timestampUTC)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return metafile.MetafileInfo{}, err
 		}
 
-		plog.Info(fmt.Sprintf("Executing %s hook", hookType), "command", command)
-		if dryRun {
-			plog.Info("[DRY RUN] Would execute command", "command", command)
-			continue
+		if hints.IsHint(err) {
+			plog.Debug("Sync skipped", "reason", err)
+			return metafile.MetafileInfo{}, nil
+		}
+		return metafile.MetafileInfo{}, fmt.Errorf("error during sync: %w", err)
+	}
+
+	// Consistency check
+	if result.RelPathKey == "" {
+		return metafile.MetafileInfo{}, fmt.Errorf("sync succeeded but result is empty")
+	}
+
+	// Write the metafile using the info populated by Sync.
+	absTargetCurrentPath := util.DenormalizedAbsPath(absBasePath, result.RelPathKey)
+	if plan.DryRun {
+		plog.Info("[DRY RUN] Would write metafile", "directory", absTargetCurrentPath)
+	} else {
+		if err := metafile.Write(absTargetCurrentPath, &result.Metadata); err != nil {
+			return metafile.MetafileInfo{}, fmt.Errorf("sync failed to write metafile: %w", err)
+		}
+	}
+	return result, nil
+}
+
+func (r *Runner) runPrune(ctx context.Context, absBasePath string, paths planner.PathKeys, plan *pathretention.Plan, toExclude []metafile.MetafileInfo, timestampUTC time.Time) error {
+
+	var relPathExclusionKeys []string
+	for _, item := range toExclude {
+		if item.RelPathKey != "" {
+			relPathExclusionKeys = append(relPathExclusionKeys, item.RelPathKey)
+		}
+	}
+
+	toRetent, err := r.fetchBackups(ctx, absBasePath, paths.RelArchivePathKey, paths.ArchiveEntryPrefix, relPathExclusionKeys)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return err
+		}
+		return fmt.Errorf("error reading backups for prune: %w", err)
+	}
+
+	if err = r.retainer.Prune(ctx, absBasePath, toRetent, plan, timestampUTC); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return err
+		}
+		if hints.IsHint(err) {
+			plog.Debug("Prune skipped", "reason", err)
+			return nil
+		}
+		return fmt.Errorf("error during prune: %w", err)
+	}
+	return nil
+}
+
+func (r *Runner) runCompress(ctx context.Context, absBasePath string, paths planner.PathKeys, plan *pathcompression.CompressPlan,
+	toCompress metafile.MetafileInfo, timestampUTC time.Time) error {
+
+	if err := r.compressor.Compress(ctx, absBasePath, paths.RelContentPathKey, toCompress, plan, timestampUTC); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return err
+		}
+		if hints.IsHint(err) {
+			plog.Debug("Compression skipped", "reason", err)
+			return nil
+		}
+		return fmt.Errorf("error during compress: %w", err)
+	}
+	return nil
+}
+
+func (r *Runner) runRestore(ctx context.Context, absBasePath, relContentPathKey, absTargetPath string, plan *pathsync.Plan,
+	toRestore metafile.MetafileInfo, timestampUTC time.Time) error {
+
+	if err := r.syncer.Restore(ctx, absBasePath, relContentPathKey, toRestore, absTargetPath, plan, timestampUTC); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return err
+		}
+		if hints.IsHint(err) {
+			plog.Debug("Restore skipped", "reason", err)
+			return nil
+		}
+		return fmt.Errorf("error during restore: %w", err)
+	}
+	return nil
+}
+
+func (r *Runner) runExtract(ctx context.Context, absBasePath, absTargetPath string, plan *pathcompression.ExtractPlan,
+	toExtract metafile.MetafileInfo, timestampUTC time.Time) error {
+
+	if err := r.compressor.Extract(ctx, absBasePath, toExtract, absTargetPath, plan, timestampUTC); err != nil {
+
+		if errors.Is(err, context.Canceled) {
+			return err
+		}
+		if hints.IsHint(err) {
+			plog.Debug("Extraction skipped", "reason", err)
+			return nil
+		}
+		return fmt.Errorf("error during extraction: %w", err)
+	}
+	return nil
+}
+
+func (r *Runner) runPreHook(ctx context.Context, hookName string, plan *hook.Plan, timestampUTC time.Time) error {
+	if err := r.hookRunner.RunPreHook(ctx, hookName, plan, timestampUTC); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return err
 		}
 
-		cmd := r.createHookCommand(ctx, command)
-
-		// Pipe output to our logger for visibility
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		if err := cmd.Run(); err != nil {
-			// Check if the context was canceled, which can cause cmd.Wait() to return an error.
-			// If so, we should return the context's error to be more specific.
-			if ctx.Err() == context.Canceled {
-				return context.Canceled
-			}
-			return fmt.Errorf("command '%s' failed: %w", command, err)
+		if hints.IsHint(err) {
+			plog.Debug("Pre-Hook skipped", "reason", err)
+			return nil
 		}
+		return fmt.Errorf("error during pre-hook: %w", err)
+	}
+	return nil
+}
+
+func (r *Runner) runPostHook(ctx context.Context, hookName string, plan *hook.Plan, timestampUTC time.Time) error {
+	if err := r.hookRunner.RunPostHook(ctx, hookName, plan, timestampUTC); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return err // Pass through cancellation and hints
+		}
+
+		if hints.IsHint(err) {
+			plog.Debug("Post-Hook skipped", "reason", err)
+			return nil
+		}
+		return fmt.Errorf("error during post-hook: %w", err)
 	}
 	return nil
 }

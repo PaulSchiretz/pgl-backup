@@ -20,7 +20,7 @@ import (
 type Validator struct {
 }
 
-// NewChecker creates a new PathArchiver with the given configuration.
+// NewValidator creates a new PathArchiver with the given configuration.
 func NewValidator() *Validator {
 	return &Validator{}
 }

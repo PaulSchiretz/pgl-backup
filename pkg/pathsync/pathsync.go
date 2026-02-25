@@ -56,7 +56,6 @@ func NewPathSyncer(bufferSizeKB, readAheadLimitKB int64, numSyncWorkers int, num
 func (s *PathSyncer) Sync(ctx context.Context, absBasePath, absSourcePath string, relCurrentPathKey, relContentPathKey string, p *Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
 
 	if !p.Enabled {
-		plog.Debug("Sync is disabled, skipping Sync")
 		return metafile.MetafileInfo{}, ErrDisabled
 	}
 
@@ -128,7 +127,6 @@ func (s *PathSyncer) Sync(ctx context.Context, absBasePath, absSourcePath string
 func (s *PathSyncer) Restore(ctx context.Context, absBasePath string, relContentPathKey string, toRestore metafile.MetafileInfo, absRestoreTargetPath string, p *Plan, timestampUTC time.Time) error {
 
 	if !p.Enabled {
-		plog.Debug("Sync is disabled, skipping Restore")
 		return ErrDisabled
 	}
 

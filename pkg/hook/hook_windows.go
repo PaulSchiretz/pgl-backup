@@ -1,6 +1,6 @@
 //go:build windows
 
-package engine
+package hook
 
 import (
 	"context"
@@ -9,9 +9,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// createHookCommand creates an exec.Cmd for a hook on Windows.
-func (r *Runner) createHookCommand(ctx context.Context, command string) *exec.Cmd {
-	cmd := r.hookCommandExecutor(ctx, "cmd", "/C", command)
+// createCommand creates an exec.Cmd for a hook on Windows.
+func (e *HookExecutor) createCommand(ctx context.Context, command string) *exec.Cmd {
+	cmd := e.commandContext(ctx, "cmd", "/C", command)
 	// On Windows, create a new process group to ensure that when the context is
 	// canceled, the entire process tree is terminated, not just the parent cmd.
 	// This is crucial for killing child processes spawned by the hook command.

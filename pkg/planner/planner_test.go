@@ -153,13 +153,13 @@ func TestGenerateBackupPlan(t *testing.T) {
 			},
 			expectedMode: planner.Incremental,
 			validate: func(t *testing.T, p *planner.BackupPlan) {
-				if !p.DryRun {
+				if !p.Sync.DryRun {
 					t.Error("Expected DryRun to be true")
 				}
-				if !p.FailFast {
+				if !p.Sync.FailFast {
 					t.Error("Expected FailFast to be true")
 				}
-				if p.Metrics {
+				if p.Sync.Metrics {
 					t.Error("Expected Metrics to be false")
 				}
 				// Check Sync specific mapping
@@ -217,6 +217,33 @@ func TestGenerateBackupPlan(t *testing.T) {
 				}
 				if p.Retention.Years != 5 {
 					t.Errorf("Expected Retention Years 5, got %d", p.Retention.Years)
+				}
+			},
+		},
+		{
+			name: "Hook Plan Generation",
+			configMod: func(c *config.Config) {
+				c.Runtime.Mode = "incremental"
+				c.Hooks.PreBackup = []string{"pre-hook"}
+				c.Hooks.PostBackup = []string{"post-hook"}
+				c.Runtime.DryRun = true
+			},
+			expectedMode: planner.Incremental,
+			validate: func(t *testing.T, p *planner.BackupPlan) {
+				if p.HookRunner == nil {
+					t.Fatal("HookRunner plan should not be nil")
+				}
+				if !p.HookRunner.Enabled {
+					t.Error("Expected HookRunner to be enabled")
+				}
+				if len(p.HookRunner.PreHookCommands) != 1 || p.HookRunner.PreHookCommands[0] != "pre-hook" {
+					t.Errorf("Unexpected PreHookCommands: %v", p.HookRunner.PreHookCommands)
+				}
+				if len(p.HookRunner.PostHookCommands) != 1 || p.HookRunner.PostHookCommands[0] != "post-hook" {
+					t.Errorf("Unexpected PostHookCommands: %v", p.HookRunner.PostHookCommands)
+				}
+				if !p.HookRunner.DryRun {
+					t.Error("Expected HookRunner.DryRun to be true")
 				}
 			},
 		},
@@ -459,10 +486,16 @@ func TestGeneratePrunePlan(t *testing.T) {
 				if p.PathsSnapshot.RelArchivePathKey != "snap_archive" {
 					t.Errorf("Expected Snapshot Archive Path 'snap_archive', got %s", p.PathsSnapshot.RelArchivePathKey)
 				}
-				if !p.DryRun {
+				if !p.RetentionIncremental.DryRun {
 					t.Error("Expected DryRun to be true")
 				}
-				if !p.FailFast {
+				if !p.RetentionIncremental.FailFast {
+					t.Error("Expected FailFast to be true")
+				}
+				if !p.RetentionSnapshot.DryRun {
+					t.Error("Expected DryRun to be true")
+				}
+				if !p.RetentionSnapshot.FailFast {
 					t.Error("Expected FailFast to be true")
 				}
 			},
