@@ -234,7 +234,7 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 			Metrics:  metrics,
 		},
 		HookRunner: &hook.Plan{
-			Enabled:          len(cfg.Hooks.PreBackup) > 0 || len(cfg.Hooks.PostBackup) > 0,
+			Enabled:          cfg.Hooks.Enabled && (len(cfg.Hooks.PreBackup) > 0 || len(cfg.Hooks.PostBackup) > 0),
 			PreHookCommands:  cfg.Hooks.PreBackup,
 			PostHookCommands: cfg.Hooks.PostBackup,
 			DryRun:           dryRun,
@@ -393,7 +393,7 @@ func GenerateRestorePlan(cfg config.Config) (*RestorePlan, error) {
 			Metrics:  metrics,
 		},
 		HookRunner: &hook.Plan{
-			Enabled:          len(cfg.Hooks.PreRestore) > 0 || len(cfg.Hooks.PostRestore) > 0,
+			Enabled:          cfg.Hooks.Enabled && (len(cfg.Hooks.PreRestore) > 0 || len(cfg.Hooks.PostRestore) > 0),
 			PreHookCommands:  cfg.Hooks.PreRestore,
 			PostHookCommands: cfg.Hooks.PostRestore,
 			DryRun:           dryRun,

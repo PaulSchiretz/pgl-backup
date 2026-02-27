@@ -44,6 +44,7 @@ type cliFlags struct {
 
 	UserExcludeFiles *string
 	UserExcludeDirs  *string
+	Hooks            *bool
 	PreBackupHooks   *string
 	PostBackupHooks  *string
 
@@ -118,6 +119,7 @@ func registerBackupFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.IgnoreCaseMismatch = fs.Bool("ignore-case-mismatch", false, "Bypass the case-sensitivity safety check (use with caution).")
 	f.UserExcludeFiles = fs.String("user-exclude-files", "", "Comma-separated list of case-insensitive file names to exclude (supports glob patterns).")
 	f.UserExcludeDirs = fs.String("user-exclude-dirs", "", "Comma-separated list of case-insensitive directory names to exclude (supports glob patterns).")
+	f.Hooks = fs.Bool("hooks", false, "Enable execution of pre/post hooks.")
 	f.PreBackupHooks = fs.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
 	f.PostBackupHooks = fs.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
 
@@ -169,6 +171,7 @@ func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.IgnoreCaseMismatch = fs.Bool("ignore-case-mismatch", false, "Bypass the case-sensitivity safety check (use with caution).")
 	f.UserExcludeFiles = fs.String("user-exclude-files", "", "Comma-separated list of case-insensitive file names to exclude (supports glob patterns).")
 	f.UserExcludeDirs = fs.String("user-exclude-dirs", "", "Comma-separated list of case-insensitive directory names to exclude (supports glob patterns).")
+	f.Hooks = fs.Bool("hooks", false, "Enable execution of pre/post hooks.")
 	f.PreBackupHooks = fs.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
 	f.PostBackupHooks = fs.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
 
@@ -227,6 +230,7 @@ func registerRestoreFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.IgnoreCaseMismatch = fs.Bool("ignore-case-mismatch", false, "Bypass the case-sensitivity safety check (use with caution).")
 	f.UserExcludeFiles = fs.String("user-exclude-files", "", "Comma-separated list of case-insensitive file names to exclude (supports glob patterns).")
 	f.UserExcludeDirs = fs.String("user-exclude-dirs", "", "Comma-separated list of case-insensitive directory names to exclude (supports glob patterns).")
+	f.Hooks = fs.Bool("hooks", false, "Enable execution of pre/post hooks.")
 	f.PreRestoreHooks = fs.String("pre-restore-hooks", "", "Comma-separated list of commands to run before the restore.")
 	f.PostRestoreHooks = fs.String("post-restore-hooks", "", "Comma-separated list of commands to run after the restore.")
 	f.OverwriteBehavior = fs.String("overwrite", "never", "Overwrite behavior: 'always', 'never', 'if-newer', 'update'.")
@@ -403,6 +407,8 @@ func flagsToMap(fs *flag.FlagSet, f *cliFlags) (map[string]any, error) {
 	addIfUsed(flagMap, usedFlags, "retention-snapshot-weeks", f.RetentionSnapshotWeeks)
 	addIfUsed(flagMap, usedFlags, "retention-snapshot-months", f.RetentionSnapshotMonths)
 	addIfUsed(flagMap, usedFlags, "retention-snapshot-years", f.RetentionSnapshotYears)
+
+	addIfUsed(flagMap, usedFlags, "hooks", f.Hooks)
 
 	addIfUsed(flagMap, usedFlags, "force", f.Force)
 	addIfUsed(flagMap, usedFlags, "ignore-case-mismatch", f.IgnoreCaseMismatch)

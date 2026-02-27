@@ -282,6 +282,7 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
     "level": "default"
   },
   "hooks": {
+    "enabled": false,
     "preBackup": [],
     "postBackup": [],
     "preRestore": [],
@@ -405,9 +406,10 @@ pgl-backup backup -base="..." -source="..." -user-exclude-files="*.tmp,*.log" -u
 ### Using Pre- and Post-Backup Hooks
 
 Run a script before the backup starts. Commands with spaces must be wrapped in single or double quotes.
+**Note:** Hooks are disabled by default for security. You must explicitly enable them using the `-hooks` flag or by setting `"enabled": true` in the configuration.
 
 ```sh
-pgl-backup backup -base="..." -source="..." -pre-backup-hooks="'/usr/local/bin/dump_database.sh', 'echo Backup starting...'"
+pgl-backup backup -base="..." -source="..." -hooks -pre-backup-hooks="'/usr/local/bin/dump_database.sh', 'echo Backup starting...'"
 ```
 >**Security Note:** Hooks execute arbitrary shell commands. Ensure that any commands in your configuration are from a trusted source and have the correct permissions to prevent unintended side effects.
 
@@ -851,6 +853,7 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `user-exclude-dirs` / `sync.userExcludeDirs` | `[]string` | `[]` | List of directory patterns to exclude. |
 | - / `sync.defaultExcludeFiles` | `[]string` | `[...]` | Default file patterns to exclude. |
 | - / `sync.defaultExcludeDirs` | `[]string` | `[...]` | Default directory patterns to exclude. |
+| `hooks` / `hooks.enabled` | `bool` | `false` | Enable execution of pre/post hooks. |
 | `pre-backup-hooks` / `hooks.preBackup` | `[]string` | `[]` | List of shell commands to run before the backup. |
 | `post-backup-hooks` / `hooks.postBackup` | `[]string` | `[]` | List of shell commands to run after the backup. |
 | `pre-restore-hooks` / `hooks.preRestore` | `[]string` | `[]` | List of shell commands to run before the restore. |

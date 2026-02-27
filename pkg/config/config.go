@@ -41,6 +41,7 @@ type PathsConfig struct {
 type HooksConfig struct {
 	// Note: omitempty is intentionally not used so that the hook fields
 	// appear in the generated config file for better discoverability.
+	Enabled bool `json:"enabled"`
 	// PreBackup is a list of shell commands to execute before the backup sync begins.
 	// SECURITY: These commands are executed as provided. Ensure they are from a trusted source.
 	PreBackup []string `json:"preBackup"`
@@ -238,6 +239,7 @@ func Default() Config {
 			Level:   "default",
 		},
 		Hooks: HooksConfig{
+			Enabled:     false,
 			PreBackup:   []string{},
 			PostBackup:  []string{},
 			PreRestore:  []string{},
@@ -540,11 +542,13 @@ func (c *Config) LogSummary(command flagparse.Command, absBasePath, absSourcePat
 			logArgs = append(logArgs, "exclude_dirs", strings.Join(finalExcludeDirs, ", "))
 		}
 
-		if len(c.Hooks.PreBackup) > 0 {
-			logArgs = append(logArgs, "pre_backup_hooks", strings.Join(c.Hooks.PreBackup, "; "))
-		}
-		if len(c.Hooks.PostBackup) > 0 {
-			logArgs = append(logArgs, "post_backup_hooks", strings.Join(c.Hooks.PostBackup, "; "))
+		if c.Hooks.Enabled {
+			if len(c.Hooks.PreBackup) > 0 {
+				logArgs = append(logArgs, "pre_backup_hooks", strings.Join(c.Hooks.PreBackup, "; "))
+			}
+			if len(c.Hooks.PostBackup) > 0 {
+				logArgs = append(logArgs, "post_backup_hooks", strings.Join(c.Hooks.PostBackup, "; "))
+			}
 		}
 
 	case flagparse.Restore:
@@ -579,11 +583,13 @@ func (c *Config) LogSummary(command flagparse.Command, absBasePath, absSourcePat
 			logArgs = append(logArgs, "exclude_dirs", strings.Join(finalExcludeDirs, ", "))
 		}
 
-		if len(c.Hooks.PreRestore) > 0 {
-			logArgs = append(logArgs, "pre_restore_hooks", strings.Join(c.Hooks.PreRestore, "; "))
-		}
-		if len(c.Hooks.PostRestore) > 0 {
-			logArgs = append(logArgs, "post_restore_hooks", strings.Join(c.Hooks.PostRestore, "; "))
+		if c.Hooks.Enabled {
+			if len(c.Hooks.PreRestore) > 0 {
+				logArgs = append(logArgs, "pre_restore_hooks", strings.Join(c.Hooks.PreRestore, "; "))
+			}
+			if len(c.Hooks.PostRestore) > 0 {
+				logArgs = append(logArgs, "post_restore_hooks", strings.Join(c.Hooks.PostRestore, "; "))
+			}
 		}
 
 	case flagparse.Prune:
@@ -696,6 +702,8 @@ func MergeConfigWithFlags(command flagparse.Command, base Config, setFlags map[s
 			merged.Sync.UserExcludeFiles = value.([]string)
 		case "user-exclude-dirs":
 			merged.Sync.UserExcludeDirs = value.([]string)
+		case "hooks":
+			merged.Hooks.Enabled = value.(bool)
 		case "pre-backup-hooks":
 			merged.Hooks.PreBackup = value.([]string)
 		case "post-backup-hooks":

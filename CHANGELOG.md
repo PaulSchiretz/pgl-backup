@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Refactor**: Updated `BucketedBufferPool` and `FixedBufferPool` to strictly enforce power-of-two constraints and capacity checks on `Put`.
 
 ### Added
+- Added `hooks` flag and configuration setting to explicitly enable/disable hook execution. Defaults to `false` for security.
 
 ### Fixed
 - **Error Handling**: The final exit status of a backup now correctly reflects a failure if either the critical `Sync` or `Archive` step fails, preventing silent failures.
