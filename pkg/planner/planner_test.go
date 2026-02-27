@@ -224,6 +224,7 @@ func TestGenerateBackupPlan(t *testing.T) {
 			name: "Hook Plan Generation",
 			configMod: func(c *config.Config) {
 				c.Runtime.Mode = "incremental"
+				c.Hooks.Enabled = true
 				c.Hooks.PreBackup = []string{"pre-hook"}
 				c.Hooks.PostBackup = []string{"post-hook"}
 				c.Runtime.DryRun = true

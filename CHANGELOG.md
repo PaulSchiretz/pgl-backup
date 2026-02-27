@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Refactor**: Updated `pool` package to use `int64` for buffer sizes, allowing for larger buffer configurations and consistent type usage across the codebase.
 - **Performance**: Optimized `pathsync` and `pathcompression` engines to avoid dereferencing buffer pointers until the I/O call, reducing stack copying overhead.
 - **Refactor**: Updated `BucketedBufferPool` and `FixedBufferPool` to strictly enforce power-of-two constraints and capacity checks on `Put`.
+- **BREAKING CHANGE**: Renamed hook flags to align with naming conventions: `pre-backup-hooks` -> `hooks-pre-backup`, `post-backup-hooks` -> `hooks-post-backup`, `pre-restore-hooks` -> `hooks-pre-restore`, `post-restore-hooks` -> `hooks-post-restore`.
 
 ### Added
 - Added `hooks` flag and configuration setting to explicitly enable/disable hook execution. Defaults to `false` for security.

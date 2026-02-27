@@ -409,7 +409,7 @@ Run a script before the backup starts. Commands with spaces must be wrapped in s
 **Note:** Hooks are disabled by default for security. You must explicitly enable them using the `-hooks` flag or by setting `"enabled": true` in the configuration.
 
 ```sh
-pgl-backup backup -base="..." -source="..." -hooks -pre-backup-hooks="'/usr/local/bin/dump_database.sh', 'echo Backup starting...'"
+pgl-backup backup -base="..." -source="..." -hooks -hooks-pre-backup="'/usr/local/bin/dump_database.sh', 'echo Backup starting...'"
 ```
 >**Security Note:** Hooks execute arbitrary shell commands. Ensure that any commands in your configuration are from a trusted source and have the correct permissions to prevent unintended side effects.
 
@@ -854,10 +854,10 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | - / `sync.defaultExcludeFiles` | `[]string` | `[...]` | Default file patterns to exclude. |
 | - / `sync.defaultExcludeDirs` | `[]string` | `[...]` | Default directory patterns to exclude. |
 | `hooks` / `hooks.enabled` | `bool` | `false` | Enable execution of pre/post hooks. |
-| `pre-backup-hooks` / `hooks.preBackup` | `[]string` | `[]` | List of shell commands to run before the backup. |
-| `post-backup-hooks` / `hooks.postBackup` | `[]string` | `[]` | List of shell commands to run after the backup. |
-| `pre-restore-hooks` / `hooks.preRestore` | `[]string` | `[]` | List of shell commands to run before the restore. |
-| `post-restore-hooks` / `hooks.postRestore` | `[]string` | `[]` | List of shell commands to run after the restore. |
+| `hooks-pre-backup` / `hooks.preBackup` | `[]string` | `[]` | List of shell commands to run before the backup. |
+| `hooks-post-backup` / `hooks.postBackup` | `[]string` | `[]` | List of shell commands to run after the backup. |
+| `hooks-pre-restore` / `hooks.preRestore` | `[]string` | `[]` | List of shell commands to run before the restore. |
+| `hooks-post-restore` / `hooks.postRestore` | `[]string` | `[]` | List of shell commands to run after the restore. |
 | **Archive & Retention** | | | |
 | `archive` / `archive.enabled` | `bool` | `true` | Enable archiving (rollover) for incremental backups. |
 | `archive-interval-mode` / `archive.intervalMode` | `string` | `"auto"` | `"auto"` or `"manual"`. |
@@ -947,7 +947,7 @@ This occurs because the binaries are currently unsigned. Please refer to the [Se
 *   **Note**: `pgl-backup` does not use the Volume Shadow Copy Service (VSS). VSS is a complex, Windows-only technology that requires Administrator privileges and is typically only needed for specific edge cases. `pgl-backup` prioritizes simplicity, speed, and cross-platform consistency.
 *   **Solution**:
     *   Close the application using the file before running the backup.
-    *   Use the `pre-backup-hooks` feature to stop the relevant service/application before the backup and `post-backup-hooks` to restart it.
+    *   Use the `hooks-pre-backup` feature to stop the relevant service/application before the backup and `hooks-post-backup` to restart it.
 
 ### Issue: Files are being re-copied every time, even if unchanged
 

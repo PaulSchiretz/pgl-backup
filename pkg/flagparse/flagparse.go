@@ -45,8 +45,8 @@ type cliFlags struct {
 	UserExcludeFiles *string
 	UserExcludeDirs  *string
 	Hooks            *bool
-	PreBackupHooks   *string
-	PostBackupHooks  *string
+	HooksPreBackup   *string
+	HooksPostBackup  *string
 
 	ArchiveEnabled         *bool
 	ArchiveIntervalSeconds *int
@@ -81,8 +81,8 @@ type cliFlags struct {
 
 	// Restore specific
 	UUID             *string
-	PreRestoreHooks  *string
-	PostRestoreHooks *string
+	HooksPreRestore  *string
+	HooksPostRestore *string
 
 	// Init specific
 	Default *bool
@@ -120,8 +120,8 @@ func registerBackupFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.UserExcludeFiles = fs.String("user-exclude-files", "", "Comma-separated list of case-insensitive file names to exclude (supports glob patterns).")
 	f.UserExcludeDirs = fs.String("user-exclude-dirs", "", "Comma-separated list of case-insensitive directory names to exclude (supports glob patterns).")
 	f.Hooks = fs.Bool("hooks", false, "Enable execution of pre/post hooks.")
-	f.PreBackupHooks = fs.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
-	f.PostBackupHooks = fs.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
+	f.HooksPreBackup = fs.String("hooks-pre-backup", "", "Comma-separated list of commands to run before the backup.")
+	f.HooksPostBackup = fs.String("hooks-post-backup", "", "Comma-separated list of commands to run after the backup.")
 
 	f.ArchiveEnabled = fs.Bool("archive", true, "Enable archiving (rollover) for incremental backups.")
 	f.ArchiveIntervalSeconds = fs.Int("archive-interval-seconds", 0, "In 'manual' mode, the interval in seconds for creating new incremental archives (e.g., 86400 for 24h).")
@@ -172,8 +172,8 @@ func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.UserExcludeFiles = fs.String("user-exclude-files", "", "Comma-separated list of case-insensitive file names to exclude (supports glob patterns).")
 	f.UserExcludeDirs = fs.String("user-exclude-dirs", "", "Comma-separated list of case-insensitive directory names to exclude (supports glob patterns).")
 	f.Hooks = fs.Bool("hooks", false, "Enable execution of pre/post hooks.")
-	f.PreBackupHooks = fs.String("pre-backup-hooks", "", "Comma-separated list of commands to run before the backup.")
-	f.PostBackupHooks = fs.String("post-backup-hooks", "", "Comma-separated list of commands to run after the backup.")
+	f.HooksPreBackup = fs.String("hooks-pre-backup", "", "Comma-separated list of commands to run before the backup.")
+	f.HooksPostBackup = fs.String("hooks-post-backup", "", "Comma-separated list of commands to run after the backup.")
 
 	f.ArchiveEnabled = fs.Bool("archive", true, "Enable archiving (rollover) for incremental backups.")
 	f.ArchiveIntervalSeconds = fs.Int("archive-interval-seconds", 0, "In 'manual' mode, the interval in seconds for creating new incremental archives (e.g., 86400 for 24h).")
@@ -231,8 +231,8 @@ func registerRestoreFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.UserExcludeFiles = fs.String("user-exclude-files", "", "Comma-separated list of case-insensitive file names to exclude (supports glob patterns).")
 	f.UserExcludeDirs = fs.String("user-exclude-dirs", "", "Comma-separated list of case-insensitive directory names to exclude (supports glob patterns).")
 	f.Hooks = fs.Bool("hooks", false, "Enable execution of pre/post hooks.")
-	f.PreRestoreHooks = fs.String("pre-restore-hooks", "", "Comma-separated list of commands to run before the restore.")
-	f.PostRestoreHooks = fs.String("post-restore-hooks", "", "Comma-separated list of commands to run after the restore.")
+	f.HooksPreRestore = fs.String("hooks-pre-restore", "", "Comma-separated list of commands to run before the restore.")
+	f.HooksPostRestore = fs.String("hooks-post-restore", "", "Comma-separated list of commands to run after the restore.")
 	f.OverwriteBehavior = fs.String("overwrite", "never", "Overwrite behavior: 'always', 'never', 'if-newer', 'update'.")
 }
 
@@ -408,19 +408,20 @@ func flagsToMap(fs *flag.FlagSet, f *cliFlags) (map[string]any, error) {
 	addIfUsed(flagMap, usedFlags, "retention-snapshot-months", f.RetentionSnapshotMonths)
 	addIfUsed(flagMap, usedFlags, "retention-snapshot-years", f.RetentionSnapshotYears)
 
-	addIfUsed(flagMap, usedFlags, "hooks", f.Hooks)
-
 	addIfUsed(flagMap, usedFlags, "force", f.Force)
 	addIfUsed(flagMap, usedFlags, "ignore-case-mismatch", f.IgnoreCaseMismatch)
 	addIfUsed(flagMap, usedFlags, "default", f.Default)
 
+	addIfUsed(flagMap, usedFlags, "hooks", f.Hooks)
+
 	// Handle flags that require parsing/validation.
 	addParsedIfUsed(flagMap, usedFlags, "user-exclude-files", f.UserExcludeFiles, ParseExcludeList)
 	addParsedIfUsed(flagMap, usedFlags, "user-exclude-dirs", f.UserExcludeDirs, ParseExcludeList)
-	addParsedIfUsed(flagMap, usedFlags, "pre-backup-hooks", f.PreBackupHooks, ParseCmdList)
-	addParsedIfUsed(flagMap, usedFlags, "post-backup-hooks", f.PostBackupHooks, ParseCmdList)
-	addParsedIfUsed(flagMap, usedFlags, "pre-restore-hooks", f.PreRestoreHooks, ParseCmdList)
-	addParsedIfUsed(flagMap, usedFlags, "post-restore-hooks", f.PostRestoreHooks, ParseCmdList)
+
+	addParsedIfUsed(flagMap, usedFlags, "hooks-pre-backup", f.HooksPreBackup, ParseCmdList)
+	addParsedIfUsed(flagMap, usedFlags, "hooks-post-backup", f.HooksPostBackup, ParseCmdList)
+	addParsedIfUsed(flagMap, usedFlags, "hooks-pre-restore", f.HooksPreRestore, ParseCmdList)
+	addParsedIfUsed(flagMap, usedFlags, "hooks-post-restore", f.HooksPostRestore, ParseCmdList)
 
 	return flagMap, nil
 }

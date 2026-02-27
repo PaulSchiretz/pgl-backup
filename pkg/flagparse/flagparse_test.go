@@ -193,20 +193,20 @@ func TestParse(t *testing.T) {
 	})
 
 	t.Run("Parse Hook Flags", func(t *testing.T) {
-		args := []string{"backup", "-pre-backup-hooks=cmd1, 'cmd2 with space'", "-post-backup-hooks=cmd3"}
+		args := []string{"backup", "-hooks-pre-backup=cmd1, 'cmd2 with space'", "-hooks-post-backup=cmd3"}
 		_, setFlags, err := flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
 		}
 
 		expectedPre := []string{"cmd1", "'cmd2 with space'"}
-		if !equalSlices(setFlags["pre-backup-hooks"].([]string), expectedPre) {
-			t.Errorf("expected pre-backup hooks %v, but got %v", expectedPre, setFlags["pre-backup-hooks"])
+		if !equalSlices(setFlags["hooks-pre-backup"].([]string), expectedPre) {
+			t.Errorf("expected pre-backup hooks %v, but got %v", expectedPre, setFlags["hooks-pre-backup"])
 		}
 
 		expectedPost := []string{"cmd3"}
-		if !equalSlices(setFlags["post-backup-hooks"].([]string), expectedPost) {
-			t.Errorf("expected post-backup hooks %v, but got %v", expectedPost, setFlags["post-backup-hooks"])
+		if !equalSlices(setFlags["hooks-post-backup"].([]string), expectedPost) {
+			t.Errorf("expected post-backup hooks %v, but got %v", expectedPost, setFlags["hooks-post-backup"])
 		}
 	})
 

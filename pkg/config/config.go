@@ -704,13 +704,13 @@ func MergeConfigWithFlags(command flagparse.Command, base Config, setFlags map[s
 			merged.Sync.UserExcludeDirs = value.([]string)
 		case "hooks":
 			merged.Hooks.Enabled = value.(bool)
-		case "pre-backup-hooks":
+		case "hooks-pre-backup":
 			merged.Hooks.PreBackup = value.([]string)
-		case "post-backup-hooks":
+		case "hooks-post-backup":
 			merged.Hooks.PostBackup = value.([]string)
-		case "pre-restore-hooks":
+		case "hooks-pre-restore":
 			merged.Hooks.PreRestore = value.([]string)
-		case "post-restore-hooks":
+		case "hooks-post-restore":
 			merged.Hooks.PostRestore = value.([]string)
 		case "archive":
 			merged.Archive.Enabled = value.(bool)
