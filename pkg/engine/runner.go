@@ -663,6 +663,7 @@ func (r *Runner) fetchBackup(absBasePath, relPathKey string) (metafile.MetafileI
 }
 
 func (r *Runner) runArchive(ctx context.Context, absBasePath string, paths planner.PathKeys, plan *patharchive.Plan, toArchive metafile.MetafileInfo, timestampUTC time.Time) (metafile.MetafileInfo, error) {
+
 	if !plan.Enabled {
 		return metafile.MetafileInfo{}, nil
 	}
