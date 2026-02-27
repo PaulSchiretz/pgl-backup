@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v1.4.4] - 2026-XX-XX
+## [v1.4.4] - 2026-02-27
 
 ### Changed
 - **Refactor**: Simplified and improved the robustness of the core backup and prune execution logic. The engine now attempts to run all planned steps (e.g., Archive, Sync, Prune, Compress) even if a non-critical one fails, logging the error before continuing.
