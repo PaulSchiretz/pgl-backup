@@ -114,6 +114,10 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 
 func (r *Runner) executeIncrementalBackup(ctx context.Context, absBasePath, absSourcePath string, p *planner.BackupPlan, timestampUTC time.Time) error {
 
+	// This function follows a "fail-forward" strategy. It attempts to execute all steps
+	// (Archive, Sync, Retention, Compression) in sequence. If a non-critical step like
+	// Retention or Compression fails, the error is logged, but the process continues.
+	// The overall backup is only considered a failure if a critical step (Sync or Archive) fails.
 	// We always want to complete the whole flow (Archive -> Sync -> Retention -> Compression).
 	// Each step handles invalid inputs internally (e.g. empty paths) and returns early if needed,
 	// or logs errors if they are non-fatal.
@@ -203,6 +207,10 @@ func (r *Runner) executeIncrementalBackup(ctx context.Context, absBasePath, absS
 }
 
 func (r *Runner) executeSnapshotBackup(ctx context.Context, absBasePath, absSourcePath string, p *planner.BackupPlan, timestampUTC time.Time) error {
+	// This function follows a "fail-forward" strategy. It attempts to execute all steps
+	// (Archive, Sync, Retention, Compression) in sequence. If a non-critical step like
+	// Retention or Compression fails, the error is logged, but the process continues.
+	// The overall backup is only considered a failure if a critical step (Sync or Archive) fails.
 	// We always want to complete the whole flow (Sync -> Archive -> Retention -> Compression).
 	// Each step handles invalid inputs internally (e.g. empty paths) and returns early if needed,
 	// or logs errors if they are non-fatal.
