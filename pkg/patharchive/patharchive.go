@@ -62,7 +62,6 @@ func NewPathArchiver() *PathArchiver {
 func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathKey, archiveEntryPrefix string, toArchive metafile.MetafileInfo, p *Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
 
 	if !p.Enabled {
-		plog.Debug("Archive is disabled, skipping archiving")
 		return metafile.MetafileInfo{}, ErrDisabled
 	}
 

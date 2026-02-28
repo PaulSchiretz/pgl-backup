@@ -51,9 +51,7 @@ func (t *task) execute() (metafile.MetafileInfo, error) {
 	}
 
 	if t.dryRun {
-		action := "moved"
-		plog.Notice("[DRY RUN] ARCHIVE", "action", action, "from", t.toArchive.RelPathKey, "to", t.relTargetPathKey)
-
+		plog.Notice("[DRY RUN] ARCHIVE", "moved", t.toArchive.RelPathKey, "to", t.relTargetPathKey)
 		return metafile.MetafileInfo{RelPathKey: t.relTargetPathKey, Metadata: t.toArchive.Metadata}, nil
 	}
 
