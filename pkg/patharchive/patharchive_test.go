@@ -14,10 +14,10 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
-func TestArchive(t *testing.T) {
+func TestShouldArchive(t *testing.T) {
 	// Define a fixed "Now" for consistent testing.
 	// Note: The implementation uses time.Local for >= 24h intervals logic.
-	now := time.Now().UTC()
+	now := time.Date(2023, 10, 27, 14, 0, 0, 0, time.UTC)
 
 	tests := []struct {
 		name            string
@@ -26,63 +26,37 @@ func TestArchive(t *testing.T) {
 		intervalSeconds int
 		constraints     patharchive.IntervalModeConstraints
 		lastBackupAge   time.Duration
-		dryRun          bool
-		setupConflict   bool // If true, create the destination directory beforehand
-		setupEmptyPath  bool // If true, force the source path to be empty
-		expectError     error
-		expectErrorStr  string
-		expectArchived  bool // True if file system change is expected
-		verify          func(t *testing.T, plan *patharchive.Plan, result metafile.MetafileInfo)
+		setupEmptyPath  bool
+		expectShould    bool
+		expectErr       error
 	}{
 		{
 			name:            "Manual - 24h Interval - 25h Passed (Should Archive)",
 			intervalMode:    patharchive.Manual,
 			intervalSeconds: 86400,
 			lastBackupAge:   25 * time.Hour,
-			expectArchived:  true,
-			verify: func(t *testing.T, plan *patharchive.Plan, result metafile.MetafileInfo) {
-				expectedPrefix := "archive/backup_"
-				if !strings.HasPrefix(result.RelPathKey, expectedPrefix) {
-					t.Errorf("ResultInfo path mismatch. Want prefix %q, got %q", expectedPrefix, result.RelPathKey)
-				}
-			},
+			expectShould:    true,
 		},
 		{
 			name:            "Manual - 24h Interval - 1h Passed (Should NOT Archive)",
 			intervalMode:    patharchive.Manual,
 			intervalSeconds: 86400,
 			lastBackupAge:   1 * time.Hour,
-			expectError:     patharchive.ErrNothingToArchive,
-			expectArchived:  false,
+			expectShould:    false,
 		},
 		{
-			name:           "Auto - Hourly Retention - 2h Passed (Should Archive)",
-			intervalMode:   patharchive.Auto,
-			constraints:    patharchive.IntervalModeConstraints{Hours: 1},
-			lastBackupAge:  2 * time.Hour,
-			expectArchived: true,
-			verify: func(t *testing.T, plan *patharchive.Plan, result metafile.MetafileInfo) {
-				expectedPrefix := "archive/backup_"
-				if !strings.HasPrefix(result.RelPathKey, expectedPrefix) {
-					t.Errorf("ResultInfo path mismatch. Want prefix %q, got %q", expectedPrefix, result.RelPathKey)
-				}
-			},
+			name:          "Auto - Hourly Retention - 2h Passed (Should Archive)",
+			intervalMode:  patharchive.Auto,
+			constraints:   patharchive.IntervalModeConstraints{Hours: 1},
+			lastBackupAge: 2 * time.Hour,
+			expectShould:  true,
 		},
 		{
-			name:           "Auto - Daily Retention - 1h Passed (Should NOT Archive)",
-			intervalMode:   patharchive.Auto,
-			constraints:    patharchive.IntervalModeConstraints{Days: 1},
-			lastBackupAge:  1 * time.Hour,
-			expectError:    patharchive.ErrNothingToArchive,
-			expectArchived: false,
-		},
-		{
-			name:            "Dry Run - 25h Passed (Should Log but NOT Move)",
-			intervalMode:    patharchive.Manual,
-			intervalSeconds: 86400,
-			lastBackupAge:   25 * time.Hour,
-			dryRun:          true,
-			expectArchived:  false, // FS should not change
+			name:          "Auto - Daily Retention - 1h Passed (Should NOT Archive)",
+			intervalMode:  patharchive.Auto,
+			constraints:   patharchive.IntervalModeConstraints{Days: 1},
+			lastBackupAge: 1 * time.Hour,
+			expectShould:  false,
 		},
 		{
 			name:            "Disabled - Should NOT Archive even if interval passed",
@@ -90,22 +64,8 @@ func TestArchive(t *testing.T) {
 			intervalMode:    patharchive.Manual,
 			intervalSeconds: 86400,
 			lastBackupAge:   25 * time.Hour,
-			expectArchived:  false,
-			expectError:     patharchive.ErrDisabled,
-		},
-		{
-			name:            "Dry Run - Verify ResultInfo Populated",
-			intervalMode:    patharchive.Manual,
-			intervalSeconds: 86400,
-			lastBackupAge:   25 * time.Hour,
-			dryRun:          true,
-			expectArchived:  false,
-			verify: func(t *testing.T, plan *patharchive.Plan, result metafile.MetafileInfo) {
-				expectedPrefix := "archive/backup_"
-				if !strings.HasPrefix(result.RelPathKey, expectedPrefix) {
-					t.Errorf("Dry Run ResultInfo path mismatch. Want prefix %q, got %q", expectedPrefix, result.RelPathKey)
-				}
-			},
+			expectShould:    false,
+			expectErr:       patharchive.ErrDisabled,
 		},
 		{
 			name:            "Invalid Input - Empty Path",
@@ -113,19 +73,87 @@ func TestArchive(t *testing.T) {
 			intervalSeconds: 86400,
 			lastBackupAge:   25 * time.Hour,
 			setupEmptyPath:  true,
-			expectError:     patharchive.ErrNothingToArchive,
-			verify: func(t *testing.T, plan *patharchive.Plan, result metafile.MetafileInfo) {
-				// No result info should be set
+			expectShould:    false,
+			expectErr:       patharchive.ErrNothingToArchive,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// 1. Setup
+			lastBackupTime := now.Add(-tc.lastBackupAge)
+			toArchive := metafile.MetafileInfo{
+				RelPathKey: "current",
+				Metadata:   metafile.MetafileContent{TimestampUTC: lastBackupTime},
+			}
+			if tc.setupEmptyPath {
+				toArchive.RelPathKey = ""
+			}
+
+			archiver := patharchive.NewPathArchiver()
+			plan := &patharchive.Plan{
+				Enabled:         !tc.disabled,
+				IntervalMode:    tc.intervalMode,
+				IntervalSeconds: tc.intervalSeconds,
+				Constraints:     tc.constraints,
+			}
+
+			// 2. Execute
+			should, err := archiver.ShouldArchive(toArchive, plan, now)
+
+			// 3. Verify
+			if should != tc.expectShould {
+				t.Errorf("expected should=%v, got %v", tc.expectShould, should)
+			}
+
+			if tc.expectErr != nil {
+				if !errors.Is(err, tc.expectErr) {
+					t.Errorf("expected error %v, got %v", tc.expectErr, err)
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestArchive(t *testing.T) {
+	now := time.Now().UTC()
+
+	tests := []struct {
+		name           string
+		dryRun         bool
+		setupConflict  bool // If true, create the destination directory beforehand
+		expectErrorStr string
+		expectArchived bool // True if file system change is expected
+		verify         func(t *testing.T, result metafile.MetafileInfo)
+	}{
+		{
+			name:           "Happy Path - Should Archive",
+			expectArchived: true,
+			verify: func(t *testing.T, result metafile.MetafileInfo) {
+				expectedPrefix := "archive/backup_"
+				if !strings.HasPrefix(result.RelPathKey, expectedPrefix) {
+					t.Errorf("ResultInfo path mismatch. Want prefix %q, got %q", expectedPrefix, result.RelPathKey)
+				}
 			},
 		},
 		{
-			name:            "Destination Conflict (Should Error)",
-			intervalMode:    patharchive.Manual,
-			intervalSeconds: 86400,
-			lastBackupAge:   25 * time.Hour,
-			setupConflict:   true,
-			expectErrorStr:  "already exists",
-			expectArchived:  false,
+			name:           "Dry Run - Should Log but NOT Move",
+			dryRun:         true,
+			expectArchived: false, // FS should not change
+			verify: func(t *testing.T, result metafile.MetafileInfo) {
+				expectedPrefix := "archive/backup_"
+				if !strings.HasPrefix(result.RelPathKey, expectedPrefix) {
+					t.Errorf("Dry Run ResultInfo path mismatch. Want prefix %q, got %q", expectedPrefix, result.RelPathKey)
+				}
+			},
+		},
+		{
+			name:           "Destination Conflict (Should Error)",
+			setupConflict:  true,
+			expectErrorStr: "already exists",
+			expectArchived: false,
 		},
 	}
 
@@ -144,7 +172,7 @@ func TestArchive(t *testing.T) {
 			}
 
 			// Create Metafile
-			lastBackupTime := now.Add(-tc.lastBackupAge)
+			lastBackupTime := now.Add(-25 * time.Hour) // Fixed time for consistent naming
 			meta := metafile.MetafileContent{
 				TimestampUTC: lastBackupTime,
 			}
@@ -155,10 +183,6 @@ func TestArchive(t *testing.T) {
 			toArchive := metafile.MetafileInfo{
 				RelPathKey: relCurrent,
 				Metadata:   meta,
-			}
-			// Override for invalid input test
-			if tc.setupEmptyPath {
-				toArchive.RelPathKey = ""
 			}
 
 			// Setup Conflict if needed
@@ -174,32 +198,23 @@ func TestArchive(t *testing.T) {
 			// 2. Create Archiver and Plan
 			archiver := patharchive.NewPathArchiver()
 			plan := &patharchive.Plan{
-				Enabled:         !tc.disabled,
-				IntervalMode:    tc.intervalMode,
-				IntervalSeconds: tc.intervalSeconds,
-				Constraints:     tc.constraints,
+				Enabled:         true,
+				IntervalMode:    patharchive.Manual,
+				IntervalSeconds: 86400,
 				DryRun:          tc.dryRun,
 				Metrics:         false,
 			}
 
 			// 3. Execute
-			result, err := archiver.Archive(context.Background(), targetBase, relArchive, prefix, toArchive, plan, now)
+			result, err := archiver.Archive(context.Background(), targetBase, relArchive, prefix, toArchive, plan, now.Add(1*time.Hour))
 
 			// 4. Verify Error
-			if tc.expectError != nil {
-				if !errors.Is(err, tc.expectError) {
-					t.Errorf("expected error %v, got %v", tc.expectError, err)
-				}
-			} else if tc.expectErrorStr != "" {
+			if tc.expectErrorStr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.expectErrorStr) {
 					t.Errorf("expected error containing %q, got %v", tc.expectErrorStr, err)
 				}
 			} else if err != nil {
 				t.Fatalf("unexpected error: %v", err)
-			} else {
-				if !tc.disabled && result.RelPathKey == "" {
-					t.Error("expected plan.ResultInfo to be set, but it was empty")
-				}
 			}
 
 			// 5. Verify Filesystem State
@@ -223,7 +238,7 @@ func TestArchive(t *testing.T) {
 			}
 
 			if tc.verify != nil {
-				tc.verify(t, plan, result)
+				tc.verify(t, result)
 			}
 		})
 	}

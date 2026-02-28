@@ -56,9 +56,11 @@ func NewPathArchiver() *PathArchiver {
 	return &PathArchiver{}
 }
 
-// Archive checks if the time since the last backup has crossed the configured interval.
-// If it has, it renames the current backup directory to a permanent, timestamped archive directory. It also
-// prepares the archive interval before checking. It is now responsible for reading its own metadata.
+// Archive moves the current backup directory to a permanent, timestamped archive directory.
+//
+// The decision to archive should be made by the caller using ShouldArchive.
+// This function now unconditionally performs the archive operation, but retains
+// basic safety checks.
 func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathKey, archiveEntryPrefix string, toArchive metafile.MetafileInfo, p *Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
 
 	if !p.Enabled {
@@ -69,7 +71,6 @@ func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathK
 		return metafile.MetafileInfo{}, ErrNothingToArchive
 	}
 
-	// Check for cancellation
 	select {
 	case <-ctx.Done():
 		return metafile.MetafileInfo{}, ctx.Err()
@@ -106,7 +107,6 @@ func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathK
 		relTargetPathKey: relTargetPathKey,
 		toArchive:        toArchive,
 		interval:         interval,
-		location:         time.Local,
 		metrics:          m,
 		timestampUTC:     timestampUTC,
 		dryRun:           p.DryRun,
@@ -118,6 +118,51 @@ func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathK
 	}
 
 	return result, nil
+}
+
+// ShouldArchive determines if a new backup archive should be created based on the plan and timestamps.
+//
+// DESIGN NOTE on time zones:
+// For intervals of 24 hours or longer, this function intentionally calculates
+// archive boundaries based on the **local system's midnight** (`time.Local`).
+// This ensures that archives align with a user's calendar day ("start a new
+// weekly backup on Sunday night"), even though all stored timestamps are UTC.
+// The conversion handles Daylight Saving Time (DST) shifts correctly by checking
+// for midnight-to-midnight boundary crossings (epoch day counting).
+func (a *PathArchiver) ShouldArchive(toArchive metafile.MetafileInfo, p *Plan, timestampUTC time.Time) (bool, error) {
+	if !p.Enabled {
+		return false, ErrDisabled
+	}
+
+	if toArchive.RelPathKey == "" {
+		return false, ErrNothingToArchive
+	}
+
+	interval := a.resolveInterval(p)
+
+	if interval == 0 {
+		return true, nil // Archive interval check is explicitly disabled, always create an archive.
+	}
+
+	location := time.Local
+
+	// For intervals of 24 hours or longer, this function intentionally calculates
+	// archive boundaries based on the local system's midnight to align with a
+	// user's calendar day, even though all stored timestamps are UTC.
+	if interval >= 24*time.Hour {
+		lastDayNum := calculateEpochDays(toArchive.Metadata.TimestampUTC, location)
+		currentDayNum := calculateEpochDays(timestampUTC, location)
+
+		daysInBucket := int64(interval / (24 * time.Hour))
+
+		return (currentDayNum / daysInBucket) != (lastDayNum / daysInBucket), nil
+	}
+
+	// Sub-Daily Intervals (Hourly, 6-Hourly)
+	lastBackupBoundary := toArchive.Metadata.TimestampUTC.Truncate(interval)
+	currentBackupBoundary := timestampUTC.Truncate(interval)
+
+	return !currentBackupBoundary.Equal(lastBackupBoundary), nil
 }
 
 // resolveInterval calculates the effective archive interval based on configuration.
@@ -194,4 +239,15 @@ func (a *PathArchiver) checkInterval(interval time.Duration, p *Plan) {
 			"archive_interval", interval,
 			"impact", "Retention slots for these periods will fill at the rate of the archive interval, not the retention period.")
 	}
+}
+
+// calculateEpochDays calculates the number of days since the Unix Epoch (1970-01-01)
+// for a given time in a specific location. It normalizes the time to midnight
+// and adds a 12-hour buffer to handle DST transitions (23h/25h days) robustly.
+func calculateEpochDays(ti time.Time, location *time.Location) int64 {
+	y, m, d := ti.In(location).Date()
+	midnight := time.Date(y, m, d, 0, 0, 0, 0, location)
+	anchor := time.Date(1970, 1, 1, 0, 0, 0, 0, location)
+	// Add 12 hours to center the calculation in the day, avoiding DST jitter (23h vs 25h days).
+	return int64(midnight.Sub(anchor).Hours()+12) / 24
 }

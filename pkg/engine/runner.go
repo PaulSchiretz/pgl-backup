@@ -663,8 +663,24 @@ func (r *Runner) fetchBackup(absBasePath, relPathKey string) (metafile.MetafileI
 }
 
 func (r *Runner) runArchive(ctx context.Context, absBasePath string, paths planner.PathKeys, plan *patharchive.Plan, toArchive metafile.MetafileInfo, timestampUTC time.Time) (metafile.MetafileInfo, error) {
-
 	if !plan.Enabled {
+		return metafile.MetafileInfo{}, nil
+	}
+
+	should, err := r.archiver.ShouldArchive(toArchive, plan, timestampUTC)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return metafile.MetafileInfo{}, err
+		}
+		if hints.IsHint(err) {
+			plog.Debug("Archiving skipped", "reason", err)
+			return metafile.MetafileInfo{}, nil
+		}
+		return metafile.MetafileInfo{}, fmt.Errorf("error checking if archive should run: %w", err)
+	}
+
+	// Archive isn't due, just return
+	if !should {
 		return metafile.MetafileInfo{}, nil
 	}
 

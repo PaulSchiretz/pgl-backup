@@ -20,18 +20,12 @@ type task struct {
 
 	toArchive    metafile.MetafileInfo
 	interval     time.Duration
-	location     *time.Location
 	metrics      Metrics
 	dryRun       bool
 	timestampUTC time.Time
 }
 
 func (t *task) execute() (metafile.MetafileInfo, error) {
-
-	if !t.shouldArchive() {
-		return metafile.MetafileInfo{}, ErrNothingToArchive
-	}
-
 	plog.Info("Archiving backup",
 		"backup_time", t.toArchive.Metadata.TimestampUTC,
 		"current_time", t.timestampUTC,
@@ -81,54 +75,4 @@ func (t *task) execute() (metafile.MetafileInfo, error) {
 		RelPathKey: util.NormalizePath(t.relTargetPathKey),
 		Metadata:   t.toArchive.Metadata,
 	}, nil
-}
-
-// shouldArchive determines if a new backup archive should be created based on the state of the current run.
-//
-// DESIGN NOTE on time zones:
-// For intervals of 24 hours or longer, this function intentionally calculates
-// archive boundaries based on the **local system's midnight** (`time.Local`).
-// This ensures that archives align with a user's calendar day ("start a new
-// weekly backup on Sunday night"), even though all stored timestamps are UTC.
-// The conversion handles Daylight Saving Time (DST) shifts correctly by checking
-// for midnight-to-midnight boundary crossings (epoch day counting).
-func (t *task) shouldArchive() bool {
-	if t.interval == 0 {
-		return true // Archive interval check is explicitly disabled, always create an archive.
-	}
-
-	// For intervals of 24 hours or longer, this function intentionally calculates
-	// archive boundaries based on the local system's midnight to align with a
-	// user's calendar day, even though all stored timestamps are UTC.
-	if t.interval >= 24*time.Hour {
-		lastDayNum := t.calculateEpochDays(t.toArchive.Metadata.TimestampUTC)
-		currentDayNum := t.calculateEpochDays(t.timestampUTC)
-
-		// Calculate the Bucket Size in Days
-		daysInBucket := int64(t.interval / (24 * time.Hour))
-
-		// Check if we have crossed a bucket boundary
-		// Example: Interval = 7 days.
-		// Day 10 / 7 = 1.  Day 12 / 7 = 1.  (No Archive)
-		// Day 13 / 7 = 1.  Day 14 / 7 = 2.  (Archive!)
-		return (currentDayNum / daysInBucket) != (lastDayNum / daysInBucket)
-	}
-
-	// Sub-Daily Intervals (Hourly, 6-Hourly)
-	// Use standard truncation for clean UTC time buckets.
-	lastBackupBoundary := t.toArchive.Metadata.TimestampUTC.Truncate(t.interval)
-	currentBackupBoundary := t.timestampUTC.Truncate(t.interval)
-
-	return !currentBackupBoundary.Equal(lastBackupBoundary)
-}
-
-// calculateEpochDays calculates the number of days since the Unix Epoch (1970-01-01)
-// for a given time in a specific location. It normalizes the time to midnight
-// and adds a 12-hour buffer to handle DST transitions (23h/25h days) robustly.
-func (t *task) calculateEpochDays(ti time.Time) int64 {
-	y, m, d := ti.In(t.location).Date()
-	midnight := time.Date(y, m, d, 0, 0, 0, 0, t.location)
-	anchor := time.Date(1970, 1, 1, 0, 0, 0, 0, t.location)
-	// Add 12 hours to center the calculation in the day, avoiding DST jitter (23h vs 25h days).
-	return int64(midnight.Sub(anchor).Hours()+12) / 24
 }
