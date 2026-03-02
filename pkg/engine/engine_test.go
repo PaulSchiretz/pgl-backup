@@ -99,6 +99,14 @@ func (m *mockArchiver) Stage(ctx context.Context, absBasePath, relStagePathKey, 
 	return metafile.MetafileInfo{RelPathKey: path}, nil
 }
 
+func (m *mockArchiver) Unstage(ctx context.Context, absBasePath string, stagedInfo metafile.MetafileInfo, p *patharchive.Plan) error {
+	return m.err
+}
+
+func (m *mockArchiver) CleanupStagingPath(ctx context.Context, absBasePath, relStagePathKey string, p *patharchive.Plan) error {
+	return m.err
+}
+
 type mockRetainer struct {
 	err     error
 	toPrune []metafile.MetafileInfo

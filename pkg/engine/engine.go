@@ -30,6 +30,8 @@ type Archiver interface {
 	ShouldArchive(ctx context.Context, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) (bool, error)
 	Archive(ctx context.Context, absBasePath, relArchivePathKey, archiveEntryPrefix string, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error)
 	Stage(ctx context.Context, absBasePath, relStagePathKey, stageEntryPrefix string, toStage metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error)
+	Unstage(ctx context.Context, absBasePath string, stagedInfo metafile.MetafileInfo, p *patharchive.Plan) error
+	CleanupStagingPath(ctx context.Context, absBasePath, relStagePathKey string, p *patharchive.Plan) error
 }
 
 // Retainer is an interface for the retention leaf package.

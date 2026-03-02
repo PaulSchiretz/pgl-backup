@@ -367,3 +367,97 @@ func TestStage(t *testing.T) {
 		})
 	}
 }
+
+func TestUnstage(t *testing.T) {
+	tests := []struct {
+		name         string
+		dryRun       bool
+		expectRemove bool
+	}{
+		{
+			name:         "Happy Path - Should Remove",
+			dryRun:       false,
+			expectRemove: true,
+		},
+		{
+			name:         "Dry Run - Should Not Remove",
+			dryRun:       true,
+			expectRemove: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			relStage := "stage_to_remove"
+			absStage := filepath.Join(tempDir, relStage)
+			if err := os.MkdirAll(absStage, 0755); err != nil {
+				t.Fatal(err)
+			}
+
+			archiver := patharchive.NewPathArchiver()
+			info := metafile.MetafileInfo{RelPathKey: relStage}
+			plan := &patharchive.Plan{DryRun: tc.dryRun}
+
+			if err := archiver.Unstage(context.Background(), tempDir, info, plan); err != nil {
+				t.Fatalf("Unstage failed: %v", err)
+			}
+
+			_, err := os.Stat(absStage)
+			exists := err == nil
+			if tc.expectRemove && exists {
+				t.Error("Stage directory should have been removed")
+			}
+			if !tc.expectRemove && !exists {
+				t.Error("Stage directory should NOT have been removed")
+			}
+		})
+	}
+}
+
+func TestCleanupStagingPath(t *testing.T) {
+	tests := []struct {
+		name         string
+		dryRun       bool
+		expectRemove bool
+	}{
+		{
+			name:         "Happy Path - Should Remove Parent",
+			dryRun:       false,
+			expectRemove: true,
+		},
+		{
+			name:         "Dry Run - Should Not Remove Parent",
+			dryRun:       true,
+			expectRemove: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			relStageParent := "stage_parent"
+			absStageParent := filepath.Join(tempDir, relStageParent)
+			// Create parent and a child to ensure RemoveAll works
+			if err := os.MkdirAll(filepath.Join(absStageParent, "child"), 0755); err != nil {
+				t.Fatal(err)
+			}
+
+			archiver := patharchive.NewPathArchiver()
+			plan := &patharchive.Plan{DryRun: tc.dryRun}
+
+			if err := archiver.CleanupStagingPath(context.Background(), tempDir, relStageParent, plan); err != nil {
+				t.Fatalf("CleanupStagingPath failed: %v", err)
+			}
+
+			_, err := os.Stat(absStageParent)
+			exists := err == nil
+			if tc.expectRemove && exists {
+				t.Error("Stage parent directory should have been removed")
+			}
+			if !tc.expectRemove && !exists {
+				t.Error("Stage parent directory should NOT have been removed")
+			}
+		})
+	}
+}

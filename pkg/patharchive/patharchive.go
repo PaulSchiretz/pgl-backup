@@ -179,6 +179,60 @@ func (a *PathArchiver) Stage(ctx context.Context, absBasePath, relStagePathKey, 
 	}, nil
 }
 
+// Unstage deletes the staged directory.
+// This is typically used to clean up the temporary staging directory after processing (e.g. compression) is complete.
+func (a *PathArchiver) Unstage(ctx context.Context, absBasePath string, stagedInfo metafile.MetafileInfo, p *Plan) error {
+	if stagedInfo.RelPathKey == "" {
+		return nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	absStagePath := util.DenormalizedAbsPath(absBasePath, stagedInfo.RelPathKey)
+
+	if p.DryRun {
+		plog.Notice("[DRY RUN] UNSTAGE", "path", absStagePath)
+		return nil
+	}
+
+	plog.Info("Unstaging directory", "path", absStagePath)
+	if err := os.RemoveAll(absStagePath); err != nil {
+		return fmt.Errorf("failed to unstage directory %s: %w", absStagePath, err)
+	}
+	return nil
+}
+
+// CleanupStagingPath deletes the entire staging parent directory.
+// This is used to clean up the top-level staging folder if it's empty or no longer needed.
+func (a *PathArchiver) CleanupStagingPath(ctx context.Context, absBasePath, relStagePathKey string, p *Plan) error {
+	if relStagePathKey == "" {
+		return nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	absStagePath := util.DenormalizedAbsPath(absBasePath, relStagePathKey)
+
+	if p.DryRun {
+		plog.Notice("[DRY RUN] CLEANUP STAGING PATH", "path", absStagePath)
+		return nil
+	}
+
+	plog.Info("Cleaning up staging directory", "path", absStagePath)
+	if err := os.RemoveAll(absStagePath); err != nil {
+		return fmt.Errorf("failed to cleanup staging directory %s: %w", absStagePath, err)
+	}
+	return nil
+}
+
 // ShouldArchive determines if a new backup archive should be created based on the plan and timestamps.
 //
 // DESIGN NOTE on time zones:
