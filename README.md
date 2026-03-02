@@ -201,14 +201,18 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
     "incremental": {
       "current": "PGL_Backup_Incremental_Current",
       "archive": "PGL_Backup_Incremental_Archive",
-      "content": "PGL_Backup_Content",
-      "archiveEntryPrefix": "PGL_Backup_"
+      "archiveEntryPrefix": "PGL_Backup_",
+      "stage": "~PGL_Backup_Incremental_Stage",
+      "stageEntryPrefix": "PGL_Backup_",
+      "content": "PGL_Backup_Content"
     },
     "snapshot": {
       "current": "PGL_Backup_Snapshot_Current",
       "archive": "PGL_Backup_Snapshot_Archive",
-      "content": "PGL_Backup_Content",
-      "archiveEntryPrefix": "PGL_Backup_"
+      "archiveEntryPrefix": "PGL_Backup_",
+      "stage": "~PGL_Backup_Snapshot_Stage",
+      "stageEntryPrefix": "PGL_Backup_",
+      "content": "PGL_Backup_Content"
     }
   },
   "engine": {
@@ -832,13 +836,17 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `metrics` / `engine.metrics` | `bool` | `true` | If true, enables detailed performance and file-counting metrics. |
 | **Paths** | | | |
 | - / `paths.incremental.archive` | `string` | `"PGL_Backup_Incremental_Archive"` | Sub-directory for historical incremental backups. |
+| - / `paths.incremental.archiveEntryPrefix` | `string` | `"PGL_Backup_"` | Prefix for timestamped archive directories (incremental). |
+| - / `paths.incremental.stage` | `string` | `"~PGL_Backup_Incremental_Stage"` | Temporary sub-directory for during incremental backups. |
+| - / `paths.incremental.stageEntryPrefix` | `string` | `"PGL_Backup_"` | Prefix for temporal stage directories (incremental). |
 | - / `paths.incremental.current` | `string` | `"PGL_Backup_Incremental_Current"` | Sub-directory for the current incremental backup. |
 | - / `paths.incremental.content` | `string` | `"PGL_Backup_Content"` | Sub-directory for the content within an incremental backup. |
-| - / `paths.incremental.archiveEntryPrefix` | `string` | `"PGL_Backup_"` | Prefix for timestamped archive directories (incremental). |
 | - / `paths.snapshot.archive` | `string` | `"PGL_Backup_Snapshot_Archive"` | Sub-directory for snapshot backups. |
+| - / `paths.snapshot.archiveEntryPrefix` | `string` | `"PGL_Backup_"` | Prefix for timestamped archive directories (snapshot). |
+| - / `paths.snapshot.stage` | `string` | `"~PGL_Backup_Snapshot_Stage"` | Temporary sub-directory for during snapshot backups. |
+| - / `paths.snapshot.stageEntryPrefix` | `string` | `"PGL_Backup_"` | Prefix for temporal stage directories (snapshot). |
 | - / `paths.snapshot.current` | `string` | `"PGL_Backup_Snapshot_Current"` | Sub-directory for the current snapshot backup. |
 | - / `paths.snapshot.content` | `string` | `"PGL_Backup_Content"` | Sub-directory for the content within a snapshot backup. |
-| - / `paths.snapshot.archiveEntryPrefix` | `string` | `"PGL_Backup_"` | Prefix for timestamped archive directories (snapshot). |
 | **Sync Settings** | | | |
 | - / `sync.enabled` | `bool` | `true` | Enable file synchronization. |
 | `sync-engine` / `sync.engine` | `string` | `"native"` | The sync engine to use: `"native"`. |
