@@ -8,7 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v1.4.5] - 2026-XX-XX
 
 ### Changed
-- **Refactor**: Decoupled the archive decision-making from the archive action. The `patharchive` package now exposes a `ShouldArchive` function, making the engine's control flow more explicit and flexible.
+- **Refactor**: Renamed the `patharchive` package to `pathrotation` to better reflect its expanded responsibility for the entire backup rotation lifecycle (staging and archiving).
+- **Refactor**: Renamed `PathArchiver` to `PathRotator` and `ArchiveMetrics` to `RotationMetrics` for consistency.
+- **Refactor**: Decoupled the archive decision-making from the archive action. The `pathrotation` package now exposes a `ShouldArchive` function, making the engine's control flow more explicit and flexible.
+
+### Added
+- Added `Unstage` and `CleanupStagingPath` methods to the `Rotator` interface to support robust cleanup of temporary staging directories.
 
 ## [v1.4.4] - 2026-02-27
 

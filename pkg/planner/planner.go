@@ -6,9 +6,9 @@ import (
 
 	"github.com/paulschiretz/pgl-backup/pkg/config"
 	"github.com/paulschiretz/pgl-backup/pkg/hook"
-	"github.com/paulschiretz/pgl-backup/pkg/patharchive"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
 	"github.com/paulschiretz/pgl-backup/pkg/pathretention"
+	"github.com/paulschiretz/pgl-backup/pkg/pathrotation"
 	"github.com/paulschiretz/pgl-backup/pkg/pathsync"
 	"github.com/paulschiretz/pgl-backup/pkg/preflight"
 )
@@ -19,7 +19,7 @@ type BackupPlan struct {
 
 	Preflight   *preflight.Plan
 	Sync        *pathsync.Plan
-	Archive     *patharchive.Plan
+	Archive     *pathrotation.Plan
 	Retention   *pathretention.Plan
 	Compression *pathcompression.CompressPlan
 
@@ -129,17 +129,17 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 	}
 
 	// Prepare Archive Plan based on Mode
-	var archivePlan *patharchive.Plan
+	var archivePlan *pathrotation.Plan
 	if mode == Incremental {
 		// Incremental: Use configured archive settings and retention constraints
-		archiveIntervalMode, err := patharchive.ParseIntervalMode(cfg.Archive.IntervalMode)
+		archiveIntervalMode, err := pathrotation.ParseIntervalMode(cfg.Archive.IntervalMode)
 		if err != nil {
 			return nil, err
 		}
 
-		var archiveIntervalConstraints patharchive.IntervalModeConstraints
+		var archiveIntervalConstraints pathrotation.IntervalModeConstraints
 		if retentionPolicy.Enabled {
-			archiveIntervalConstraints = patharchive.IntervalModeConstraints{
+			archiveIntervalConstraints = pathrotation.IntervalModeConstraints{
 				Hours:  retentionPolicy.Hours,
 				Days:   retentionPolicy.Days,
 				Weeks:  retentionPolicy.Weeks,
@@ -148,7 +148,7 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 			}
 		}
 
-		archivePlan = &patharchive.Plan{
+		archivePlan = &pathrotation.Plan{
 			Enabled:         cfg.Archive.Enabled,
 			IntervalSeconds: cfg.Archive.IntervalSeconds,
 			IntervalMode:    archiveIntervalMode,
@@ -159,11 +159,11 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 		}
 	} else {
 		// Snapshot: Always enabled, manual mode, 0 interval (immediate)
-		archivePlan = &patharchive.Plan{
+		archivePlan = &pathrotation.Plan{
 			Enabled:         true,
 			IntervalSeconds: 0,
-			IntervalMode:    patharchive.Manual,
-			Constraints:     patharchive.IntervalModeConstraints{},
+			IntervalMode:    pathrotation.Manual,
+			Constraints:     pathrotation.IntervalModeConstraints{},
 			DryRun:          dryRun,
 			FailFast:        failFast,
 			Metrics:         metrics,

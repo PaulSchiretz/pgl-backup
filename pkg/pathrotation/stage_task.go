@@ -1,4 +1,4 @@
-package patharchive
+package pathrotation
 
 import (
 	"context"

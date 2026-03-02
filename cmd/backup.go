@@ -12,9 +12,9 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/engine"
 	"github.com/paulschiretz/pgl-backup/pkg/flagparse"
 	"github.com/paulschiretz/pgl-backup/pkg/hook"
-	"github.com/paulschiretz/pgl-backup/pkg/patharchive"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
 	"github.com/paulschiretz/pgl-backup/pkg/pathretention"
+	"github.com/paulschiretz/pgl-backup/pkg/pathrotation"
 	"github.com/paulschiretz/pgl-backup/pkg/pathsync"
 	"github.com/paulschiretz/pgl-backup/pkg/planner"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
@@ -93,7 +93,7 @@ func RunBackup(ctx context.Context, flagMap map[string]any) error {
 			runConfig.Engine.Performance.SyncWorkers,
 			runConfig.Engine.Performance.MirrorWorkers,
 		),
-		patharchive.NewPathArchiver(),
+		pathrotation.NewPathRotator(),
 		pathretention.NewPathRetainer(
 			runConfig.Engine.Performance.DeleteWorkers,
 		),

@@ -1,4 +1,4 @@
-package patharchive
+package pathrotation
 
 import (
 	"sync/atomic"
@@ -15,16 +15,16 @@ type Metrics interface {
 	StopProgress()
 }
 
-// ArchiveMetrics holds the atomic counters for tracking the move operation's progress.
-type ArchiveMetrics struct {
+// RotationMetrics holds the atomic counters for tracking the move operation's progress.
+type RotationMetrics struct {
 	BackupsMoved atomic.Int64
 	stopChan     chan struct{}
 	startTime    time.Time
 }
 
-func (m *ArchiveMetrics) AddBackupsMoved(n int64) { m.BackupsMoved.Add(n) }
+func (m *RotationMetrics) AddBackupsMoved(n int64) { m.BackupsMoved.Add(n) }
 
-func (m *ArchiveMetrics) StartProgress(msg string, interval time.Duration) {
+func (m *RotationMetrics) StartProgress(msg string, interval time.Duration) {
 	m.startTime = time.Now()
 	m.stopChan = make(chan struct{})
 	ticker := time.NewTicker(interval)
@@ -41,13 +41,13 @@ func (m *ArchiveMetrics) StartProgress(msg string, interval time.Duration) {
 	}()
 }
 
-func (m *ArchiveMetrics) StopProgress() {
+func (m *RotationMetrics) StopProgress() {
 	if m.stopChan != nil {
 		close(m.stopChan)
 	}
 }
 
-func (m *ArchiveMetrics) LogSummary(msg string) {
+func (m *RotationMetrics) LogSummary(msg string) {
 	duration := time.Duration(0)
 	if !m.startTime.IsZero() {
 		duration = time.Since(m.startTime)
@@ -67,5 +67,5 @@ func (m *NoopMetrics) LogSummary(msg string)                            {}
 func (m *NoopMetrics) StartProgress(msg string, interval time.Duration) {}
 func (m *NoopMetrics) StopProgress()                                    {}
 
-var _ Metrics = (*ArchiveMetrics)(nil)
+var _ Metrics = (*RotationMetrics)(nil)
 var _ Metrics = (*NoopMetrics)(nil)

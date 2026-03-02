@@ -1,4 +1,4 @@
-package patharchive
+package pathrotation
 
 type IntervalModeConstraints struct {
 	Hours  int

@@ -1,4 +1,4 @@
-package patharchive_test
+package pathrotation_test
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
-	"github.com/paulschiretz/pgl-backup/pkg/patharchive"
+	"github.com/paulschiretz/pgl-backup/pkg/pathrotation"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
@@ -22,9 +22,9 @@ func TestShouldArchive(t *testing.T) {
 	tests := []struct {
 		name            string
 		disabled        bool
-		intervalMode    patharchive.IntervalMode
+		intervalMode    pathrotation.IntervalMode
 		intervalSeconds int
-		constraints     patharchive.IntervalModeConstraints
+		constraints     pathrotation.IntervalModeConstraints
 		lastBackupAge   time.Duration
 		setupEmptyPath  bool
 		expectShould    bool
@@ -32,49 +32,49 @@ func TestShouldArchive(t *testing.T) {
 	}{
 		{
 			name:            "Manual - 24h Interval - 25h Passed (Should Archive)",
-			intervalMode:    patharchive.Manual,
+			intervalMode:    pathrotation.Manual,
 			intervalSeconds: 86400,
 			lastBackupAge:   25 * time.Hour,
 			expectShould:    true,
 		},
 		{
 			name:            "Manual - 24h Interval - 1h Passed (Should NOT Archive)",
-			intervalMode:    patharchive.Manual,
+			intervalMode:    pathrotation.Manual,
 			intervalSeconds: 86400,
 			lastBackupAge:   1 * time.Hour,
 			expectShould:    false,
 		},
 		{
 			name:          "Auto - Hourly Retention - 2h Passed (Should Archive)",
-			intervalMode:  patharchive.Auto,
-			constraints:   patharchive.IntervalModeConstraints{Hours: 1},
+			intervalMode:  pathrotation.Auto,
+			constraints:   pathrotation.IntervalModeConstraints{Hours: 1},
 			lastBackupAge: 2 * time.Hour,
 			expectShould:  true,
 		},
 		{
 			name:          "Auto - Daily Retention - 1h Passed (Should NOT Archive)",
-			intervalMode:  patharchive.Auto,
-			constraints:   patharchive.IntervalModeConstraints{Days: 1},
+			intervalMode:  pathrotation.Auto,
+			constraints:   pathrotation.IntervalModeConstraints{Days: 1},
 			lastBackupAge: 1 * time.Hour,
 			expectShould:  false,
 		},
 		{
 			name:            "Disabled - Should NOT Archive even if interval passed",
 			disabled:        true,
-			intervalMode:    patharchive.Manual,
+			intervalMode:    pathrotation.Manual,
 			intervalSeconds: 86400,
 			lastBackupAge:   25 * time.Hour,
 			expectShould:    false,
-			expectErr:       patharchive.ErrDisabled,
+			expectErr:       pathrotation.ErrDisabled,
 		},
 		{
 			name:            "Invalid Input - Empty Path",
-			intervalMode:    patharchive.Manual,
+			intervalMode:    pathrotation.Manual,
 			intervalSeconds: 86400,
 			lastBackupAge:   25 * time.Hour,
 			setupEmptyPath:  true,
 			expectShould:    false,
-			expectErr:       patharchive.ErrNothingToArchive,
+			expectErr:       pathrotation.ErrNothingToArchive,
 		},
 	}
 
@@ -90,8 +90,8 @@ func TestShouldArchive(t *testing.T) {
 				toArchive.RelPathKey = ""
 			}
 
-			archiver := patharchive.NewPathArchiver()
-			plan := &patharchive.Plan{
+			rotator := pathrotation.NewPathRotator()
+			plan := &pathrotation.Plan{
 				Enabled:         !tc.disabled,
 				IntervalMode:    tc.intervalMode,
 				IntervalSeconds: tc.intervalSeconds,
@@ -99,7 +99,7 @@ func TestShouldArchive(t *testing.T) {
 			}
 
 			// 2. Execute
-			should, err := archiver.ShouldArchive(context.Background(), toArchive, plan, now)
+			should, err := rotator.ShouldArchive(context.Background(), toArchive, plan, now)
 
 			// 3. Verify
 			if should != tc.expectShould {
@@ -195,18 +195,18 @@ func TestArchive(t *testing.T) {
 				}
 			}
 
-			// 2. Create Archiver and Plan
-			archiver := patharchive.NewPathArchiver()
-			plan := &patharchive.Plan{
+			// 2. Create Rotator and Plan
+			rotator := pathrotation.NewPathRotator()
+			plan := &pathrotation.Plan{
 				Enabled:         true,
-				IntervalMode:    patharchive.Manual,
+				IntervalMode:    pathrotation.Manual,
 				IntervalSeconds: 86400,
 				DryRun:          tc.dryRun,
 				Metrics:         false,
 			}
 
 			// 3. Execute
-			result, err := archiver.Archive(context.Background(), targetBase, relArchive, prefix, toArchive, plan, now.Add(1*time.Hour))
+			result, err := rotator.Archive(context.Background(), targetBase, relArchive, prefix, toArchive, plan, now.Add(1*time.Hour))
 
 			// 4. Verify Error
 			if tc.expectErrorStr != "" {
@@ -321,16 +321,16 @@ func TestStage(t *testing.T) {
 				}
 			}
 
-			// 2. Create Archiver and Plan
-			archiver := patharchive.NewPathArchiver()
-			plan := &patharchive.Plan{
+			// 2. Create Rotator and Plan
+			rotator := pathrotation.NewPathRotator()
+			plan := &pathrotation.Plan{
 				Enabled: true,
 				DryRun:  tc.dryRun,
 				Metrics: false,
 			}
 
 			// 3. Execute
-			result, err := archiver.Stage(context.Background(), targetBase, relStage, prefix, toStage, plan, now)
+			result, err := rotator.Stage(context.Background(), targetBase, relStage, prefix, toStage, plan, now)
 
 			// 4. Verify Error
 			if tc.expectErrorStr != "" {
@@ -395,11 +395,11 @@ func TestUnstage(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			archiver := patharchive.NewPathArchiver()
+			rotator := pathrotation.NewPathRotator()
 			info := metafile.MetafileInfo{RelPathKey: relStage}
-			plan := &patharchive.Plan{DryRun: tc.dryRun}
+			plan := &pathrotation.Plan{DryRun: tc.dryRun}
 
-			if err := archiver.Unstage(context.Background(), tempDir, info, plan); err != nil {
+			if err := rotator.Unstage(context.Background(), tempDir, info, plan); err != nil {
 				t.Fatalf("Unstage failed: %v", err)
 			}
 
@@ -443,10 +443,10 @@ func TestCleanupStagingPath(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			archiver := patharchive.NewPathArchiver()
-			plan := &patharchive.Plan{DryRun: tc.dryRun}
+			rotator := pathrotation.NewPathRotator()
+			plan := &pathrotation.Plan{DryRun: tc.dryRun}
 
-			if err := archiver.CleanupStagingPath(context.Background(), tempDir, relStageParent, plan); err != nil {
+			if err := rotator.CleanupStagingPath(context.Background(), tempDir, relStageParent, plan); err != nil {
 				t.Fatalf("CleanupStagingPath failed: %v", err)
 			}
 

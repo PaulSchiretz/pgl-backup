@@ -14,9 +14,9 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/engine"
 	"github.com/paulschiretz/pgl-backup/pkg/hook"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
-	"github.com/paulschiretz/pgl-backup/pkg/patharchive"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
 	"github.com/paulschiretz/pgl-backup/pkg/pathretention"
+	"github.com/paulschiretz/pgl-backup/pkg/pathrotation"
 	"github.com/paulschiretz/pgl-backup/pkg/pathsync"
 	"github.com/paulschiretz/pgl-backup/pkg/planner"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
@@ -65,11 +65,11 @@ type mockArchiver struct {
 	shouldArchiveErr    error
 }
 
-func (m *mockArchiver) ShouldArchive(ctx context.Context, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) (bool, error) {
+func (m *mockArchiver) ShouldArchive(ctx context.Context, toArchive metafile.MetafileInfo, p *pathrotation.Plan, timestampUTC time.Time) (bool, error) {
 	return m.shouldArchiveResult, m.shouldArchiveErr
 }
 
-func (m *mockArchiver) Archive(ctx context.Context, absBasePath, relArchivePathKey, archiveEntryPrefix string, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
+func (m *mockArchiver) Archive(ctx context.Context, absBasePath, relArchivePathKey, archiveEntryPrefix string, toArchive metafile.MetafileInfo, p *pathrotation.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
 	if m.err != nil {
 		return metafile.MetafileInfo{}, m.err
 	}
@@ -84,7 +84,7 @@ func (m *mockArchiver) Archive(ctx context.Context, absBasePath, relArchivePathK
 	return metafile.MetafileInfo{RelPathKey: path}, nil
 }
 
-func (m *mockArchiver) Stage(ctx context.Context, absBasePath, relStagePathKey, stageEntryPrefix string, toStage metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
+func (m *mockArchiver) Stage(ctx context.Context, absBasePath, relStagePathKey, stageEntryPrefix string, toStage metafile.MetafileInfo, p *pathrotation.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
 	if m.err != nil {
 		return metafile.MetafileInfo{}, m.err
 	}
@@ -99,11 +99,11 @@ func (m *mockArchiver) Stage(ctx context.Context, absBasePath, relStagePathKey, 
 	return metafile.MetafileInfo{RelPathKey: path}, nil
 }
 
-func (m *mockArchiver) Unstage(ctx context.Context, absBasePath string, stagedInfo metafile.MetafileInfo, p *patharchive.Plan) error {
+func (m *mockArchiver) Unstage(ctx context.Context, absBasePath string, stagedInfo metafile.MetafileInfo, p *pathrotation.Plan) error {
 	return m.err
 }
 
-func (m *mockArchiver) CleanupStagingPath(ctx context.Context, absBasePath, relStagePathKey string, p *patharchive.Plan) error {
+func (m *mockArchiver) CleanupStagingPath(ctx context.Context, absBasePath, relStagePathKey string, p *pathrotation.Plan) error {
 	return m.err
 }
 
@@ -323,7 +323,7 @@ func TestExecuteBackup(t *testing.T) {
 			name:             "ShouldArchive returns hint error",
 			mode:             planner.Incremental,
 			archiveEnabled:   true,
-			shouldArchiveErr: patharchive.ErrDisabled,
+			shouldArchiveErr: pathrotation.ErrDisabled,
 			setupFS: func(t *testing.T, baseDir string) {
 				currentPath := filepath.Join(baseDir, relCurrent)
 				os.MkdirAll(currentPath, 0755)
@@ -474,7 +474,7 @@ func TestExecuteBackup(t *testing.T) {
 					DryRun:   tc.dryRun,
 					FailFast: tc.failFast,
 				},
-				Archive: &patharchive.Plan{
+				Archive: &pathrotation.Plan{
 					Enabled:  tc.archiveEnabled,
 					DryRun:   tc.dryRun,
 					FailFast: tc.failFast,
@@ -932,7 +932,7 @@ func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
 		},
 		Preflight:   &preflight.Plan{},
 		Sync:        &pathsync.Plan{Enabled: true},
-		Archive:     &patharchive.Plan{Enabled: true},
+		Archive:     &pathrotation.Plan{Enabled: true},
 		Retention:   &pathretention.Plan{Enabled: true}, // Enabled!
 		Compression: &pathcompression.CompressPlan{Enabled: false},
 		HookRunner:  &hook.Plan{},

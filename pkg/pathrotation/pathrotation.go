@@ -1,4 +1,4 @@
-// --- ARCHITECTURAL OVERVIEW: Archive Time Handling ---
+// --- ARCHITECTURAL OVERVIEW: Rotation Time Handling ---
 //
 // This package employs a specific time-handling strategy for creating archives,
 // designed to provide predictable creation schedules for the user.
@@ -28,9 +28,9 @@
 //     faster than a slow target copying to itself. The `Rename` strategy is therefore the
 //     unambiguously correct choice for performance in all typical backup scenarios.
 
-// package patharchive is responsible for archiving the "current" incremental backup
+// package pathrotation is responsible for archiving the "current" incremental backup
 // into a permanent, timestamped directory when a configured time interval is crossed.
-package patharchive
+package pathrotation
 
 import (
 	"context"
@@ -50,11 +50,11 @@ var ErrNothingToStage = hints.New("nothing to stage")
 var ErrNothingToArchive = hints.New("nothing to archive")
 var ErrDisabled = hints.New("archiving is disabled")
 
-type PathArchiver struct{}
+type PathRotator struct{}
 
-// NewPathArchiver creates a new PathArchiver with the given configuration.
-func NewPathArchiver() *PathArchiver {
-	return &PathArchiver{}
+// NewPathRotator creates a new PathRotator with the given configuration.
+func NewPathRotator() *PathRotator {
+	return &PathRotator{}
 }
 
 // Archive moves a backup directory to a permanent, timestamped archive directory.
@@ -62,7 +62,7 @@ func NewPathArchiver() *PathArchiver {
 // The decision to archive should be made by the caller using ShouldArchive.
 // This function now unconditionally performs the archive operation, but retains
 // basic safety checks.
-func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathKey, archiveEntryPrefix string, toArchive metafile.MetafileInfo, p *Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
+func (r *PathRotator) Archive(ctx context.Context, absBasePath, relArchivePathKey, archiveEntryPrefix string, toArchive metafile.MetafileInfo, p *Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
 
 	if !p.Enabled {
 		return metafile.MetafileInfo{}, ErrDisabled
@@ -80,7 +80,7 @@ func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathK
 
 	var m Metrics
 	if p.Metrics {
-		m = &ArchiveMetrics{}
+		m = &RotationMetrics{}
 	} else {
 		m = &NoopMetrics{}
 	}
@@ -123,7 +123,7 @@ func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathK
 }
 
 // Stage moves the current backup directory to a temporary, timestamped staging directory.
-func (a *PathArchiver) Stage(ctx context.Context, absBasePath, relStagePathKey, stageEntryPrefix string, toStage metafile.MetafileInfo, p *Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
+func (r *PathRotator) Stage(ctx context.Context, absBasePath, relStagePathKey, stageEntryPrefix string, toStage metafile.MetafileInfo, p *Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
 
 	if toStage.RelPathKey == "" {
 		return metafile.MetafileInfo{}, ErrNothingToStage
@@ -137,7 +137,7 @@ func (a *PathArchiver) Stage(ctx context.Context, absBasePath, relStagePathKey, 
 
 	var m Metrics
 	if p.Metrics {
-		m = &ArchiveMetrics{}
+		m = &RotationMetrics{}
 	} else {
 		m = &NoopMetrics{}
 	}
@@ -181,7 +181,7 @@ func (a *PathArchiver) Stage(ctx context.Context, absBasePath, relStagePathKey, 
 
 // Unstage deletes the staged directory.
 // This is typically used to clean up the temporary staging directory after processing (e.g. compression) is complete.
-func (a *PathArchiver) Unstage(ctx context.Context, absBasePath string, stagedInfo metafile.MetafileInfo, p *Plan) error {
+func (r *PathRotator) Unstage(ctx context.Context, absBasePath string, stagedInfo metafile.MetafileInfo, p *Plan) error {
 	if stagedInfo.RelPathKey == "" {
 		return nil
 	}
@@ -208,7 +208,7 @@ func (a *PathArchiver) Unstage(ctx context.Context, absBasePath string, stagedIn
 
 // CleanupStagingPath deletes the entire staging parent directory.
 // This is used to clean up the top-level staging folder if it's empty or no longer needed.
-func (a *PathArchiver) CleanupStagingPath(ctx context.Context, absBasePath, relStagePathKey string, p *Plan) error {
+func (r *PathRotator) CleanupStagingPath(ctx context.Context, absBasePath, relStagePathKey string, p *Plan) error {
 	if relStagePathKey == "" {
 		return nil
 	}
@@ -242,7 +242,7 @@ func (a *PathArchiver) CleanupStagingPath(ctx context.Context, absBasePath, relS
 // weekly backup on Sunday night"), even though all stored timestamps are UTC.
 // The conversion handles Daylight Saving Time (DST) shifts correctly by checking
 // for midnight-to-midnight boundary crossings (epoch day counting).
-func (a *PathArchiver) ShouldArchive(ctx context.Context, toArchive metafile.MetafileInfo, p *Plan, timestampUTC time.Time) (bool, error) {
+func (r *PathRotator) ShouldArchive(ctx context.Context, toArchive metafile.MetafileInfo, p *Plan, timestampUTC time.Time) (bool, error) {
 	if !p.Enabled {
 		return false, ErrDisabled
 	}
@@ -257,7 +257,7 @@ func (a *PathArchiver) ShouldArchive(ctx context.Context, toArchive metafile.Met
 	default:
 	}
 
-	interval := a.resolveInterval(p)
+	interval := r.resolveInterval(p)
 
 	if interval == 0 {
 		return true, nil // Archive interval check is explicitly disabled, always create an archive.
@@ -287,20 +287,20 @@ func (a *PathArchiver) ShouldArchive(ctx context.Context, toArchive metafile.Met
 // resolveInterval calculates the effective archive interval based on configuration.
 // If the mode is 'auto', it calculates the optimal interval based on the retention policy.
 // If the mode is 'manual', it validates the user-configured interval.
-func (a *PathArchiver) resolveInterval(p *Plan) time.Duration {
+func (r *PathRotator) resolveInterval(p *Plan) time.Duration {
 	switch p.IntervalMode {
 	case Manual:
 		interval := time.Duration(p.IntervalSeconds) * time.Second
-		a.checkInterval(interval, p)
+		r.checkInterval(interval, p)
 		return interval
 	default:
-		return a.adjustInterval(p)
+		return r.adjustInterval(p)
 	}
 }
 
 // adjustInterval calculates the optimal archive interval based on the retention
 // policy. This is only called when the archive policy mode is 'auto'.
-func (a *PathArchiver) adjustInterval(p *Plan) time.Duration {
+func (r *PathRotator) adjustInterval(p *Plan) time.Duration {
 	var suggestedInterval time.Duration
 
 	// Pick the shortest duration required to satisfy the configured retention slots.
@@ -325,7 +325,7 @@ func (a *PathArchiver) adjustInterval(p *Plan) time.Duration {
 }
 
 // checkInterval validates the interval against the retention policy.
-func (a *PathArchiver) checkInterval(interval time.Duration, p *Plan) {
+func (r *PathRotator) checkInterval(interval time.Duration, p *Plan) {
 
 	// Shortcut for always archive interval
 	if interval == 0 {

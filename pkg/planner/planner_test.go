@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/config"
-	"github.com/paulschiretz/pgl-backup/pkg/patharchive"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
+	"github.com/paulschiretz/pgl-backup/pkg/pathrotation"
 	"github.com/paulschiretz/pgl-backup/pkg/pathsync"
 	"github.com/paulschiretz/pgl-backup/pkg/planner"
 )
@@ -31,7 +31,7 @@ func TestGenerateBackupPlan(t *testing.T) {
 				if !p.Sync.PreserveSourceDirName {
 					t.Error("Expected PreserveSourceDirName to be true")
 				}
-				if p.Archive.IntervalMode != patharchive.Auto {
+				if p.Archive.IntervalMode != pathrotation.Auto {
 					t.Errorf("Expected Archive IntervalMode Auto, got %v", p.Archive.IntervalMode)
 				}
 				if p.Paths.RelCurrentPathKey != "PGL_Backup_Incremental_Current" {

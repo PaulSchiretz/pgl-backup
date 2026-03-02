@@ -14,9 +14,9 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/hook"
 	"github.com/paulschiretz/pgl-backup/pkg/lockfile"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
-	"github.com/paulschiretz/pgl-backup/pkg/patharchive"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
 	"github.com/paulschiretz/pgl-backup/pkg/pathretention"
+	"github.com/paulschiretz/pgl-backup/pkg/pathrotation"
 	"github.com/paulschiretz/pgl-backup/pkg/pathsync"
 	"github.com/paulschiretz/pgl-backup/pkg/planner"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
@@ -662,12 +662,12 @@ func (r *Runner) fetchBackup(absBasePath, relPathKey string) (metafile.MetafileI
 	return metafile.MetafileInfo{RelPathKey: relPathKey, Metadata: metadata}, nil
 }
 
-func (r *Runner) runStage(ctx context.Context, absBasePath string, paths planner.PathKeys, plan *patharchive.Plan, toStage metafile.MetafileInfo, timestampUTC time.Time) (metafile.MetafileInfo, error) {
+func (r *Runner) runStage(ctx context.Context, absBasePath string, paths planner.PathKeys, plan *pathrotation.Plan, toStage metafile.MetafileInfo, timestampUTC time.Time) (metafile.MetafileInfo, error) {
 	if !plan.Enabled {
 		return metafile.MetafileInfo{}, nil
 	}
 
-	result, err := r.archiver.Stage(ctx, absBasePath, paths.RelStagePathKey, paths.StageEntryPrefix, toStage, plan, timestampUTC)
+	result, err := r.rotator.Stage(ctx, absBasePath, paths.RelStagePathKey, paths.StageEntryPrefix, toStage, plan, timestampUTC)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return metafile.MetafileInfo{}, err
@@ -686,12 +686,12 @@ func (r *Runner) runStage(ctx context.Context, absBasePath string, paths planner
 	return result, nil
 }
 
-func (r *Runner) runArchive(ctx context.Context, absBasePath string, paths planner.PathKeys, plan *patharchive.Plan, toArchive metafile.MetafileInfo, timestampUTC time.Time) (metafile.MetafileInfo, error) {
+func (r *Runner) runArchive(ctx context.Context, absBasePath string, paths planner.PathKeys, plan *pathrotation.Plan, toArchive metafile.MetafileInfo, timestampUTC time.Time) (metafile.MetafileInfo, error) {
 	if !plan.Enabled {
 		return metafile.MetafileInfo{}, nil
 	}
 
-	should, err := r.archiver.ShouldArchive(ctx, toArchive, plan, timestampUTC)
+	should, err := r.rotator.ShouldArchive(ctx, toArchive, plan, timestampUTC)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return metafile.MetafileInfo{}, err
@@ -708,7 +708,7 @@ func (r *Runner) runArchive(ctx context.Context, absBasePath string, paths plann
 		return metafile.MetafileInfo{}, nil
 	}
 
-	result, err := r.archiver.Archive(ctx, absBasePath, paths.RelArchivePathKey, paths.ArchiveEntryPrefix, toArchive, plan, timestampUTC)
+	result, err := r.rotator.Archive(ctx, absBasePath, paths.RelArchivePathKey, paths.ArchiveEntryPrefix, toArchive, plan, timestampUTC)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return metafile.MetafileInfo{}, err

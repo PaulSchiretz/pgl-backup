@@ -6,14 +6,14 @@ import (
 
 	"github.com/paulschiretz/pgl-backup/pkg/hook"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
-	"github.com/paulschiretz/pgl-backup/pkg/patharchive"
 	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
 	"github.com/paulschiretz/pgl-backup/pkg/pathretention"
+	"github.com/paulschiretz/pgl-backup/pkg/pathrotation"
 	"github.com/paulschiretz/pgl-backup/pkg/pathsync"
 	"github.com/paulschiretz/pgl-backup/pkg/preflight"
 )
 
-// Syncer is an interface for the preflight leaf package.
+// Validator is an interface for the preflight leaf package.
 type Validator interface {
 	Run(ctx context.Context, absSourcePath, absTargetPath string, p *preflight.Plan, timestampUTC time.Time) error
 }
@@ -24,14 +24,14 @@ type Syncer interface {
 	Restore(ctx context.Context, absBasePath string, relContentPathKey string, toRestore metafile.MetafileInfo, absRestoreTargetPath string, p *pathsync.Plan, timestampUTC time.Time) error
 }
 
-// Archiver is an interface for the archive leaf package.
+// Rotator is an interface for the rotation leaf package.
 // Responsible for turning the the 'current' state into a permanent historical record.
-type Archiver interface {
-	ShouldArchive(ctx context.Context, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) (bool, error)
-	Archive(ctx context.Context, absBasePath, relArchivePathKey, archiveEntryPrefix string, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error)
-	Stage(ctx context.Context, absBasePath, relStagePathKey, stageEntryPrefix string, toStage metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error)
-	Unstage(ctx context.Context, absBasePath string, stagedInfo metafile.MetafileInfo, p *patharchive.Plan) error
-	CleanupStagingPath(ctx context.Context, absBasePath, relStagePathKey string, p *patharchive.Plan) error
+type Rotator interface {
+	ShouldArchive(ctx context.Context, toArchive metafile.MetafileInfo, p *pathrotation.Plan, timestampUTC time.Time) (bool, error)
+	Archive(ctx context.Context, absBasePath, relArchivePathKey, archiveEntryPrefix string, toArchive metafile.MetafileInfo, p *pathrotation.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error)
+	Stage(ctx context.Context, absBasePath, relStagePathKey, stageEntryPrefix string, toStage metafile.MetafileInfo, p *pathrotation.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error)
+	Unstage(ctx context.Context, absBasePath string, stagedInfo metafile.MetafileInfo, p *pathrotation.Plan) error
+	CleanupStagingPath(ctx context.Context, absBasePath, relStagePathKey string, p *pathrotation.Plan) error
 }
 
 // Retainer is an interface for the retention leaf package.
@@ -53,18 +53,18 @@ type HookRunner interface {
 type Runner struct {
 	validator  Validator
 	syncer     Syncer
-	archiver   Archiver
+	rotator    Rotator
 	retainer   Retainer
 	compressor Compressor
 	hookRunner HookRunner
 }
 
 // NewRunner creates a new engine instance.
-func NewRunner(v Validator, hr HookRunner, s Syncer, a Archiver, r Retainer, c Compressor) *Runner {
+func NewRunner(v Validator, hr HookRunner, s Syncer, ro Rotator, r Retainer, c Compressor) *Runner {
 	return &Runner{
 		validator:  v,
 		syncer:     s,
-		archiver:   a,
+		rotator:    ro,
 		retainer:   r,
 		compressor: c,
 		hookRunner: hr,
