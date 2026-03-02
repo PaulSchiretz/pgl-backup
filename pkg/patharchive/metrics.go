@@ -7,22 +7,22 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
-// Metrics defines the interface for collecting and reporting archive statistics.
+// Metrics defines the interface for collecting and reporting move statistics.
 type Metrics interface {
-	AddArchivesCreated(n int64)
+	AddBackupsMoved(n int64)
 	LogSummary(msg string)
 	StartProgress(msg string, interval time.Duration)
 	StopProgress()
 }
 
-// ArchiveMetrics holds the atomic counters for tracking the archive operation's progress.
+// ArchiveMetrics holds the atomic counters for tracking the move operation's progress.
 type ArchiveMetrics struct {
-	ArchivesCreated atomic.Int64
-	stopChan        chan struct{}
-	startTime       time.Time
+	BackupsMoved atomic.Int64
+	stopChan     chan struct{}
+	startTime    time.Time
 }
 
-func (m *ArchiveMetrics) AddArchivesCreated(n int64) { m.ArchivesCreated.Add(n) }
+func (m *ArchiveMetrics) AddBackupsMoved(n int64) { m.BackupsMoved.Add(n) }
 
 func (m *ArchiveMetrics) StartProgress(msg string, interval time.Duration) {
 	m.startTime = time.Now()
@@ -54,7 +54,7 @@ func (m *ArchiveMetrics) LogSummary(msg string) {
 	}
 
 	plog.Info(msg,
-		"archives_created", m.ArchivesCreated.Load(),
+		"backups_moved", m.BackupsMoved.Load(),
 		"duration", duration.Round(time.Millisecond),
 	)
 }
@@ -62,7 +62,7 @@ func (m *ArchiveMetrics) LogSummary(msg string) {
 // NoopMetrics is an implementation of the Metrics interface that performs no operations.
 type NoopMetrics struct{}
 
-func (m *NoopMetrics) AddArchivesCreated(n int64)                       {}
+func (m *NoopMetrics) AddBackupsMoved(n int64)                          {}
 func (m *NoopMetrics) LogSummary(msg string)                            {}
 func (m *NoopMetrics) StartProgress(msg string, interval time.Duration) {}
 func (m *NoopMetrics) StopProgress()                                    {}

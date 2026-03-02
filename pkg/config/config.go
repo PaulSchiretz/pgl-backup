@@ -29,8 +29,10 @@ var systemExcludeDirPatterns = []string{}
 type PathConfig struct {
 	Current            string `json:"current"`
 	Archive            string `json:"archive"`
-	Content            string `json:"content"`
 	ArchiveEntryPrefix string `json:"archiveEntryPrefix"`
+	Stage              string `json:"stage"`
+	StageEntryPrefix   string `json:"stageEntryPrefix"`
+	Content            string `json:"content"`
 }
 
 type PathsConfig struct {
@@ -157,14 +159,18 @@ func Default() Config {
 			Incremental: PathConfig{
 				Current:            "PGL_Backup_Incremental_Current", // Default name for the incremental current sub-directory.
 				Archive:            "PGL_Backup_Incremental_Archive", // Default name for the incremental archive sub-directory.
+				Stage:              "~PGL_Backup_Incremental_Stage",  // Default name for the incremental temporal stage sub-directory.
 				Content:            "PGL_Backup_Content",             // Default name for the incremental content sub-directory.
 				ArchiveEntryPrefix: "PGL_Backup_",
+				StageEntryPrefix:   "PGL_Backup_",
 			},
 			Snapshot: PathConfig{
 				Current:            "PGL_Backup_Snapshot_Current", // Default name for the snapshot current sub-directory.
 				Archive:            "PGL_Backup_Snapshot_Archive", // Default name for the snapshot archive sub-directory.
+				Stage:              "~PGL_Backup_Snapshot_Stage",  // Default name for the snapshot temporal stage sub-directory.
 				Content:            "PGL_Backup_Content",          // Default name for the snapshot content sub-directory.
 				ArchiveEntryPrefix: "PGL_Backup_",
+				StageEntryPrefix:   "PGL_Backup_",
 			},
 		},
 		Engine: EngineConfig{
@@ -334,6 +340,10 @@ func (c *Config) Validate() error {
 		if c.Paths.Incremental.Archive == "" {
 			return fmt.Errorf("paths.incremental.archive cannot be empty")
 		}
+		if c.Paths.Incremental.Stage == "" {
+			return fmt.Errorf("paths.incremental.stage cannot be empty")
+		}
+
 		if c.Paths.Incremental.Current == "" {
 			return fmt.Errorf("paths.incremental.current cannot be empty")
 		}
@@ -347,6 +357,10 @@ func (c *Config) Validate() error {
 		if strings.ContainsAny(c.Paths.Incremental.Archive, `\/`) {
 			return fmt.Errorf("paths.incremental.archive cannot contain path separators ('/' or '\\')")
 		}
+		if strings.ContainsAny(c.Paths.Incremental.Stage, `\/`) {
+			return fmt.Errorf("paths.incremental.stage cannot contain path separators ('/' or '\\')")
+		}
+
 		if strings.ContainsAny(c.Paths.Incremental.Current, `\/`) {
 			return fmt.Errorf("paths.incremental.current cannot contain path separators ('/' or '\\')")
 		}
@@ -357,16 +371,21 @@ func (c *Config) Validate() error {
 		if strings.EqualFold(c.Paths.Incremental.Current, c.Paths.Incremental.Archive) {
 			return fmt.Errorf("paths.incremental.current and paths.incremental.archive cannot be the same")
 		}
-		if strings.EqualFold(c.Paths.Incremental.Current, c.Paths.Incremental.Content) {
-			return fmt.Errorf("paths.incremental.current and paths.incremental.content cannot be the same")
+
+		if strings.EqualFold(c.Paths.Incremental.Current, c.Paths.Incremental.Stage) {
+			return fmt.Errorf("paths.incremental.current and paths.incremental.stage cannot be the same")
 		}
-		if strings.EqualFold(c.Paths.Incremental.Archive, c.Paths.Incremental.Content) {
-			return fmt.Errorf("paths.incremental.archive and paths.incremental.content cannot be the same")
+
+		if strings.EqualFold(c.Paths.Incremental.Archive, c.Paths.Incremental.Stage) {
+			return fmt.Errorf("paths.incremental.archive and paths.incremental.stage cannot be the same")
 		}
 
 	case "snapshot":
 		if c.Paths.Snapshot.Archive == "" {
 			return fmt.Errorf("paths.snapshot.archive cannot be empty")
+		}
+		if c.Paths.Snapshot.Stage == "" {
+			return fmt.Errorf("paths.snapshot.stage cannot be empty")
 		}
 		if c.Paths.Snapshot.Current == "" {
 			return fmt.Errorf("paths.snapshot.current cannot be empty")
@@ -381,6 +400,9 @@ func (c *Config) Validate() error {
 		if strings.ContainsAny(c.Paths.Snapshot.Archive, `\/`) {
 			return fmt.Errorf("paths.snapshot.archive cannot contain path separators ('/' or '\\')")
 		}
+		if strings.ContainsAny(c.Paths.Snapshot.Stage, `\/`) {
+			return fmt.Errorf("paths.snapshot.stage cannot contain path separators ('/' or '\\')")
+		}
 		if strings.ContainsAny(c.Paths.Snapshot.Current, `\/`) {
 			return fmt.Errorf("paths.snapshot.current cannot contain path separators ('/' or '\\')")
 		}
@@ -391,11 +413,11 @@ func (c *Config) Validate() error {
 		if strings.EqualFold(c.Paths.Snapshot.Current, c.Paths.Snapshot.Archive) {
 			return fmt.Errorf("paths.snapshot.current and paths.snapshot.archive cannot be the same")
 		}
-		if strings.EqualFold(c.Paths.Snapshot.Current, c.Paths.Snapshot.Content) {
-			return fmt.Errorf("paths.snapshot.current and paths.snapshot.content cannot be the same")
+		if strings.EqualFold(c.Paths.Snapshot.Current, c.Paths.Snapshot.Stage) {
+			return fmt.Errorf("paths.snapshot.current and paths.snapshot.stage cannot be the same")
 		}
-		if strings.EqualFold(c.Paths.Snapshot.Archive, c.Paths.Snapshot.Content) {
-			return fmt.Errorf("paths.snapshot.archive and paths.snapshot.content cannot be the same")
+		if strings.EqualFold(c.Paths.Snapshot.Archive, c.Paths.Snapshot.Stage) {
+			return fmt.Errorf("paths.snapshot.archive and paths.snapshot.stage cannot be the same")
 		}
 	}
 
@@ -499,6 +521,7 @@ func (c *Config) LogSummary(command flagparse.Command, absBasePath, absSourcePat
 		case "incremental":
 			logArgs = append(logArgs, "current_subdir", c.Paths.Incremental.Current)
 			logArgs = append(logArgs, "archive_subdir", c.Paths.Incremental.Archive)
+			logArgs = append(logArgs, "stage_subdir", c.Paths.Incremental.Stage)
 			logArgs = append(logArgs, "content_subdir", c.Paths.Incremental.Content)
 
 			if c.Archive.Enabled {
@@ -525,6 +548,7 @@ func (c *Config) LogSummary(command flagparse.Command, absBasePath, absSourcePat
 		case "snapshot":
 			logArgs = append(logArgs, "current_subdir", c.Paths.Snapshot.Current)
 			logArgs = append(logArgs, "archive_subdir", c.Paths.Snapshot.Archive)
+			logArgs = append(logArgs, "stage_subdir", c.Paths.Snapshot.Stage)
 			logArgs = append(logArgs, "content_subdir", c.Paths.Snapshot.Content)
 
 			if c.Retention.Snapshot.Enabled {

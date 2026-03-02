@@ -89,11 +89,11 @@ func TestConfig_Validate(t *testing.T) {
 			errContains: "paths.snapshot.current cannot be empty",
 		},
 		{
-			name: "Snapshot: Archive == Content",
+			name: "Snapshot: Archive == Stage",
 			modify: func(c *Config) {
 				c.Runtime.Mode = "snapshot"
 				c.Paths.Snapshot.Archive = "same"
-				c.Paths.Snapshot.Content = "same"
+				c.Paths.Snapshot.Stage = "same"
 			},
 			wantErr:     true,
 			errContains: "cannot be the same",

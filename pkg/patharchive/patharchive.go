@@ -46,6 +46,7 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
+var ErrNothingToStage = hints.New("nothing to stage")
 var ErrNothingToArchive = hints.New("nothing to archive")
 var ErrDisabled = hints.New("archiving is disabled")
 
@@ -56,7 +57,7 @@ func NewPathArchiver() *PathArchiver {
 	return &PathArchiver{}
 }
 
-// Archive moves the current backup directory to a permanent, timestamped archive directory.
+// Archive moves a backup directory to a permanent, timestamped archive directory.
 //
 // The decision to archive should be made by the caller using ShouldArchive.
 // This function now unconditionally performs the archive operation, but retains
@@ -76,9 +77,6 @@ func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathK
 		return metafile.MetafileInfo{}, ctx.Err()
 	default:
 	}
-
-	// Resolve the actual archiving interval
-	interval := a.resolveInterval(p)
 
 	var m Metrics
 	if p.Metrics {
@@ -101,23 +99,84 @@ func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathK
 	archiveEntry := archiveEntryPrefix + timestamp
 	relTargetPathKey := path.Join(relArchivePathKey, archiveEntry)
 
-	t := &task{
-		ctx:              ctx,
-		absBasePath:      absBasePath,
-		relTargetPathKey: relTargetPathKey,
-		toArchive:        toArchive,
-		interval:         interval,
-		metrics:          m,
-		timestampUTC:     timestampUTC,
-		dryRun:           p.DryRun,
+	absMoveSourcePath := util.DenormalizedAbsPath(absBasePath, toArchive.RelPathKey)
+	absMoveTargetPath := util.DenormalizedAbsPath(absBasePath, relTargetPathKey)
+
+	t := &archiveTask{
+		ctx:           ctx,
+		absSourcePath: absMoveSourcePath,
+		absTargetPath: absMoveTargetPath,
+		metrics:       m,
+		timestampUTC:  timestampUTC,
+		dryRun:        p.DryRun,
 	}
 
-	result, err := t.execute()
-	if err != nil {
+	if err := t.execute(); err != nil {
 		return metafile.MetafileInfo{}, err
 	}
 
-	return result, nil
+	// Return the updated archive result
+	return metafile.MetafileInfo{
+		RelPathKey: util.NormalizePath(relTargetPathKey),
+		Metadata:   toArchive.Metadata,
+	}, nil
+}
+
+// Stage moves the current backup directory to a temporary, timestamped staging directory.
+func (a *PathArchiver) Stage(ctx context.Context, absBasePath, relStagePathKey, stageEntryPrefix string, toStage metafile.MetafileInfo, p *Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
+
+	if toStage.RelPathKey == "" {
+		return metafile.MetafileInfo{}, ErrNothingToStage
+	}
+
+	select {
+	case <-ctx.Done():
+		return metafile.MetafileInfo{}, ctx.Err()
+	default:
+	}
+
+	var m Metrics
+	if p.Metrics {
+		m = &ArchiveMetrics{}
+	} else {
+		m = &NoopMetrics{}
+	}
+
+	// Ensure the archives directory exists.
+	if !p.DryRun {
+		absStagePath := util.DenormalizedAbsPath(absBasePath, relStagePathKey)
+		if err := os.MkdirAll(absStagePath, util.UserWritableDirPerms); err != nil {
+			return metafile.MetafileInfo{}, fmt.Errorf("failed to create staging directory %s: %w", relStagePathKey, err)
+		}
+	}
+
+	// The directory name must remain uniquely based on UTC time to avoid DST conflicts,
+	// but we add the user's local offset to make the timezone clear to the user.
+	timestamp := util.FormatTimestampWithOffset(toStage.Metadata.TimestampUTC)
+	stageEntry := stageEntryPrefix + timestamp
+	relTargetPathKey := path.Join(relStagePathKey, stageEntry)
+
+	absMoveSourcePath := util.DenormalizedAbsPath(absBasePath, toStage.RelPathKey)
+	absMoveTargetPath := util.DenormalizedAbsPath(absBasePath, relTargetPathKey)
+
+	t := &stageTask{
+		ctx:           ctx,
+		absSourcePath: absMoveSourcePath,
+		absTargetPath: absMoveTargetPath,
+		metrics:       m,
+		timestampUTC:  timestampUTC,
+		dryRun:        p.DryRun,
+	}
+
+	if err := t.execute(); err != nil {
+		return metafile.MetafileInfo{}, err
+	}
+
+	// Return the updated stage result
+	return metafile.MetafileInfo{
+		RelPathKey: util.NormalizePath(relTargetPathKey),
+		Metadata:   toStage.Metadata,
+	}, nil
 }
 
 // ShouldArchive determines if a new backup archive should be created based on the plan and timestamps.
@@ -129,13 +188,19 @@ func (a *PathArchiver) Archive(ctx context.Context, absBasePath, relArchivePathK
 // weekly backup on Sunday night"), even though all stored timestamps are UTC.
 // The conversion handles Daylight Saving Time (DST) shifts correctly by checking
 // for midnight-to-midnight boundary crossings (epoch day counting).
-func (a *PathArchiver) ShouldArchive(toArchive metafile.MetafileInfo, p *Plan, timestampUTC time.Time) (bool, error) {
+func (a *PathArchiver) ShouldArchive(ctx context.Context, toArchive metafile.MetafileInfo, p *Plan, timestampUTC time.Time) (bool, error) {
 	if !p.Enabled {
 		return false, ErrDisabled
 	}
 
 	if toArchive.RelPathKey == "" {
 		return false, ErrNothingToArchive
+	}
+
+	select {
+	case <-ctx.Done():
+		return false, ctx.Err()
+	default:
 	}
 
 	interval := a.resolveInterval(p)

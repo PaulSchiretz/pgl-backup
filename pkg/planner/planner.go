@@ -66,8 +66,10 @@ type PrunePlan struct {
 type PathKeys struct {
 	RelCurrentPathKey  string
 	RelArchivePathKey  string
-	RelContentPathKey  string
 	ArchiveEntryPrefix string
+	RelStagePathKey    string
+	StageEntryPrefix   string
+	RelContentPathKey  string
 }
 
 func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
@@ -176,8 +178,10 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 		Paths: PathKeys{
 			RelCurrentPathKey:  pathCfg.Current,
 			RelArchivePathKey:  pathCfg.Archive,
-			RelContentPathKey:  pathCfg.Content,
 			ArchiveEntryPrefix: pathCfg.ArchiveEntryPrefix,
+			RelStagePathKey:    pathCfg.Stage,
+			StageEntryPrefix:   pathCfg.StageEntryPrefix,
+			RelContentPathKey:  pathCfg.Content,
 		},
 		Preflight: &preflight.Plan{
 			SourceAccessible:   true,
@@ -289,15 +293,19 @@ func GenerateListPlan(cfg config.Config) (*ListPlan, error) {
 		PathsIncremental: PathKeys{
 			RelCurrentPathKey:  cfg.Paths.Incremental.Current,
 			RelArchivePathKey:  cfg.Paths.Incremental.Archive,
-			RelContentPathKey:  cfg.Paths.Incremental.Content,
 			ArchiveEntryPrefix: cfg.Paths.Incremental.ArchiveEntryPrefix,
+			RelStagePathKey:    cfg.Paths.Incremental.Stage,
+			StageEntryPrefix:   cfg.Paths.Incremental.StageEntryPrefix,
+			RelContentPathKey:  cfg.Paths.Incremental.Content,
 		},
 
 		PathsSnapshot: PathKeys{
 			RelCurrentPathKey:  cfg.Paths.Snapshot.Current,
 			RelArchivePathKey:  cfg.Paths.Snapshot.Archive,
-			RelContentPathKey:  cfg.Paths.Snapshot.Content,
 			ArchiveEntryPrefix: cfg.Paths.Snapshot.ArchiveEntryPrefix,
+			RelStagePathKey:    cfg.Paths.Snapshot.Stage,
+			StageEntryPrefix:   cfg.Paths.Snapshot.StageEntryPrefix,
+			RelContentPathKey:  cfg.Paths.Snapshot.Content,
 		},
 	}, nil
 }
@@ -340,15 +348,19 @@ func GenerateRestorePlan(cfg config.Config) (*RestorePlan, error) {
 		PathsIncremental: PathKeys{
 			RelCurrentPathKey:  cfg.Paths.Incremental.Current,
 			RelArchivePathKey:  cfg.Paths.Incremental.Archive,
-			RelContentPathKey:  cfg.Paths.Incremental.Content,
 			ArchiveEntryPrefix: cfg.Paths.Incremental.ArchiveEntryPrefix,
+			RelStagePathKey:    cfg.Paths.Incremental.Stage,
+			StageEntryPrefix:   cfg.Paths.Incremental.StageEntryPrefix,
+			RelContentPathKey:  cfg.Paths.Incremental.Content,
 		},
 
 		PathsSnapshot: PathKeys{
 			RelCurrentPathKey:  cfg.Paths.Snapshot.Current,
 			RelArchivePathKey:  cfg.Paths.Snapshot.Archive,
-			RelContentPathKey:  cfg.Paths.Snapshot.Content,
 			ArchiveEntryPrefix: cfg.Paths.Snapshot.ArchiveEntryPrefix,
+			RelStagePathKey:    cfg.Paths.Snapshot.Stage,
+			StageEntryPrefix:   cfg.Paths.Snapshot.StageEntryPrefix,
+			RelContentPathKey:  cfg.Paths.Snapshot.Content,
 		},
 
 		Preflight: &preflight.Plan{
@@ -434,8 +446,10 @@ func GeneratePrunePlan(cfg config.Config) (*PrunePlan, error) {
 		PathsIncremental: PathKeys{
 			RelCurrentPathKey:  cfg.Paths.Incremental.Current,
 			RelArchivePathKey:  cfg.Paths.Incremental.Archive,
-			RelContentPathKey:  cfg.Paths.Incremental.Content,
 			ArchiveEntryPrefix: cfg.Paths.Incremental.ArchiveEntryPrefix,
+			RelStagePathKey:    cfg.Paths.Incremental.Stage,
+			StageEntryPrefix:   cfg.Paths.Incremental.StageEntryPrefix,
+			RelContentPathKey:  cfg.Paths.Incremental.Content,
 		},
 
 		RetentionIncremental: &pathretention.Plan{
@@ -454,8 +468,10 @@ func GeneratePrunePlan(cfg config.Config) (*PrunePlan, error) {
 		PathsSnapshot: PathKeys{
 			RelCurrentPathKey:  cfg.Paths.Snapshot.Current,
 			RelArchivePathKey:  cfg.Paths.Snapshot.Archive,
-			RelContentPathKey:  cfg.Paths.Snapshot.Content,
 			ArchiveEntryPrefix: cfg.Paths.Snapshot.ArchiveEntryPrefix,
+			RelStagePathKey:    cfg.Paths.Snapshot.Stage,
+			StageEntryPrefix:   cfg.Paths.Snapshot.StageEntryPrefix,
+			RelContentPathKey:  cfg.Paths.Snapshot.Content,
 		},
 
 		RetentionSnapshot: &pathretention.Plan{

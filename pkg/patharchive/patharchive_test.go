@@ -99,7 +99,7 @@ func TestShouldArchive(t *testing.T) {
 			}
 
 			// 2. Execute
-			should, err := archiver.ShouldArchive(toArchive, plan, now)
+			should, err := archiver.ShouldArchive(context.Background(), toArchive, plan, now)
 
 			// 3. Verify
 			if should != tc.expectShould {
@@ -230,6 +230,130 @@ func TestArchive(t *testing.T) {
 				expectedArchivePath := filepath.Join(targetBase, relArchive, prefix+ts)
 				if _, err := os.Stat(expectedArchivePath); os.IsNotExist(err) {
 					t.Errorf("expected archive at %s, but not found", expectedArchivePath)
+				}
+			} else {
+				if !currentExists {
+					t.Error("expected 'current' directory to remain, but it is gone")
+				}
+			}
+
+			if tc.verify != nil {
+				tc.verify(t, result)
+			}
+		})
+	}
+}
+
+func TestStage(t *testing.T) {
+	now := time.Now().UTC()
+
+	tests := []struct {
+		name           string
+		dryRun         bool
+		setupConflict  bool // If true, create the destination directory beforehand
+		expectErrorStr string
+		expectStaged   bool // True if file system change is expected
+		verify         func(t *testing.T, result metafile.MetafileInfo)
+	}{
+		{
+			name:         "Happy Path - Should Stage",
+			expectStaged: true,
+			verify: func(t *testing.T, result metafile.MetafileInfo) {
+				expectedPrefix := "stage/stage_"
+				if !strings.HasPrefix(result.RelPathKey, expectedPrefix) {
+					t.Errorf("ResultInfo path mismatch. Want prefix %q, got %q", expectedPrefix, result.RelPathKey)
+				}
+			},
+		},
+		{
+			name:         "Dry Run - Should Log but NOT Move",
+			dryRun:       true,
+			expectStaged: false, // FS should not change
+			verify: func(t *testing.T, result metafile.MetafileInfo) {
+				expectedPrefix := "stage/stage_"
+				if !strings.HasPrefix(result.RelPathKey, expectedPrefix) {
+					t.Errorf("Dry Run ResultInfo path mismatch. Want prefix %q, got %q", expectedPrefix, result.RelPathKey)
+				}
+			},
+		},
+		{
+			name:           "Destination Conflict (Should Error)",
+			setupConflict:  true,
+			expectErrorStr: "already exists",
+			expectStaged:   false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// 1. Setup Filesystem
+			tempDir := t.TempDir()
+			targetBase := tempDir
+			relCurrent := "current"
+			relStage := "stage"
+			prefix := "stage_"
+
+			absCurrent := filepath.Join(targetBase, relCurrent)
+			if err := os.MkdirAll(absCurrent, 0755); err != nil {
+				t.Fatalf("failed to create current dir: %v", err)
+			}
+
+			// Create Metafile
+			lastBackupTime := now.Add(-1 * time.Hour)
+			meta := metafile.MetafileContent{
+				TimestampUTC: lastBackupTime,
+			}
+			if err := metafile.Write(absCurrent, &meta); err != nil {
+				t.Fatalf("failed to write metafile: %v", err)
+			}
+
+			toStage := metafile.MetafileInfo{
+				RelPathKey: relCurrent,
+				Metadata:   meta,
+			}
+
+			// Setup Conflict if needed
+			if tc.setupConflict {
+				ts := util.FormatTimestampWithOffset(lastBackupTime)
+				conflictPath := filepath.Join(targetBase, relStage, prefix+ts)
+				if err := os.MkdirAll(conflictPath, 0755); err != nil {
+					t.Fatalf("failed to create conflict dir: %v", err)
+				}
+			}
+
+			// 2. Create Archiver and Plan
+			archiver := patharchive.NewPathArchiver()
+			plan := &patharchive.Plan{
+				Enabled: true,
+				DryRun:  tc.dryRun,
+				Metrics: false,
+			}
+
+			// 3. Execute
+			result, err := archiver.Stage(context.Background(), targetBase, relStage, prefix, toStage, plan, now)
+
+			// 4. Verify Error
+			if tc.expectErrorStr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.expectErrorStr) {
+					t.Errorf("expected error containing %q, got %v", tc.expectErrorStr, err)
+				}
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			// 5. Verify Filesystem State
+			_, errCurrent := os.Stat(absCurrent)
+			currentExists := errCurrent == nil
+
+			if tc.expectStaged {
+				if currentExists {
+					t.Error("expected 'current' directory to be moved, but it still exists")
+				}
+				// Verify stage exists
+				ts := util.FormatTimestampWithOffset(lastBackupTime)
+				expectedStagePath := filepath.Join(targetBase, relStage, prefix+ts)
+				if _, err := os.Stat(expectedStagePath); os.IsNotExist(err) {
+					t.Errorf("expected stage at %s, but not found", expectedStagePath)
 				}
 			} else {
 				if !currentExists {

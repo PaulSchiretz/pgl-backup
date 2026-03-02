@@ -662,12 +662,36 @@ func (r *Runner) fetchBackup(absBasePath, relPathKey string) (metafile.MetafileI
 	return metafile.MetafileInfo{RelPathKey: relPathKey, Metadata: metadata}, nil
 }
 
+func (r *Runner) runStage(ctx context.Context, absBasePath string, paths planner.PathKeys, plan *patharchive.Plan, toStage metafile.MetafileInfo, timestampUTC time.Time) (metafile.MetafileInfo, error) {
+	if !plan.Enabled {
+		return metafile.MetafileInfo{}, nil
+	}
+
+	result, err := r.archiver.Stage(ctx, absBasePath, paths.RelStagePathKey, paths.StageEntryPrefix, toStage, plan, timestampUTC)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return metafile.MetafileInfo{}, err
+		}
+		if hints.IsHint(err) {
+			plog.Debug("Staging skipped", "reason", err)
+			return metafile.MetafileInfo{}, nil
+		}
+		return metafile.MetafileInfo{}, fmt.Errorf("error during staging: %w", err)
+	}
+
+	// Consistency check
+	if result.RelPathKey == "" {
+		return metafile.MetafileInfo{}, fmt.Errorf("staging succeeded but result is empty")
+	}
+	return result, nil
+}
+
 func (r *Runner) runArchive(ctx context.Context, absBasePath string, paths planner.PathKeys, plan *patharchive.Plan, toArchive metafile.MetafileInfo, timestampUTC time.Time) (metafile.MetafileInfo, error) {
 	if !plan.Enabled {
 		return metafile.MetafileInfo{}, nil
 	}
 
-	should, err := r.archiver.ShouldArchive(toArchive, plan, timestampUTC)
+	should, err := r.archiver.ShouldArchive(ctx, toArchive, plan, timestampUTC)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return metafile.MetafileInfo{}, err

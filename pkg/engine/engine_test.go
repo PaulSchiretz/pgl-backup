@@ -65,7 +65,7 @@ type mockArchiver struct {
 	shouldArchiveErr    error
 }
 
-func (m *mockArchiver) ShouldArchive(toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) (bool, error) {
+func (m *mockArchiver) ShouldArchive(ctx context.Context, toArchive metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) (bool, error) {
 	return m.shouldArchiveResult, m.shouldArchiveErr
 }
 
@@ -78,6 +78,21 @@ func (m *mockArchiver) Archive(ctx context.Context, absBasePath, relArchivePathK
 	}
 	// Simulate result info
 	path := "archived_path"
+	if m.resultPath != "" {
+		path = m.resultPath
+	}
+	return metafile.MetafileInfo{RelPathKey: path}, nil
+}
+
+func (m *mockArchiver) Stage(ctx context.Context, absBasePath, relStagePathKey, stageEntryPrefix string, toStage metafile.MetafileInfo, p *patharchive.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
+	if m.err != nil {
+		return metafile.MetafileInfo{}, m.err
+	}
+	if m.returnEmptyResult {
+		return metafile.MetafileInfo{}, nil
+	}
+	// Simulate result info
+	path := "staged_path"
 	if m.resultPath != "" {
 		path = m.resultPath
 	}
@@ -161,6 +176,7 @@ func TestExecuteBackup(t *testing.T) {
 	const (
 		relCurrent = "current"
 		relArchive = "archive"
+		relStage   = "stage"
 		relContent = "content"
 		prefix     = "backup_"
 	)
@@ -439,8 +455,10 @@ func TestExecuteBackup(t *testing.T) {
 				Paths: planner.PathKeys{
 					RelCurrentPathKey:  relCurrent,
 					RelArchivePathKey:  relArchive,
+					RelStagePathKey:    relStage,
 					RelContentPathKey:  relContent,
 					ArchiveEntryPrefix: prefix,
+					StageEntryPrefix:   prefix,
 				},
 				Preflight: &preflight.Plan{},
 				Sync: &pathsync.Plan{
@@ -597,11 +615,15 @@ func TestExecuteList(t *testing.T) {
 					RelCurrentPathKey:  "PGL_Backup_Incremental_Current",
 					RelArchivePathKey:  "PGL_Backup_Incremental_Archive",
 					ArchiveEntryPrefix: "PGL_Backup_",
+					RelStagePathKey:    "PGL_Backup_Incremental_Stage",
+					StageEntryPrefix:   "PGL_Backup_",
 				},
 				PathsSnapshot: planner.PathKeys{
 					RelCurrentPathKey:  "PGL_Backup_Snapshot_Current",
 					RelArchivePathKey:  "PGL_Backup_Snapshot_Archive",
 					ArchiveEntryPrefix: "PGL_Backup_",
+					RelStagePathKey:    "PGL_Backup_Snapshot_Stage",
+					StageEntryPrefix:   "PGL_Backup_",
 				},
 				Preflight: &preflight.Plan{},
 			}
@@ -657,12 +679,16 @@ func TestListBackups_Sorting(t *testing.T) {
 		PathsIncremental: planner.PathKeys{
 			RelCurrentPathKey:  "current",
 			RelArchivePathKey:  "archive",
+			RelStagePathKey:    "stage",
 			ArchiveEntryPrefix: "backup_",
+			StageEntryPrefix:   "backup_",
 		},
 		PathsSnapshot: planner.PathKeys{
 			RelCurrentPathKey:  "snap_current",
 			RelArchivePathKey:  "snap_archive",
+			RelStagePathKey:    "snap_stage",
 			ArchiveEntryPrefix: "backup_",
+			StageEntryPrefix:   "backup_",
 		},
 	}
 
@@ -861,6 +887,7 @@ func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
 	// Setup
 	baseDir := t.TempDir()
 	relArchive := "archive"
+	relStage := "stage"
 	relCurrent := "current"
 	prefix := "backup_"
 
@@ -890,8 +917,10 @@ func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
 		Mode: planner.Incremental,
 		Paths: planner.PathKeys{
 			RelArchivePathKey:  relArchive,
+			RelStagePathKey:    relStage,
 			RelCurrentPathKey:  relCurrent,
 			ArchiveEntryPrefix: prefix,
+			StageEntryPrefix:   prefix,
 		},
 		Preflight:   &preflight.Plan{},
 		Sync:        &pathsync.Plan{Enabled: true},

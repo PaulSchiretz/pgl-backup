@@ -51,7 +51,7 @@ func (t *syncTask) execute() error {
 
 	// Before dispatching to a specific sync engine, we prepare the destination directory.
 	// This centralizes the logic, ensuring that the target directory exists with appropriate
-	// permissions, regardless of which engine (native, robocopy) is used.
+	// permissions, regardless of which engine is used.
 	srcInfo, err := os.Stat(t.absSourcePath)
 	if err != nil {
 		return fmt.Errorf("could not stat source directory %s: %w", t.absSourcePath, err)

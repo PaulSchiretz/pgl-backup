@@ -464,6 +464,8 @@ func TestGeneratePrunePlan(t *testing.T) {
 				c.Retention.Snapshot.Weeks = 2
 				c.Paths.Incremental.Archive = "inc_archive"
 				c.Paths.Snapshot.Archive = "snap_archive"
+				c.Paths.Incremental.Stage = "inc_stage"
+				c.Paths.Snapshot.Stage = "snap_stage"
 				c.Runtime.DryRun = true
 				c.Engine.FailFast = true
 			},
@@ -486,6 +488,12 @@ func TestGeneratePrunePlan(t *testing.T) {
 				}
 				if p.PathsSnapshot.RelArchivePathKey != "snap_archive" {
 					t.Errorf("Expected Snapshot Archive Path 'snap_archive', got %s", p.PathsSnapshot.RelArchivePathKey)
+				}
+				if p.PathsIncremental.RelStagePathKey != "inc_stage" {
+					t.Errorf("Expected Incremental Stage Path 'inc_stage', got %s", p.PathsIncremental.RelStagePathKey)
+				}
+				if p.PathsSnapshot.RelStagePathKey != "snap_stage" {
+					t.Errorf("Expected Snapshot Stage Path 'snap_archive', got %s", p.PathsSnapshot.RelStagePathKey)
 				}
 				if !p.RetentionIncremental.DryRun {
 					t.Error("Expected DryRun to be true")
