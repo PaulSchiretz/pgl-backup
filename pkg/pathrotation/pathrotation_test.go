@@ -22,9 +22,9 @@ func TestShouldArchive(t *testing.T) {
 	tests := []struct {
 		name            string
 		disabled        bool
-		intervalMode    pathrotation.IntervalMode
+		intervalMode    pathrotation.ArchiveIntervalMode
 		intervalSeconds int
-		constraints     pathrotation.IntervalModeConstraints
+		constraints     pathrotation.ArchiveIntervalModeConstraints
 		lastBackupAge   time.Duration
 		setupEmptyPath  bool
 		expectShould    bool
@@ -47,14 +47,14 @@ func TestShouldArchive(t *testing.T) {
 		{
 			name:          "Auto - Hourly Retention - 2h Passed (Should Archive)",
 			intervalMode:  pathrotation.Auto,
-			constraints:   pathrotation.IntervalModeConstraints{Hours: 1},
+			constraints:   pathrotation.ArchiveIntervalModeConstraints{Hours: 1},
 			lastBackupAge: 2 * time.Hour,
 			expectShould:  true,
 		},
 		{
 			name:          "Auto - Daily Retention - 1h Passed (Should NOT Archive)",
 			intervalMode:  pathrotation.Auto,
-			constraints:   pathrotation.IntervalModeConstraints{Days: 1},
+			constraints:   pathrotation.ArchiveIntervalModeConstraints{Days: 1},
 			lastBackupAge: 1 * time.Hour,
 			expectShould:  false,
 		},
@@ -92,10 +92,10 @@ func TestShouldArchive(t *testing.T) {
 
 			rotator := pathrotation.NewPathRotator()
 			plan := &pathrotation.Plan{
-				Enabled:         !tc.disabled,
-				IntervalMode:    tc.intervalMode,
-				IntervalSeconds: tc.intervalSeconds,
-				Constraints:     tc.constraints,
+				ArchiveEnabled:         !tc.disabled,
+				ArchiveIntervalMode:    tc.intervalMode,
+				ArchiveIntervalSeconds: tc.intervalSeconds,
+				ArchiveConstraints:     tc.constraints,
 			}
 
 			// 2. Execute
@@ -198,11 +198,11 @@ func TestArchive(t *testing.T) {
 			// 2. Create Rotator and Plan
 			rotator := pathrotation.NewPathRotator()
 			plan := &pathrotation.Plan{
-				Enabled:         true,
-				IntervalMode:    pathrotation.Manual,
-				IntervalSeconds: 86400,
-				DryRun:          tc.dryRun,
-				Metrics:         false,
+				ArchiveEnabled:         true,
+				ArchiveIntervalMode:    pathrotation.Manual,
+				ArchiveIntervalSeconds: 86400,
+				DryRun:                 tc.dryRun,
+				Metrics:                false,
 			}
 
 			// 3. Execute
@@ -324,9 +324,9 @@ func TestStage(t *testing.T) {
 			// 2. Create Rotator and Plan
 			rotator := pathrotation.NewPathRotator()
 			plan := &pathrotation.Plan{
-				Enabled: true,
-				DryRun:  tc.dryRun,
-				Metrics: false,
+				ArchiveEnabled: true,
+				DryRun:         tc.dryRun,
+				Metrics:        false,
 			}
 
 			// 3. Execute

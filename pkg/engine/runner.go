@@ -125,7 +125,7 @@ func (r *Runner) executeIncrementalBackup(ctx context.Context, absBasePath, absS
 
 	// 1. Archive
 	var archiveErr error
-	if p.Archive.Enabled {
+	if p.Rotation.ArchiveEnabled {
 		var toArchive metafile.MetafileInfo
 		toArchive, archiveErr = r.fetchBackup(absBasePath, p.Paths.RelCurrentPathKey)
 		if archiveErr != nil {
@@ -136,7 +136,7 @@ func (r *Runner) executeIncrementalBackup(ctx context.Context, absBasePath, absS
 				archiveErr = fmt.Errorf("error reading backup to archive: %w", archiveErr)
 			}
 		} else {
-			archiveResult, archiveErr = r.runArchive(ctx, absBasePath, p.Paths, p.Archive, toArchive, timestampUTC)
+			archiveResult, archiveErr = r.runArchive(ctx, absBasePath, p.Paths, p.Rotation, toArchive, timestampUTC)
 			if archiveErr != nil {
 				if errors.Is(archiveErr, context.Canceled) {
 					return archiveErr
@@ -231,8 +231,8 @@ func (r *Runner) executeSnapshotBackup(ctx context.Context, absBasePath, absSour
 
 	// 2. Archive
 	var archiveErr error
-	if p.Archive.Enabled {
-		archiveResult, archiveErr = r.runArchive(ctx, absBasePath, p.Paths, p.Archive, syncResult, timestampUTC)
+	if p.Rotation.ArchiveEnabled {
+		archiveResult, archiveErr = r.runArchive(ctx, absBasePath, p.Paths, p.Rotation, syncResult, timestampUTC)
 		if archiveErr != nil {
 			if errors.Is(archiveErr, context.Canceled) {
 				return archiveErr
@@ -663,7 +663,7 @@ func (r *Runner) fetchBackup(absBasePath, relPathKey string) (metafile.MetafileI
 }
 
 func (r *Runner) runStage(ctx context.Context, absBasePath string, paths planner.PathKeys, plan *pathrotation.Plan, toStage metafile.MetafileInfo, timestampUTC time.Time) (metafile.MetafileInfo, error) {
-	if !plan.Enabled {
+	if !plan.ArchiveEnabled {
 		return metafile.MetafileInfo{}, nil
 	}
 
@@ -687,7 +687,7 @@ func (r *Runner) runStage(ctx context.Context, absBasePath string, paths planner
 }
 
 func (r *Runner) runArchive(ctx context.Context, absBasePath string, paths planner.PathKeys, plan *pathrotation.Plan, toArchive metafile.MetafileInfo, timestampUTC time.Time) (metafile.MetafileInfo, error) {
-	if !plan.Enabled {
+	if !plan.ArchiveEnabled {
 		return metafile.MetafileInfo{}, nil
 	}
 

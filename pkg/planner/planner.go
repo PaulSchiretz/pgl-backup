@@ -19,7 +19,7 @@ type BackupPlan struct {
 
 	Preflight   *preflight.Plan
 	Sync        *pathsync.Plan
-	Archive     *pathrotation.Plan
+	Rotation    *pathrotation.Plan
 	Retention   *pathretention.Plan
 	Compression *pathcompression.CompressPlan
 
@@ -129,17 +129,17 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 	}
 
 	// Prepare Archive Plan based on Mode
-	var archivePlan *pathrotation.Plan
+	var rotationPlan *pathrotation.Plan
 	if mode == Incremental {
 		// Incremental: Use configured archive settings and retention constraints
-		archiveIntervalMode, err := pathrotation.ParseIntervalMode(cfg.Archive.IntervalMode)
+		archiveIntervalMode, err := pathrotation.ParseArchiveIntervalMode(cfg.Archive.IntervalMode)
 		if err != nil {
 			return nil, err
 		}
 
-		var archiveIntervalConstraints pathrotation.IntervalModeConstraints
+		var archiveIntervalConstraints pathrotation.ArchiveIntervalModeConstraints
 		if retentionPolicy.Enabled {
-			archiveIntervalConstraints = pathrotation.IntervalModeConstraints{
+			archiveIntervalConstraints = pathrotation.ArchiveIntervalModeConstraints{
 				Hours:  retentionPolicy.Hours,
 				Days:   retentionPolicy.Days,
 				Weeks:  retentionPolicy.Weeks,
@@ -148,25 +148,25 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 			}
 		}
 
-		archivePlan = &pathrotation.Plan{
-			Enabled:         cfg.Archive.Enabled,
-			IntervalSeconds: cfg.Archive.IntervalSeconds,
-			IntervalMode:    archiveIntervalMode,
-			Constraints:     archiveIntervalConstraints,
-			DryRun:          dryRun,
-			FailFast:        failFast,
-			Metrics:         metrics,
+		rotationPlan = &pathrotation.Plan{
+			ArchiveEnabled:         cfg.Archive.Enabled,
+			ArchiveIntervalSeconds: cfg.Archive.IntervalSeconds,
+			ArchiveIntervalMode:    archiveIntervalMode,
+			ArchiveConstraints:     archiveIntervalConstraints,
+			DryRun:                 dryRun,
+			FailFast:               failFast,
+			Metrics:                metrics,
 		}
 	} else {
 		// Snapshot: Always enabled, manual mode, 0 interval (immediate)
-		archivePlan = &pathrotation.Plan{
-			Enabled:         true,
-			IntervalSeconds: 0,
-			IntervalMode:    pathrotation.Manual,
-			Constraints:     pathrotation.IntervalModeConstraints{},
-			DryRun:          dryRun,
-			FailFast:        failFast,
-			Metrics:         metrics,
+		rotationPlan = &pathrotation.Plan{
+			ArchiveEnabled:         true,
+			ArchiveIntervalSeconds: 0,
+			ArchiveIntervalMode:    pathrotation.Manual,
+			ArchiveConstraints:     pathrotation.ArchiveIntervalModeConstraints{},
+			DryRun:                 dryRun,
+			FailFast:               failFast,
+			Metrics:                metrics,
 		}
 	}
 
@@ -215,7 +215,7 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 			FailFast: failFast,
 			Metrics:  metrics,
 		},
-		Archive: archivePlan,
+		Rotation: rotationPlan,
 		Retention: &pathretention.Plan{
 			Enabled: retentionPolicy.Enabled,
 			Hours:   retentionPolicy.Hours,

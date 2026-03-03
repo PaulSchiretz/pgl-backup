@@ -64,7 +64,7 @@ func NewPathRotator() *PathRotator {
 // basic safety checks.
 func (r *PathRotator) Archive(ctx context.Context, absBasePath, relArchivePathKey, archiveEntryPrefix string, toArchive metafile.MetafileInfo, p *Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
 
-	if !p.Enabled {
+	if !p.ArchiveEnabled {
 		return metafile.MetafileInfo{}, ErrDisabled
 	}
 
@@ -243,7 +243,7 @@ func (r *PathRotator) CleanupStagingPath(ctx context.Context, absBasePath, relSt
 // The conversion handles Daylight Saving Time (DST) shifts correctly by checking
 // for midnight-to-midnight boundary crossings (epoch day counting).
 func (r *PathRotator) ShouldArchive(ctx context.Context, toArchive metafile.MetafileInfo, p *Plan, timestampUTC time.Time) (bool, error) {
-	if !p.Enabled {
+	if !p.ArchiveEnabled {
 		return false, ErrDisabled
 	}
 
@@ -288,9 +288,9 @@ func (r *PathRotator) ShouldArchive(ctx context.Context, toArchive metafile.Meta
 // If the mode is 'auto', it calculates the optimal interval based on the retention policy.
 // If the mode is 'manual', it validates the user-configured interval.
 func (r *PathRotator) resolveInterval(p *Plan) time.Duration {
-	switch p.IntervalMode {
+	switch p.ArchiveIntervalMode {
 	case Manual:
-		interval := time.Duration(p.IntervalSeconds) * time.Second
+		interval := time.Duration(p.ArchiveIntervalSeconds) * time.Second
 		r.checkInterval(interval, p)
 		return interval
 	default:
@@ -305,15 +305,15 @@ func (r *PathRotator) adjustInterval(p *Plan) time.Duration {
 
 	// Pick the shortest duration required to satisfy the configured retention slots.
 	switch {
-	case p.Constraints.Hours > 0:
+	case p.ArchiveConstraints.Hours > 0:
 		suggestedInterval = 1 * time.Hour
-	case p.Constraints.Days > 0:
+	case p.ArchiveConstraints.Days > 0:
 		suggestedInterval = 24 * time.Hour
-	case p.Constraints.Weeks > 0:
+	case p.ArchiveConstraints.Weeks > 0:
 		suggestedInterval = 7 * 24 * time.Hour
-	case p.Constraints.Months > 0:
+	case p.ArchiveConstraints.Months > 0:
 		suggestedInterval = 30 * 24 * time.Hour // Approximation
-	case p.Constraints.Years > 0:
+	case p.ArchiveConstraints.Years > 0:
 		suggestedInterval = 365 * 24 * time.Hour // Approximation
 	default:
 		// Fallback if retention is disabled but mode is auto.
@@ -334,21 +334,21 @@ func (r *PathRotator) checkInterval(interval time.Duration, p *Plan) {
 	}
 
 	var mismatchedPeriods []string
-	if p.Constraints.Hours > 0 && interval > 1*time.Hour {
+	if p.ArchiveConstraints.Hours > 0 && interval > 1*time.Hour {
 		mismatchedPeriods = append(mismatchedPeriods, "Hourly")
 	}
-	if p.Constraints.Days > 0 && interval > 24*time.Hour {
+	if p.ArchiveConstraints.Days > 0 && interval > 24*time.Hour {
 		mismatchedPeriods = append(mismatchedPeriods, "Daily")
 	}
-	if p.Constraints.Weeks > 0 && interval > 168*time.Hour {
+	if p.ArchiveConstraints.Weeks > 0 && interval > 168*time.Hour {
 		mismatchedPeriods = append(mismatchedPeriods, "Weekly")
 	}
 	avgMonth := 30 * 24 * time.Hour
-	if p.Constraints.Months > 0 && interval > avgMonth {
+	if p.ArchiveConstraints.Months > 0 && interval > avgMonth {
 		mismatchedPeriods = append(mismatchedPeriods, "Monthly")
 	}
 	avgYear := 365 * 24 * time.Hour
-	if p.Constraints.Years > 0 && interval > avgYear {
+	if p.ArchiveConstraints.Years > 0 && interval > avgYear {
 		mismatchedPeriods = append(mismatchedPeriods, "Yearly")
 	}
 

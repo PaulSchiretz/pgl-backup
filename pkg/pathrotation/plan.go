@@ -1,6 +1,6 @@
 package pathrotation
 
-type IntervalModeConstraints struct {
+type ArchiveIntervalModeConstraints struct {
 	Hours  int
 	Days   int
 	Weeks  int
@@ -9,10 +9,10 @@ type IntervalModeConstraints struct {
 }
 
 type Plan struct {
-	Enabled         bool
-	IntervalSeconds int
-	IntervalMode    IntervalMode
-	Constraints     IntervalModeConstraints
+	ArchiveEnabled         bool
+	ArchiveIntervalSeconds int
+	ArchiveIntervalMode    ArchiveIntervalMode
+	ArchiveConstraints     ArchiveIntervalModeConstraints
 
 	// Global Flags
 	DryRun   bool

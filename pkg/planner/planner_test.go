@@ -31,8 +31,8 @@ func TestGenerateBackupPlan(t *testing.T) {
 				if !p.Sync.PreserveSourceDirName {
 					t.Error("Expected PreserveSourceDirName to be true")
 				}
-				if p.Archive.IntervalMode != pathrotation.Auto {
-					t.Errorf("Expected Archive IntervalMode Auto, got %v", p.Archive.IntervalMode)
+				if p.Rotation.ArchiveIntervalMode != pathrotation.Auto {
+					t.Errorf("Expected Archive IntervalMode Auto, got %v", p.Rotation.ArchiveIntervalMode)
 				}
 				if p.Paths.RelCurrentPathKey != "PGL_Backup_Incremental_Current" {
 					t.Errorf("Expected default incremental current path, got %s", p.Paths.RelCurrentPathKey)
@@ -95,8 +95,8 @@ func TestGenerateBackupPlan(t *testing.T) {
 			},
 			expectedMode: planner.Incremental,
 			validate: func(t *testing.T, p *planner.BackupPlan) {
-				if p.Archive.Constraints.Days != 7 {
-					t.Errorf("Expected Archive Constraints Days to be 7, got %d", p.Archive.Constraints.Days)
+				if p.Rotation.ArchiveConstraints.Days != 7 {
+					t.Errorf("Expected Archive Constraints Days to be 7, got %d", p.Rotation.ArchiveConstraints.Days)
 				}
 			},
 		},
@@ -109,8 +109,8 @@ func TestGenerateBackupPlan(t *testing.T) {
 			},
 			expectedMode: planner.Incremental,
 			validate: func(t *testing.T, p *planner.BackupPlan) {
-				if p.Archive.Constraints.Days != 0 {
-					t.Errorf("Expected Archive Constraints Days to be 0 when retention disabled, got %d", p.Archive.Constraints.Days)
+				if p.Rotation.ArchiveConstraints.Days != 0 {
+					t.Errorf("Expected Archive Constraints Days to be 0 when retention disabled, got %d", p.Rotation.ArchiveConstraints.Days)
 				}
 			},
 		},

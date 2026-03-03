@@ -474,10 +474,10 @@ func TestExecuteBackup(t *testing.T) {
 					DryRun:   tc.dryRun,
 					FailFast: tc.failFast,
 				},
-				Archive: &pathrotation.Plan{
-					Enabled:  tc.archiveEnabled,
-					DryRun:   tc.dryRun,
-					FailFast: tc.failFast,
+				Rotation: &pathrotation.Plan{
+					ArchiveEnabled: tc.archiveEnabled,
+					DryRun:         tc.dryRun,
+					FailFast:       tc.failFast,
 				},
 				Retention: &pathretention.Plan{
 					Enabled:  tc.retentionEnabled,
@@ -932,7 +932,7 @@ func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
 		},
 		Preflight:   &preflight.Plan{},
 		Sync:        &pathsync.Plan{Enabled: true},
-		Archive:     &pathrotation.Plan{Enabled: true},
+		Rotation:    &pathrotation.Plan{ArchiveEnabled: true},
 		Retention:   &pathretention.Plan{Enabled: true}, // Enabled!
 		Compression: &pathcompression.CompressPlan{Enabled: false},
 		HookRunner:  &hook.Plan{},
