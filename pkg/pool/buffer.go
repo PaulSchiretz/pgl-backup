@@ -1,7 +1,6 @@
 package pool
 
 import (
-	"fmt"
 	"math/bits"
 	"sync"
 )
@@ -19,13 +18,15 @@ type BucketedBufferPool struct {
 func NewBucketedBufferPool(minSize, maxSize int64) *BucketedBufferPool {
 	// 1. Validate that inputs are powers of two
 	if !isPowerOfTwo(minSize) {
-		panic(fmt.Sprintf("minSize %d must be a power of two", minSize))
+		// Round up to next power of 2
+		minSize = nextPowerOfTwo(minSize)
 	}
 	if !isPowerOfTwo(maxSize) {
-		panic(fmt.Sprintf("maxSize %d must be a power of two", maxSize))
+		// Round up to next power of 2
+		maxSize = nextPowerOfTwo(maxSize)
 	}
 	if maxSize <= minSize {
-		panic("maxSize must be greater than minSize")
+		maxSize = nextPowerOfTwo(minSize)
 	}
 
 	// 2. Convert raw sizes to exponents (2^n)

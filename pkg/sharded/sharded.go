@@ -1,5 +1,7 @@
 package sharded
 
+import "math/bits"
+
 const offset32 = 2166136261
 const prime32 = 16777619
 
@@ -25,4 +27,16 @@ func getShardIndex(key string, numShards int) int {
 
 func isPowerOfTwo(n int) bool {
 	return n > 0 && (n&(n-1)) == 0
+}
+
+func nextPowerOfTwo(n int) int {
+	if n <= 0 {
+		return 1
+	}
+	// If already power of two, return it
+	if n&(n-1) == 0 {
+		return n
+	}
+	// Find next power of two
+	return 1 << (64 - bits.LeadingZeros64(uint64(n)))
 }

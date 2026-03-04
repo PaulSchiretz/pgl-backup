@@ -14,7 +14,8 @@ type Map []*mapShard
 
 func NewMap(numShards int) *Map {
 	if !isPowerOfTwo(numShards) {
-		panic("num shards must be a power of 2")
+		// Round up to next power of 2
+		numShards = nextPowerOfTwo(numShards)
 	}
 	s := make(Map, numShards)
 	for i := range numShards {
