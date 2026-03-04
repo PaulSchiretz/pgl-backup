@@ -986,15 +986,25 @@ func (s *nativeSyncer) handleSync() error {
 	go s.syncItemProducer()
 
 	// 3. Wait for all workers to finish processing all items.
-	s.syncWg.Wait()
+	// We use a channel to allow pre-emption if a critical error occurs (FailFast).
+	done := make(chan struct{})
+	go func() {
+		s.syncWg.Wait()
+		close(done)
+	}()
 
-	// 4. Check for any critical errors captured by workers during the sync phase.
 	select {
+	case <-done:
+		// Workers finished naturally. Check if a critical error was buffered just as they finished.
+		select {
+		case err := <-s.criticalSyncErrsChan:
+			return fmt.Errorf("critical sync error: %w", err)
+		default:
+		}
 	case err := <-s.criticalSyncErrsChan:
-		// A critical error occurred (e.g., walker failed), fail fast.
+		// Critical error occurred while workers were running. Return immediately.
+		// The defer cancel() in Sync() will fire, stopping all other workers via context cancellation.
 		return fmt.Errorf("critical sync error: %w", err)
-	default:
-		// No critical errors, check for non-fatal worker errors.
 	}
 
 	allErrors := s.syncErrs.Items()
@@ -1155,13 +1165,21 @@ func (s *nativeSyncer) handleMirror() error {
 	go s.mirrorItemProducer()
 
 	// Wait for all file deletions to complete.
-	s.mirrorWg.Wait()
+	done := make(chan struct{})
+	go func() {
+		s.mirrorWg.Wait()
+		close(done)
+	}()
 
-	// Check for critical errors first.
 	select {
+	case <-done:
+		select {
+		case err := <-s.criticalMirrorErrsChan:
+			return fmt.Errorf("critical mirror error: %w", err)
+		default:
+		}
 	case err := <-s.criticalMirrorErrsChan:
 		return fmt.Errorf("critical mirror error: %w", err)
-	default:
 	}
 
 	// --- Phase 2B: Sequential Deletion of Directories ---
@@ -1215,6 +1233,9 @@ func (s *nativeSyncer) handleMirror() error {
 // Sync coordinates the concurrent synchronization pipeline.
 func (s *nativeSyncer) Sync(ctx context.Context, absSourcePath, absTargetPath string) error {
 
+	// Wrap context to allow immediate cancellation of workers on fail-fast
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	s.ctx = ctx
 
 	// store the paths

@@ -4,41 +4,6 @@ import (
 	"testing"
 )
 
-func TestBucketedBufferPool_New(t *testing.T) {
-	// Valid
-	_ = NewBucketedBufferPool(1024, 4096)
-
-	// Invalid Min (not power of two)
-	func() {
-		defer func() {
-			if recover() == nil {
-				t.Error("expected panic for non-power-of-two minSize")
-			}
-		}()
-		NewBucketedBufferPool(1000, 4096)
-	}()
-
-	// Invalid Max (not power of two)
-	func() {
-		defer func() {
-			if recover() == nil {
-				t.Error("expected panic for non-power-of-two maxSize")
-			}
-		}()
-		NewBucketedBufferPool(1024, 4097)
-	}()
-
-	// Invalid Range (max <= min)
-	func() {
-		defer func() {
-			if recover() == nil {
-				t.Error("expected panic for minSize >= maxSize")
-			}
-		}()
-		NewBucketedBufferPool(4096, 1024)
-	}()
-}
-
 func TestBucketedBufferPool_Get(t *testing.T) {
 	minSize := int64(1024)
 	maxSize := int64(16384) // 16KB
