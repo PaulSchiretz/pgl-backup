@@ -30,7 +30,7 @@ func TestSync_Dispatch(t *testing.T) {
 		}
 	})
 
-	t.Run("Success Native Stores Result", func(t *testing.T) {
+	t.Run("Success Native Stores Result and writes metafile", func(t *testing.T) {
 		srcDir := t.TempDir()
 		baseDir := t.TempDir()
 
@@ -59,6 +59,20 @@ func TestSync_Dispatch(t *testing.T) {
 		}
 		if !result.Metadata.TimestampUTC.Equal(timestamp) {
 			t.Errorf("expected ResultInfo.Metadata.TimestampUTC to be %v, got %v", timestamp, result.Metadata.TimestampUTC)
+		}
+
+		// Assert metafile was written
+		metafilePath := filepath.Join(baseDir, relCurrent, metafile.MetaFileName)
+		if _, err := os.Stat(metafilePath); os.IsNotExist(err) {
+			t.Fatalf("metafile was not written to %s", metafilePath)
+		}
+
+		readMeta, err := metafile.Read(filepath.Join(baseDir, relCurrent))
+		if err != nil {
+			t.Fatalf("failed to read back written metafile: %v", err)
+		}
+		if readMeta.UUID == "" {
+			t.Error("written metafile has empty UUID")
 		}
 	})
 }

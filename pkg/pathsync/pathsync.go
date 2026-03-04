@@ -117,10 +117,21 @@ func (s *PathSyncer) Sync(ctx context.Context, absBasePath, absSourcePath string
 	}
 	plog.Notice("SYNCED", "source", absSourcePath, "target", absSyncTargetPath)
 
-	return metafile.MetafileInfo{
+	result := metafile.MetafileInfo{
 		RelPathKey: util.NormalizePath(relCurrentPathKey),
 		Metadata:   metadata,
-	}, nil
+	}
+
+	// Write the metafile
+	absTargetCurrentPath := util.DenormalizedAbsPath(absBasePath, result.RelPathKey)
+	if p.DryRun {
+		plog.Info("[DRY RUN] Would write metafile", "directory", absTargetCurrentPath)
+	} else {
+		if err := metafile.Write(absTargetCurrentPath, &result.Metadata); err != nil {
+			return metafile.MetafileInfo{}, fmt.Errorf("failed to write metafile: %w", err)
+		}
+	}
+	return result, nil
 }
 
 // Restore restores a backup to a target directory.

@@ -43,11 +43,7 @@ func (m *mockSyncer) Sync(ctx context.Context, absBasePath, absSourcePath, relCu
 	if m.err != nil {
 		return metafile.MetafileInfo{}, m.err
 	}
-	// Simulate real syncer behavior: ensure the target directory exists.
-	// This is required because Runner now writes the metafile to this directory.
-	targetPath := filepath.Join(absBasePath, relCurrentPathKey)
-	os.MkdirAll(targetPath, 0755)
-
+	// The real syncer now writes the metafile. The mock just returns the result.
 	// Return the configured result info
 	return m.resultInfo, nil
 }
@@ -426,11 +422,12 @@ func TestExecuteBackup(t *testing.T) {
 			errorContains:   "error during sync",
 		},
 		{
-			name:          "Metafile Write Failure",
+			name:          "Sync returns Metafile Write Failure",
 			mode:          planner.Incremental,
 			syncEnabled:   true,
+			syncErr:       errors.New("failed to write metafile"),
 			expectError:   true,
-			errorContains: "failed to write metafile",
+			errorContains: "error during sync: failed to write metafile",
 		},
 	}
 
@@ -494,11 +491,6 @@ func TestExecuteBackup(t *testing.T) {
 				shouldArchiveResult: tc.shouldArchive,
 				shouldArchiveErr:    tc.shouldArchiveErr,
 			}
-			if tc.name == "Metafile Write Failure" {
-				// Return a path that doesn't exist so metafile.Write fails
-				s.resultInfo = metafile.MetafileInfo{RelPathKey: "non_existent_dir"}
-			}
-
 			// If we want to test compression triggering, the mock archiver needs to return a path
 			if tc.name == "Incremental Happy Path with Archive and Compression" {
 				a.resultPath = "archive/backup_123"

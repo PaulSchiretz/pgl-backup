@@ -11,13 +11,10 @@ import (
 	"time"
 
 	"github.com/paulschiretz/pgl-backup/pkg/hints"
-	"github.com/paulschiretz/pgl-backup/pkg/hook"
 	"github.com/paulschiretz/pgl-backup/pkg/lockfile"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
-	"github.com/paulschiretz/pgl-backup/pkg/pathcompression"
 	"github.com/paulschiretz/pgl-backup/pkg/pathretention"
 	"github.com/paulschiretz/pgl-backup/pkg/pathrotation"
-	"github.com/paulschiretz/pgl-backup/pkg/pathsync"
 	"github.com/paulschiretz/pgl-backup/pkg/planner"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
@@ -78,23 +75,27 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 	defer releaseLock()
 
 	// Hooks
-	if err := r.runPreHook(ctx, "backup", p.HookRunner, timestampUTC); err != nil {
-		// Pre-hook errors are fatal.
-		errMsg := "pre-backup hook failed"
-		if errors.Is(err, context.Canceled) {
-			errMsg = "pre-backup hook canceled"
+	if err := r.hookRunner.RunPreHook(ctx, "backup", p.HookRunner, timestampUTC); err != nil {
+		if preHookErr := r.handleError(err, "pre-hook"); preHookErr != nil {
+			// Pre-hook errors are fatal.
+			errMsg := "pre-backup hook failed"
+			if errors.Is(preHookErr, context.Canceled) {
+				errMsg = "pre-backup hook canceled"
+			}
+			return fmt.Errorf("%s: %w", errMsg, preHookErr)
 		}
-		return fmt.Errorf("%s: %w", errMsg, err)
 	}
 	defer func() {
-		if err := r.runPostHook(ctx, "backup", p.HookRunner, timestampUTC); err != nil {
-			// Post-hook errors are non-fatal to the overall backup status, but should be logged.
-			errMsg := "post-backup hook failed"
-			if errors.Is(err, context.Canceled) {
-				plog.Info("post-backup hooks skipped due to cancellation.")
-				return
+		if err := r.hookRunner.RunPostHook(ctx, "backup", p.HookRunner, timestampUTC); err != nil {
+			if postHookErr := r.handleError(err, "post-hook"); postHookErr != nil {
+				// Post-hook errors are non-fatal to the overall backup status, but should be logged.
+				errMsg := "post-backup hook failed"
+				if errors.Is(postHookErr, context.Canceled) {
+					plog.Info("post-backup hooks skipped due to cancellation.")
+					return
+				}
+				plog.Warn(errMsg, "error", postHookErr)
 			}
-			plog.Warn(errMsg, "error", err)
 		}
 	}()
 
@@ -150,13 +151,15 @@ func (r *Runner) executeIncrementalBackup(ctx context.Context, absBasePath, absS
 	// 2. Sync
 	var syncErr error
 	if p.Sync.Enabled {
-		syncResult, syncErr = r.runSync(ctx, absBasePath, absSourcePath, p.Paths, p.Sync, timestampUTC)
-		if syncErr != nil {
-			if errors.Is(syncErr, context.Canceled) {
-				return syncErr
+		var err error
+		if syncResult, err = r.syncer.Sync(ctx, absBasePath, absSourcePath, p.Paths.RelCurrentPathKey, p.Paths.RelContentPathKey, p.Sync, timestampUTC); err != nil {
+			if syncErr = r.handleError(err, "sync"); syncErr != nil {
+				if errors.Is(syncErr, context.Canceled) {
+					return syncErr
+				}
+				// We still might need to run another step, so just log and continue
+				plog.Error("Sync failed", "error", syncErr)
 			}
-			// We still might need to run another step, so just log and continue
-			plog.Error("Sync failed", "error", syncErr)
 		}
 	}
 
@@ -185,13 +188,14 @@ func (r *Runner) executeIncrementalBackup(ctx context.Context, absBasePath, absS
 
 	// 4. Compression
 	var compressErr error
-	if p.Compression.Enabled && archiveResult.RelPathKey != "" {
-		compressErr = r.runCompress(ctx, absBasePath, p.Paths, p.Compression, archiveResult, timestampUTC)
-		if compressErr != nil {
-			if errors.Is(compressErr, context.Canceled) {
-				return compressErr
+	if p.Compression.Enabled {
+		if err := r.compressor.Compress(ctx, absBasePath, p.Paths.RelContentPathKey, archiveResult, p.Compression, timestampUTC); err != nil {
+			if compressErr = r.handleError(err, "compress"); compressErr != nil {
+				if errors.Is(compressErr, context.Canceled) {
+					return compressErr
+				}
+				plog.Error("Compress failed", "error", compressErr)
 			}
-			plog.Error("Compress failed", "error", compressErr)
 		}
 	}
 
@@ -218,13 +222,15 @@ func (r *Runner) executeSnapshotBackup(ctx context.Context, absBasePath, absSour
 	// 1. Sync
 	var syncErr error
 	if p.Sync.Enabled {
-		syncResult, syncErr = r.runSync(ctx, absBasePath, absSourcePath, p.Paths, p.Sync, timestampUTC)
-		if syncErr != nil {
-			if errors.Is(syncErr, context.Canceled) {
-				return syncErr
+		var err error
+		if syncResult, err = r.syncer.Sync(ctx, absBasePath, absSourcePath, p.Paths.RelCurrentPathKey, p.Paths.RelContentPathKey, p.Sync, timestampUTC); err != nil {
+			if syncErr = r.handleError(err, "sync"); syncErr != nil {
+				if errors.Is(syncErr, context.Canceled) {
+					return syncErr
+				}
+				// We still might need to run another step, so just log and continue
+				plog.Error("Sync failed", "error", syncErr)
 			}
-			// We still might need to run another step, so just log and continue
-			plog.Error("Sync failed", "error", syncErr)
 		}
 	}
 
@@ -266,13 +272,14 @@ func (r *Runner) executeSnapshotBackup(ctx context.Context, absBasePath, absSour
 
 	// 4. Compression
 	var compressErr error
-	if p.Compression.Enabled && archiveResult.RelPathKey != "" {
-		compressErr = r.runCompress(ctx, absBasePath, p.Paths, p.Compression, archiveResult, timestampUTC)
-		if compressErr != nil {
-			if errors.Is(compressErr, context.Canceled) {
-				return compressErr
+	if p.Compression.Enabled {
+		if err := r.compressor.Compress(ctx, absBasePath, p.Paths.RelContentPathKey, archiveResult, p.Compression, timestampUTC); err != nil {
+			if compressErr = r.handleError(err, "compress"); compressErr != nil {
+				if errors.Is(compressErr, context.Canceled) {
+					return compressErr
+				}
+				plog.Error("Compress failed", "error", compressErr)
 			}
-			plog.Error("Compress failed", "error", compressErr)
 		}
 	}
 
@@ -477,22 +484,27 @@ func (r *Runner) ExecuteRestore(ctx context.Context, absBasePath, uuid, absTarge
 	defer releaseLock()
 
 	// Hooks
-	if err := r.runPreHook(ctx, "restore", p.HookRunner, timestampUTC); err != nil {
-		errMsg := "pre-restore hook failed"
-		if errors.Is(err, context.Canceled) {
-			errMsg = "pre-restore hook canceled"
+	if err := r.hookRunner.RunPreHook(ctx, "restore", p.HookRunner, timestampUTC); err != nil {
+		if preHookErr := r.handleError(err, "pre-hook"); preHookErr != nil {
+			// Pre-hook errors are fatal.
+			errMsg := "pre-restore hook failed"
+			if errors.Is(preHookErr, context.Canceled) {
+				errMsg = "pre-restore hook canceled"
+			}
+			return fmt.Errorf("%s: %w", errMsg, preHookErr)
 		}
-		// Pre-hook errors are fatal.
-		return fmt.Errorf("%s: %w", errMsg, err)
 	}
 	defer func() {
-		if err := r.runPostHook(ctx, "restore", p.HookRunner, timestampUTC); err != nil {
-			// Post-hook errors are fatal.
-			errMsg := "post-restore hook failed"
-			if errors.Is(err, context.Canceled) {
-				errMsg = "post-restore hook canceled"
+		if err := r.hookRunner.RunPostHook(ctx, "restore", p.HookRunner, timestampUTC); err != nil {
+			if postHookErr := r.handleError(err, "post-hook"); postHookErr != nil {
+				// Post-hook errors are non-fatal to the overall backup status, but should be logged.
+				errMsg := "post-restore hook failed"
+				if errors.Is(postHookErr, context.Canceled) {
+					plog.Info("post-restore hooks skipped due to cancellation.")
+					return
+				}
+				plog.Warn(errMsg, "error", postHookErr)
 			}
-			plog.Error(errMsg, "error", err)
 		}
 	}()
 
@@ -545,14 +557,16 @@ func (r *Runner) ExecuteRestore(ctx context.Context, absBasePath, uuid, absTarge
 	plog.Info("Starting restore", "backup", absBackupPath, "destination", absTargetPath)
 
 	if toRestore.Metadata.IsCompressed {
-		if err := r.runExtract(ctx, absBasePath, absTargetPath, p.Extraction, toRestore, timestampUTC); err != nil {
-			return fmt.Errorf("restore extraction failed: %w", err)
+		err := r.compressor.Extract(ctx, absBasePath, toRestore, absTargetPath, p.Extraction, timestampUTC)
+		if extractErr := r.handleError(err, "extract"); extractErr != nil {
+			return fmt.Errorf("restore extraction failed: %w", extractErr)
 		}
 	} else {
 		// Sync (Flat file restore)
 		// We sync FROM backup content TO absTargetPath.
-		if err := r.runRestore(ctx, absBasePath, relContentPathKey, absTargetPath, p.Sync, toRestore, timestampUTC); err != nil {
-			return fmt.Errorf("restore sync failed: %w", err)
+		err := r.syncer.Restore(ctx, absBasePath, relContentPathKey, toRestore, absTargetPath, p.Sync, timestampUTC)
+		if restoreErr := r.handleError(err, "restore"); restoreErr != nil {
+			return fmt.Errorf("restore sync failed: %w", restoreErr)
 		}
 	}
 
@@ -660,18 +674,6 @@ func (r *Runner) fetchBackup(absBasePath, relPathKey string) (metafile.MetafileI
 	return metafile.MetafileInfo{RelPathKey: relPathKey, Metadata: metadata}, nil
 }
 
-func (r *Runner) runStage(ctx context.Context, absBasePath string, paths planner.PathKeys, plan *pathrotation.Plan, toStage metafile.MetafileInfo, timestampUTC time.Time) (metafile.MetafileInfo, error) {
-	if !plan.ArchiveEnabled {
-		return metafile.MetafileInfo{}, nil
-	}
-
-	result, err := r.rotator.Stage(ctx, absBasePath, paths.RelStagePathKey, paths.StageEntryPrefix, toStage, plan, timestampUTC)
-	if err != nil {
-		return metafile.MetafileInfo{}, r.handleError(err, "staging")
-	}
-	return result, nil
-}
-
 func (r *Runner) runArchive(ctx context.Context, absBasePath string, paths planner.PathKeys, plan *pathrotation.Plan, toArchive metafile.MetafileInfo, timestampUTC time.Time) (metafile.MetafileInfo, error) {
 	if !plan.ArchiveEnabled {
 		return metafile.MetafileInfo{}, nil
@@ -691,21 +693,6 @@ func (r *Runner) runArchive(ctx context.Context, absBasePath string, paths plann
 	if err != nil {
 		return metafile.MetafileInfo{}, r.handleError(err, "archive")
 	}
-	return result, nil
-}
-
-func (r *Runner) runSync(ctx context.Context, absBasePath, absSourcePath string, paths planner.PathKeys, plan *pathsync.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
-	result, err := r.syncer.Sync(ctx, absBasePath, absSourcePath, paths.RelCurrentPathKey, paths.RelContentPathKey, plan, timestampUTC)
-	if err != nil {
-		// This handles all errors from the syncer, including hints.
-		return metafile.MetafileInfo{}, r.handleError(err, "sync")
-	}
-
-	// If we reach here, the sync was successful. Now, we must write the metafile.
-	if err := r.writeMetafile(absBasePath, result, plan.DryRun); err != nil {
-		return metafile.MetafileInfo{}, fmt.Errorf("error during sync write metafile: %w", err)
-	}
-
 	return result, nil
 }
 
@@ -734,49 +721,6 @@ func (r *Runner) runPrune(ctx context.Context, absBasePath string, paths planner
 	return nil
 }
 
-func (r *Runner) runCompress(ctx context.Context, absBasePath string, paths planner.PathKeys, plan *pathcompression.CompressPlan,
-	toCompress metafile.MetafileInfo, timestampUTC time.Time) error {
-	err := r.compressor.Compress(ctx, absBasePath, paths.RelContentPathKey, toCompress, plan, timestampUTC)
-	if err != nil {
-		return r.handleError(err, "compress")
-	}
-	return nil
-}
-
-func (r *Runner) runRestore(ctx context.Context, absBasePath, relContentPathKey, absTargetPath string, plan *pathsync.Plan,
-	toRestore metafile.MetafileInfo, timestampUTC time.Time) error {
-	err := r.syncer.Restore(ctx, absBasePath, relContentPathKey, toRestore, absTargetPath, plan, timestampUTC)
-	if err != nil {
-		return r.handleError(err, "restore")
-	}
-	return nil
-}
-
-func (r *Runner) runExtract(ctx context.Context, absBasePath, absTargetPath string, plan *pathcompression.ExtractPlan,
-	toExtract metafile.MetafileInfo, timestampUTC time.Time) error {
-	err := r.compressor.Extract(ctx, absBasePath, toExtract, absTargetPath, plan, timestampUTC)
-	if err != nil {
-		return r.handleError(err, "extract")
-	}
-	return nil
-}
-
-func (r *Runner) runPreHook(ctx context.Context, hookName string, plan *hook.Plan, timestampUTC time.Time) error {
-	err := r.hookRunner.RunPreHook(ctx, hookName, plan, timestampUTC)
-	if err != nil {
-		return r.handleError(err, "pre-hook")
-	}
-	return nil
-}
-
-func (r *Runner) runPostHook(ctx context.Context, hookName string, plan *hook.Plan, timestampUTC time.Time) error {
-	err := r.hookRunner.RunPostHook(ctx, hookName, plan, timestampUTC)
-	if err != nil {
-		return r.handleError(err, "post-hook")
-	}
-	return nil
-}
-
 // Helper to standardize error handling across run... functions
 func (r *Runner) handleError(err error, taskLabel string) error {
 	if err == nil {
@@ -790,17 +734,4 @@ func (r *Runner) handleError(err error, taskLabel string) error {
 		return nil
 	}
 	return fmt.Errorf("error during %s: %w", taskLabel, err)
-}
-
-// Helper to write the metafile to disk after sync
-func (r *Runner) writeMetafile(absBasePath string, info metafile.MetafileInfo, dryRun bool) error {
-	absTargetCurrentPath := util.DenormalizedAbsPath(absBasePath, info.RelPathKey)
-	if dryRun {
-		plog.Info("[DRY RUN] Would write metafile", "directory", absTargetCurrentPath)
-		return nil
-	}
-	if err := metafile.Write(absTargetCurrentPath, &info.Metadata); err != nil {
-		return fmt.Errorf("failed to write metafile: %w", err)
-	}
-	return nil
 }
