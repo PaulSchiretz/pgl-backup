@@ -968,10 +968,10 @@ func (s *nativeSyncer) syncWorker() {
 func (s *nativeSyncer) handleSync() error {
 	plog.Notice("SYN", "from", s.src, "to", s.trg)
 
-	// Clear our Sync Optimization Caches when we are finished
+	// Clear our Sync Optimization Caches when we are finished for Immediate Memory Release, they should not, and cannot be used anymore in mirror
 	defer func() {
-		s.syncSourceDirInfoCache = &sharded.Map{}        // Clear memory immediately
-		s.syncTargetLStatCache = newLStatSnapshotStore() // Clear memory immediately
+		s.syncSourceDirInfoCache = nil // Clear memory immediately
+		s.syncTargetLStatCache = nil   // Clear memory immediately
 	}()
 
 	// 1. Start syncWorkers (Consumers).
