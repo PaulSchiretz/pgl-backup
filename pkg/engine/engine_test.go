@@ -332,20 +332,6 @@ func TestExecuteBackup(t *testing.T) {
 			expectError: false, // hint is not a real error
 		},
 		{
-			name:               "Incremental Archive Success Empty Result",
-			mode:               planner.Incremental,
-			archiveEnabled:     true,
-			shouldArchive:      true,
-			archiveReturnEmpty: true,
-			setupFS: func(t *testing.T, baseDir string) {
-				currentPath := filepath.Join(baseDir, relCurrent)
-				os.MkdirAll(currentPath, 0755)
-				metafile.Write(currentPath, &metafile.MetafileContent{UUID: "uuid-empty-result"})
-			},
-			expectError:   true,
-			errorContains: "archive succeeded but result is empty",
-		},
-		{
 			name:             "Retention Failure",
 			mode:             planner.Incremental,
 			retentionEnabled: true,

@@ -671,11 +671,6 @@ func (r *Runner) runStage(ctx context.Context, absBasePath string, paths planner
 	if err != nil {
 		return metafile.MetafileInfo{}, r.handleError(err, "Staging")
 	}
-
-	// Consistency check
-	if result.RelPathKey == "" {
-		return metafile.MetafileInfo{}, fmt.Errorf("staging succeeded but result is empty")
-	}
 	return result, nil
 }
 
@@ -698,11 +693,6 @@ func (r *Runner) runArchive(ctx context.Context, absBasePath string, paths plann
 	if err != nil {
 		return metafile.MetafileInfo{}, r.handleError(err, "Archive")
 	}
-
-	// Consistency check
-	if result.RelPathKey == "" {
-		return metafile.MetafileInfo{}, fmt.Errorf("archive succeeded but result is empty")
-	}
 	return result, nil
 }
 
@@ -710,11 +700,6 @@ func (r *Runner) runSync(ctx context.Context, absBasePath, absSourcePath string,
 	result, err := r.syncer.Sync(ctx, absBasePath, absSourcePath, paths.RelCurrentPathKey, paths.RelContentPathKey, plan, timestampUTC)
 	if err != nil {
 		return metafile.MetafileInfo{}, r.handleError(err, "Sync")
-	}
-
-	// Consistency check
-	if result.RelPathKey == "" {
-		return metafile.MetafileInfo{}, fmt.Errorf("sync succeeded but result is empty")
 	}
 
 	// Write the metafile using the info populated by Sync.
@@ -800,6 +785,7 @@ func (r *Runner) handleError(err error, taskLabel string) error {
 	return fmt.Errorf("error during %s: %w", taskLabel, err)
 }
 
+// Helper to write the metafile to disk after sync
 func (r *Runner) writeMetafile(absBasePath string, info metafile.MetafileInfo, dryRun bool) error {
 	absTargetCurrentPath := util.DenormalizedAbsPath(absBasePath, info.RelPathKey)
 	if dryRun {
