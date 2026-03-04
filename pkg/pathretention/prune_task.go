@@ -13,9 +13,9 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
-// task holds the mutable state for a single execution of the retention manager.
+// pruneTask holds the mutable state for a single execution of the retention manager.
 // This makes the RetentionEngine itself stateless and safe for concurrent use if needed.
-type task struct {
+type pruneTask struct {
 	*PathRetainer
 
 	ctx         context.Context
@@ -38,26 +38,26 @@ type task struct {
 }
 
 // execute runs the retention logic.
-func (t *task) execute() error {
+func (t *pruneTask) execute() error {
 
 	// Filter the list of all backups to get only those that should be deleted.
 	toDelete := t.filterToDelete()
 
 	if len(toDelete) <= 0 {
 		if t.dryRun {
-			plog.Debug("[DRY RUN] No backups need deletion")
+			plog.Debug("[DRY RUN] No backups need pruning")
 		} else {
-			plog.Debug("No backups need deletion")
+			plog.Debug("No backups need pruning")
 		}
 		return nil
 	}
 
-	plog.Info("Deleting outdated backups", "count", len(toDelete))
+	plog.Info("Pruning outdated backups", "count", len(toDelete))
 
-	t.metrics.StartProgress("Delete progress", 10*time.Second)
+	t.metrics.StartProgress("Prune progress", 10*time.Second)
 	defer func() {
 		t.metrics.StopProgress()
-		t.metrics.LogSummary("Delete finished")
+		t.metrics.LogSummary("Prune finished")
 	}()
 
 	// Start workers
@@ -75,7 +75,7 @@ func (t *task) execute() error {
 }
 
 // deleteTaskProducer feeds the eligible backups into the channel for workers.
-func (t *task) deleteTaskProducer(eligibleBackups []metafile.MetafileInfo) {
+func (t *pruneTask) deleteTaskProducer(eligibleBackups []metafile.MetafileInfo) {
 	defer close(t.deleteTasksChan)
 	for _, b := range eligibleBackups {
 		select {
@@ -88,7 +88,7 @@ func (t *task) deleteTaskProducer(eligibleBackups []metafile.MetafileInfo) {
 }
 
 // deleteWorker consumes tasks from the channel and deletes the backups.
-func (t *task) deleteWorker() {
+func (t *pruneTask) deleteWorker() {
 	defer t.deleteWg.Done()
 	for b := range t.deleteTasksChan {
 		// Check for cancellation before each deletion.
@@ -115,7 +115,7 @@ func (t *task) deleteWorker() {
 }
 
 // filterToDelete identifies which backups should be deleted based on the retention policy.
-func (t *task) filterToDelete() []metafile.MetafileInfo {
+func (t *pruneTask) filterToDelete() []metafile.MetafileInfo {
 	toKeep := t.filterToKeep()
 
 	var toDelete []metafile.MetafileInfo
@@ -130,7 +130,7 @@ func (t *task) filterToDelete() []metafile.MetafileInfo {
 }
 
 // filterBackupsToKeep applies the retention policy to a sorted list of backups.
-func (t *task) filterToKeep() map[string]bool {
+func (t *pruneTask) filterToKeep() map[string]bool {
 	toKeep := make(map[string]bool)
 
 	// Keep track of which periods we've already saved a backup for.

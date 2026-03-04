@@ -13,8 +13,6 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/hints"
 	"github.com/paulschiretz/pgl-backup/pkg/lockfile"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
-	"github.com/paulschiretz/pgl-backup/pkg/pathretention"
-	"github.com/paulschiretz/pgl-backup/pkg/pathrotation"
 	"github.com/paulschiretz/pgl-backup/pkg/planner"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
@@ -125,30 +123,49 @@ func (r *Runner) executeIncrementalBackup(ctx context.Context, absBasePath, absS
 	var syncResult, archiveResult metafile.MetafileInfo
 
 	// 1. Archive
+	// Check if the 'current' backup (from the previous run) needs to be archived (rolled over)
+	// before we overwrite it with the new sync. This ensures we capture the state *before* changes.
 	var archiveErr error
 	if p.Rotation.ArchiveEnabled {
 		var toArchive metafile.MetafileInfo
-		toArchive, archiveErr = r.fetchBackup(absBasePath, p.Paths.RelCurrentPathKey)
-		if archiveErr != nil {
-			if os.IsNotExist(archiveErr) {
-				// IMPORTANT: If we never did a backup before our archive does not exist! This is not an error!
-				archiveErr = nil
-			} else {
-				archiveErr = fmt.Errorf("error reading backup to archive: %w", archiveErr)
+		toArchive, err := r.fetchBackup(absBasePath, p.Paths.RelCurrentPathKey)
+		if err != nil {
+			// IMPORTANT: If we never did a backup before our archive does not exist! This is not an error, otherwise it is!
+			if !os.IsNotExist(err) {
+				if errors.Is(err, context.Canceled) {
+					return err
+				}
+				archiveErr = fmt.Errorf("fetch backup failed: %w", err)
+				plog.Error("Archive failed", "error", archiveErr)
 			}
 		} else {
-			archiveResult, archiveErr = r.runArchive(ctx, absBasePath, p.Paths, p.Rotation, toArchive, timestampUTC)
-			if archiveErr != nil {
-				if errors.Is(archiveErr, context.Canceled) {
-					return archiveErr
+			var err error
+			var shouldArchive bool
+			if shouldArchive, err = r.rotator.ShouldArchive(ctx, toArchive, p.Rotation, timestampUTC); err != nil {
+				if archiveErr = r.handleError(err, "archive"); archiveErr != nil {
+					if errors.Is(archiveErr, context.Canceled) {
+						return archiveErr
+					}
+					// We still might need to run another step, so just log and continue
+					plog.Error("Archive failed", "error", archiveErr)
 				}
-				// We still might need to run another step, so just log and continue
-				plog.Error("Archive failed", "error", archiveErr)
+			} else if shouldArchive {
+				if archiveResult, err = r.rotator.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, toArchive, p.Rotation, timestampUTC); err != nil {
+					if archiveErr = r.handleError(err, "archive"); archiveErr != nil {
+						if errors.Is(archiveErr, context.Canceled) {
+							return archiveErr
+						}
+						// We still might need to run another step, so just log and continue
+						plog.Error("Archive failed", "error", archiveErr)
+					}
+				}
 			}
 		}
 	}
 
 	// 2. Sync
+	// Synchronize the source directory to the 'current' backup location.
+	// This updates the 'current' state to match the live source.
 	var syncErr error
 	if p.Sync.Enabled {
 		var err error
@@ -164,29 +181,41 @@ func (r *Runner) executeIncrementalBackup(ctx context.Context, absBasePath, absS
 	}
 
 	// 3. Retention
+	// Prune old backups from the archive directory according to the retention policy.
+	// We explicitly exclude the just-created archive and the current sync result to prevent accidental deletion.
 	var pruneErr error
 	if p.Retention.Enabled {
-		var toExclude []metafile.MetafileInfo
+		var pruneExcludeRelPathKeys []string
 		// Add our just created sync/archive results to the exclusion list for prune so they are never pruned
 		// NOTE: This is needed in case our retention is enabled but 0,0,0,0,0 and we just created a snapshot. (we avoid deleting it rightaway)
 		if archiveResult.RelPathKey != "" {
-			toExclude = append(toExclude, archiveResult)
+			pruneExcludeRelPathKeys = append(pruneExcludeRelPathKeys, archiveResult.RelPathKey)
 		}
 		if syncResult.RelPathKey != "" {
-			toExclude = append(toExclude, syncResult)
+			pruneExcludeRelPathKeys = append(pruneExcludeRelPathKeys, syncResult.RelPathKey)
 		}
 
-		pruneErr = r.runPrune(ctx, absBasePath, p.Paths, p.Retention, toExclude, timestampUTC)
-		if pruneErr != nil {
-			if errors.Is(pruneErr, context.Canceled) {
-				return pruneErr
+		toPrune, err := r.fetchBackups(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, pruneExcludeRelPathKeys)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return err
 			}
-			// We still might need to run another step, so just log and continue
+			pruneErr = fmt.Errorf("fetch backups failed: %w", err)
 			plog.Error("Prune failed", "error", pruneErr)
+		} else {
+			if err := r.retainer.Prune(ctx, absBasePath, toPrune, p.Retention, timestampUTC); err != nil {
+				if pruneErr = r.handleError(err, "prune"); pruneErr != nil {
+					if errors.Is(pruneErr, context.Canceled) {
+						return pruneErr
+					}
+					plog.Error("Prune failed", "error", pruneErr)
+				}
+			}
 		}
 	}
 
 	// 4. Compression
+	// If an archive was created in step 1, compress it now to save disk space.
 	var compressErr error
 	if p.Compression.Enabled {
 		if err := r.compressor.Compress(ctx, absBasePath, p.Paths.RelContentPathKey, archiveResult, p.Compression, timestampUTC); err != nil {
@@ -220,6 +249,8 @@ func (r *Runner) executeSnapshotBackup(ctx context.Context, absBasePath, absSour
 	var syncResult, archiveResult metafile.MetafileInfo
 
 	// 1. Sync
+	// Create a new snapshot by synchronizing the source to the 'current' location.
+	// In snapshot mode, 'current' is effectively a staging area for the new snapshot.
 	var syncErr error
 	if p.Sync.Enabled {
 		var err error
@@ -235,42 +266,70 @@ func (r *Runner) executeSnapshotBackup(ctx context.Context, absBasePath, absSour
 	}
 
 	// 2. Archive
+	// Move the newly created snapshot from 'current' to the archive directory.
+	// This finalizes the snapshot creation.
 	var archiveErr error
 	if p.Rotation.ArchiveEnabled {
-		archiveResult, archiveErr = r.runArchive(ctx, absBasePath, p.Paths, p.Rotation, syncResult, timestampUTC)
-		if archiveErr != nil {
-			if errors.Is(archiveErr, context.Canceled) {
-				return archiveErr
+		var err error
+		var shouldArchive bool
+		if shouldArchive, err = r.rotator.ShouldArchive(ctx, syncResult, p.Rotation, timestampUTC); err != nil {
+			if archiveErr = r.handleError(err, "archive"); archiveErr != nil {
+				if errors.Is(archiveErr, context.Canceled) {
+					return archiveErr
+				}
+				// We still might need to run another step, so just log and continue
+				plog.Error("Archive failed", "error", archiveErr)
 			}
-			// We still might need to run another step, so just log and continue
-			plog.Error("Archive failed", "error", archiveErr)
+		} else if shouldArchive {
+			if archiveResult, err = r.rotator.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, syncResult, p.Rotation, timestampUTC); err != nil {
+				if archiveErr = r.handleError(err, "archive"); archiveErr != nil {
+					if errors.Is(archiveErr, context.Canceled) {
+						return archiveErr
+					}
+					// We still might need to run another step, so just log and continue
+					plog.Error("Archive failed", "error", archiveErr)
+				}
+			}
 		}
 	}
 
 	// 3. Retention
+	// Prune old snapshots according to the retention policy.
 	var pruneErr error
 	if p.Retention.Enabled {
-		var toExclude []metafile.MetafileInfo
+		var pruneExcludeRelPathKeys []string
 		// Add our just created sync/archive results to the exclusion list for prune so they are never pruned
 		// NOTE: This is needed in case our retention is enabled but 0,0,0,0,0 and we just created a snapshot. (we avoid deleting it rightaway)
 		if archiveResult.RelPathKey != "" {
-			toExclude = append(toExclude, archiveResult)
+			pruneExcludeRelPathKeys = append(pruneExcludeRelPathKeys, archiveResult.RelPathKey)
 		}
 		if syncResult.RelPathKey != "" {
-			toExclude = append(toExclude, syncResult)
+			pruneExcludeRelPathKeys = append(pruneExcludeRelPathKeys, syncResult.RelPathKey)
 		}
 
-		pruneErr = r.runPrune(ctx, absBasePath, p.Paths, p.Retention, toExclude, timestampUTC)
-		if pruneErr != nil {
-			if errors.Is(pruneErr, context.Canceled) {
-				return pruneErr
+		toPrune, err := r.fetchBackups(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, pruneExcludeRelPathKeys)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return err
 			}
+			pruneErr = fmt.Errorf("fetch backups failed: %w", err)
 			// We still might need to run another step, so just log and continue
 			plog.Error("Prune failed", "error", pruneErr)
+		} else {
+			if err := r.retainer.Prune(ctx, absBasePath, toPrune, p.Retention, timestampUTC); err != nil {
+				if pruneErr = r.handleError(err, "prune"); pruneErr != nil {
+					if errors.Is(pruneErr, context.Canceled) {
+						return pruneErr
+					}
+					// We still might need to run another step, so just log and continue
+					plog.Error("Prune failed", "error", pruneErr)
+				}
+			}
 		}
 	}
 
 	// 4. Compression
+	// Compress the newly created snapshot archive to save space.
 	var compressErr error
 	if p.Compression.Enabled {
 		if err := r.compressor.Compress(ctx, absBasePath, p.Paths.RelContentPathKey, archiveResult, p.Compression, timestampUTC); err != nil {
@@ -278,6 +337,7 @@ func (r *Runner) executeSnapshotBackup(ctx context.Context, absBasePath, absSour
 				if errors.Is(compressErr, context.Canceled) {
 					return compressErr
 				}
+				// We still might need to run another step, so just log and continue
 				plog.Error("Compress failed", "error", compressErr)
 			}
 		}
@@ -332,22 +392,46 @@ func (r *Runner) ExecutePrune(ctx context.Context, absBasePath string, p *planne
 	var pruneIncErr, pruneSnapErr error
 
 	if pruneIncremental && p.RetentionIncremental.Enabled {
-		pruneIncErr = r.runPrune(ctx, absBasePath, p.PathsIncremental, p.RetentionIncremental, []metafile.MetafileInfo{}, timestampUTC)
-		if pruneIncErr != nil {
-			if errors.Is(pruneIncErr, context.Canceled) {
-				return pruneIncErr
+		toPrune, err := r.fetchBackups(ctx, absBasePath, p.PathsIncremental.RelArchivePathKey, p.PathsIncremental.ArchiveEntryPrefix, []string{})
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return err
 			}
+			pruneIncErr = fmt.Errorf("fetch backups failed: %w", err)
+			// We still might need to run another step, so just log and continue
 			plog.Error("Prune incremental failed", "error", pruneIncErr)
+		} else {
+			if err := r.retainer.Prune(ctx, absBasePath, toPrune, p.RetentionIncremental, timestampUTC); err != nil {
+				if pruneIncErr = r.handleError(err, "prune"); pruneIncErr != nil {
+					if errors.Is(pruneIncErr, context.Canceled) {
+						return pruneIncErr
+					}
+					// We still might need to run another step, so just log and continue
+					plog.Error("Prune incremental failed", "error", pruneIncErr)
+				}
+			}
 		}
 	}
 
 	if pruneSnapshot && p.RetentionSnapshot.Enabled {
-		pruneSnapErr = r.runPrune(ctx, absBasePath, p.PathsSnapshot, p.RetentionSnapshot, []metafile.MetafileInfo{}, timestampUTC)
-		if pruneSnapErr != nil {
-			if errors.Is(pruneSnapErr, context.Canceled) {
-				return pruneSnapErr
+		toPrune, err := r.fetchBackups(ctx, absBasePath, p.PathsSnapshot.RelArchivePathKey, p.PathsSnapshot.ArchiveEntryPrefix, []string{})
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return err
 			}
+			pruneSnapErr = fmt.Errorf("fetch backups failed: %w", err)
+			// We still might need to run another step, so just log and continue
 			plog.Error("Prune snapshot failed", "error", pruneSnapErr)
+		} else {
+			if err = r.retainer.Prune(ctx, absBasePath, toPrune, p.RetentionSnapshot, timestampUTC); err != nil {
+				if pruneSnapErr = r.handleError(err, "prune"); pruneSnapErr != nil {
+					if errors.Is(pruneSnapErr, context.Canceled) {
+						return pruneSnapErr
+					}
+					// We still might need to run another step, so just log and continue
+					plog.Error("Prune snapshot failed", "error", pruneSnapErr)
+				}
+			}
 		}
 	}
 
@@ -672,53 +756,6 @@ func (r *Runner) fetchBackup(absBasePath, relPathKey string) (metafile.MetafileI
 		return metafile.MetafileInfo{}, err
 	}
 	return metafile.MetafileInfo{RelPathKey: relPathKey, Metadata: metadata}, nil
-}
-
-func (r *Runner) runArchive(ctx context.Context, absBasePath string, paths planner.PathKeys, plan *pathrotation.Plan, toArchive metafile.MetafileInfo, timestampUTC time.Time) (metafile.MetafileInfo, error) {
-	if !plan.ArchiveEnabled {
-		return metafile.MetafileInfo{}, nil
-	}
-
-	should, err := r.rotator.ShouldArchive(ctx, toArchive, plan, timestampUTC)
-	if err != nil {
-		return metafile.MetafileInfo{}, r.handleError(err, "archive")
-	}
-
-	// Archive isn't due, just return
-	if !should {
-		return metafile.MetafileInfo{}, nil
-	}
-
-	result, err := r.rotator.Archive(ctx, absBasePath, paths.RelArchivePathKey, paths.ArchiveEntryPrefix, toArchive, plan, timestampUTC)
-	if err != nil {
-		return metafile.MetafileInfo{}, r.handleError(err, "archive")
-	}
-	return result, nil
-}
-
-func (r *Runner) runPrune(ctx context.Context, absBasePath string, paths planner.PathKeys, plan *pathretention.Plan, toExclude []metafile.MetafileInfo, timestampUTC time.Time) error {
-
-	var relPathExclusionKeys []string
-	for _, item := range toExclude {
-		if item.RelPathKey != "" {
-			relPathExclusionKeys = append(relPathExclusionKeys, item.RelPathKey)
-		}
-	}
-
-	toPrune, err := r.fetchBackups(ctx, absBasePath, paths.RelArchivePathKey, paths.ArchiveEntryPrefix, relPathExclusionKeys)
-	if err != nil {
-		// fetchBackups does not return hints, so we handle its error directly.
-		if errors.Is(err, context.Canceled) {
-			return err
-		}
-		return fmt.Errorf("error during prune fetch backups: %w", err)
-	}
-
-	err = r.retainer.Prune(ctx, absBasePath, toPrune, plan, timestampUTC)
-	if err != nil {
-		return r.handleError(err, "prune")
-	}
-	return nil
 }
 
 // Helper to standardize error handling across run... functions

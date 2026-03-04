@@ -79,7 +79,7 @@ func (r *PathRetainer) Prune(ctx context.Context, absBasePath string, toPrune []
 		m = &NoopMetrics{}
 	}
 
-	t := &task{
+	t := &pruneTask{
 		PathRetainer:    r,
 		ctx:             ctx,
 		absBasePath:     absBasePath,
