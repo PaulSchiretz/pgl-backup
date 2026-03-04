@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Refactor**: Renamed `IntervalMode` to `ArchiveIntervalMode` and `IntervalModeConstraints` to `ArchiveIntervalModeConstraints` in `pathrotation` package for clarity.
 - **Refactor**: Prefixed fields in `pathrotation.Plan` with `Archive` (e.g., `ArchiveEnabled`, `ArchiveIntervalSeconds`) to avoid ambiguity.
 - **Refactor**: Renamed `Archive` field in `BackupPlan` to `Rotation` to better align with the package name `pathrotation`.
+- **Refactor**: Streamlined the core backup engine (`Runner`) by inlining simple helper functions. This makes the main execution logic in `executeIncrementalBackup` and `executeSnapshotBackup` more direct and readable.
+- **Docs**: Added detailed comments to the backup execution functions to clarify the purpose of each step in the backup lifecycle.
 
 ### Added
 - Added `Unstage` and `CleanupStagingPath` methods to the `Rotator` interface to support robust cleanup of temporary staging directories.
