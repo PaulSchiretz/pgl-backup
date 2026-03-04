@@ -18,6 +18,11 @@ func TestRotationMetrics_Adders(t *testing.T) {
 		if got := m.BackupsMoved.Load(); got != 5 {
 			t.Errorf("expected BackupsMoved to be 5, got %d", got)
 		}
+
+		m.AddBackupsRemoved(5)
+		if got := m.BackupsRemoved.Load(); got != 5 {
+			t.Errorf("expected BackupsRemoved to be 5, got %d", got)
+		}
 	})
 }
 
@@ -29,6 +34,7 @@ func TestRotationMetrics_Log(t *testing.T) {
 
 		m := &pathrotation.RotationMetrics{}
 		m.AddBackupsMoved(10)
+		m.AddBackupsRemoved(10)
 		m.StartProgress("Test", time.Hour) // Initialize startTime
 		m.StopProgress()                   // Stop immediately to avoid leaks
 		m.LogSummary("Test Archive Summary")
@@ -39,6 +45,9 @@ func TestRotationMetrics_Log(t *testing.T) {
 		}
 		if !strings.Contains(output, "backups_moved=10") {
 			t.Errorf("expected log output to contain 'backups_moved=10', but it didn't. Got: %s", output)
+		}
+		if !strings.Contains(output, "backups_removed=10") {
+			t.Errorf("expected log output to contain 'backups_removed=10', but it didn't. Got: %s", output)
 		}
 		if !strings.Contains(output, "duration=") {
 			t.Errorf("expected log output to contain 'duration=', but it didn't. Got: %s", output)

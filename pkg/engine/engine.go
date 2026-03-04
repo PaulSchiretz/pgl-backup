@@ -30,8 +30,8 @@ type Rotator interface {
 	ShouldArchive(ctx context.Context, toArchive metafile.MetafileInfo, p *pathrotation.Plan, timestampUTC time.Time) (bool, error)
 	Archive(ctx context.Context, absBasePath, relArchivePathKey, archiveEntryPrefix string, toArchive metafile.MetafileInfo, p *pathrotation.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error)
 	Stage(ctx context.Context, absBasePath, relStagePathKey, stageEntryPrefix string, toStage metafile.MetafileInfo, p *pathrotation.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error)
-	Unstage(ctx context.Context, absBasePath string, stagedInfo metafile.MetafileInfo, p *pathrotation.Plan) error
-	CleanupStagingPath(ctx context.Context, absBasePath, relStagePathKey string, p *pathrotation.Plan) error
+	Unstage(ctx context.Context, absBasePath string, stagedInfo metafile.MetafileInfo, p *pathrotation.Plan, timestampUTC time.Time) error
+	CleanupStagingPath(ctx context.Context, absBasePath, relStagePathKey string, p *pathrotation.Plan, timestampUTC time.Time) error
 }
 
 // Retainer is an interface for the retention leaf package.

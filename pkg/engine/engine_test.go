@@ -99,11 +99,11 @@ func (m *mockArchiver) Stage(ctx context.Context, absBasePath, relStagePathKey, 
 	return metafile.MetafileInfo{RelPathKey: path}, nil
 }
 
-func (m *mockArchiver) Unstage(ctx context.Context, absBasePath string, stagedInfo metafile.MetafileInfo, p *pathrotation.Plan) error {
+func (m *mockArchiver) Unstage(ctx context.Context, absBasePath string, stagedInfo metafile.MetafileInfo, p *pathrotation.Plan, timestampUTC time.Time) error {
 	return m.err
 }
 
-func (m *mockArchiver) CleanupStagingPath(ctx context.Context, absBasePath, relStagePathKey string, p *pathrotation.Plan) error {
+func (m *mockArchiver) CleanupStagingPath(ctx context.Context, absBasePath, relStagePathKey string, p *pathrotation.Plan, timestampUTC time.Time) error {
 	return m.err
 }
 

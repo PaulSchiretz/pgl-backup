@@ -181,7 +181,7 @@ func (r *PathRotator) Stage(ctx context.Context, absBasePath, relStagePathKey, s
 
 // Unstage deletes the staged directory.
 // This is typically used to clean up the temporary staging directory after processing (e.g. compression) is complete.
-func (r *PathRotator) Unstage(ctx context.Context, absBasePath string, stagedInfo metafile.MetafileInfo, p *Plan) error {
+func (r *PathRotator) Unstage(ctx context.Context, absBasePath string, stagedInfo metafile.MetafileInfo, p *Plan, timestampUTC time.Time) error {
 	if stagedInfo.RelPathKey == "" {
 		return nil
 	}
@@ -192,23 +192,32 @@ func (r *PathRotator) Unstage(ctx context.Context, absBasePath string, stagedInf
 	default:
 	}
 
-	absStagePath := util.DenormalizedAbsPath(absBasePath, stagedInfo.RelPathKey)
-
-	if p.DryRun {
-		plog.Notice("[DRY RUN] UNSTAGE", "path", absStagePath)
-		return nil
+	var m Metrics
+	if p.Metrics {
+		m = &RotationMetrics{}
+	} else {
+		m = &NoopMetrics{}
 	}
 
-	plog.Info("Unstaging directory", "path", absStagePath)
-	if err := os.RemoveAll(absStagePath); err != nil {
-		return fmt.Errorf("failed to unstage directory %s: %w", absStagePath, err)
+	absUnstagePath := util.DenormalizedAbsPath(absBasePath, stagedInfo.RelPathKey)
+
+	t := &unstageTask{
+		ctx:            ctx,
+		absUnstagePath: absUnstagePath,
+		metrics:        m,
+		timestampUTC:   timestampUTC,
+		dryRun:         p.DryRun,
+	}
+
+	if err := t.execute(); err != nil {
+		return err
 	}
 	return nil
 }
 
 // CleanupStagingPath deletes the entire staging parent directory.
 // This is used to clean up the top-level staging folder if it's empty or no longer needed.
-func (r *PathRotator) CleanupStagingPath(ctx context.Context, absBasePath, relStagePathKey string, p *Plan) error {
+func (r *PathRotator) CleanupStagingPath(ctx context.Context, absBasePath, relStagePathKey string, p *Plan, timestampUTC time.Time) error {
 	if relStagePathKey == "" {
 		return nil
 	}
@@ -219,16 +228,25 @@ func (r *PathRotator) CleanupStagingPath(ctx context.Context, absBasePath, relSt
 	default:
 	}
 
-	absStagePath := util.DenormalizedAbsPath(absBasePath, relStagePathKey)
-
-	if p.DryRun {
-		plog.Notice("[DRY RUN] CLEANUP STAGING PATH", "path", absStagePath)
-		return nil
+	var m Metrics
+	if p.Metrics {
+		m = &RotationMetrics{}
+	} else {
+		m = &NoopMetrics{}
 	}
 
-	plog.Info("Cleaning up staging directory", "path", absStagePath)
-	if err := os.RemoveAll(absStagePath); err != nil {
-		return fmt.Errorf("failed to cleanup staging directory %s: %w", absStagePath, err)
+	absStagePath := util.DenormalizedAbsPath(absBasePath, relStagePathKey)
+
+	t := &cleanStageTask{
+		ctx:          ctx,
+		absStagePath: absStagePath,
+		metrics:      m,
+		timestampUTC: timestampUTC,
+		dryRun:       p.DryRun,
+	}
+
+	if err := t.execute(); err != nil {
+		return err
 	}
 	return nil
 }

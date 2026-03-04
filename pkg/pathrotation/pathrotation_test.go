@@ -369,6 +369,8 @@ func TestStage(t *testing.T) {
 }
 
 func TestUnstage(t *testing.T) {
+	now := time.Now().UTC()
+
 	tests := []struct {
 		name         string
 		dryRun       bool
@@ -399,7 +401,7 @@ func TestUnstage(t *testing.T) {
 			info := metafile.MetafileInfo{RelPathKey: relStage}
 			plan := &pathrotation.Plan{DryRun: tc.dryRun}
 
-			if err := rotator.Unstage(context.Background(), tempDir, info, plan); err != nil {
+			if err := rotator.Unstage(context.Background(), tempDir, info, plan, now); err != nil {
 				t.Fatalf("Unstage failed: %v", err)
 			}
 
@@ -416,6 +418,7 @@ func TestUnstage(t *testing.T) {
 }
 
 func TestCleanupStagingPath(t *testing.T) {
+	now := time.Now().UTC()
 	tests := []struct {
 		name         string
 		dryRun       bool
@@ -446,7 +449,7 @@ func TestCleanupStagingPath(t *testing.T) {
 			rotator := pathrotation.NewPathRotator()
 			plan := &pathrotation.Plan{DryRun: tc.dryRun}
 
-			if err := rotator.CleanupStagingPath(context.Background(), tempDir, relStageParent, plan); err != nil {
+			if err := rotator.CleanupStagingPath(context.Background(), tempDir, relStageParent, plan, now); err != nil {
 				t.Fatalf("CleanupStagingPath failed: %v", err)
 			}
 

@@ -10,6 +10,7 @@ import (
 // Metrics defines the interface for collecting and reporting move statistics.
 type Metrics interface {
 	AddBackupsMoved(n int64)
+	AddBackupsRemoved(n int64)
 	LogSummary(msg string)
 	StartProgress(msg string, interval time.Duration)
 	StopProgress()
@@ -17,12 +18,14 @@ type Metrics interface {
 
 // RotationMetrics holds the atomic counters for tracking the move operation's progress.
 type RotationMetrics struct {
-	BackupsMoved atomic.Int64
-	stopChan     chan struct{}
-	startTime    time.Time
+	BackupsMoved   atomic.Int64
+	BackupsRemoved atomic.Int64
+	stopChan       chan struct{}
+	startTime      time.Time
 }
 
-func (m *RotationMetrics) AddBackupsMoved(n int64) { m.BackupsMoved.Add(n) }
+func (m *RotationMetrics) AddBackupsMoved(n int64)   { m.BackupsMoved.Add(n) }
+func (m *RotationMetrics) AddBackupsRemoved(n int64) { m.BackupsRemoved.Add(n) }
 
 func (m *RotationMetrics) StartProgress(msg string, interval time.Duration) {
 	m.startTime = time.Now()
@@ -55,6 +58,7 @@ func (m *RotationMetrics) LogSummary(msg string) {
 
 	plog.Info(msg,
 		"backups_moved", m.BackupsMoved.Load(),
+		"backups_removed", m.BackupsRemoved.Load(),
 		"duration", duration.Round(time.Millisecond),
 	)
 }
@@ -63,6 +67,7 @@ func (m *RotationMetrics) LogSummary(msg string) {
 type NoopMetrics struct{}
 
 func (m *NoopMetrics) AddBackupsMoved(n int64)                          {}
+func (m *NoopMetrics) AddBackupsRemoved(n int64)                        {}
 func (m *NoopMetrics) LogSummary(msg string)                            {}
 func (m *NoopMetrics) StartProgress(msg string, interval time.Duration) {}
 func (m *NoopMetrics) StopProgress()                                    {}

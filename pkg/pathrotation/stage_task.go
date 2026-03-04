@@ -24,10 +24,10 @@ func (t *stageTask) execute() error {
 		"move", t.absSourcePath,
 		"to", t.absTargetPath)
 
-	t.metrics.StartProgress("Staging progress", 10*time.Second)
+	t.metrics.StartProgress("Stage progress", 10*time.Second)
 	defer func() {
 		t.metrics.StopProgress()
-		t.metrics.LogSummary("Staging finished")
+		t.metrics.LogSummary("Stage finished")
 	}()
 
 	// Check for cancellation before performing the rename.
