@@ -697,11 +697,11 @@ func (r *Runner) runArchive(ctx context.Context, absBasePath string, paths plann
 func (r *Runner) runSync(ctx context.Context, absBasePath, absSourcePath string, paths planner.PathKeys, plan *pathsync.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
 	result, err := r.syncer.Sync(ctx, absBasePath, absSourcePath, paths.RelCurrentPathKey, paths.RelContentPathKey, plan, timestampUTC)
 	if err != nil {
+		// This handles all errors from the syncer, including hints.
 		return metafile.MetafileInfo{}, r.handleError(err, "sync")
 	}
 
-	// Write the metafile using the info populated by Sync.
-	// writeMetafile does not return hints, so we handle its error directly.
+	// If we reach here, the sync was successful. Now, we must write the metafile.
 	if err := r.writeMetafile(absBasePath, result, plan.DryRun); err != nil {
 		return metafile.MetafileInfo{}, fmt.Errorf("error during sync write metafile: %w", err)
 	}
