@@ -185,13 +185,12 @@ func (r *Runner) executeIncrementalBackup(ctx context.Context, absBasePath, absS
 
 	// 4. Compression
 	var compressErr error
-	if p.Compression.Enabled {
+	if p.Compression.Enabled && archiveResult.RelPathKey != "" {
 		compressErr = r.runCompress(ctx, absBasePath, p.Paths, p.Compression, archiveResult, timestampUTC)
 		if compressErr != nil {
 			if errors.Is(compressErr, context.Canceled) {
 				return compressErr
 			}
-			// We still might need to run another step, so just log and continue
 			plog.Error("Compress failed", "error", compressErr)
 		}
 	}
@@ -267,13 +266,12 @@ func (r *Runner) executeSnapshotBackup(ctx context.Context, absBasePath, absSour
 
 	// 4. Compression
 	var compressErr error
-	if p.Compression.Enabled {
+	if p.Compression.Enabled && archiveResult.RelPathKey != "" {
 		compressErr = r.runCompress(ctx, absBasePath, p.Paths, p.Compression, archiveResult, timestampUTC)
 		if compressErr != nil {
 			if errors.Is(compressErr, context.Canceled) {
 				return compressErr
 			}
-			// We still might need to run another step, so just log and continue
 			plog.Error("Compress failed", "error", compressErr)
 		}
 	}
@@ -669,7 +667,7 @@ func (r *Runner) runStage(ctx context.Context, absBasePath string, paths planner
 
 	result, err := r.rotator.Stage(ctx, absBasePath, paths.RelStagePathKey, paths.StageEntryPrefix, toStage, plan, timestampUTC)
 	if err != nil {
-		return metafile.MetafileInfo{}, r.handleError(err, "Staging")
+		return metafile.MetafileInfo{}, r.handleError(err, "staging")
 	}
 	return result, nil
 }
@@ -681,7 +679,7 @@ func (r *Runner) runArchive(ctx context.Context, absBasePath string, paths plann
 
 	should, err := r.rotator.ShouldArchive(ctx, toArchive, plan, timestampUTC)
 	if err != nil {
-		return metafile.MetafileInfo{}, r.handleError(err, "ShouldArchive")
+		return metafile.MetafileInfo{}, r.handleError(err, "archive")
 	}
 
 	// Archive isn't due, just return
@@ -691,7 +689,7 @@ func (r *Runner) runArchive(ctx context.Context, absBasePath string, paths plann
 
 	result, err := r.rotator.Archive(ctx, absBasePath, paths.RelArchivePathKey, paths.ArchiveEntryPrefix, toArchive, plan, timestampUTC)
 	if err != nil {
-		return metafile.MetafileInfo{}, r.handleError(err, "Archive")
+		return metafile.MetafileInfo{}, r.handleError(err, "archive")
 	}
 	return result, nil
 }
@@ -699,13 +697,15 @@ func (r *Runner) runArchive(ctx context.Context, absBasePath string, paths plann
 func (r *Runner) runSync(ctx context.Context, absBasePath, absSourcePath string, paths planner.PathKeys, plan *pathsync.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
 	result, err := r.syncer.Sync(ctx, absBasePath, absSourcePath, paths.RelCurrentPathKey, paths.RelContentPathKey, plan, timestampUTC)
 	if err != nil {
-		return metafile.MetafileInfo{}, r.handleError(err, "Sync")
+		return metafile.MetafileInfo{}, r.handleError(err, "sync")
 	}
 
 	// Write the metafile using the info populated by Sync.
+	// writeMetafile does not return hints, so we handle its error directly.
 	if err := r.writeMetafile(absBasePath, result, plan.DryRun); err != nil {
-		return metafile.MetafileInfo{}, fmt.Errorf("sync %w", err)
+		return metafile.MetafileInfo{}, fmt.Errorf("error during sync write metafile: %w", err)
 	}
+
 	return result, nil
 }
 
@@ -718,63 +718,70 @@ func (r *Runner) runPrune(ctx context.Context, absBasePath string, paths planner
 		}
 	}
 
-	toRetent, err := r.fetchBackups(ctx, absBasePath, paths.RelArchivePathKey, paths.ArchiveEntryPrefix, relPathExclusionKeys)
+	toPrune, err := r.fetchBackups(ctx, absBasePath, paths.RelArchivePathKey, paths.ArchiveEntryPrefix, relPathExclusionKeys)
 	if err != nil {
+		// fetchBackups does not return hints, so we handle its error directly.
 		if errors.Is(err, context.Canceled) {
 			return err
 		}
-		return fmt.Errorf("error reading backups for prune: %w", err)
+		return fmt.Errorf("error during prune fetch backups: %w", err)
 	}
 
-	if err = r.retainer.Prune(ctx, absBasePath, toRetent, plan, timestampUTC); err != nil {
-		return r.handleError(err, "Prune")
+	err = r.retainer.Prune(ctx, absBasePath, toPrune, plan, timestampUTC)
+	if err != nil {
+		return r.handleError(err, "prune")
 	}
 	return nil
 }
 
 func (r *Runner) runCompress(ctx context.Context, absBasePath string, paths planner.PathKeys, plan *pathcompression.CompressPlan,
 	toCompress metafile.MetafileInfo, timestampUTC time.Time) error {
-
-	if err := r.compressor.Compress(ctx, absBasePath, paths.RelContentPathKey, toCompress, plan, timestampUTC); err != nil {
-		return r.handleError(err, "Compress")
+	err := r.compressor.Compress(ctx, absBasePath, paths.RelContentPathKey, toCompress, plan, timestampUTC)
+	if err != nil {
+		return r.handleError(err, "compress")
 	}
 	return nil
 }
 
 func (r *Runner) runRestore(ctx context.Context, absBasePath, relContentPathKey, absTargetPath string, plan *pathsync.Plan,
 	toRestore metafile.MetafileInfo, timestampUTC time.Time) error {
-
-	if err := r.syncer.Restore(ctx, absBasePath, relContentPathKey, toRestore, absTargetPath, plan, timestampUTC); err != nil {
-		return r.handleError(err, "Restore")
+	err := r.syncer.Restore(ctx, absBasePath, relContentPathKey, toRestore, absTargetPath, plan, timestampUTC)
+	if err != nil {
+		return r.handleError(err, "restore")
 	}
 	return nil
 }
 
 func (r *Runner) runExtract(ctx context.Context, absBasePath, absTargetPath string, plan *pathcompression.ExtractPlan,
 	toExtract metafile.MetafileInfo, timestampUTC time.Time) error {
-
-	if err := r.compressor.Extract(ctx, absBasePath, toExtract, absTargetPath, plan, timestampUTC); err != nil {
-		return r.handleError(err, "Extract")
+	err := r.compressor.Extract(ctx, absBasePath, toExtract, absTargetPath, plan, timestampUTC)
+	if err != nil {
+		return r.handleError(err, "extract")
 	}
 	return nil
 }
 
 func (r *Runner) runPreHook(ctx context.Context, hookName string, plan *hook.Plan, timestampUTC time.Time) error {
-	if err := r.hookRunner.RunPreHook(ctx, hookName, plan, timestampUTC); err != nil {
-		return r.handleError(err, "Pre-Hook")
+	err := r.hookRunner.RunPreHook(ctx, hookName, plan, timestampUTC)
+	if err != nil {
+		return r.handleError(err, "pre-hook")
 	}
 	return nil
 }
 
 func (r *Runner) runPostHook(ctx context.Context, hookName string, plan *hook.Plan, timestampUTC time.Time) error {
-	if err := r.hookRunner.RunPostHook(ctx, hookName, plan, timestampUTC); err != nil {
-		return r.handleError(err, "Post-Hook")
+	err := r.hookRunner.RunPostHook(ctx, hookName, plan, timestampUTC)
+	if err != nil {
+		return r.handleError(err, "post-hook")
 	}
 	return nil
 }
 
 // Helper to standardize error handling across run... functions
 func (r *Runner) handleError(err error, taskLabel string) error {
+	if err == nil {
+		return nil
+	}
 	if errors.Is(err, context.Canceled) {
 		return err
 	}

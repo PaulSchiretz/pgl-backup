@@ -18,6 +18,7 @@ import (
 )
 
 var ErrDisabled = hints.New("sync is disabled")
+var ErrNothingToRestore = hints.New("nothing to restore")
 
 // PathSyncer orchestrates the file synchronization process.
 type PathSyncer struct {
@@ -128,6 +129,10 @@ func (s *PathSyncer) Restore(ctx context.Context, absBasePath string, relContent
 
 	if !p.Enabled {
 		return ErrDisabled
+	}
+
+	if toRestore.RelPathKey == "" {
+		return ErrNothingToRestore
 	}
 
 	// Check for cancellation

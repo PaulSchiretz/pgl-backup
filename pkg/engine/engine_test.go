@@ -289,7 +289,7 @@ func TestExecuteBackup(t *testing.T) {
 			syncEnabled:   true,
 			syncErr:       errors.New("sync failed"),
 			expectError:   true,
-			errorContains: "error during Sync",
+			errorContains: "error during sync",
 		},
 		{
 			name:           "Incremental Archive Failure",
@@ -304,7 +304,7 @@ func TestExecuteBackup(t *testing.T) {
 				metafile.Write(currentPath, &metafile.MetafileContent{UUID: "uuid-fail-fast"})
 			},
 			expectError:   true,
-			errorContains: "error during Archive",
+			errorContains: "error during archive",
 		},
 		{
 			name:           "Archive Nothing To Archive (Ignored)",
@@ -423,7 +423,7 @@ func TestExecuteBackup(t *testing.T) {
 			postBackupHooks: []string{"echo post"},
 			expectedHooks:   []string{"echo post"},
 			expectError:     true,
-			errorContains:   "error during Sync",
+			errorContains:   "error during sync",
 		},
 		{
 			name:          "Metafile Write Failure",

@@ -73,15 +73,15 @@ func (c *PathCompressor) Compress(ctx context.Context, absBasePath, relContentPa
 		return ErrDisabled
 	}
 
+	if toCompress.RelPathKey == "" {
+		return ErrNothingToCompress
+	}
+
 	// Check for cancellation
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
-	}
-
-	if toCompress.RelPathKey == "" {
-		return ErrNothingToCompress
 	}
 
 	absToCompressPath := util.DenormalizedAbsPath(absBasePath, toCompress.RelPathKey)
