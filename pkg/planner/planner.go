@@ -160,8 +160,8 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 	} else {
 		// Snapshot: Always enabled, manual mode, 0 interval (immediate)
 		rotationPlan = &pathrotation.Plan{
-			ArchiveEnabled:         true,
-			ArchiveIntervalSeconds: 0,
+			ArchiveEnabled:         true, // Needs to be always on in snapshot mode
+			ArchiveIntervalSeconds: 0,    // Needs to be 0 in snapshot mode
 			ArchiveIntervalMode:    pathrotation.Manual,
 			ArchiveConstraints:     pathrotation.ArchiveIntervalModeConstraints{},
 			DryRun:                 dryRun,
