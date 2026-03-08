@@ -130,7 +130,8 @@ func (r *Runner) executeIncrementalBackup(ctx context.Context, absBasePath, absS
 		var toArchive metafile.MetafileInfo
 		toArchive, err := r.fetchBackup(absBasePath, p.Paths.RelCurrentPathKey)
 		if err != nil {
-			// IMPORTANT: If we never did a backup before our archive does not exist! This is not an error, otherwise it is!
+			// If 'current' doesn't exist (e.g., first run), there's nothing to archive. This is not an error.
+			// Any other error (e.g., permissions) is logged.
 			if !os.IsNotExist(err) {
 				if errors.Is(err, context.Canceled) {
 					return err
@@ -186,8 +187,7 @@ func (r *Runner) executeIncrementalBackup(ctx context.Context, absBasePath, absS
 	var pruneErr error
 	if p.Retention.Enabled {
 		var pruneExcludeRelPathKeys []string
-		// Add our just created sync/archive results to the exclusion list for prune so they are never pruned
-		// NOTE: This is needed in case our retention is enabled but 0,0,0,0,0 and we just created a snapshot. (we avoid deleting it rightaway)
+		// We explicitly exclude the just-created archive and the current sync result to prevent accidental deletion.
 		if archiveResult.RelPathKey != "" {
 			pruneExcludeRelPathKeys = append(pruneExcludeRelPathKeys, archiveResult.RelPathKey)
 		}
@@ -289,8 +289,7 @@ func (r *Runner) executeSnapshotBackup(ctx context.Context, absBasePath, absSour
 	var pruneErr error
 	if p.Retention.Enabled {
 		var pruneExcludeRelPathKeys []string
-		// Add our just created sync/archive results to the exclusion list for prune so they are never pruned
-		// NOTE: This is needed in case our retention is enabled but 0,0,0,0,0 and we just created a snapshot. (we avoid deleting it rightaway)
+		// We explicitly exclude the just-created archive and the current sync result to prevent accidental deletion.
 		if archiveResult.RelPathKey != "" {
 			pruneExcludeRelPathKeys = append(pruneExcludeRelPathKeys, archiveResult.RelPathKey)
 		}
