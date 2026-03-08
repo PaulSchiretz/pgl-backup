@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Docs**: Added detailed comments to the backup execution functions to clarify the purpose of each step in the backup lifecycle.
 
 ### Added
-- Added `Unstage` and `CleanupStagingPath` methods to the `Rotator` interface to support robust cleanup of temporary staging directories.
+- Added `Unstage` and `CleanupStage` methods to the `Rotator` interface to support robust cleanup of temporary staging directories.
 
 ## [v1.4.4] - 2026-02-27
 

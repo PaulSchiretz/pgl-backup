@@ -9,7 +9,7 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
 )
 
-// cleanStageTask holds the mutable state for a single execution of the Unstage func.
+// cleanStageTask holds the mutable state for a single execution of the CleanupStage func.
 type cleanStageTask struct {
 	ctx          context.Context
 	absStagePath string
@@ -19,7 +19,7 @@ type cleanStageTask struct {
 }
 
 func (t *cleanStageTask) execute() error {
-	plog.Info("Cleanup staging path", "remove", t.absStagePath)
+	plog.Info("Cleaning stage", "remove", t.absStagePath)
 
 	t.metrics.StartProgress("Clean stage progress", 10*time.Second)
 	defer func() {

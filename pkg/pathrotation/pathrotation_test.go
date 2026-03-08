@@ -417,7 +417,7 @@ func TestUnstage(t *testing.T) {
 	}
 }
 
-func TestCleanupStagingPath(t *testing.T) {
+func TestCleanupStage(t *testing.T) {
 	now := time.Now().UTC()
 	tests := []struct {
 		name         string
@@ -449,8 +449,8 @@ func TestCleanupStagingPath(t *testing.T) {
 			rotator := pathrotation.NewPathRotator()
 			plan := &pathrotation.Plan{DryRun: tc.dryRun}
 
-			if err := rotator.CleanupStagingPath(context.Background(), tempDir, relStageParent, plan, now); err != nil {
-				t.Fatalf("CleanupStagingPath failed: %v", err)
+			if err := rotator.CleanupStage(context.Background(), tempDir, relStageParent, plan, now); err != nil {
+				t.Fatalf("CleanupStage failed: %v", err)
 			}
 
 			_, err := os.Stat(absStageParent)

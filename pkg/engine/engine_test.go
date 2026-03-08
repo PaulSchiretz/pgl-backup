@@ -99,7 +99,7 @@ func (m *mockArchiver) Unstage(ctx context.Context, absBasePath string, stagedIn
 	return m.err
 }
 
-func (m *mockArchiver) CleanupStagingPath(ctx context.Context, absBasePath, relStagePathKey string, p *pathrotation.Plan, timestampUTC time.Time) error {
+func (m *mockArchiver) CleanupStage(ctx context.Context, absBasePath, relStagePathKey string, p *pathrotation.Plan, timestampUTC time.Time) error {
 	return m.err
 }
 

@@ -215,9 +215,9 @@ func (r *PathRotator) Unstage(ctx context.Context, absBasePath string, stagedInf
 	return nil
 }
 
-// CleanupStagingPath deletes the entire staging parent directory.
+// CleanupStage deletes the entire staging parent directory.
 // This is used to clean up the top-level staging folder if it's empty or no longer needed.
-func (r *PathRotator) CleanupStagingPath(ctx context.Context, absBasePath, relStagePathKey string, p *Plan, timestampUTC time.Time) error {
+func (r *PathRotator) CleanupStage(ctx context.Context, absBasePath, relStagePathKey string, p *Plan, timestampUTC time.Time) error {
 	if relStagePathKey == "" {
 		return nil
 	}
