@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Refactor**: Renamed the `patharchive` package to `pathrotation` to better reflect its expanded responsibility for the entire backup rotation lifecycle (staging and archiving).
 - **Refactor**: Renamed `PathArchiver` to `PathRotator` and `ArchiveMetrics` to `RotationMetrics` for consistency.
-- **Refactor**: Decoupled the archive decision-making from the archive action. The `pathrotation` package now exposes a `ShouldArchive` function, making the engine's control flow more explicit and flexible.
+- **Refactor**: Decoupled the archive decision-making from the archive action. The `pathrotation` package now exposes an `IsArchivingDue` function, making the engine's control flow more explicit and flexible.
 - **Refactor**: Renamed `IntervalMode` to `ArchiveIntervalMode` and `IntervalModeConstraints` to `ArchiveIntervalModeConstraints` in `pathrotation` package for clarity.
 - **Refactor**: Prefixed fields in `pathrotation.Plan` with `Archive` (e.g., `ArchiveEnabled`, `ArchiveIntervalSeconds`) to avoid ambiguity.
 - **Refactor**: Renamed `Archive` field in `BackupPlan` to `Rotation` to better align with the package name `pathrotation`.

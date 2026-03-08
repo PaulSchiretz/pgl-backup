@@ -14,7 +14,7 @@ import (
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
-func TestShouldArchive(t *testing.T) {
+func TestIsArchivingDue(t *testing.T) {
 	// Define a fixed "Now" for consistent testing.
 	// Note: The implementation uses time.Local for >= 24h intervals logic.
 	now := time.Date(2023, 10, 27, 14, 0, 0, 0, time.UTC)
@@ -99,7 +99,7 @@ func TestShouldArchive(t *testing.T) {
 			}
 
 			// 2. Execute
-			should, err := rotator.ShouldArchive(context.Background(), toArchive, plan, now)
+			should, err := rotator.IsArchivingDue(context.Background(), toArchive, plan, now)
 
 			// 3. Verify
 			if should != tc.expectShould {

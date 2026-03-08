@@ -140,8 +140,8 @@ func (r *Runner) executeIncrementalBackup(ctx context.Context, absBasePath, absS
 			}
 		} else {
 			var err error
-			var shouldArchive bool
-			if shouldArchive, err = r.rotator.ShouldArchive(ctx, toArchive, p.Rotation, timestampUTC); err != nil {
+			var archivingDue bool
+			if archivingDue, err = r.rotator.IsArchivingDue(ctx, toArchive, p.Rotation, timestampUTC); err != nil {
 				if archiveErr = r.handleError(err, "archive"); archiveErr != nil {
 					if errors.Is(archiveErr, context.Canceled) {
 						return archiveErr
@@ -149,7 +149,7 @@ func (r *Runner) executeIncrementalBackup(ctx context.Context, absBasePath, absS
 					// We still might need to run another step, so just log and continue
 					plog.Error("Archive failed", "error", archiveErr)
 				}
-			} else if shouldArchive {
+			} else if archivingDue {
 				if archiveResult, err = r.rotator.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, toArchive, p.Rotation, timestampUTC); err != nil {
 					if archiveErr = r.handleError(err, "archive"); archiveErr != nil {
 						if errors.Is(archiveErr, context.Canceled) {
@@ -271,8 +271,8 @@ func (r *Runner) executeSnapshotBackup(ctx context.Context, absBasePath, absSour
 	var archiveErr error
 	if p.Rotation.ArchiveEnabled {
 		var err error
-		var shouldArchive bool
-		if shouldArchive, err = r.rotator.ShouldArchive(ctx, syncResult, p.Rotation, timestampUTC); err != nil {
+		var archivingDue bool
+		if archivingDue, err = r.rotator.IsArchivingDue(ctx, syncResult, p.Rotation, timestampUTC); err != nil {
 			if archiveErr = r.handleError(err, "archive"); archiveErr != nil {
 				if errors.Is(archiveErr, context.Canceled) {
 					return archiveErr
@@ -280,7 +280,7 @@ func (r *Runner) executeSnapshotBackup(ctx context.Context, absBasePath, absSour
 				// We still might need to run another step, so just log and continue
 				plog.Error("Archive failed", "error", archiveErr)
 			}
-		} else if shouldArchive {
+		} else if archivingDue {
 			if archiveResult, err = r.rotator.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, syncResult, p.Rotation, timestampUTC); err != nil {
 				if archiveErr = r.handleError(err, "archive"); archiveErr != nil {
 					if errors.Is(archiveErr, context.Canceled) {

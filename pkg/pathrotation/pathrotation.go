@@ -5,7 +5,7 @@
 //
 // 1. Archive (Snapshot Creation) - Predictable Creation
 //    - Goal: To honor the user's configured `ArchiveInterval` as literally as possible.
-//    - Logic: The `shouldArchive` function calculates time-based "bucketing" based on the
+//    - Logic: The `IsArchivingDue` function calculates time-based "bucketing" based on the
 //      **local system's midnight** for day-or-longer intervals. This gives the user direct,
 //      predictable control over the *frequency* of new archives, anchored to their local day.
 //      This is distinct from the retention logic in the `engine` package, which uses UTC
@@ -59,7 +59,7 @@ func NewPathRotator() *PathRotator {
 
 // Archive moves a backup directory to a permanent, timestamped archive directory.
 //
-// The decision to archive should be made by the caller using ShouldArchive.
+// The decision to archive should be made by the caller using IsArchivingDue.
 // This function now unconditionally performs the archive operation, but retains
 // basic safety checks.
 func (r *PathRotator) Archive(ctx context.Context, absBasePath, relArchivePathKey, archiveEntryPrefix string, toArchive metafile.MetafileInfo, p *Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
@@ -251,7 +251,7 @@ func (r *PathRotator) CleanupStage(ctx context.Context, absBasePath, relStagePat
 	return nil
 }
 
-// ShouldArchive determines if a new backup archive should be created based on the plan and timestamps.
+// IsArchivingDue determines if a new backup archive should be created based on the plan and timestamps.
 //
 // DESIGN NOTE on time zones:
 // For intervals of 24 hours or longer, this function intentionally calculates
@@ -260,7 +260,7 @@ func (r *PathRotator) CleanupStage(ctx context.Context, absBasePath, relStagePat
 // weekly backup on Sunday night"), even though all stored timestamps are UTC.
 // The conversion handles Daylight Saving Time (DST) shifts correctly by checking
 // for midnight-to-midnight boundary crossings (epoch day counting).
-func (r *PathRotator) ShouldArchive(ctx context.Context, toArchive metafile.MetafileInfo, p *Plan, timestampUTC time.Time) (bool, error) {
+func (r *PathRotator) IsArchivingDue(ctx context.Context, toArchive metafile.MetafileInfo, p *Plan, timestampUTC time.Time) (bool, error) {
 	if !p.ArchiveEnabled {
 		return false, ErrDisabled
 	}

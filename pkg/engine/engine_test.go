@@ -54,15 +54,15 @@ func (m *mockSyncer) Restore(ctx context.Context, absBasePath string, relContent
 }
 
 type mockArchiver struct {
-	err                 error
-	resultPath          string
-	returnEmptyResult   bool
-	shouldArchiveResult bool
-	shouldArchiveErr    error
+	err                  error
+	resultPath           string
+	returnEmptyResult    bool
+	isArchivingDueResult bool
+	isArchivingDueErr    error
 }
 
-func (m *mockArchiver) ShouldArchive(ctx context.Context, toArchive metafile.MetafileInfo, p *pathrotation.Plan, timestampUTC time.Time) (bool, error) {
-	return m.shouldArchiveResult, m.shouldArchiveErr
+func (m *mockArchiver) IsArchivingDue(ctx context.Context, toArchive metafile.MetafileInfo, p *pathrotation.Plan, timestampUTC time.Time) (bool, error) {
+	return m.isArchivingDueResult, m.isArchivingDueErr
 }
 
 func (m *mockArchiver) Archive(ctx context.Context, absBasePath, relArchivePathKey, archiveEntryPrefix string, toArchive metafile.MetafileInfo, p *pathrotation.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
@@ -208,8 +208,8 @@ func TestExecuteBackup(t *testing.T) {
 		postHookErr        error
 		compressErr        error
 		archiveReturnEmpty bool
-		shouldArchive      bool
-		shouldArchiveErr   error
+		isArchivingDue     bool
+		isArchivingDueErr  error
 
 		// Filesystem setup
 		setupFS func(t *testing.T, baseDir string)
@@ -226,7 +226,7 @@ func TestExecuteBackup(t *testing.T) {
 			syncEnabled:        true,
 			retentionEnabled:   true,
 			compressionEnabled: true,
-			shouldArchive:      true,
+			isArchivingDue:     true,
 			setupFS: func(t *testing.T, baseDir string) {
 				// Create 'current' backup for archiving
 				currentPath := filepath.Join(baseDir, relCurrent)
@@ -247,7 +247,7 @@ func TestExecuteBackup(t *testing.T) {
 			syncEnabled:        true,
 			retentionEnabled:   true,
 			compressionEnabled: true,
-			shouldArchive:      true,
+			isArchivingDue:     true,
 			setupFS: func(t *testing.T, baseDir string) {
 				currentPath := filepath.Join(baseDir, relCurrent)
 				if err := os.MkdirAll(currentPath, 0755); err != nil {
@@ -269,7 +269,7 @@ func TestExecuteBackup(t *testing.T) {
 			syncEnabled:        true,
 			retentionEnabled:   true,
 			compressionEnabled: true,
-			shouldArchive:      true,
+			isArchivingDue:     true,
 			expectError:        false,
 		},
 		{
@@ -291,7 +291,7 @@ func TestExecuteBackup(t *testing.T) {
 			name:           "Incremental Archive Failure",
 			mode:           planner.Incremental,
 			archiveEnabled: true,
-			shouldArchive:  true,
+			isArchivingDue: true,
 			archiveErr:     errors.New("archive failed"),
 			setupFS: func(t *testing.T, baseDir string) {
 				// Create 'current' backup so fetchBackup succeeds and archive is attempted
@@ -313,13 +313,13 @@ func TestExecuteBackup(t *testing.T) {
 				metafile.Write(currentPath, &metafile.MetafileContent{UUID: "uuid-nothing"})
 			},
 			expectError: false,
-			// shouldArchive is false by default, which is what we want
+			// isArchivingDue is false by default, which is what we want
 		},
 		{
-			name:             "ShouldArchive returns hint error",
-			mode:             planner.Incremental,
-			archiveEnabled:   true,
-			shouldArchiveErr: pathrotation.ErrDisabled,
+			name:              "IsArchivingDue returns hint error",
+			mode:              planner.Incremental,
+			archiveEnabled:    true,
+			isArchivingDueErr: pathrotation.ErrDisabled,
 			setupFS: func(t *testing.T, baseDir string) {
 				currentPath := filepath.Join(baseDir, relCurrent)
 				os.MkdirAll(currentPath, 0755)
@@ -338,7 +338,7 @@ func TestExecuteBackup(t *testing.T) {
 			name:               "Compression Failure",
 			mode:               planner.Incremental,
 			archiveEnabled:     true,
-			shouldArchive:      true,
+			isArchivingDue:     true,
 			compressionEnabled: true,
 			compressErr:        errors.New("compression failed"),
 			setupFS: func(t *testing.T, baseDir string) {
@@ -368,7 +368,7 @@ func TestExecuteBackup(t *testing.T) {
 			name:               "Compression Nothing To Compress (Ignored)",
 			mode:               planner.Incremental,
 			archiveEnabled:     true,
-			shouldArchive:      true,
+			isArchivingDue:     true,
 			compressionEnabled: true,
 			compressErr:        pathcompression.ErrNothingToCompress,
 			setupFS: func(t *testing.T, baseDir string) {
@@ -486,10 +486,10 @@ func TestExecuteBackup(t *testing.T) {
 			hr := &mockHookRunner{preHookErr: tc.preHookErr, postHookErr: tc.postHookErr}
 			s := &mockSyncer{err: tc.syncErr, resultInfo: metafile.MetafileInfo{RelPathKey: relCurrent}}
 			a := &mockArchiver{
-				err:                 tc.archiveErr,
-				returnEmptyResult:   tc.archiveReturnEmpty,
-				shouldArchiveResult: tc.shouldArchive,
-				shouldArchiveErr:    tc.shouldArchiveErr,
+				err:                  tc.archiveErr,
+				returnEmptyResult:    tc.archiveReturnEmpty,
+				isArchivingDueResult: tc.isArchivingDue,
+				isArchivingDueErr:    tc.isArchivingDueErr,
 			}
 			// If we want to test compression triggering, the mock archiver needs to return a path
 			if tc.name == "Incremental Happy Path with Archive and Compression" {
@@ -925,8 +925,8 @@ func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
 
 	// Mock Archiver that returns the path of the NEW backup we created
 	a := &mockArchiver{
-		shouldArchiveResult: true,
-		resultPath:          newArchiveEntryRelPath,
+		isArchivingDueResult: true,
+		resultPath:           newArchiveEntryRelPath,
 	}
 
 	r := &mockRetainer{}
