@@ -267,28 +267,19 @@ func (r *Runner) executeSnapshotBackup(ctx context.Context, absBasePath, absSour
 
 	// 2. Archive
 	// Move the newly created snapshot from 'current' to the archive directory.
-	// This finalizes the snapshot creation.
+	// This finalizes the snapshot creation. In snapshot mode, archiving is unconditional,
+	// so we call Archive directly without checking IsArchivingDue. The planner ensures
+	// the rotation plan is configured for immediate archiving.
 	var archiveErr error
 	if p.Rotation.ArchiveEnabled {
 		var err error
-		var archivingDue bool
-		if archivingDue, err = r.rotator.IsArchivingDue(ctx, syncResult, p.Rotation, timestampUTC); err != nil {
+		if archiveResult, err = r.rotator.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, syncResult, p.Rotation, timestampUTC); err != nil {
 			if archiveErr = r.handleError(err, "archive"); archiveErr != nil {
 				if errors.Is(archiveErr, context.Canceled) {
 					return archiveErr
 				}
 				// We still might need to run another step, so just log and continue
 				plog.Error("Archive failed", "error", archiveErr)
-			}
-		} else if archivingDue {
-			if archiveResult, err = r.rotator.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, syncResult, p.Rotation, timestampUTC); err != nil {
-				if archiveErr = r.handleError(err, "archive"); archiveErr != nil {
-					if errors.Is(archiveErr, context.Canceled) {
-						return archiveErr
-					}
-					// We still might need to run another step, so just log and continue
-					plog.Error("Archive failed", "error", archiveErr)
-				}
 			}
 		}
 	}
