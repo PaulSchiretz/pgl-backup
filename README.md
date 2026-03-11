@@ -308,9 +308,15 @@ pgl-backup backup -base="/media/backup-drive/MyDocumentsBackup" -source="$HOME/D
 *   `-base`**(Required)**: The root directory of your backup repository (where `pgl-backup.config.json` is located).
 *   `-source`**(Required)**: The source directory where the files you want to backup are stored.
 
-The first run will copy all files into a `PGL_Backup_Content` subdirectory inside the main `PGL_Backup_Incremental_Current` directory.
-Subsequent runs will efficiently update the contents of `PGL_Backup_Incremental_Current/PGL_Backup_Content`. After 1 week (by default) or your configured interval, the next run will first rename the entire `PGL_Backup_Incremental_Current` directory to a timestamped archive (e.g., `PGL_Backup_2023-10-27-...`) inside the `PGL_Backup_Incremental_Archive` sub-directory, and then create a new, clean `PGL_Backup_Incremental_Current` for the next sync.
-When compression is enabled, the `PGL_Backup_Content` subdirectory within an archive is compressed, and the original subdirectory is removed, leaving the compressed file alongside the backup's metadata.
+The first run will copy all files into a `PGL_Backup_Content` subdirectory inside the main `PGL_Backup_Incremental_Current` directory. Subsequent runs will efficiently update this directory.
+
+When it's time to create a historical archive (e.g., after a week), the next backup run will:
+1.  Move the old `PGL_Backup_Incremental_Current` to a temporary staging area.
+2.  Create a new, up-to-date `PGL_Backup_Incremental_Current` by syncing from your source.
+3.  Clean up old backups from the archive according to your retention policy.
+4.  Compress the staged backup (if enabled) and move it into the `PGL_Backup_Incremental_Archive` directory as a permanent, timestamped record.
+
+This robust `Stage -> Prune -> Archive` flow ensures that old backups are removed *before* new ones are added, preventing "disk full" errors and keeping the main archive clean.
 
 Your backup target will be organized like this:
 ```
