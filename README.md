@@ -10,6 +10,20 @@
 
 `pgl-backup` is a simple, powerful, and robust file backup utility written in Go. It is designed for creating versioned backups of local directories to another local or network-attached drive. It supports periodic snapshots, an efficient incremental mode with a flexible retention policy, and automatic compression. A core design goal is ensuring backups can be restored no matter what; by relying on standard file structures and open archive formats, your data remains fully accessible via native OS tools without needing `pgl-backup` installed.
 
+## Why Choose `pgl-backup`?
+
+Based on a philosophy of "solidity over frills," `pgl-backup` is built for users who value reliability and performance above all else.
+
+*   **Engineered for Robustness**: The backup engine uses a "Stage, then Process" pipeline with atomic operations to ensure your backup repository is never left in a corrupt or inconsistent state, even if a run is interrupted. Critical steps are "fail-fast," while non-critical failures (like a single file error) are logged without halting the entire backup.
+
+*   **High Performance by Default**: A concurrent, producer-consumer architecture maximizes I/O throughput. It includes specific optimizations like a sequential-write mode for HDDs and memory pooling to reduce GC pressure, ensuring fast performance on both modern SSDs and traditional spinning disks.
+
+*   **Zero Vendor Lock-In**: Your data is your own. Backups are stored in standard folders and open archive formats (`.zip`, `.tar.gz`, `.tar.zst`). You can always access and restore your files using native OS tools, with or without `pgl-backup`.
+
+*   **Safety First**: Extensive pre-flight checks prevent common pitfalls before they happen. This includes "Ghost Directory" protection (for unmounted drives), cross-platform case-sensitivity mismatch detection, and path nesting validation to prevent infinite loops.
+
+*   **Simple and Transparent**: A single, dependency-free binary that's easy to deploy and automate. The configuration is straightforward, and the logging is clear, giving you full visibility into what's happening.
+
 ## Table of Contents
 
 *   [Core Concepts](#core-concepts)
