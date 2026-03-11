@@ -239,105 +239,131 @@ func (r *Runner) executeIncrementalBackup(ctx context.Context, absBasePath, absS
 }
 
 func (r *Runner) executeSnapshotBackup(ctx context.Context, absBasePath, absSourcePath string, p *planner.BackupPlan, timestampUTC time.Time) error {
-	// This function follows a "fail-forward" strategy. It attempts to execute all steps
-	// (Archive, Sync, Retention, Compression) in sequence. If a non-critical step like
-	// Retention or Compression fails, the error is logged, but the process continues.
-	// The overall backup is only considered a failure if a critical step (Sync or Archive) fails.
-	// We always want to complete the whole flow (Sync -> Archive -> Retention -> Compression).
-	// Each step handles invalid inputs internally (e.g. empty paths) and returns early if needed,
-	// or logs errors if they are non-fatal.
-	var syncResult, archiveResult metafile.MetafileInfo
+	// executeSnapshotBackup implements the snapshot backup flow:
+	// Sync -> Stage -> Prune -> Compress -> Archive.
+	//
+	// This function follows a "fail-fast" approach for critical steps.
+	// - Sync & Stage: Any error, including informational hints (e.g., "nothing to sync"),
+	//   is treated as fatal. A snapshot must have a valid synced and staged artifact
+	//   to proceed.
+	// - Prune: Errors are non-fatal. Pruning is a maintenance task; its failure
+	//   should not prevent the creation of a new backup.
+	// - Compress & Archive: Real errors are fatal, but informational hints (e.g.,
+	//   "nothing to compress") are ignored, allowing the flow to continue with the
+	//   uncompressed/staged artifact.
+	//
+	// A deferred function ensures the staging area is cleaned up regardless of success or failure.
+
+	// activeResult holds the metafile.MetafileInfo that is the one we are working on
+	var activeResult metafile.MetafileInfo
+
+	if p.Rotation.ArchiveEnabled {
+		// Cleanup any stale data from a previous, failed run before we start.
+		if err := r.rotator.CleanupStage(ctx, absBasePath, p.Paths.RelStagePathKey, p.Rotation, timestampUTC); err != nil {
+			// Cleanup errors are non-fatal to the backup result, so we just log them.
+			plog.Debug("Failed to pre-cleanup stage directory", "path", p.Paths.RelStagePathKey, "error", err)
+		}
+		// Defer cleanup of the staging directory. This will run at the end of the function,
+		// ensuring the staging area is cleared even if subsequent steps fail.
+		defer func() {
+			if err := r.rotator.CleanupStage(ctx, absBasePath, p.Paths.RelStagePathKey, p.Rotation, timestampUTC); err != nil {
+				// Cleanup errors are non-fatal to the backup result, so we just log them.
+				plog.Debug("Failed to post-cleanup stage directory", "path", p.Paths.RelStagePathKey, "error", err)
+			}
+		}()
+	}
 
 	// 1. Sync
 	// Create a new snapshot by synchronizing the source to the 'current' location.
-	// In snapshot mode, 'current' is effectively a staging area for the new snapshot.
-	var syncErr error
+	// In snapshot mode, 'current' is effectively a temporary holding area for the new snapshot.
 	if p.Sync.Enabled {
+		var syncResult metafile.MetafileInfo
 		var err error
 		if syncResult, err = r.syncer.Sync(ctx, absBasePath, absSourcePath, p.Paths.RelCurrentPathKey, p.Paths.RelContentPathKey, p.Sync, timestampUTC); err != nil {
-			if syncErr = r.handleError(err, "sync"); syncErr != nil {
-				if errors.Is(syncErr, context.Canceled) {
-					return syncErr
-				}
-				// We still might need to run another step, so just log and continue
-				plog.Error("Sync failed", "error", syncErr)
+			// Any error from Sync, including hints, is fatal for the snapshot flow
+			// because subsequent steps depend on a valid result.
+			if errors.Is(err, context.Canceled) {
+				return err
 			}
+			return fmt.Errorf("sync step failed, cannot continue snapshot: %w", err)
 		}
+		// Sync succeeded, update our active result to point to the sync result.
+		activeResult = syncResult
 	}
 
-	// 2. Archive
-	// Move the newly created snapshot from 'current' to the archive directory.
-	// This finalizes the snapshot creation. In snapshot mode, archiving is unconditional,
-	// so we call Archive directly without checking IsArchivingDue. The planner ensures
-	// the rotation plan is configured for immediate archiving.
-	var archiveErr error
-	if p.Rotation.ArchiveEnabled {
+	// 2. Stage
+	// Move the synced snapshot to a temporary staging area. This clears 'current' for future runs
+	// and prepares the backup for processing (compression) isolated from the final archive.
+	if p.Rotation.ArchiveEnabled && activeResult.RelPathKey != "" {
+		var stageResult metafile.MetafileInfo
 		var err error
-		if archiveResult, err = r.rotator.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, syncResult, p.Rotation, timestampUTC); err != nil {
-			if archiveErr = r.handleError(err, "archive"); archiveErr != nil {
-				if errors.Is(archiveErr, context.Canceled) {
-					return archiveErr
-				}
-				// We still might need to run another step, so just log and continue
-				plog.Error("Archive failed", "error", archiveErr)
+		if stageResult, err = r.rotator.Stage(ctx, absBasePath, p.Paths.RelStagePathKey, p.Paths.StageEntryPrefix, activeResult, p.Rotation, timestampUTC); err != nil {
+			// Any error from Stage, including hints, is fatal.
+			if errors.Is(err, context.Canceled) {
+				return err
 			}
+			return fmt.Errorf("stage step failed, cannot continue snapshot: %w", err)
 		}
+		// Stage succeeded, update our active result to point to the staged result.
+		activeResult = stageResult
 	}
 
 	// 3. Retention
-	// Prune old snapshots according to the retention policy.
-	var pruneErr error
+	// Prune old snapshots according to the retention policy. This is non-fatal.
+	// Crucially, we do this BEFORE moving the new backup to Archive. This frees up space
+	// for the new backup if disk space is tight.
 	if p.Retention.Enabled {
-		var pruneExcludeRelPathKeys []string
-		// We explicitly exclude the just-created archive and the current sync result to prevent accidental deletion.
-		if archiveResult.RelPathKey != "" {
-			pruneExcludeRelPathKeys = append(pruneExcludeRelPathKeys, archiveResult.RelPathKey)
-		}
-		if syncResult.RelPathKey != "" {
-			pruneExcludeRelPathKeys = append(pruneExcludeRelPathKeys, syncResult.RelPathKey)
-		}
-
-		toPrune, err := r.fetchBackups(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, pruneExcludeRelPathKeys)
+		toPrune, err := r.fetchBackups(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, nil)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return err
 			}
-			pruneErr = fmt.Errorf("fetch backups failed: %w", err)
-			// We still might need to run another step, so just log and continue
-			plog.Error("Prune failed", "error", pruneErr)
+			// Log and continue.
+			plog.Error("Prune step failed while fetching backups", "error", err)
 		} else {
 			if err := r.retainer.Prune(ctx, absBasePath, toPrune, p.Retention, timestampUTC); err != nil {
-				if pruneErr = r.handleError(err, "prune"); pruneErr != nil {
+				if pruneErr := r.handleError(err, "prune"); pruneErr != nil {
 					if errors.Is(pruneErr, context.Canceled) {
 						return pruneErr
 					}
-					// We still might need to run another step, so just log and continue
-					plog.Error("Prune failed", "error", pruneErr)
+					// Log and continue.
+					plog.Error("Prune step failed", "error", pruneErr)
 				}
 			}
 		}
 	}
 
 	// 4. Compression
-	// Compress the newly created snapshot archive to save space.
-	var compressErr error
-	if p.Compression.Enabled {
-		if _, err := r.compressor.Compress(ctx, absBasePath, p.Paths.RelContentPathKey, archiveResult, p.Compression, timestampUTC); err != nil {
-			if compressErr = r.handleError(err, "compress"); compressErr != nil {
+	// Compress the backup while it is in the Staging area.
+	if p.Compression.Enabled && activeResult.RelPathKey != "" {
+		if compressedResult, err := r.compressor.Compress(ctx, absBasePath, p.Paths.RelContentPathKey, activeResult, p.Compression, timestampUTC); err != nil {
+			// A real compression error is fatal.
+			if compressErr := r.handleError(err, "compress"); compressErr != nil {
 				if errors.Is(compressErr, context.Canceled) {
 					return compressErr
 				}
-				// We still might need to run another step, so just log and continue
-				plog.Error("Compress failed", "error", compressErr)
+				return fmt.Errorf("compress step failed: %w", compressErr)
 			}
+			// A hint (e.g., nothing to compress) is not fatal. We continue with the uncompressed artifact.
+		} else {
+			// Compression succeeded, update our active result to point to the compressed artifact.
+			activeResult = compressedResult
 		}
 	}
 
-	if syncErr != nil && !hints.IsHint(syncErr) {
-		return syncErr
-	}
-	if archiveErr != nil && !hints.IsHint(archiveErr) {
-		return archiveErr
+	// 5. Archive
+	// Move the final result (compressed or uncompressed) from Stage to the Archive directory.
+	if p.Rotation.ArchiveEnabled && activeResult.RelPathKey != "" {
+		if _, err := r.rotator.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, activeResult, p.Rotation, timestampUTC); err != nil {
+			// A real archive error is fatal.
+			if archiveErr := r.handleError(err, "archive"); archiveErr != nil {
+				if errors.Is(archiveErr, context.Canceled) {
+					return archiveErr
+				}
+				return fmt.Errorf("archive step failed: %w", archiveErr)
+			}
+			// A hint (e.g., nothing to archive) is not fatal.
+		}
 	}
 	return nil
 }
@@ -382,7 +408,7 @@ func (r *Runner) ExecutePrune(ctx context.Context, absBasePath string, p *planne
 	var pruneIncErr, pruneSnapErr error
 
 	if pruneIncremental && p.RetentionIncremental.Enabled {
-		toPrune, err := r.fetchBackups(ctx, absBasePath, p.PathsIncremental.RelArchivePathKey, p.PathsIncremental.ArchiveEntryPrefix, []string{})
+		toPrune, err := r.fetchBackups(ctx, absBasePath, p.PathsIncremental.RelArchivePathKey, p.PathsIncremental.ArchiveEntryPrefix, nil)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return err
@@ -404,7 +430,7 @@ func (r *Runner) ExecutePrune(ctx context.Context, absBasePath string, p *planne
 	}
 
 	if pruneSnapshot && p.RetentionSnapshot.Enabled {
-		toPrune, err := r.fetchBackups(ctx, absBasePath, p.PathsSnapshot.RelArchivePathKey, p.PathsSnapshot.ArchiveEntryPrefix, []string{})
+		toPrune, err := r.fetchBackups(ctx, absBasePath, p.PathsSnapshot.RelArchivePathKey, p.PathsSnapshot.ArchiveEntryPrefix, nil)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return err

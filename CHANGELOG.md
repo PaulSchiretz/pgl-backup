@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v1.4.5] - 2026-XX-XX
 
 ### Changed
+- **Refactor**: Re-architected the snapshot backup flow to be more robust: `Sync -> Stage -> Prune -> Compress -> Archive`. This change ensures that pruning happens *before* archiving the new backup, preventing potential "disk full" errors on crowded drives.
+- **Refactor**: Hardened snapshot backup logic to be "fail-fast". Any error or informational hint from the critical `Sync` or `Stage` steps will now immediately and correctly halt the backup run, preventing incomplete or invalid snapshots from being archived.
 - **Refactor**: `pathcompressor.Compress` now also returns the `metadata` of the updated compress result.
 - **Refactor**: Simplified snapshot backup logic by removing the redundant `IsArchivingDue` check, making the unconditional archiving behavior more explicit.
 - **Refactor**: Renamed the `patharchive` package to `pathrotation` to better reflect its expanded responsibility for the entire backup rotation lifecycle (staging and archiving).
@@ -22,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Docs**: Improved internal comments in the core backup runner for clarity.
 
 ### Added
-- Added `Unstage` and `CleanupStage` methods to the `Rotator` interface to support robust cleanup of temporary staging directories.
+- Added `Stage`, `Unstage`, and `CleanupStage` methods to the `Rotator` interface to support a more robust, two-phase commit-style backup flow with temporary staging directories.
 
 ## [v1.4.4] - 2026-02-27
 
