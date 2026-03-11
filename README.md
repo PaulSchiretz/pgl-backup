@@ -14,6 +14,9 @@
 
 *   [Core Concepts](#core-concepts)
 *   [Key Features](#key-features)
+*   [Architecture & Cloud Sync Safety](#architecture--cloud-sync-safety)
+    *   [Why This Matters for Cloud Sync](#why-this-matters-for-cloud-sync)
+    *   [Which Directories to Sync?](#which-directories-to-sync)
 *   [Installation](#installation)
     *   [From Source](#from-source)
     *   [From Pre-compiled Binaries](#from-pre-compiled-binaries)
@@ -80,6 +83,33 @@
     *   **"Ghost Directory" Protection**: On Unix-like systems, it helps prevent accidentally backing up to a mount point when the external drive is not actually mounted.
     *   **Cross-Platform Safety**: Detects and halts on risky backup scenarios, such as backing up a case-sensitive Linux source from a case-insensitive Windows host, which can lead to silent data loss.
     *   **Path Nesting Protection**: Prevents infinite recursion loops by ensuring source and target directories are not nested within each other.
+
+## Architecture & Cloud Sync Safety
+
+`pgl-backup` is designed with data integrity as its highest priority, especially when the backup repository is being monitored by a cloud sync client (like Google Drive, Dropbox, or Synology Drive).
+
+The backup process follows a robust "Stage, then Process" pipeline:
+1.  A new backup is created by syncing the source to a temporary `current` directory.
+2.  If an old backup is due for archival, it is moved to a temporary `stage` directory.
+3.  The staged backup is then compressed.
+4.  Finally, the fully processed backup is moved from `stage` into its permanent home in the `archive` directory using an `os.Rename` operation.
+
+The use of `os.Rename` is critical. On most filesystems, a rename is an **atomic operation**. This means that from the perspective of the filesystem (and any application watching it), the backup directory appears **instantly and completely** in its final destination.
+
+### Why This Matters for Cloud Sync
+
+Sync clients will **never see a partially copied or partially compressed backup**. They will only ever see a complete, consistent backup directory appear in the archive, which they can then safely upload. This eliminates the risk of syncing an incomplete or corrupt backup state to the cloud, making the archive directories extremely safe to use as a source for a secondary cloud backup.
+
+### Which Directories to Sync?
+
+For cloud synchronization, you should point your sync client to the following directories inside your backup base path:
+
+*   `PGL_Backup_Incremental_Archive`
+*   `PGL_Backup_Snapshot_Archive`
+
+These are the default names for the directories containing the final, safe-to-sync backups. You can customize these names after running `pgl-backup init` by editing the `paths` section in your `pgl-backup.config.json` file.
+
+> **Important:** You should **not** sync the `..._Current` or `..._Stage` directories, as they contain in-progress or temporary data.
 
 ## Installation
 
