@@ -66,21 +66,21 @@ func NewPathCompressor(bufferSizeKB, readAheadLimitKB int64, numCompressWorkers 
 }
 
 // Compress processes the specific list of paths provided by the engine.
-func (c *PathCompressor) Compress(ctx context.Context, absBasePath, relContentPathKey string, toCompress metafile.MetafileInfo, p *CompressPlan, timestampUTC time.Time) error {
+func (c *PathCompressor) Compress(ctx context.Context, absBasePath, relContentPathKey string, toCompress metafile.MetafileInfo, p *CompressPlan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
 
 	if !p.Enabled {
 		plog.Debug("Compression is disabled, skipping compress")
-		return ErrDisabled
+		return metafile.MetafileInfo{}, ErrDisabled
 	}
 
 	if toCompress.RelPathKey == "" {
-		return ErrNothingToCompress
+		return metafile.MetafileInfo{}, ErrNothingToCompress
 	}
 
 	// Check for cancellation
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return metafile.MetafileInfo{}, ctx.Err()
 	default:
 	}
 
@@ -107,32 +107,35 @@ func (c *PathCompressor) Compress(ctx context.Context, absBasePath, relContentPa
 		dryRun:                   p.DryRun,
 	}
 
-	err := t.execute()
-	if err != nil {
-		return err
+	if err := t.execute(); err != nil {
+		return metafile.MetafileInfo{}, err
 	}
+
+	// update the metadata entries
+	result := toCompress
+	result.Metadata.IsCompressed = true
+	result.Metadata.CompressionFormat = t.format.String()
 
 	// In dryRun mode we exit here
 	if t.dryRun {
 		plog.Notice("COMPRESSED", "source", absToCompressPath)
-		return nil
+		return result, nil
 	}
 
 	// 1. On successful archive creation, we update the metafile.
-	toCompress.Metadata.IsCompressed = true
-	toCompress.Metadata.CompressionFormat = t.format.String()
-	if writeErr := metafile.Write(absToCompressPath, &toCompress.Metadata); writeErr != nil {
+	if writeErr := metafile.Write(absToCompressPath, &result.Metadata); writeErr != nil {
 		plog.Error("Failed to write updated metafile after compression success. Original content has been preserved.", "path", absToCompressPath, "error", writeErr)
-		return fmt.Errorf("failed to update metafile: %w", writeErr)
+		return metafile.MetafileInfo{}, fmt.Errorf("failed to update metafile: %w", writeErr)
 	}
 
 	// 2. Only after the metafile is successfully updated we remove the original content.
-	if err := os.RemoveAll(absToCompressContentPath); err != nil {
-		plog.Error("Failed to remove original content directory after successful compression. Manual cleanup may be required.", "path", absToCompressPath, "error", err)
+	if cleanupErr := os.RemoveAll(absToCompressContentPath); cleanupErr != nil {
+		plog.Error("Failed to remove original content directory after successful compression.", "path", absToCompressPath, "error", cleanupErr)
+		return metafile.MetafileInfo{}, fmt.Errorf("failed to cleanup content directory: %w", cleanupErr)
 	}
 
 	plog.Notice("COMPRESSED", "source", absToCompressPath)
-	return nil
+	return result, nil
 }
 
 // Extract extracts an archive to a target directory.

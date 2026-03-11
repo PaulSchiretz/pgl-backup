@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v1.4.5] - 2026-XX-XX
 
 ### Changed
+- **Refactor**: `pathcompressor.Compress` now also returns the `metadata` of the updated compress result.
 - **Refactor**: Simplified snapshot backup logic by removing the redundant `IsArchivingDue` check, making the unconditional archiving behavior more explicit.
 - **Refactor**: Renamed the `patharchive` package to `pathrotation` to better reflect its expanded responsibility for the entire backup rotation lifecycle (staging and archiving).
 - **Refactor**: Renamed `PathArchiver` to `PathRotator` and `ArchiveMetrics` to `RotationMetrics` for consistency.

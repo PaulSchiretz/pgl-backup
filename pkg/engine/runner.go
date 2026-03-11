@@ -218,7 +218,7 @@ func (r *Runner) executeIncrementalBackup(ctx context.Context, absBasePath, absS
 	// If an archive was created in step 1, compress it now to save disk space.
 	var compressErr error
 	if p.Compression.Enabled {
-		if err := r.compressor.Compress(ctx, absBasePath, p.Paths.RelContentPathKey, archiveResult, p.Compression, timestampUTC); err != nil {
+		if _, err := r.compressor.Compress(ctx, absBasePath, p.Paths.RelContentPathKey, archiveResult, p.Compression, timestampUTC); err != nil {
 			if compressErr = r.handleError(err, "compress"); compressErr != nil {
 				if errors.Is(compressErr, context.Canceled) {
 					return compressErr
@@ -322,7 +322,7 @@ func (r *Runner) executeSnapshotBackup(ctx context.Context, absBasePath, absSour
 	// Compress the newly created snapshot archive to save space.
 	var compressErr error
 	if p.Compression.Enabled {
-		if err := r.compressor.Compress(ctx, absBasePath, p.Paths.RelContentPathKey, archiveResult, p.Compression, timestampUTC); err != nil {
+		if _, err := r.compressor.Compress(ctx, absBasePath, p.Paths.RelContentPathKey, archiveResult, p.Compression, timestampUTC); err != nil {
 			if compressErr = r.handleError(err, "compress"); compressErr != nil {
 				if errors.Is(compressErr, context.Canceled) {
 					return compressErr

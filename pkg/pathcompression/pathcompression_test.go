@@ -178,7 +178,7 @@ func TestCompress(t *testing.T) {
 
 			compressor := pathcompression.NewPathCompressor(256, 524288, 4)
 
-			err := compressor.Compress(context.Background(), targetBase, testContentDir, toCompress, &tc.plan, time.Now().UTC())
+			result, err := compressor.Compress(context.Background(), targetBase, testContentDir, toCompress, &tc.plan, time.Now().UTC())
 
 			if tc.expectError != nil {
 				if !errors.Is(err, tc.expectError) {
@@ -187,6 +187,15 @@ func TestCompress(t *testing.T) {
 			} else {
 				if err != nil {
 					t.Errorf("Unexpected error: %v", err)
+				}
+				// On success, the returned result should reflect compression.
+				if toCompress.RelPathKey != "" { // Don't check for "nothing to compress" case
+					if !result.Metadata.IsCompressed {
+						t.Error("Expected returned result to be marked as compressed")
+					}
+					if result.Metadata.CompressionFormat != tc.plan.Format.String() {
+						t.Errorf("Expected returned result format to be %q, got %q", tc.plan.Format.String(), result.Metadata.CompressionFormat)
+					}
 				}
 			}
 
@@ -282,7 +291,7 @@ func TestExtract(t *testing.T) {
 			}
 			compressor := pathcompression.NewPathCompressor(256, 524288, 4)
 
-			err := compressor.Compress(context.Background(), targetBase, testContentDir, toCompress, compressPlan, time.Now().UTC())
+			_, err := compressor.Compress(context.Background(), targetBase, testContentDir, toCompress, compressPlan, time.Now().UTC())
 			if err != nil {
 				t.Fatalf("Setup failed: failed to compress: %v", err)
 			}
@@ -325,7 +334,7 @@ func TestExtract_OverwriteBehavior(t *testing.T) {
 		Enabled: true,
 		Format:  pathcompression.Zip,
 	}
-	err := compressor.Compress(context.Background(), targetBase, testContentDir, toCompress, compressPlan, time.Now().UTC())
+	_, err := compressor.Compress(context.Background(), targetBase, testContentDir, toCompress, compressPlan, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("Setup failed: failed to compress: %v", err)
 	}
@@ -447,7 +456,7 @@ func TestExtract_FormatMismatch(t *testing.T) {
 		Format:  pathcompression.Zip,
 	}
 	// Compress it
-	err := compressor.Compress(context.Background(), targetBase, testContentDir, toCompress, compressPlan, time.Now().UTC())
+	_, err := compressor.Compress(context.Background(), targetBase, testContentDir, toCompress, compressPlan, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("Setup failed: failed to compress: %v", err)
 	}
@@ -496,7 +505,7 @@ func TestExtract_AutoDetect_CorruptMeta(t *testing.T) {
 		Format:  pathcompression.Zip,
 	}
 	// Compress it
-	err := compressor.Compress(context.Background(), targetBase, testContentDir, toCompress, compressPlan, time.Now().UTC())
+	_, err := compressor.Compress(context.Background(), targetBase, testContentDir, toCompress, compressPlan, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("Setup failed: failed to compress: %v", err)
 	}

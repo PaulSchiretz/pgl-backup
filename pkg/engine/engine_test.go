@@ -118,8 +118,15 @@ type mockCompressor struct {
 	extractRelPathKey string
 }
 
-func (m *mockCompressor) Compress(ctx context.Context, absBasePath, relContentPathKey string, toCompress metafile.MetafileInfo, p *pathcompression.CompressPlan, timestampUTC time.Time) error {
-	return m.err
+func (m *mockCompressor) Compress(ctx context.Context, absBasePath, relContentPathKey string, toCompress metafile.MetafileInfo, p *pathcompression.CompressPlan, timestampUTC time.Time) (metafile.MetafileInfo, error) {
+	if m.err != nil {
+		return metafile.MetafileInfo{}, m.err
+	}
+	// Simulate a successful compression by returning updated metadata
+	result := toCompress
+	result.Metadata.IsCompressed = true
+	result.Metadata.CompressionFormat = p.Format.String()
+	return result, nil
 }
 
 func (m *mockCompressor) Extract(ctx context.Context, absBasePath string, toExtract metafile.MetafileInfo, absExtractTargetPath string, p *pathcompression.ExtractPlan, timestampUTC time.Time) error {
