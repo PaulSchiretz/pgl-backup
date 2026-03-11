@@ -280,6 +280,15 @@ func TestExecuteBackup(t *testing.T) {
 			expectError:        false,
 		},
 		{
+			name:           "Snapshot Stage Failure",
+			mode:           planner.Snapshot,
+			archiveEnabled: true,
+			syncEnabled:    true,
+			archiveErr:     errors.New("stage failed"),
+			expectError:    true,
+			errorContains:  "stage step failed",
+		},
+		{
 			name:          "Preflight Failure",
 			mode:          planner.Incremental,
 			preflightErr:  errors.New("preflight failed"),
@@ -292,22 +301,22 @@ func TestExecuteBackup(t *testing.T) {
 			syncEnabled:   true,
 			syncErr:       errors.New("sync failed"),
 			expectError:   true,
-			errorContains: "error during sync",
+			errorContains: "sync step failed",
 		},
 		{
-			name:           "Incremental Archive Failure",
+			name:           "Incremental Stage Failure",
 			mode:           planner.Incremental,
 			archiveEnabled: true,
 			isArchivingDue: true,
 			archiveErr:     errors.New("archive failed"),
 			setupFS: func(t *testing.T, baseDir string) {
-				// Create 'current' backup so fetchBackup succeeds and archive is attempted
+				// Create 'current' backup so fetchBackup succeeds and stage is attempted
 				currentPath := filepath.Join(baseDir, relCurrent)
 				os.MkdirAll(currentPath, 0755)
 				metafile.Write(currentPath, &metafile.MetafileContent{UUID: "uuid-fail-fast"})
 			},
 			expectError:   true,
-			errorContains: "error during archive",
+			errorContains: "stage step failed",
 		},
 		{
 			name:           "Archive Nothing To Archive (Ignored)",
@@ -353,7 +362,8 @@ func TestExecuteBackup(t *testing.T) {
 				os.MkdirAll(currentPath, 0755)
 				metafile.Write(currentPath, &metafile.MetafileContent{UUID: "uuid-compress-fail"})
 			},
-			expectError: false,
+			expectError:   true,
+			errorContains: "compress step failed",
 		},
 		{
 			name:               "Compression Skipped if Archive Disabled",
@@ -426,7 +436,7 @@ func TestExecuteBackup(t *testing.T) {
 			postBackupHooks: []string{"echo post"},
 			expectedHooks:   []string{"echo post"},
 			expectError:     true,
-			errorContains:   "error during sync",
+			errorContains:   "sync step failed",
 		},
 		{
 			name:          "Sync returns Metafile Write Failure",
@@ -434,7 +444,7 @@ func TestExecuteBackup(t *testing.T) {
 			syncEnabled:   true,
 			syncErr:       errors.New("failed to write metafile"),
 			expectError:   true,
-			errorContains: "error during sync: failed to write metafile",
+			errorContains: "sync step failed, cannot continue incremental backup: failed to write metafile",
 		},
 	}
 
@@ -608,14 +618,14 @@ func TestExecuteList(t *testing.T) {
 					RelCurrentPathKey:  "PGL_Backup_Incremental_Current",
 					RelArchivePathKey:  "PGL_Backup_Incremental_Archive",
 					ArchiveEntryPrefix: "PGL_Backup_",
-					RelStagePathKey:    "PGL_Backup_Incremental_Stage",
+					RelStagePathKey:    ".~PGL_Backup_Incremental_Stage",
 					StageEntryPrefix:   "PGL_Backup_",
 				},
 				PathsSnapshot: planner.PathKeys{
 					RelCurrentPathKey:  "PGL_Backup_Snapshot_Current",
 					RelArchivePathKey:  "PGL_Backup_Snapshot_Archive",
 					ArchiveEntryPrefix: "PGL_Backup_",
-					RelStagePathKey:    "PGL_Backup_Snapshot_Stage",
+					RelStagePathKey:    ".~PGL_Backup_Snapshot_Stage",
 					StageEntryPrefix:   "PGL_Backup_",
 				},
 				Preflight: &preflight.Plan{},
@@ -873,89 +883,6 @@ func TestExecuteRestore(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestExecuteBackup_RetentionExcludesCurrent(t *testing.T) {
-	// Setup
-	baseDir := t.TempDir()
-	relArchive := "archive"
-	relStage := "stage"
-	relCurrent := "current"
-	prefix := "backup_"
-
-	// Create the archive directory
-	archivePath := filepath.Join(baseDir, relArchive)
-	os.MkdirAll(archivePath, 0755)
-
-	// Create 'current' backup so fetchBackup succeeds and Archive is called
-	currentPath := filepath.Join(baseDir, relCurrent)
-	os.MkdirAll(currentPath, 0755)
-	metafile.Write(currentPath, &metafile.MetafileContent{TimestampUTC: time.Now(), UUID: "uuid-current"})
-
-	// 1. Create an OLD backup on disk (should be pruned)
-	oldArchiveEntryName := prefix + "old"
-	oldArchiveEntryPath := filepath.Join(archivePath, oldArchiveEntryName)
-	os.MkdirAll(oldArchiveEntryPath, 0755)
-	metafile.Write(oldArchiveEntryPath, &metafile.MetafileContent{TimestampUTC: time.Now().Add(-24 * time.Hour), UUID: "uuid-old"})
-
-	// 2. Create the NEW backup on disk (simulating what Archiver just did)
-	newArchiveEntryRelPath := path.Join(relArchive, prefix+"new")
-	newArchiveEntryPath := filepath.Join(baseDir, newArchiveEntryRelPath)
-	os.MkdirAll(newArchiveEntryPath, 0755)
-	metafile.Write(newArchiveEntryPath, &metafile.MetafileContent{TimestampUTC: time.Now(), UUID: "uuid-new"})
-
-	// Plan
-	plan := &planner.BackupPlan{
-		Mode: planner.Incremental,
-		Paths: planner.PathKeys{
-			RelArchivePathKey:  relArchive,
-			RelStagePathKey:    relStage,
-			RelCurrentPathKey:  relCurrent,
-			ArchiveEntryPrefix: prefix,
-			StageEntryPrefix:   prefix,
-		},
-		Preflight:   &preflight.Plan{},
-		Sync:        &pathsync.Plan{Enabled: true},
-		Rotation:    &pathrotation.Plan{ArchiveEnabled: true},
-		Retention:   &pathretention.Plan{Enabled: true}, // Enabled!
-		Compression: &pathcompression.CompressPlan{Enabled: false},
-		HookRunner:  &hook.Plan{},
-	}
-
-	// Mocks
-	v := &mockValidator{}
-	hr := &mockHookRunner{}
-	s := &mockSyncer{
-		resultInfo: metafile.MetafileInfo{RelPathKey: relCurrent},
-	}
-
-	// Mock Archiver that returns the path of the NEW backup we created
-	a := &mockArchiver{
-		isArchivingDueResult: true,
-		resultPath:           newArchiveEntryRelPath,
-	}
-
-	r := &mockRetainer{}
-	c := &mockCompressor{}
-
-	runner := engine.NewRunner(v, hr, s, a, r, c)
-
-	// Execute
-	err := runner.ExecuteBackup(context.Background(), baseDir, "src", plan)
-	if err != nil {
-		t.Fatalf("ExecuteBackup failed: %v", err)
-	}
-
-	// Assert
-	// We expect toPrune to contain ONLY the old backup.
-	if len(r.toPrune) != 1 {
-		t.Errorf("Expected 1 backup to prune, got %d", len(r.toPrune))
-	} else {
-		expectedKey := path.Join(relArchive, oldArchiveEntryName)
-		if r.toPrune[0].RelPathKey != expectedKey {
-			t.Errorf("Expected to prune %s, got %s", expectedKey, r.toPrune[0].RelPathKey)
-		}
 	}
 }
 

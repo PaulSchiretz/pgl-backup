@@ -112,128 +112,147 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 }
 
 func (r *Runner) executeIncrementalBackup(ctx context.Context, absBasePath, absSourcePath string, p *planner.BackupPlan, timestampUTC time.Time) error {
+	// executeIncrementalBackup implements the incremental backup flow:
+	// (Check Archive Due -> Stage) -> Sync -> Prune -> (Compress -> Archive).
+	//
+	// This function first checks if the previous 'current' backup is due for archival.
+	// If so, it is moved to a temporary 'stage' directory.
+	// Then, a new 'current' backup is created by syncing from the source.
+	// After the new backup is secure, old backups in the main archive are pruned.
+	// Finally, the staged backup is compressed and moved into the main archive.
+	//
+	// This flow ensures that the processing (compression, archival) of the old backup
+	// is isolated from the creation of the new one, and that pruning happens before
+	// adding a new archive, managing disk space effectively.
+	//
+	// It follows a "fail-fast" approach for critical steps (Stage, Sync, Compress, Archive)
+	// while treating Prune failures as non-fatal.
 
-	// This function follows a "fail-forward" strategy. It attempts to execute all steps
-	// (Archive, Sync, Retention, Compression) in sequence. If a non-critical step like
-	// Retention or Compression fails, the error is logged, but the process continues.
-	// The overall backup is only considered a failure if a critical step (Sync or Archive) fails.
-	// We always want to complete the whole flow (Archive -> Sync -> Retention -> Compression).
-	// Each step handles invalid inputs internally (e.g. empty paths) and returns early if needed,
-	// or logs errors if they are non-fatal.
-	var syncResult, archiveResult metafile.MetafileInfo
+	var activeResult metafile.MetafileInfo // This will hold the old 'current' backup as it moves through the pipeline.
 
-	// 1. Archive
+	if p.Rotation.ArchiveEnabled {
+		// Cleanup any stale data from a previous, failed run before we start.
+		if err := r.rotator.CleanupStage(ctx, absBasePath, p.Paths.RelStagePathKey, p.Rotation, timestampUTC); err != nil {
+			plog.Debug("Failed to pre-cleanup stage directory", "path", p.Paths.RelStagePathKey, "error", err)
+		}
+		// Defer cleanup of the staging directory to ensure it's cleared on both success and failure.
+		defer func() {
+			if err := r.rotator.CleanupStage(ctx, absBasePath, p.Paths.RelStagePathKey, p.Rotation, timestampUTC); err != nil {
+				plog.Debug("Failed to post-cleanup stage directory", "path", p.Paths.RelStagePathKey, "error", err)
+			}
+		}()
+	}
+
+	// 1. Stage (conditionally)
 	// Check if the 'current' backup (from the previous run) needs to be archived (rolled over)
-	// before we overwrite it with the new sync. This ensures we capture the state *before* changes.
-	var archiveErr error
+	// before we overwrite it with the new sync. If so we move it to the staging dir
 	if p.Rotation.ArchiveEnabled {
 		var toArchive metafile.MetafileInfo
 		toArchive, err := r.fetchBackup(absBasePath, p.Paths.RelCurrentPathKey)
 		if err != nil {
 			// If 'current' doesn't exist (e.g., first run), there's nothing to archive. This is not an error.
-			// Any other error (e.g., permissions) is logged.
 			if !os.IsNotExist(err) {
 				if errors.Is(err, context.Canceled) {
 					return err
 				}
-				archiveErr = fmt.Errorf("fetch backup failed: %w", err)
-				plog.Error("Archive failed", "error", archiveErr)
+				// Log other errors (e.g., permissions) but continue to the Sync step.
+				plog.Error("Failed to fetch current backup for archival check", "error", err)
 			}
 		} else {
-			var err error
-			var archivingDue bool
-			if archivingDue, err = r.rotator.IsArchivingDue(ctx, toArchive, p.Rotation, timestampUTC); err != nil {
-				if archiveErr = r.handleError(err, "archive"); archiveErr != nil {
-					if errors.Is(archiveErr, context.Canceled) {
-						return archiveErr
-					}
-					// We still might need to run another step, so just log and continue
-					plog.Error("Archive failed", "error", archiveErr)
+			archivingDue, err := r.rotator.IsArchivingDue(ctx, toArchive, p.Rotation, timestampUTC)
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return err
+				}
+				// A hint is not a real error, and a real error here is not fatal for the new sync.
+				if archiveErr := r.handleError(err, "is_archiving_due"); archiveErr != nil {
+					plog.Error("Archive check failed, skipping archival", "error", archiveErr)
 				}
 			} else if archivingDue {
-				if archiveResult, err = r.rotator.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, toArchive, p.Rotation, timestampUTC); err != nil {
-					if archiveErr = r.handleError(err, "archive"); archiveErr != nil {
-						if errors.Is(archiveErr, context.Canceled) {
-							return archiveErr
-						}
-						// We still might need to run another step, so just log and continue
-						plog.Error("Archive failed", "error", archiveErr)
+				// Staging is critical. If it fails, we must stop to avoid overwriting the 'current' backup.
+				stagedResult, err := r.rotator.Stage(ctx, absBasePath, p.Paths.RelStagePathKey, p.Paths.StageEntryPrefix, toArchive, p.Rotation, timestampUTC)
+				if err != nil {
+					if errors.Is(err, context.Canceled) {
+						return err
 					}
+					return fmt.Errorf("stage step failed, cannot continue incremental backup: %w", err)
 				}
+				activeResult = stagedResult
 			}
 		}
 	}
 
 	// 2. Sync
 	// Synchronize the source directory to the 'current' backup location.
-	// This updates the 'current' state to match the live source.
-	var syncErr error
+	// This updates the 'current' state to match the live source. This is a critical step.
 	if p.Sync.Enabled {
-		var err error
-		if syncResult, err = r.syncer.Sync(ctx, absBasePath, absSourcePath, p.Paths.RelCurrentPathKey, p.Paths.RelContentPathKey, p.Sync, timestampUTC); err != nil {
-			if syncErr = r.handleError(err, "sync"); syncErr != nil {
-				if errors.Is(syncErr, context.Canceled) {
-					return syncErr
-				}
-				// We still might need to run another step, so just log and continue
-				plog.Error("Sync failed", "error", syncErr)
+		if _, err := r.syncer.Sync(ctx, absBasePath, absSourcePath, p.Paths.RelCurrentPathKey, p.Paths.RelContentPathKey, p.Sync, timestampUTC); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return err
 			}
+			return fmt.Errorf("sync step failed, cannot continue incremental backup: %w", err)
 		}
 	}
 
 	// 3. Retention
-	// Prune old backups from the archive directory according to the retention policy.
-	// We explicitly exclude the just-created archive and the current sync result to prevent accidental deletion.
-	var pruneErr error
+	// Prune old backups from the archive directory according to the retention policy. This is non-fatal.
 	if p.Retention.Enabled {
-		var pruneExcludeRelPathKeys []string
-		// We explicitly exclude the just-created archive and the current sync result to prevent accidental deletion.
-		if archiveResult.RelPathKey != "" {
-			pruneExcludeRelPathKeys = append(pruneExcludeRelPathKeys, archiveResult.RelPathKey)
-		}
-		if syncResult.RelPathKey != "" {
-			pruneExcludeRelPathKeys = append(pruneExcludeRelPathKeys, syncResult.RelPathKey)
-		}
-
-		toPrune, err := r.fetchBackups(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, pruneExcludeRelPathKeys)
+		// We don't need to exclude the new backup because it's in 'stage', not the 'archive' we are pruning.
+		toPrune, err := r.fetchBackups(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, nil)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return err
 			}
-			pruneErr = fmt.Errorf("fetch backups failed: %w", err)
-			plog.Error("Prune failed", "error", pruneErr)
+			plog.Error("Prune step failed while fetching backups", "error", err)
 		} else {
 			if err := r.retainer.Prune(ctx, absBasePath, toPrune, p.Retention, timestampUTC); err != nil {
-				if pruneErr = r.handleError(err, "prune"); pruneErr != nil {
+				if pruneErr := r.handleError(err, "prune"); pruneErr != nil {
 					if errors.Is(pruneErr, context.Canceled) {
 						return pruneErr
 					}
-					plog.Error("Prune failed", "error", pruneErr)
+					plog.Error("Prune step failed", "error", pruneErr)
 				}
 			}
 		}
+	}
+
+	// CRITICAL
+	// If nothing was staged cause IsArchivingDue returned false or archiving is disabled we are Finished here, the remaining steps (Compress, Archive) are skipped.
+	if activeResult.RelPathKey == "" {
+		return nil
 	}
 
 	// 4. Compression
-	// If an archive was created in step 1, compress it now to save disk space.
-	var compressErr error
+	// Compress the staged backup.
 	if p.Compression.Enabled {
-		if _, err := r.compressor.Compress(ctx, absBasePath, p.Paths.RelContentPathKey, archiveResult, p.Compression, timestampUTC); err != nil {
-			if compressErr = r.handleError(err, "compress"); compressErr != nil {
+		if compressedResult, err := r.compressor.Compress(ctx, absBasePath, p.Paths.RelContentPathKey, activeResult, p.Compression, timestampUTC); err != nil {
+			// A real compression error is fatal.
+			if compressErr := r.handleError(err, "compress"); compressErr != nil {
 				if errors.Is(compressErr, context.Canceled) {
 					return compressErr
 				}
-				plog.Error("Compress failed", "error", compressErr)
+				return fmt.Errorf("compress step failed: %w", compressErr)
 			}
+			// A hint (e.g., nothing to compress) is not fatal. We continue with the uncompressed artifact.
+		} else {
+			// Compression succeeded, update our active result to point to the compressed artifact.
+			activeResult = compressedResult
 		}
 	}
 
-	// If Sync or Archive failed, the run is considered a failure.
-	if syncErr != nil && !hints.IsHint(syncErr) {
-		return syncErr
-	}
-	if archiveErr != nil && !hints.IsHint(archiveErr) {
-		return archiveErr
+	// 5. Archive
+	// Move the final result (compressed or uncompressed) from Stage to the Archive directory.
+	if p.Rotation.ArchiveEnabled {
+		if _, err := r.rotator.Archive(ctx, absBasePath, p.Paths.RelArchivePathKey, p.Paths.ArchiveEntryPrefix, activeResult, p.Rotation, timestampUTC); err != nil {
+			// A real archive error is fatal.
+			if archiveErr := r.handleError(err, "archive"); archiveErr != nil {
+				if errors.Is(archiveErr, context.Canceled) {
+					return archiveErr
+				}
+				return fmt.Errorf("archive step failed: %w", archiveErr)
+			}
+			// A hint (e.g., nothing to archive) is not fatal.
+		}
 	}
 	return nil
 }

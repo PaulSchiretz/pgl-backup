@@ -159,7 +159,7 @@ func Default() Config {
 			Incremental: PathConfig{
 				Current:            "PGL_Backup_Incremental_Current", // Default name for the incremental current sub-directory.
 				Archive:            "PGL_Backup_Incremental_Archive", // Default name for the incremental archive sub-directory.
-				Stage:              "~PGL_Backup_Incremental_Stage",  // Default name for the incremental temporal stage sub-directory.
+				Stage:              ".~PGL_Backup_Incremental_Stage", // Default name for the incremental temporal stage sub-directory.
 				Content:            "PGL_Backup_Content",             // Default name for the incremental content sub-directory.
 				ArchiveEntryPrefix: "PGL_Backup_",
 				StageEntryPrefix:   "PGL_Backup_",
@@ -167,7 +167,7 @@ func Default() Config {
 			Snapshot: PathConfig{
 				Current:            "PGL_Backup_Snapshot_Current", // Default name for the snapshot current sub-directory.
 				Archive:            "PGL_Backup_Snapshot_Archive", // Default name for the snapshot archive sub-directory.
-				Stage:              "~PGL_Backup_Snapshot_Stage",  // Default name for the snapshot temporal stage sub-directory.
+				Stage:              ".~PGL_Backup_Snapshot_Stage", // Default name for the snapshot temporal stage sub-directory.
 				Content:            "PGL_Backup_Content",          // Default name for the snapshot content sub-directory.
 				ArchiveEntryPrefix: "PGL_Backup_",
 				StageEntryPrefix:   "PGL_Backup_",

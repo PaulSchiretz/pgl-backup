@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Refactor**: Re-architected the snapshot backup flow to be more robust: `Sync -> Stage -> Prune -> Compress -> Archive`. This change ensures that pruning happens *before* archiving the new backup, preventing potential "disk full" errors on crowded drives.
+- **Refactor**: Aligned the incremental backup flow with the new snapshot architecture: `(Stage) -> Sync -> Prune -> (Compress -> Archive)`. This isolates the processing of old backups and ensures consistency between both backup modes.
 - **Refactor**: Hardened snapshot backup logic to be "fail-fast". Any error or informational hint from the critical `Sync` or `Stage` steps will now immediately and correctly halt the backup run, preventing incomplete or invalid snapshots from being archived.
 - **Refactor**: `pathcompressor.Compress` now also returns the `metadata` of the updated compress result.
 - **Refactor**: Simplified snapshot backup logic by removing the redundant `IsArchivingDue` check, making the unconditional archiving behavior more explicit.
