@@ -72,7 +72,7 @@ func RunList(ctx context.Context, flagMap map[string]any) error {
 			runConfig.Engine.Performance.SyncWorkers,
 			runConfig.Engine.Performance.MirrorWorkers,
 		),
-		pathrotation.NewPathRotator(),
+		pathrotation.NewPathRotator(time.Local),
 		pathretention.NewPathRetainer(
 			runConfig.Engine.Performance.DeleteWorkers,
 		),

@@ -42,11 +42,16 @@ func (t *cleanStageTask) execute() error {
 	// Log the intent before starting the operation
 	plog.Info("Starting clean stage operation", "remove", t.absStagePath)
 
-	if err := os.RemoveAll(t.absStagePath); err != nil {
-		return fmt.Errorf("failed to cleanup staging directory: %w", err)
+	// We retry this operation to handle transient file locks (e.g., AntiVirus scanners, Windows Indexer)
+	const maxRetries = 5
+	var err error
+	for range maxRetries {
+		if err = os.RemoveAll(t.absStagePath); err == nil {
+			plog.Notice("CLEANED STAGE", "removed", t.absStagePath)
+			t.metrics.AddBackupsRemoved(1)
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-	plog.Notice("CLEANED STAGE", "removed", t.absStagePath)
-
-	t.metrics.AddBackupsRemoved(1)
-	return nil
+	return fmt.Errorf("failed to cleanup staging directory after %d attempts: %w", maxRetries, err)
 }

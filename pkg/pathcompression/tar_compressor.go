@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/klauspost/pgzip"
@@ -142,17 +143,27 @@ func (c *tarCompressor) Compress(ctx context.Context, absSourcePath, absArchiveF
 		return err
 	}
 
+	// 2a. Sync to disk for durability
+	if err := c.trgF.Sync(); err != nil {
+		return fmt.Errorf("failed to sync temp archive: %w", err)
+	}
+
 	// 3. Close explicitly
 	if err := c.trgF.Close(); err != nil {
 		return fmt.Errorf("failed to close temp file: %w", err)
 	}
 
 	// 4. Atomic Rename
-	if err := os.Rename(tempTrgPath, absArchiveFilePath); err != nil {
-		return fmt.Errorf("failed to rename temp archive to final path: %w", err)
+	// We retry the rename to handle transient file locks (e.g., AntiVirus scanners, Windows Indexer)
+	const maxRetries = 5
+	var renameErr error
+	for range maxRetries {
+		if renameErr = os.Rename(tempTrgPath, absArchiveFilePath); renameErr == nil {
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-
-	return nil
+	return fmt.Errorf("failed to rename temp archive to final path after %d attempts: %w", maxRetries, renameErr)
 }
 
 func (c *tarCompressor) handleTar() (retErr error) {

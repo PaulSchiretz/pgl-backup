@@ -43,11 +43,17 @@ func (t *unstageTask) execute() error {
 	plog.Info("Starting unstage operation", "remove", t.absUnstagePath)
 
 	// Strategy: Remove (Unstage)
-	if err := os.RemoveAll(t.absUnstagePath); err != nil {
-		return fmt.Errorf("failed to unstage backup (directory might be in use): %w", err)
+	// We retry this operation to handle transient file locks. (e.g., AntiVirus scanners, Windows Indexer)
+	const maxRetries = 5
+	var err error
+	for range maxRetries {
+		if err = os.RemoveAll(t.absUnstagePath); err == nil {
+			plog.Notice("UNSTAGED", "removed", t.absUnstagePath)
+			t.metrics.AddBackupsRemoved(1)
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-	plog.Notice("UNSTAGED", "removed", t.absUnstagePath)
 
-	t.metrics.AddBackupsRemoved(1)
-	return nil
+	return fmt.Errorf("failed to unstage backup after %d attempts (directory might be in use): %w", maxRetries, err)
 }

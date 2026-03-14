@@ -379,6 +379,12 @@ func (c *Config) Validate() error {
 		if strings.EqualFold(c.Paths.Incremental.Archive, c.Paths.Incremental.Stage) {
 			return fmt.Errorf("paths.incremental.archive and paths.incremental.stage cannot be the same")
 		}
+		if strings.ContainsAny(c.Paths.Incremental.ArchiveEntryPrefix, `\/`) {
+			return fmt.Errorf("paths.incremental.archiveEntryPrefix cannot contain path separators")
+		}
+		if strings.ContainsAny(c.Paths.Incremental.StageEntryPrefix, `\/`) {
+			return fmt.Errorf("paths.incremental.stageEntryPrefix cannot contain path separators")
+		}
 
 	case "snapshot":
 		if c.Paths.Snapshot.Archive == "" {
@@ -418,6 +424,12 @@ func (c *Config) Validate() error {
 		}
 		if strings.EqualFold(c.Paths.Snapshot.Archive, c.Paths.Snapshot.Stage) {
 			return fmt.Errorf("paths.snapshot.archive and paths.snapshot.stage cannot be the same")
+		}
+		if strings.ContainsAny(c.Paths.Snapshot.ArchiveEntryPrefix, `\/`) {
+			return fmt.Errorf("paths.snapshot.archiveEntryPrefix cannot contain path separators")
+		}
+		if strings.ContainsAny(c.Paths.Snapshot.StageEntryPrefix, `\/`) {
+			return fmt.Errorf("paths.snapshot.stageEntryPrefix cannot contain path separators")
 		}
 	}
 

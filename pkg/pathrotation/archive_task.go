@@ -55,11 +55,18 @@ func (t *archiveTask) execute() error {
 	}
 
 	// Strategy: Rename (Move)
-	if err := os.Rename(t.absSourcePath, t.absTargetPath); err != nil {
-		return fmt.Errorf("failed to archive backup (directory might be in use): %w", err)
+	// We retry this operation to handle transient file locks (e.g., AntiVirus scanners, Windows Indexer)
+	// which are common on Windows and cause "Access Denied" errors during directory moves.
+	const maxRetries = 5
+	var err error
+	for range maxRetries {
+		if err = os.Rename(t.absSourcePath, t.absTargetPath); err == nil {
+			plog.Notice("ARCHIVED", "moved", t.absSourcePath, "to", t.absTargetPath)
+			t.metrics.AddBackupsMoved(1)
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-	plog.Notice("ARCHIVED", "moved", t.absSourcePath, "to", t.absTargetPath)
 
-	t.metrics.AddBackupsMoved(1)
-	return nil
+	return fmt.Errorf("failed to archive backup after %d attempts (directory might be in use): %w", maxRetries, err)
 }

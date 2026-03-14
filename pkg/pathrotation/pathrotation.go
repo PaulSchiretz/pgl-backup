@@ -50,11 +50,18 @@ var ErrNothingToStage = hints.New("nothing to stage")
 var ErrNothingToArchive = hints.New("nothing to archive")
 var ErrDisabled = hints.New("archiving is disabled")
 
-type PathRotator struct{}
+type PathRotator struct {
+	location *time.Location
+}
 
-// NewPathRotator creates a new PathRotator with the given configuration.
-func NewPathRotator() *PathRotator {
-	return &PathRotator{}
+// NewPathRotator creates a new PathRotator.
+// location defines the timezone used for calculating daily/weekly intervals.
+// If nil, defaults to time.Local.
+func NewPathRotator(location *time.Location) *PathRotator {
+	if location == nil {
+		location = time.Local
+	}
+	return &PathRotator{location: location}
 }
 
 // Archive moves a backup directory to a permanent, timestamped archive directory.
@@ -281,7 +288,7 @@ func (r *PathRotator) IsArchivingDue(ctx context.Context, toArchive metafile.Met
 		return true, nil // Archive interval check is explicitly disabled, always create an archive.
 	}
 
-	location := time.Local
+	location := r.location
 
 	// For intervals of 24 hours or longer, this function intentionally calculates
 	// archive boundaries based on the local system's midnight to align with a

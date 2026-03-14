@@ -55,11 +55,17 @@ func (t *stageTask) execute() error {
 	}
 
 	// Strategy: Rename (Move)
-	if err := os.Rename(t.absSourcePath, t.absTargetPath); err != nil {
-		return fmt.Errorf("failed to stage backup (directory might be in use): %w", err)
+	// We retry this operation to handle transient file locks (e.g., AntiVirus scanners, Windows Indexer)
+	const maxRetries = 5
+	var err error
+	for range maxRetries {
+		if err = os.Rename(t.absSourcePath, t.absTargetPath); err == nil {
+			plog.Notice("STAGED", "moved", t.absSourcePath, "to", t.absTargetPath)
+			t.metrics.AddBackupsMoved(1)
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-	plog.Notice("STAGED", "moved", t.absSourcePath, "to", t.absTargetPath)
 
-	t.metrics.AddBackupsMoved(1)
-	return nil
+	return fmt.Errorf("failed to stage backup after %d attempts (directory might be in use): %w", maxRetries, err)
 }

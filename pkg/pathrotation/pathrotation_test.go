@@ -90,7 +90,7 @@ func TestIsArchivingDue(t *testing.T) {
 				toArchive.RelPathKey = ""
 			}
 
-			rotator := pathrotation.NewPathRotator()
+			rotator := pathrotation.NewPathRotator(time.UTC)
 			plan := &pathrotation.Plan{
 				ArchiveEnabled:         !tc.disabled,
 				ArchiveIntervalMode:    tc.intervalMode,
@@ -196,7 +196,7 @@ func TestArchive(t *testing.T) {
 			}
 
 			// 2. Create Rotator and Plan
-			rotator := pathrotation.NewPathRotator()
+			rotator := pathrotation.NewPathRotator(time.UTC)
 			plan := &pathrotation.Plan{
 				ArchiveEnabled:         true,
 				ArchiveIntervalMode:    pathrotation.Manual,
@@ -322,7 +322,7 @@ func TestStage(t *testing.T) {
 			}
 
 			// 2. Create Rotator and Plan
-			rotator := pathrotation.NewPathRotator()
+			rotator := pathrotation.NewPathRotator(time.UTC)
 			plan := &pathrotation.Plan{
 				ArchiveEnabled: true,
 				DryRun:         tc.dryRun,
@@ -397,7 +397,7 @@ func TestUnstage(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			rotator := pathrotation.NewPathRotator()
+			rotator := pathrotation.NewPathRotator(time.UTC)
 			info := metafile.MetafileInfo{RelPathKey: relStage}
 			plan := &pathrotation.Plan{DryRun: tc.dryRun}
 
@@ -446,7 +446,7 @@ func TestCleanupStage(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			rotator := pathrotation.NewPathRotator()
+			rotator := pathrotation.NewPathRotator(time.UTC)
 			plan := &pathrotation.Plan{DryRun: tc.dryRun}
 
 			if err := rotator.CleanupStage(context.Background(), tempDir, relStageParent, plan, now); err != nil {

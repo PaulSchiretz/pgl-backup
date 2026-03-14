@@ -77,8 +77,7 @@ func Acquire(ctx context.Context, dirPath string, appID string) (*Lock, error) {
 
 	absLockFilePath := util.DenormalizedAbsPath(dirPath, LockFileName)
 	// We will attempt to acquire multiple times in case of race conditions during cleanup
-	maxAttempts := 3
-
+	const maxAttempts = 3
 	for range maxAttempts {
 		// Check context cancellation
 		if ctx.Err() != nil {

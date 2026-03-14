@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Robustness**: Hardened the lock file heartbeat mechanism to be resilient to system clock adjustments. The staleness check now uses the timestamp from within the lock file content (`LastUpdate`) rather than a local in-memory timestamp, preventing false positives if the system time is changed.
+- **Robustness**: Implemented retry logic for critical filesystem operations (Archive, Stage, Unstage, Cleanup, Mirror Deletion) and final archive renaming. This mitigates transient "Access Denied" errors, particularly on Windows, caused by Antivirus scanners or Indexers holding brief locks.
+- **Robustness**: Added explicit `fsync` calls in the sync and compression engines to ensure data is physically flushed to disk before atomic renames, enhancing data durability against power loss.
+- **Config**: Added validation to prevent path separators in `archiveEntryPrefix` and `stageEntryPrefix`, preventing potential directory naming errors.
+- **Refactor**: Improved test determinism for time-based rotation logic by injecting the timezone location into the `PathRotator`.
 
 ## [v1.4.5] - 2026-03-11
 

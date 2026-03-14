@@ -132,6 +132,11 @@ type nativeSyncer struct {
 	// It is populated on-demand by the first worker to enter a directory via os.ReadDir.
 	// This allows subsequent workers to verify file existence, size, and modtime entirely in RAM,
 	// eliminating thousands of redundant Lstat system calls on the target filesystem.
+	//
+	// NOTE: This cache uses exact string matching. On case-insensitive filesystems (e.g., Windows),
+	// a file might exist as "file.txt" but be looked up as "File.txt". This will result in a cache miss
+	// (treated as non-existent) and trigger a copy/overwrite. This ensures functional correctness
+	// (the file is updated) at the cost of potential redundant I/O in mixed-case scenarios.
 	syncTargetLStatCache *LStatSnapshotStore
 
 	// syncWg waits for the syncItemProducer and syncWorkers to finish processing all sync items.
@@ -352,6 +357,11 @@ func (s *nativeSyncer) copyFile(absSrcPath, absTrgPath string, item *syncItem) e
 				// Copy Content
 				if _, err := io.CopyBuffer(mw, reader, *bufPtr); err != nil {
 					return fmt.Errorf("failed to copy content to %s: %w", absWritePath, err)
+				}
+
+				// Sync to disk to ensure data durability before closing/renaming
+				if err := out.Sync(); err != nil {
+					return fmt.Errorf("failed to sync file %s: %w", absWritePath, err)
 				}
 
 				// Close Target (Flush)
@@ -1130,7 +1140,17 @@ func (s *nativeSyncer) mirrorWorker() {
 
 				plog.Notice("DELETE", "path", item.RelPathKey)
 
-				if err := os.RemoveAll(absPathToDelete); err != nil {
+				// Robust deletion with retry for transient locks (e.g., AntiVirus scanners, Windows Indexer)
+				const maxRetries = 5
+				var err error
+				for range maxRetries {
+					if err = os.RemoveAll(absPathToDelete); err == nil {
+						break
+					}
+					time.Sleep(100 * time.Millisecond)
+				}
+
+				if err != nil {
 					if s.failFast {
 						// In fail-fast mode, any deletion error is critical.
 						// Use a non-blocking send in case another worker has already sent a critical error.
