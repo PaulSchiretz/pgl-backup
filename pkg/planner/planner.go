@@ -90,7 +90,7 @@ func GenerateBackupPlan(cfg config.Config) (*BackupPlan, error) {
 		retentionPolicy config.RetentionPolicy
 	)
 
-	// mode needs to be set eather to incremental or snapshot
+	// mode needs to be set either to incremental or snapshot
 	switch mode {
 	case Incremental:
 		pathCfg = cfg.Paths.Incremental
@@ -382,7 +382,7 @@ func GenerateRestorePlan(cfg config.Config) (*RestorePlan, error) {
 			ExcludeDirs:           syncExcludeDirs,
 			ExcludeFiles:          syncExcludeFiles,
 			PreserveSourceDirName: false, // Force false for restore to avoid creating PGL_Backup_Content subdir
-			Mirror:                false, // Force false for restore, we don't want to delete anything in the users retore target
+			Mirror:                false, // Force false for restore, we don't want to delete anything in the users restore target
 
 			SafeCopy:          cfg.Sync.SafeCopy,
 			SequentialWrite:   cfg.Sync.SequentialWrite,

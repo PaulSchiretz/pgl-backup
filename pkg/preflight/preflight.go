@@ -20,7 +20,7 @@ import (
 type Validator struct {
 }
 
-// NewValidator creates a new Valditator with the given configuration.
+// NewValidator creates a new Validator with the given configuration.
 func NewValidator() *Validator {
 	return &Validator{}
 }

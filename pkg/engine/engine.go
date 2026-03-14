@@ -25,7 +25,7 @@ type Syncer interface {
 }
 
 // Rotator is an interface for the rotation leaf package.
-// Responsible for turning the the 'current' state into a permanent historical record.
+// Responsible for turning the 'current' state into a permanent historical record.
 type Rotator interface {
 	IsArchivingDue(ctx context.Context, toArchive metafile.MetafileInfo, p *pathrotation.Plan, timestampUTC time.Time) (bool, error)
 	Archive(ctx context.Context, absBasePath, relArchivePathKey, archiveEntryPrefix string, toArchive metafile.MetafileInfo, p *pathrotation.Plan, timestampUTC time.Time) (metafile.MetafileInfo, error)
