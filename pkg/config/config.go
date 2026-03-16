@@ -306,6 +306,55 @@ func Generate(absBasePath string, configToGenerate Config) error {
 	return nil
 }
 
+// validatePathConfig checks a single mode's path configuration for validity.
+func validatePathConfig(modeName string, p PathConfig) error {
+	if p.Archive == "" {
+		return fmt.Errorf("paths.%s.archive cannot be empty", modeName)
+	}
+	if p.Stage == "" {
+		return fmt.Errorf("paths.%s.stage cannot be empty", modeName)
+	}
+	if p.Current == "" {
+		return fmt.Errorf("paths.%s.current cannot be empty", modeName)
+	}
+	if p.Content == "" {
+		return fmt.Errorf("paths.%s.content cannot be empty", modeName)
+	}
+
+	// Disallow path separators to ensure directories are direct children of the target.
+	// This is critical for guaranteeing that atomic `os.Rename` operations work correctly.
+	if strings.ContainsAny(p.Archive, `\/`) {
+		return fmt.Errorf("paths.%s.archive cannot contain path separators ('/' or '\\')", modeName)
+	}
+	if strings.ContainsAny(p.Stage, `\/`) {
+		return fmt.Errorf("paths.%s.stage cannot contain path separators ('/' or '\\')", modeName)
+	}
+	if strings.ContainsAny(p.Current, `\/`) {
+		return fmt.Errorf("paths.%s.current cannot contain path separators ('/' or '\\')", modeName)
+	}
+	if strings.ContainsAny(p.Content, `\/`) {
+		return fmt.Errorf("paths.%s.content cannot contain path separators ('/' or '\\')", modeName)
+	}
+
+	if strings.ContainsAny(p.ArchiveEntryPrefix, `\/`) {
+		return fmt.Errorf("paths.%s.archiveEntryPrefix cannot contain path separators", modeName)
+	}
+	if strings.ContainsAny(p.StageEntryPrefix, `\/`) {
+		return fmt.Errorf("paths.%s.stageEntryPrefix cannot contain path separators", modeName)
+	}
+
+	if strings.EqualFold(p.Current, p.Archive) {
+		return fmt.Errorf("paths.%s.current and paths.%s.archive cannot be the same", modeName, modeName)
+	}
+	if strings.EqualFold(p.Current, p.Stage) {
+		return fmt.Errorf("paths.%s.current and paths.%s.stage cannot be the same", modeName, modeName)
+	}
+	if strings.EqualFold(p.Archive, p.Stage) {
+		return fmt.Errorf("paths.%s.archive and paths.%s.stage cannot be the same", modeName, modeName)
+	}
+	return nil
+}
+
 // Validate checks the configuration for logical errors and inconsistencies.
 // It performs strict checks, including ensuring the source path is non-empty
 // and exists.
@@ -337,99 +386,12 @@ func (c *Config) Validate() error {
 
 	switch c.Runtime.Mode {
 	case "incremental":
-		if c.Paths.Incremental.Archive == "" {
-			return fmt.Errorf("paths.incremental.archive cannot be empty")
+		if err := validatePathConfig("incremental", c.Paths.Incremental); err != nil {
+			return err
 		}
-		if c.Paths.Incremental.Stage == "" {
-			return fmt.Errorf("paths.incremental.stage cannot be empty")
-		}
-
-		if c.Paths.Incremental.Current == "" {
-			return fmt.Errorf("paths.incremental.current cannot be empty")
-		}
-		if c.Paths.Incremental.Content == "" {
-			return fmt.Errorf("paths.incremental.content cannot be empty")
-		}
-
-		// Disallow path separators to ensure the archives directory is a direct child of the target.
-		// This is critical for guaranteeing that the atomic `os.Rename` operation during archive
-		// works correctly, as it requires the source and destination to be on the same filesystem.
-		if strings.ContainsAny(c.Paths.Incremental.Archive, `\/`) {
-			return fmt.Errorf("paths.incremental.archive cannot contain path separators ('/' or '\\')")
-		}
-		if strings.ContainsAny(c.Paths.Incremental.Stage, `\/`) {
-			return fmt.Errorf("paths.incremental.stage cannot contain path separators ('/' or '\\')")
-		}
-
-		if strings.ContainsAny(c.Paths.Incremental.Current, `\/`) {
-			return fmt.Errorf("paths.incremental.current cannot contain path separators ('/' or '\\')")
-		}
-		if strings.ContainsAny(c.Paths.Incremental.Content, `\/`) {
-			return fmt.Errorf("paths.incremental.content cannot contain path separators ('/' or '\\')")
-		}
-
-		if strings.EqualFold(c.Paths.Incremental.Current, c.Paths.Incremental.Archive) {
-			return fmt.Errorf("paths.incremental.current and paths.incremental.archive cannot be the same")
-		}
-
-		if strings.EqualFold(c.Paths.Incremental.Current, c.Paths.Incremental.Stage) {
-			return fmt.Errorf("paths.incremental.current and paths.incremental.stage cannot be the same")
-		}
-
-		if strings.EqualFold(c.Paths.Incremental.Archive, c.Paths.Incremental.Stage) {
-			return fmt.Errorf("paths.incremental.archive and paths.incremental.stage cannot be the same")
-		}
-		if strings.ContainsAny(c.Paths.Incremental.ArchiveEntryPrefix, `\/`) {
-			return fmt.Errorf("paths.incremental.archiveEntryPrefix cannot contain path separators")
-		}
-		if strings.ContainsAny(c.Paths.Incremental.StageEntryPrefix, `\/`) {
-			return fmt.Errorf("paths.incremental.stageEntryPrefix cannot contain path separators")
-		}
-
 	case "snapshot":
-		if c.Paths.Snapshot.Archive == "" {
-			return fmt.Errorf("paths.snapshot.archive cannot be empty")
-		}
-		if c.Paths.Snapshot.Stage == "" {
-			return fmt.Errorf("paths.snapshot.stage cannot be empty")
-		}
-		if c.Paths.Snapshot.Current == "" {
-			return fmt.Errorf("paths.snapshot.current cannot be empty")
-		}
-		if c.Paths.Snapshot.Content == "" {
-			return fmt.Errorf("paths.snapshot.content cannot be empty")
-		}
-
-		// Disallow path separators to ensure the archives directory is a direct child of the target.
-		// This is critical for guaranteeing that the atomic `os.Rename` operation during archive
-		// works correctly, as it requires the source and destination to be on the same filesystem.
-		if strings.ContainsAny(c.Paths.Snapshot.Archive, `\/`) {
-			return fmt.Errorf("paths.snapshot.archive cannot contain path separators ('/' or '\\')")
-		}
-		if strings.ContainsAny(c.Paths.Snapshot.Stage, `\/`) {
-			return fmt.Errorf("paths.snapshot.stage cannot contain path separators ('/' or '\\')")
-		}
-		if strings.ContainsAny(c.Paths.Snapshot.Current, `\/`) {
-			return fmt.Errorf("paths.snapshot.current cannot contain path separators ('/' or '\\')")
-		}
-		if strings.ContainsAny(c.Paths.Snapshot.Content, `\/`) {
-			return fmt.Errorf("paths.snapshot.content cannot contain path separators ('/' or '\\')")
-		}
-
-		if strings.EqualFold(c.Paths.Snapshot.Current, c.Paths.Snapshot.Archive) {
-			return fmt.Errorf("paths.snapshot.current and paths.snapshot.archive cannot be the same")
-		}
-		if strings.EqualFold(c.Paths.Snapshot.Current, c.Paths.Snapshot.Stage) {
-			return fmt.Errorf("paths.snapshot.current and paths.snapshot.stage cannot be the same")
-		}
-		if strings.EqualFold(c.Paths.Snapshot.Archive, c.Paths.Snapshot.Stage) {
-			return fmt.Errorf("paths.snapshot.archive and paths.snapshot.stage cannot be the same")
-		}
-		if strings.ContainsAny(c.Paths.Snapshot.ArchiveEntryPrefix, `\/`) {
-			return fmt.Errorf("paths.snapshot.archiveEntryPrefix cannot contain path separators")
-		}
-		if strings.ContainsAny(c.Paths.Snapshot.StageEntryPrefix, `\/`) {
-			return fmt.Errorf("paths.snapshot.stageEntryPrefix cannot contain path separators")
+		if err := validatePathConfig("snapshot", c.Paths.Snapshot); err != nil {
+			return err
 		}
 	}
 

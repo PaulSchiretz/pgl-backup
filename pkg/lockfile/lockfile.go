@@ -278,9 +278,11 @@ func (l *Lock) heartbeat() {
 		case t := <-ticker.C:
 			// If we haven't updated the lock file within the stale timeout window,
 			// we must assume we've lost the lock (or IO is broken).
+			// This is a critical failure. We stop the heartbeat, but the main application
+			// will continue until it finishes or another error occurs.
 			if l.content.LastUpdate.Add(staleTimeout).Before(t.UTC()) {
-				plog.Error("Lost lock ownership due to persistent I/O failures; aborting", "path", l.path)
-				l.cancel() // Cancel the context to stop the application
+				plog.Error("Lost lock ownership due to persistent I/O failures; stopping heartbeat.", "path", l.path)
+				l.cancel() // Stop the heartbeat goroutine.
 				return
 			}
 
