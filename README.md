@@ -1,4 +1,4 @@
-# pgl-backup
+# pgl-backup (PixelGardenLabs Backup)
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/paulschiretz/pgl-backup.svg)](https://pkg.go.dev/github.com/paulschiretz/pgl-backup)
 [![Latest Release](https://img.shields.io/github/v/release/paulschiretz/pgl-backup)](https://github.com/paulschiretz/pgl-backup/releases)
@@ -8,7 +8,7 @@
 
 > This project was born from a desire for a backup tool that is fast, reliable, and simple. It prioritizes robust, best-practice engineering over fancy features that could compromise solidity. The goal is to provide everything you need for solid, performant, cross-platform backups—no more, no less.
 
-`pgl-backup` is a simple, powerful, and robust file backup utility written in Go. It is designed for creating versioned backups of local directories to another local or network-attached drive. It supports periodic snapshots, an efficient incremental mode with a flexible retention policy, and automatic compression. A core design goal is ensuring backups can be restored no matter what; by relying on standard file structures and open archive formats, your data remains fully accessible via native OS tools without needing `pgl-backup` installed.
+`pgl-backup (PixelGardenLabs Backup)` is a simple, powerful, and robust file backup utility written in Go. It is designed for creating versioned backups of local directories to another local or network-attached drive. It supports periodic snapshots, an efficient incremental mode with a flexible retention policy, and automatic compression. A core design goal is ensuring backups can be restored no matter what; by relying on standard file structures and open archive formats, your data remains fully accessible via native OS tools without needing `pgl-backup` installed.
 
 ## Why Choose `pgl-backup`?
 
@@ -120,6 +120,8 @@ For cloud synchronization, you should point your sync client to the following di
 
 *   `PGL_Backup_Incremental_Archive`
 *   `PGL_Backup_Snapshot_Archive`
+
+> Note: PGL stands for PixelGardenLabs, the namespace used for all internal and open-source projects in this ecosystem.
 
 These are the default names for the directories containing the final, safe-to-sync backups. You can customize these names after running `pgl-backup init` by editing the `paths` section in your `pgl-backup.config.json` file.
 
