@@ -101,48 +101,11 @@ func registerBackupFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.Mode = fs.String("mode", "incremental", "Backup mode: 'incremental' or 'snapshot'.")
 	f.FailFast = fs.Bool("fail-fast", false, "Stop the backup immediately on the first file sync error.")
 	f.OverwriteBehavior = fs.String("overwrite", "update", "Overwrite behavior: 'always', 'never', 'if-newer', 'update'.")
-	f.SyncWorkers = fs.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
-	f.MirrorWorkers = fs.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
-	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
-	f.CompressWorkers = fs.Int("compress-workers", 0, "Number of worker goroutines for compressing backups.")
-	f.BufferSizeKB = fs.Int64("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression. Default is 1024 (1MB).")
-	f.ReadAheadLimitKB = fs.Int64("readahead-limit-kb", 0, "Limit of the I/O readahead in kilobytes for file compression. Default is 262144 (256MB).")
-
-	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native'.")
 	f.SyncSafeCopy = fs.Bool("sync-safe-copy", true, "Enable 'copy then rename' for secure file syncing (slower but safer).")
 	f.SyncSequentialWrite = fs.Bool("sync-sequential-write", false, "Serialize file writes to reduce disk thrashing (recommended for HDDs or Tape-Drives).")
-	f.SyncRetryCount = fs.Int("sync-retry-count", 0, "Number of retries for failed file copies.")
-	f.SyncRetryWait = fs.Int("sync-retry-wait", 0, "Seconds to wait between retries.")
-	f.SyncModTimeWindow = fs.Int("sync-mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
-	f.SyncPreserveSourceDirName = fs.Bool("sync-preserve-source-dir-name", true, "Preserve the source directory's name in the destination path. Set to false to sync contents directly.")
 
 	f.IgnoreCaseMismatch = fs.Bool("ignore-case-mismatch", false, "Bypass the case-sensitivity safety check (use with caution).")
-	f.UserExcludeFiles = fs.String("user-exclude-files", "", "Comma-separated list of case-insensitive file names to exclude (supports glob patterns).")
-	f.UserExcludeDirs = fs.String("user-exclude-dirs", "", "Comma-separated list of case-insensitive directory names to exclude (supports glob patterns).")
 	f.Hooks = fs.Bool("hooks", false, "Enable execution of pre/post hooks.")
-	f.HooksPreBackup = fs.String("hooks-pre-backup", "", "Comma-separated list of commands to run before the backup.")
-	f.HooksPostBackup = fs.String("hooks-post-backup", "", "Comma-separated list of commands to run after the backup.")
-
-	f.ArchiveEnabled = fs.Bool("archive", true, "Enable archiving (rollover) for incremental backups.")
-	f.ArchiveIntervalSeconds = fs.Int("archive-interval-seconds", 0, "In 'manual' mode, the interval in seconds for creating new incremental archives (e.g., 86400 for 24h).")
-	f.ArchiveIntervalMode = fs.String("archive-interval-mode", "", "Archive interval mode: 'auto' or 'manual'.")
-
-	f.RetentionIncrementalEnabled = fs.Bool("retention-incremental", true, "Enable retention policy for incremental backups.")
-	f.RetentionIncrementalHours = fs.Int("retention-incremental-hours", 0, "Number of hourly backups to keep (incremental).")
-	f.RetentionIncrementalDays = fs.Int("retention-incremental-days", 0, "Number of daily backups to keep (incremental).")
-	f.RetentionIncrementalWeeks = fs.Int("retention-incremental-weeks", 0, "Number of weekly backups to keep (incremental).")
-	f.RetentionIncrementalMonths = fs.Int("retention-incremental-months", 0, "Number of monthly backups to keep (incremental).")
-	f.RetentionIncrementalYears = fs.Int("retention-incremental-years", 0, "Number of yearly backups to keep (incremental).")
-	f.RetentionSnapshotEnabled = fs.Bool("retention-snapshot", false, "Enable retention policy for snapshot backups.")
-	f.RetentionSnapshotHours = fs.Int("retention-snapshot-hours", -1, "Number of hourly backups to keep (snapshot).")
-	f.RetentionSnapshotDays = fs.Int("retention-snapshot-days", -1, "Number of daily backups to keep (snapshot).")
-	f.RetentionSnapshotWeeks = fs.Int("retention-snapshot-weeks", -1, "Number of weekly backups to keep (snapshot).")
-	f.RetentionSnapshotMonths = fs.Int("retention-snapshot-months", -1, "Number of monthly backups to keep (snapshot).")
-	f.RetentionSnapshotYears = fs.Int("retention-snapshot-years", -1, "Number of yearly backups to keep (snapshot).")
-
-	f.CompressionEnabled = fs.Bool("compression", true, "Enable compression for backups.")
-	f.CompressionFormat = fs.String("compression-format", "", "Compression format: 'zip', 'tar.gz', or 'tar.zst'.")
-	f.CompressionLevel = fs.String("compression-level", "", "Compression level: 'default', 'fastest', 'better', 'best'.")
 }
 
 func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
@@ -174,6 +137,8 @@ func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.Hooks = fs.Bool("hooks", false, "Enable execution of pre/post hooks.")
 	f.HooksPreBackup = fs.String("hooks-pre-backup", "", "Comma-separated list of commands to run before the backup.")
 	f.HooksPostBackup = fs.String("hooks-post-backup", "", "Comma-separated list of commands to run after the backup.")
+	f.HooksPreRestore = fs.String("hooks-pre-restore", "", "Comma-separated list of commands to run before the restore.")
+	f.HooksPostRestore = fs.String("hooks-post-restore", "", "Comma-separated list of commands to run after the restore.")
 
 	f.ArchiveEnabled = fs.Bool("archive", true, "Enable archiving (rollover) for incremental backups.")
 	f.ArchiveIntervalSeconds = fs.Int("archive-interval-seconds", 0, "In 'manual' mode, the interval in seconds for creating new incremental archives (e.g., 86400 for 24h).")
@@ -216,23 +181,12 @@ func registerRestoreFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.UUID = fs.String("uuid", "", "UUID of the backup to restore. If omitted, an interactive list is shown.")
 	f.Mode = fs.String("mode", "any", "Filter the interactive list by mode ('incremental' or 'snapshot'), or restrict search when -uuid is provided. Defaults to 'any'.")
 	f.FailFast = fs.Bool("fail-fast", false, "Stop the restore immediately on the first error.")
-	f.SyncEngine = fs.String("sync-engine", "native", "Sync engine to use: 'native'.")
 
 	f.SyncSafeCopy = fs.Bool("sync-safe-copy", true, "Enable 'copy then rename' for secure file syncing (slower but safer).")
 	f.SyncSequentialWrite = fs.Bool("sync-sequential-write", false, "Serialize file writes to reduce disk thrashing (recommended for HDDs or Tape-Drives).")
-	f.SyncRetryCount = fs.Int("sync-retry-count", 0, "Number of retries for failed file copies.")
-	f.SyncRetryWait = fs.Int("sync-retry-wait", 0, "Seconds to wait between retries.")
-	f.SyncModTimeWindow = fs.Int("sync-mod-time-window", 1, "Time window in seconds to consider file modification times equal (0=exact).")
-	f.SyncWorkers = fs.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
-	f.BufferSizeKB = fs.Int64("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes. Default is 1024 (1MB).")
-	f.ReadAheadLimitKB = fs.Int64("readahead-limit-kb", 0, "Limit of the I/O readahead in kilobytes for file compression. Default is 262144 (256MB).")
 
 	f.IgnoreCaseMismatch = fs.Bool("ignore-case-mismatch", false, "Bypass the case-sensitivity safety check (use with caution).")
-	f.UserExcludeFiles = fs.String("user-exclude-files", "", "Comma-separated list of case-insensitive file names to exclude (supports glob patterns).")
-	f.UserExcludeDirs = fs.String("user-exclude-dirs", "", "Comma-separated list of case-insensitive directory names to exclude (supports glob patterns).")
 	f.Hooks = fs.Bool("hooks", false, "Enable execution of pre/post hooks.")
-	f.HooksPreRestore = fs.String("hooks-pre-restore", "", "Comma-separated list of commands to run before the restore.")
-	f.HooksPostRestore = fs.String("hooks-post-restore", "", "Comma-separated list of commands to run after the restore.")
 	f.OverwriteBehavior = fs.String("overwrite", "never", "Overwrite behavior: 'always', 'never', 'if-newer', 'update'.")
 }
 

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Docs**: Clarified in the README that "pgl" stands for PixelGardenLabs and that the tool is for general file backups, not for any specific database system.
+- **CLI**: Moved configuration-tuning and structural flags (Retention, Archive, Compression, Hooks, Exclusions, `*-workers`, `sync-retry-*`) to be **Init-only**. They can still be used with `init` to generate a custom configuration, but can no longer be used as runtime overrides for the `backup` and `restore` commands. This significantly reduces CLI noise and enforces the configuration file as the source of truth for repository behavior. `sync-safe-copy`, `sync-sequential-write` and `hooks` (toggle) remain available for runtime overrides.
 
 ### Fixed
 - **Robustness**: Hardened the lock file heartbeat mechanism to be resilient to system clock adjustments. The staleness check now uses the timestamp from within the lock file content (`LastUpdate`) rather than a local in-memory timestamp, preventing false positives if the system time is changed.

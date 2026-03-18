@@ -452,20 +452,48 @@ pgl-backup backup -base="/path/to/your/backup-target" -source="/path/to/your/sou
 
 ### Excluding Files and Directories
 
-Exclude temporary files and `node_modules` directories. Patterns support standard file globbing.
+You can define a list of files and directories to exclude from your backups. This is useful for ignoring temporary files, caches, or large media files. Patterns support standard file globbing.
+
+You can set or update exclusions in two ways:
+
+**1. Using the `init` command:**
+Use the `-user-exclude-*` flags with the `init` command to generate/update a configuration with your exclusions.
 
 ```sh
-pgl-backup backup -base="..." -source="..." -user-exclude-files="*.tmp,*.log" -user-exclude-dirs="node_modules,.cache"
+pgl-backup init -base="..." -source="..." -user-exclude-files="*.tmp,*.log" -user-exclude-dirs="node_modules,.cache"
 ```
+
+**2. By Editing the Configuration File:**
+Alternatively, you can open `pgl-backup.config.json` at any time and add your patterns to the `sync` section:
+
+```json
+"sync": {
+  ...
+  "userExcludeFiles": [
+    "*.tmp",
+    "*.log"
+  ],
+  "userExcludeDirs": [
+    "node_modules",
+    ".cache"
+  ]
+}
+```
+Your next backup run will automatically apply these exclusions.
+
 > **Note on Matching**: All exclusion patterns are case-insensitive on all operating systems. A pattern like *.jpeg will match photo.jpeg, photo.JPEG, and photo.JpEg. This ensures your configuration is portable and behaves predictably across Windows, macOS, and Linux.
 
 ### Using Pre- and Post-Backup Hooks
 
-Run a script before the backup starts. Commands with spaces must be wrapped in single or double quotes.
+You can configure scripts to run before or after operations. Define these commands during initialization or in your config file. Commands with spaces must be wrapped in single or double quotes.
 **Note:** Hooks are disabled by default for security. You must explicitly enable them using the `-hooks` flag or by setting `"enabled": true` in the configuration.
 
 ```sh
-pgl-backup backup -base="..." -source="..." -hooks -hooks-pre-backup="'/usr/local/bin/dump_database.sh', 'echo Backup starting...'"
+# Configure hooks during init
+pgl-backup init -base="..." -source="..." -hooks-pre-backup="'/usr/local/bin/dump_database.sh', 'echo Backup starting...'"
+
+# Enable hooks during backup (disabled by default for security)
+pgl-backup backup -base="..." -source="..." -hooks
 ```
 >**Security Note:** Hooks execute arbitrary shell commands. Ensure that any commands in your configuration are from a trusted source and have the correct permissions to prevent unintended side effects.
 
@@ -881,7 +909,7 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `overwrite` (restore) / `runtime.restoreOverwriteBehavior` (internal) | `string` | `"never"` | Overwrite behavior for restore: `'always'`, `'never'`, `'if-newer'`, `'update'`. |
 | `fail-fast` / `engine.failFast` | `bool` | `false` | If true, stops the backup immediately on the first file sync error. |
 | `ignore-case-mismatch` / `runtime.ignoreCaseMismatch` (internal) | `bool` | `false` | Bypass the case-sensitivity safety check (use with caution). |
-| `default` / - | `false` | Used with `init` command. Overwrite existing configuration with defaults. |
+| `default` (init) / - | `false` | Used with `init` command. Overwrite existing configuration with defaults. |
 | `force` / - | `false` | Bypass confirmation prompts (e.g., for init -default). |
 | `dry-run` / `runtime.dryRun` (internal) | `false` | If true, simulates the backup without making changes. |
 | `log-level` / `logLevel` | `string` | `"info"` | Set the logging level: `"debug"`, `"notice"`, `"info"`, `"warn"`, or `"error"`. |
@@ -901,50 +929,50 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | - / `paths.snapshot.content` | `string` | `"PGL_Backup_Content"` | Sub-directory for the content within a snapshot backup. |
 | **Sync Settings** | | | |
 | - / `sync.enabled` | `bool` | `true` | Enable file synchronization. |
-| `sync-engine` / `sync.engine` | `string` | `"native"` | The sync engine to use: `"native"`. |
+| `sync-engine` (init) / `sync.engine` | `string` | `"native"` | The sync engine to use: `"native"`. |
 | `sync-safe-copy` / `sync.safeCopy` | `bool` | `true` | Enable 'copy then rename' for secure file syncing (slower but safer). |
 | `sync-sequential-write` / `sync.sequentialWrite` | `bool` | `false` | Serialize file writes to reduce disk thrashing (recommended for HDDs or a Tape-Drives). |
-| `sync-retry-count` / `sync.retryCount` | `int` | `3` | Number of retries for failed file copies. |
-| `sync-retry-wait` / `sync.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries. |
-| `sync-mod-time-window` / `sync.modTimeWindowSeconds` | `int` | `1` | Time window in seconds to consider file modification times equal. |
-| `sync-preserve-source-dir-name` / `sync.PreserveSourceDirName` | `bool` | `true` | If true, creates a subdirectory in the destination named after the source directory. |
+| `sync-retry-count` (init) / `sync.retryCount` | `int` | `3` | Number of retries for failed file copies. |
+| `sync-retry-wait` (init) / `sync.retryWaitSeconds` | `int` | `5` | Seconds to wait between retries. |
+| `sync-mod-time-window` (init) / `sync.modTimeWindowSeconds` | `int` | `1` | Time window in seconds to consider file modification times equal. |
+| `sync-preserve-source-dir-name` (init) / `sync.PreserveSourceDirName` | `bool` | `true` | If true, creates a subdirectory in the destination named after the source directory. |
 | **Exclusions & Hooks** | | | |
-| `user-exclude-files` / `sync.userExcludeFiles` | `[]string` | `[]` | List of file patterns to exclude. |
-| `user-exclude-dirs` / `sync.userExcludeDirs` | `[]string` | `[]` | List of directory patterns to exclude. |
+| `user-exclude-files` (init) / `sync.userExcludeFiles` | `[]string` | `[]` | List of file patterns to exclude. |
+| `user-exclude-dirs` (init) / `sync.userExcludeDirs` | `[]string` | `[]` | List of directory patterns to exclude. |
 | - / `sync.defaultExcludeFiles` | `[]string` | `[...]` | Default file patterns to exclude. |
 | - / `sync.defaultExcludeDirs` | `[]string` | `[...]` | Default directory patterns to exclude. |
 | `hooks` / `hooks.enabled` | `bool` | `false` | Enable execution of pre/post hooks. |
-| `hooks-pre-backup` / `hooks.preBackup` | `[]string` | `[]` | List of shell commands to run before the backup. |
-| `hooks-post-backup` / `hooks.postBackup` | `[]string` | `[]` | List of shell commands to run after the backup. |
-| `hooks-pre-restore` / `hooks.preRestore` | `[]string` | `[]` | List of shell commands to run before the restore. |
-| `hooks-post-restore` / `hooks.postRestore` | `[]string` | `[]` | List of shell commands to run after the restore. |
+| `hooks-pre-backup` (init) / `hooks.preBackup` | `[]string` | `[]` | List of shell commands to run before the backup. |
+| `hooks-post-backup` (init) / `hooks.postBackup` | `[]string` | `[]` | List of shell commands to run after the backup. |
+| `hooks-pre-restore` (init) / `hooks.preRestore` | `[]string` | `[]` | List of shell commands to run before the restore. |
+| `hooks-post-restore` (init) / `hooks.postRestore` | `[]string` | `[]` | List of shell commands to run after the restore. |
 | **Archive & Retention** | | | |
-| `archive` / `archive.enabled` | `bool` | `true` | Enable archiving (rollover) for incremental backups. |
-| `archive-interval-mode` / `archive.intervalMode` | `string` | `"auto"` | `"auto"` or `"manual"`. |
-| `archive-interval-seconds` / `archive.intervalSeconds` | `int` | `86400` | Interval in seconds for manual mode. |
-| `retention-incremental` / `retention.incremental.enabled` | `bool` | `true` | Enable retention policy for incremental backups. |
-| `retention-incremental-hours` / `retention.incremental.hours` | `int` | `0` | Hourly backups to keep. |
-| `retention-incremental-days` / `retention.incremental.days` | `int` | `0` | Daily backups to keep. |
-| `retention-incremental-weeks` / `retention.incremental.weeks` | `int` | `4` | Weekly backups to keep. |
-| `retention-incremental-months` / `retention.incremental.months` | `int` | `0` | Monthly backups to keep. |
-| `retention-incremental-years` / `retention.incremental.years` | `int` | `0` | Yearly backups to keep. |
-| `retention-snapshot` / `retention.snapshot.enabled` | `bool` | `false` | Enable retention policy for snapshot backups. |
-| `retention-snapshot-hours` / `retention.snapshot.hours` | `int` | `-1` | Hourly backups to keep. |
-| `retention-snapshot-days` / `retention.snapshot.days` | `int` | `-1` | Daily backups to keep. |
-| `retention-snapshot-weeks` / `retention.snapshot.weeks` | `int` | `-1` | Weekly backups to keep. |
-| `retention-snapshot-months` / `retention.snapshot.months` | `int` | `-1` | Monthly backups to keep. |
-| `retention-snapshot-years` / `retention.snapshot.years` | `int` | `-1` | Yearly backups to keep. |
+| `archive` (init) / `archive.enabled` | `bool` | `true` | Enable archiving (rollover) for incremental backups. |
+| `archive-interval-mode` (init) / `archive.intervalMode` | `string` | `"auto"` | `"auto"` or `"manual"`. |
+| `archive-interval-seconds` (init) / `archive.intervalSeconds` | `int` | `86400` | Interval in seconds for manual mode. |
+| `retention-incremental` (init) / `retention.incremental.enabled` | `bool` | `true` | Enable retention policy for incremental backups. |
+| `retention-incremental-hours` (init) / `retention.incremental.hours` | `int` | `0` | Hourly backups to keep. |
+| `retention-incremental-days` (init) / `retention.incremental.days` | `int` | `0` | Daily backups to keep. |
+| `retention-incremental-weeks` (init) / `retention.incremental.weeks` | `int` | `4` | Weekly backups to keep. |
+| `retention-incremental-months` (init) / `retention.incremental.months` | `int` | `0` | Monthly backups to keep. |
+| `retention-incremental-years` (init) / `retention.incremental.years` | `int` | `0` | Yearly backups to keep. |
+| `retention-snapshot` (init) / `retention.snapshot.enabled` | `bool` | `false` | Enable retention policy for snapshot backups. |
+| `retention-snapshot-hours` (init) / `retention.snapshot.hours` | `int` | `-1` | Hourly backups to keep. |
+| `retention-snapshot-days` (init) / `retention.snapshot.days` | `int` | `-1` | Daily backups to keep. |
+| `retention-snapshot-weeks` (init) / `retention.snapshot.weeks` | `int` | `-1` | Weekly backups to keep. |
+| `retention-snapshot-months` (init) / `retention.snapshot.months` | `int` | `-1` | Monthly backups to keep. |
+| `retention-snapshot-years` (init) / `retention.snapshot.years` | `int` | `-1` | Yearly backups to keep. |
 | **Compression** | | | |
-| `compression` / `compression.enabled` | `bool` | `true` | Enable compression for backups. |
-| `compression-format` / `compression.format` | `string` | `"tar.zst"` | `"zip"`, `"tar.gz"`, or `"tar.zst"`. |
-| `compression-level` / `compression.level` | `string` | `"default"` | Compression level: `"default"`, `"fastest"`, `"better"`, `"best"`. |
+| `compression` (init) / `compression.enabled` | `bool` | `true` | Enable compression for backups. |
+| `compression-format` (init) / `compression.format` | `string` | `"tar.zst"` | `"zip"`, `"tar.gz"`, or `"tar.zst"`. |
+| `compression-level` (init) / `compression.level` | `string` | `"default"` | Compression level: `"default"`, `"fastest"`, `"better"`, `"best"`. |
 | **Performance Tuning** | | | |
-| `sync-workers` / `engine.performance.syncWorkers` | `int` | `4` | Number of concurrent workers for file synchronization. |
-| `mirror-workers` / `engine.performance.mirrorWorkers` | `int` | `4` | Number of concurrent workers for file deletions in mirror mode. |
-| `delete-workers` / `engine.performance.deleteWorkers` | `int` | `4` | Number of concurrent workers for deleting outdated backups. |
-| `compress-workers` / `engine.performance.compressWorkers` | `int` | `4` | Number of concurrent workers for compressing backups. |
-| `buffer-size-kb` / `engine.performance.bufferSizeKB` | `int64` | `1024` | Size of the I/O buffer in kilobytes for file copies and compression. |
-| `readahead-limit-kb` / `engine.performance.readAheadLimitKB` | `int64` | `262144` | Limit of the I/O readahead in kilobytes for file compression. 0 disables the readahead on systems with very low memory |
+| `sync-workers` (init) / `engine.performance.syncWorkers` | `int` | `4` | Number of concurrent workers for file synchronization. |
+| `mirror-workers` (init) / `engine.performance.mirrorWorkers` | `int` | `4` | Number of concurrent workers for file deletions in mirror mode. |
+| `delete-workers` (init) / `engine.performance.deleteWorkers` | `int` | `4` | Number of concurrent workers for deleting outdated backups. |
+| `compress-workers` (init) / `engine.performance.compressWorkers` | `int` | `4` | Number of concurrent workers for compressing backups. |
+| `buffer-size-kb` (init) / `engine.performance.bufferSizeKB` | `int64` | `1024` | Size of the I/O buffer in kilobytes for file copies and compression. |
+| `readahead-limit-kb` (init) / `engine.performance.readAheadLimitKB` | `int64` | `262144` | Limit of the I/O readahead in kilobytes for file compression. 0 disables the readahead on systems with very low memory |
 
 ## Troubleshooting
 
