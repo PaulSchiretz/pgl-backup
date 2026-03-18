@@ -39,7 +39,7 @@ Based on a philosophy of "solidity over frills," `pgl-backup` is built for users
     *   [Running on Windows (SmartScreen)](#running-on-windows-smartscreen)
     *   [Verifying Checksums](#verifying-checksums)
 *   [Getting Started: A 3-Step Guide](#getting-started-a-3-step-guide)
-    *   [Step 1: Initialize Configuration](#step-1-initialize-configuration)
+    *   [Step 1: Initialize or Update Configuration](#step-1-initialize-or-update-configuration)
     *   [Step 2: Review Configuration (Optional)](#step-2-review-configuration-optional)
     *   [Step 3: Run Your First Backup](#step-3-run-your-first-backup)
 *   [Usage and Examples](#usage-and-examples)
@@ -195,13 +195,15 @@ Get-FileHash .\pgl-backup_v1.4.5_windows_amd64.zip -Algorithm SHA256
 
 Let's set up a daily incremental backup for your `~/Documents` folder to an external drive.
 
-### Step 1: Initialize Configuration
+### Step 1: Initialize or Update Configuration
 
 The easiest way to get started is to use the `init` command. This will generate a `pgl-backup.config.json` file in your target directory.
 
 *   **New Backups**: It creates the directory and a default configuration file. The `-base` and `-source` flags are required.
 *   **Existing Backups**: It reads your existing configuration, applies any new flags you provide (like changing the log level), and saves the updated config. It preserves your retention policies and other settings. Note that `-source` is required to perform pre-flight checks.
 *   **Fresh Start**: If you want to completely overwrite an existing configuration with defaults, use `init -default` instead.
+
+> **Update Anytime**: You can run the `init` command again at any time with new flags to update specific settings (e.g., exclusions or worker counts). It will merge your changes into the existing configuration file while preserving other settings.
 
 ```sh
 # Example for Linux/macOS
@@ -696,7 +698,7 @@ The JSON keys for these are `defaultExcludeFiles` and `defaultExcludeDirs`.
 *   **Default Excluded Directories:** `@tmp`, `@eadir`, `.SynologyWorkingDirectory`, `#recycle`, `$Recycle.Bin`.
 
 ### User-Defined Exclusions (Customizable)
-You can define your own list of files and directories to exclude using the `userExcludeFiles` and `userExcludeDirs` keys in the configuration file, or via the command-line flags `-user-exclude-files` and `-user-exclude-dirs`. These are combined with the system and default exclusions.
+You can define your own list of files and directories to exclude using the `userExcludeFiles` and `userExcludeDirs` keys in the configuration file, or via the command-line flags `-user-exclude-files` and `-user-exclude-dirs` of the `init` command. These are combined with the system and default exclusions.
 
 ## Log Levels
 
