@@ -1,12 +1,15 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to `pgl-backup` (PixelGardenLabs Backup) will be documented in this file.
 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [v1.4.6] - 2026-XX-XX
+
+### Changed
+- **Docs**: Clarified in the README that "pgl" stands for PixelGardenLabs and that the tool is for general file backups, not for any specific database system.
 
 ### Fixed
 - **Robustness**: Hardened the lock file heartbeat mechanism to be resilient to system clock adjustments. The staleness check now uses the timestamp from within the lock file content (`LastUpdate`) rather than a local in-memory timestamp, preventing false positives if the system time is changed.

@@ -1,6 +1,6 @@
 # Contributing
 
-We'd love your help making `pgl-backup` even better! Whether it's reporting a bug, suggesting a new feature, or writing code, every contribution is appreciated.
+We'd love your help making `pgl-backup` (PixelGardenLabs Backup) even better! Whether it's reporting a bug, suggesting a new feature, or writing code, every contribution is appreciated.
 
 ## Found a Bug?
 
