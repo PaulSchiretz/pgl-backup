@@ -175,7 +175,7 @@ func TestParse(t *testing.T) {
 
 	t.Run("Parse Exclude Flags", func(t *testing.T) {
 		// Using subcommand style
-		args := []string{"backup", "-user-exclude-files=*.tmp,*.log", "-user-exclude-dirs=node_modules,.cache"}
+		args := []string{"init", "-user-exclude-files=*.tmp,*.log", "-user-exclude-dirs=node_modules,.cache"}
 		_, setFlags, err := flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
@@ -193,7 +193,7 @@ func TestParse(t *testing.T) {
 	})
 
 	t.Run("Parse Hook Flags", func(t *testing.T) {
-		args := []string{"backup", "-hooks-pre-backup=cmd1, 'cmd2 with space'", "-hooks-post-backup=cmd3"}
+		args := []string{"init", "-hooks-pre-backup=cmd1, 'cmd2 with space'", "-hooks-post-backup=cmd3"}
 		_, setFlags, err := flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
@@ -211,7 +211,7 @@ func TestParse(t *testing.T) {
 	})
 
 	t.Run("Set Sync Incremental Mod Time Window Flag", func(t *testing.T) {
-		args := []string{"backup", "-sync-mod-time-window=2"}
+		args := []string{"init", "-sync-mod-time-window=2"}
 		_, setFlags, err := flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
@@ -226,7 +226,7 @@ func TestParse(t *testing.T) {
 	})
 
 	t.Run("Override Sync Incremental Preserve Source Dir Name", func(t *testing.T) {
-		args := []string{"backup", "-sync-preserve-source-dir-name=false"}
+		args := []string{"init", "-sync-preserve-source-dir-name=false"}
 		_, setFlags, err := flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
@@ -314,7 +314,7 @@ func TestParse(t *testing.T) {
 
 	t.Run("Parse Compression Flags", func(t *testing.T) {
 		args := []string{
-			"backup",
+			"init",
 			"-compression",
 			"-compression-format=tar.gz",
 		}
@@ -335,7 +335,7 @@ func TestParse(t *testing.T) {
 	})
 
 	t.Run("Set Archive Interval Flag", func(t *testing.T) {
-		args := []string{"backup", "-archive-interval-seconds=172800"} // 48h
+		args := []string{"init", "-archive-interval-seconds=172800"} // 48h
 		_, setFlags, err := flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)
@@ -346,12 +346,12 @@ func TestParse(t *testing.T) {
 		}
 		expectedSeconds := 172800
 		if intVal, typeOK := val.(int); !typeOK || intVal != expectedSeconds {
-			t.Errorf("expected archive-incremental-interval-seconds to be %v, but got %v (type %T)", expectedSeconds, val, val)
+			t.Errorf("expected archive-interval-seconds to be %v, but got %v (type %T)", expectedSeconds, val, val)
 		}
 	})
 
 	t.Run("Set Archive Interval Mode Flag", func(t *testing.T) {
-		args := []string{"backup", "-archive-interval-mode=manual"}
+		args := []string{"init", "-archive-interval-mode=manual"}
 		_, setFlags, err := flagparse.Parse(args)
 		if err != nil {
 			t.Fatalf("expected no error, but got: %v", err)

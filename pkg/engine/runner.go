@@ -10,11 +10,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/paulschiretz/pgl-backup/pkg/buildinfo"
 	"github.com/paulschiretz/pgl-backup/pkg/hints"
 	"github.com/paulschiretz/pgl-backup/pkg/lockfile"
 	"github.com/paulschiretz/pgl-backup/pkg/metafile"
 	"github.com/paulschiretz/pgl-backup/pkg/planner"
 	"github.com/paulschiretz/pgl-backup/pkg/plog"
+	"github.com/paulschiretz/pgl-backup/pkg/sleep"
 	"github.com/paulschiretz/pgl-backup/pkg/util"
 )
 
@@ -71,6 +73,11 @@ func (r *Runner) ExecuteBackup(ctx context.Context, absBasePath, absSourcePath s
 		return nil // Lock was already held, exit gracefully.
 	}
 	defer releaseLock()
+
+	// Prevent system sleep during the backup operation
+	sleeper := sleep.New()
+	sleeper.Prevent(buildinfo.Name, "Backup")
+	defer sleeper.Allow()
 
 	// Hooks
 	if err := r.hookRunner.RunPreHook(ctx, "backup", p.HookRunner, timestampUTC); err != nil {
@@ -417,6 +424,11 @@ func (r *Runner) ExecutePrune(ctx context.Context, absBasePath string, p *planne
 	}
 	defer releaseLock()
 
+	// Prevent system sleep during the prune operation
+	sleeper := sleep.New()
+	sleeper.Prevent(buildinfo.Name, "Prune")
+	defer sleeper.Allow()
+
 	plog.Info("Starting prune", "base", absBasePath)
 
 	// Standalone prune logic
@@ -505,6 +517,11 @@ func (r *Runner) ExecuteList(ctx context.Context, absBasePath string, p *planner
 		return nil // Lock was already held, exit gracefully.
 	}
 	defer releaseLock()
+
+	// Prevent system sleep during the list operation
+	sleeper := sleep.New()
+	sleeper.Prevent(buildinfo.Name, "List")
+	defer sleeper.Allow()
 
 	plog.Info("Starting list", "base", absBasePath)
 
@@ -601,6 +618,11 @@ func (r *Runner) ExecuteRestore(ctx context.Context, absBasePath, uuid, absTarge
 		return nil // Lock was already held
 	}
 	defer releaseLock()
+
+	// Prevent system sleep during the restore operation
+	sleeper := sleep.New()
+	sleeper.Prevent(buildinfo.Name, "Restore")
+	defer sleeper.Allow()
 
 	// Hooks
 	if err := r.hookRunner.RunPreHook(ctx, "restore", p.HookRunner, timestampUTC); err != nil {

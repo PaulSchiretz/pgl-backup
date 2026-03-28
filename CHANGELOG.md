@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v1.4.6] - 2026-XX-XX
 
+### Added
+- **Feature**: Implemented cross-platform sleep prevention. The application now automatically inhibits system sleep and idle modes during `backup`, `restore`, `prune`, and `list` operations to ensure uninterrupted execution. Supported on Windows (`SetThreadExecutionState`), macOS (`caffeinate`), and Linux (`systemd-inhibit`).
+
 ### Changed
 - **Docs**: Clarified in the README that "pgl" stands for PixelGardenLabs and that the tool is for general file backups, not for any specific database system.
 - **CLI**: Moved configuration-tuning and structural flags (Retention, Archive, Compression, Hooks, Exclusions, `*-workers`, `sync-retry-*`) to be **Init-only**. They can still be used with `init` to generate a custom configuration, but can no longer be used as runtime overrides for the `backup` and `restore` commands. This significantly reduces CLI noise and enforces the configuration file as the source of truth for repository behavior. `sync-safe-copy`, `sync-sequential-write` and `hooks` (toggle) remain available for runtime overrides.
