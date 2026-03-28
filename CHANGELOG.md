@@ -6,7 +6,7 @@ All notable changes to `pgl-backup` (PixelGardenLabs Backup) will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v1.4.6] - 2026-XX-XX
+## [v1.4.6] - 2026-03-28
 
 ### Added
 - **Feature**: Implemented cross-platform sleep prevention. The application now automatically inhibits system sleep and idle modes during `backup`, `restore`, `prune`, and `list` operations to ensure uninterrupted execution. Supported on Windows (`SetThreadExecutionState`), macOS (`caffeinate`), and Linux (`systemd-inhibit`).
