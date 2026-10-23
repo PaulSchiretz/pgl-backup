@@ -132,7 +132,7 @@ These are the default names for the directories containing the final, safe-to-sy
 
 ### From Source
 
-Ensure you have [Go](https://go.dev/dl/) installed (version 1.26+ recommended).
+Ensure you have [Go](https://go.dev/dl/) installed (version 1.27+ recommended).
 If you have a Go environment set up, you can install `pgl-backup` directly:
 
 ```sh
