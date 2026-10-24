@@ -6,7 +6,7 @@ All notable changes to `pgl-backup` (PixelGardenLabs Backup) will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [x.x.x]
+## [1.4.8] - 2026-10-24
 
 ### Added
 - **Performance**: Replaced the two-phase sync+mirror architecture with a single-pass **Directory Diff engine**. Source and target directories are now compared side-by-side, folder-by-folder, in one depth-first traversal. Orphan detection and deletion (mirror mode) are handled in the same pass, eliminating the separate second full target-tree walk entirely. Memory usage drops from O(total file count) to O(directory depth).
