@@ -359,11 +359,6 @@ func (s *nativeSyncer) copyFile(absSrcPath, absTrgPath string, item *syncItem) e
 					return fmt.Errorf("failed to copy content to %s: %w", absWritePath, err)
 				}
 
-				// Sync to disk to ensure data durability before closing/renaming
-				if err := out.Sync(); err != nil {
-					return fmt.Errorf("failed to sync file %s: %w", absWritePath, err)
-				}
-
 				// Close Target (Flush)
 				if err := out.Close(); err != nil {
 					return fmt.Errorf("failed to close file %s: %w", absWritePath, err)
