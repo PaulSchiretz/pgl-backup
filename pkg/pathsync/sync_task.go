@@ -92,7 +92,6 @@ func (t *syncTask) syncDirectories() error {
 			t.readAheadLimit,
 			t.readAheadPool,
 			t.numSyncWorkers,
-			t.numMirrorWorkers,
 			t.metrics,
 		)
 		if err != nil {

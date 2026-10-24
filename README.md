@@ -268,7 +268,6 @@ Open the newly created `pgl-backup.config.json` file. It will look something lik
     "failFast": false,
     "performance": {
       "syncWorkers": 4,
-      "mirrorWorkers": 4,
       "deleteWorkers": 4,
       "compressWorkers": 4,
       "bufferSizeKB": 1024,
@@ -970,7 +969,6 @@ All command-line flags can also be set in the `pgl-backup.config.json` file. Not
 | `compression-level` (init) / `compression.level` | `string` | `"default"` | Compression level: `"default"`, `"fastest"`, `"better"`, `"best"`. |
 | **Performance Tuning** | | | |
 | `sync-workers` (init) / `engine.performance.syncWorkers` | `int` | `4` | Number of concurrent workers for file synchronization. |
-| `mirror-workers` (init) / `engine.performance.mirrorWorkers` | `int` | `4` | Number of concurrent workers for file deletions in mirror mode. |
 | `delete-workers` (init) / `engine.performance.deleteWorkers` | `int` | `4` | Number of concurrent workers for deleting outdated backups. |
 | `compress-workers` (init) / `engine.performance.compressWorkers` | `int` | `4` | Number of concurrent workers for compressing backups. |
 | `buffer-size-kb` (init) / `engine.performance.bufferSizeKB` | `int64` | `1024` | Size of the I/O buffer in kilobytes for file copies and compression. |

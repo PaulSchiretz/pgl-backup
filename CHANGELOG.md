@@ -6,6 +6,19 @@ All notable changes to `pgl-backup` (PixelGardenLabs Backup) will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [x.x.x]
+
+### Added
+- **Performance**: Replaced the two-phase sync+mirror architecture with a single-pass **Directory Diff engine**. Source and target directories are now compared side-by-side, folder-by-folder, in one depth-first traversal. Orphan detection and deletion (mirror mode) are handled in the same pass, eliminating the separate second full target-tree walk entirely. Memory usage drops from O(total file count) to O(directory depth).
+- **Performance**: Removed per-file `fsync` in the sync worker. The forced physical disk flush after every copied file was the single largest bottleneck for small-file-heavy workloads (e.g. source code repositories), adding 5–50 ms of latency per file. `out.Close()` alone is sufficient for application-level crash safety, and the OS page cache handles durability for the common case.
+- **Performance**: Removed `singleflight` per-directory locking and the `LStatSnapshotStore` target-cache. These were used to serialize and cache `stat` calls on target directories before diffing. With Directory Diff, destination metadata is only consulted for files that actually exist in both source and target, and it is read lazily per folder rather than eagerly for the entire tree upfront.
+
+### Changed
+- **Simplification**: Unified the sync and mirror worker pools into a single `syncWorkers` pool. File copies (`opCopy`) and mirror deletions (`opDelete`) now share one worker pool and one channel, reducing goroutine infrastructure and channel complexity.
+
+### Removed
+- **Breaking**: Removed the `mirrorWorkers` configuration option (`engine.performance.mirrorWorkers`), the `-mirror-workers` CLI flag, and the corresponding internal `MirrorWorkers` field. The `syncWorkers` pool now handles both file copies and file deletions. Existing config files that contain `mirrorWorkers` will silently ignore the key (Go JSON unmarshaling ignores unknown fields by default).
+
 ## [v1.4.7] - 2026-10-23
 
 ### Changed

@@ -22,7 +22,7 @@ func TestSync_Dispatch(t *testing.T) {
 			Engine:  Engine(99),
 		}
 
-		syncer := NewPathSyncer(256, 524288, 1, 1)
+		syncer := NewPathSyncer(256, 524288, 1)
 		_, err := syncer.Sync(context.Background(), baseDir, srcDir, "current", "content", plan, time.Now())
 
 		if err == nil {
@@ -44,7 +44,7 @@ func TestSync_Dispatch(t *testing.T) {
 			Engine:  Native,
 		}
 
-		syncer := NewPathSyncer(256, 524288, 1, 1)
+		syncer := NewPathSyncer(256, 524288, 1)
 		relCurrent := "current"
 		relContent := "content"
 		timestamp := time.Now().UTC()
@@ -92,7 +92,7 @@ func TestSync_PreserveSourceDirName(t *testing.T) {
 		PreserveSourceDirName: true,
 	}
 
-	syncer := NewPathSyncer(256, 524288, 1, 1)
+	syncer := NewPathSyncer(256, 524288, 1)
 	relCurrent := "current"
 	relContent := "content"
 	timestamp := time.Now().UTC()
@@ -137,7 +137,7 @@ func TestRestore_NoMetafile(t *testing.T) {
 		PreserveSourceDirName: false, // Standard restore behavior
 	}
 
-	syncer := NewPathSyncer(256, 524288, 1, 1)
+	syncer := NewPathSyncer(256, 524288, 1)
 
 	// Act
 	err := syncer.Restore(context.Background(), srcBase, relContentPath, toRestore, restoreTarget, plan, timestamp)

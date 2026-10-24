@@ -31,15 +31,14 @@ type PathSyncer struct {
 	// 1KB min, 64MB max
 	readAheadPool *pool.BucketedBufferPool
 
-	numSyncWorkers   int
-	numMirrorWorkers int
+	numSyncWorkers int
 
 	// lastNativeSyncer is for testing purposes only, to inspect the state of the last native sync.
 	lastNativeSyncer *nativeSyncer
 }
 
 // NewPathSyncer creates a new PathSyncer with the given configuration.
-func NewPathSyncer(bufferSizeKB, readAheadLimitKB int64, numSyncWorkers int, numMirrorWorkers int) *PathSyncer {
+func NewPathSyncer(bufferSizeKB, readAheadLimitKB int64, numSyncWorkers int) *PathSyncer {
 	ioBufferSize := bufferSizeKB * 1024 // Buffer size is configured in KB, so multiply by 1024.
 	readAheadLimit := readAheadLimitKB * 1024
 	return &PathSyncer{
@@ -49,7 +48,6 @@ func NewPathSyncer(bufferSizeKB, readAheadLimitKB int64, numSyncWorkers int, num
 		readAheadLimit:   readAheadLimit,
 		readAheadPool:    pool.NewBucketedBufferPool(1024, 64*1024*1024), // 1KB min, 64MB max as we do not want to Pool tiny or very large Buffers
 		numSyncWorkers:   numSyncWorkers,
-		numMirrorWorkers: numMirrorWorkers,
 	}
 }
 

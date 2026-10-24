@@ -28,7 +28,6 @@ type cliFlags struct {
 	Target           *string
 	FailFast         *bool
 	SyncWorkers      *int
-	MirrorWorkers    *int
 	DeleteWorkers    *int
 	CompressWorkers  *int
 	BufferSizeKB     *int64
@@ -117,7 +116,6 @@ func registerInitFlags(fs *flag.FlagSet, f *cliFlags) {
 	f.FailFast = fs.Bool("fail-fast", false, "Stop the backup immediately on the first file sync error.")
 
 	f.SyncWorkers = fs.Int("sync-workers", 0, "Number of worker goroutines for file synchronization.")
-	f.MirrorWorkers = fs.Int("mirror-workers", 0, "Number of worker goroutines for file deletions in mirror mode.")
 	f.DeleteWorkers = fs.Int("delete-workers", 0, "Number of worker goroutines for deleting outdated backups.")
 	f.CompressWorkers = fs.Int("compress-workers", 0, "Number of worker goroutines for compressing backups.")
 	f.BufferSizeKB = fs.Int64("buffer-size-kb", 0, "Size of the I/O buffer in kilobytes for file copies and compression. Default is 1024 (1MB).")
@@ -326,7 +324,6 @@ func flagsToMap(fs *flag.FlagSet, f *cliFlags) (map[string]any, error) {
 	addIfUsed(flagMap, usedFlags, "overwrite", f.OverwriteBehavior)
 	addIfUsed(flagMap, usedFlags, "fail-fast", f.FailFast)
 	addIfUsed(flagMap, usedFlags, "sync-workers", f.SyncWorkers)
-	addIfUsed(flagMap, usedFlags, "mirror-workers", f.MirrorWorkers)
 	addIfUsed(flagMap, usedFlags, "delete-workers", f.DeleteWorkers)
 	addIfUsed(flagMap, usedFlags, "compress-workers", f.CompressWorkers)
 	addIfUsed(flagMap, usedFlags, "buffer-size-kb", f.BufferSizeKB)

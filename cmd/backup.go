@@ -91,7 +91,6 @@ func RunBackup(ctx context.Context, flagMap map[string]any) error {
 			runConfig.Engine.Performance.BufferSizeKB,
 			runConfig.Engine.Performance.ReadAheadLimitKB,
 			runConfig.Engine.Performance.SyncWorkers,
-			runConfig.Engine.Performance.MirrorWorkers,
 		),
 		pathrotation.NewPathRotator(time.Local),
 		pathretention.NewPathRetainer(

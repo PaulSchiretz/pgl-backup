@@ -754,7 +754,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 				dirsCreated:      1,  // dir1
 				dirsDeleted:      1,  // obsolete_dir
 				dirsExcluded:     1,  // ignored_dir
-				entriesProcessed: 15, // 8 from sync + 7 from mirror (including roots)
+				entriesProcessed: 14, // 8 from sync + 6 from mirror (target pre-existing entries including roots)
 			},
 		},
 		{
@@ -864,7 +864,7 @@ func TestNativeSync_EndToEnd(t *testing.T) {
 			} else {
 				plan.ModTimeWindow = 1 * time.Second
 			}
-			syncer := NewPathSyncer(256, 524288, 4, 4)
+			syncer := NewPathSyncer(256, 524288, 4)
 			_, err := syncer.Sync(context.Background(), runner.baseDir, runner.srcDir, "", "", plan, time.Now())
 
 			// Assert on error
@@ -1035,7 +1035,7 @@ func TestNativeSync_WorkerCancellation(t *testing.T) {
 		Engine:  Native,
 		Mirror:  true,
 	}
-	syncer := NewPathSyncer(256, 524288, 1, 1)
+	syncer := NewPathSyncer(256, 524288, 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -1081,7 +1081,7 @@ func TestNativeSync_MirrorCancellation(t *testing.T) {
 		Engine:  Native,
 		Mirror:  true,
 	}
-	syncer := NewPathSyncer(256, 524288, 1, 1)
+	syncer := NewPathSyncer(256, 524288, 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
