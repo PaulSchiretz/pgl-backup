@@ -184,6 +184,18 @@ func (s *nativeSyncer) isExcluded(relPathKey, relPathBasename string, isDir bool
 	return s.fileExclusions.matches(relPathKey, relPathBasename)
 }
 
+func (s *nativeSyncer) removeWithRetry(absPath string) error {
+	const maxRetries = 5
+	var err error
+	for range maxRetries {
+		if err = os.Remove(absPath); err == nil {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return err
+}
+
 func (s *nativeSyncer) removeAllWithRetry(absPath string) error {
 	const maxRetries = 5
 	var err error
@@ -290,7 +302,7 @@ func (s *nativeSyncer) copyFile(absSrcPath, absTrgPath string, item *syncItem) e
 
 			if err != nil {
 				if s.safeCopy && absWritePath != "" {
-					os.Remove(absWritePath)
+					s.removeWithRetry(absWritePath)
 				}
 				return err
 			}
@@ -302,7 +314,7 @@ func (s *nativeSyncer) copyFile(absSrcPath, absTrgPath string, item *syncItem) e
 
 			if s.safeCopy {
 				if err := os.Rename(absWritePath, absTrgPath); err != nil {
-					os.Remove(absWritePath)
+					s.removeWithRetry(absWritePath)
 					return err
 				}
 			}
@@ -805,7 +817,7 @@ func (s *nativeSyncer) handleOrphanTargetDirEntries() error {
 		}
 		plog.Notice("DELETE", "path", relPathKey)
 
-		if err := os.Remove(absPathToDelete); err == nil {
+		if err := s.removeWithRetry(absPathToDelete); err == nil {
 			s.metrics.AddDirsDeleted(1)
 		} else {
 			plog.Debug("Directory removal skipped (not empty)", "path", relPathKey, "error", err)
